@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import sqlite3
 
 from playwright.async_api import async_playwright
@@ -26,6 +27,73 @@ def get_browser_options():
 
     return options
 
+
+def save_login_account(account_type, user_name, file_name, status=1):
+    """同平台同账号只保留一条记录，新的 cookie 会覆盖旧记录。"""
+    cookie_paths_to_delete = []
+
+    with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            SELECT id, filePath
+            FROM user_info
+            WHERE type = ? AND userName = ?
+            ORDER BY id ASC
+            ''',
+            (account_type, user_name)
+        )
+        existing_rows = cursor.fetchall()
+
+        if existing_rows:
+            primary_row = existing_rows[0]
+            duplicate_ids = [row["id"] for row in existing_rows[1:]]
+            cookie_paths_to_delete = [
+                row["filePath"]
+                for row in existing_rows
+                if row["filePath"] and row["filePath"] != file_name
+            ]
+
+            cursor.execute(
+                '''
+                UPDATE user_info
+                SET type = ?, filePath = ?, userName = ?, status = ?
+                WHERE id = ?
+                ''',
+                (account_type, file_name, user_name, status, primary_row["id"])
+            )
+
+            if duplicate_ids:
+                cursor.executemany(
+                    'DELETE FROM user_info WHERE id = ?',
+                    [(duplicate_id,) for duplicate_id in duplicate_ids]
+                )
+        else:
+            cursor.execute(
+                '''
+                INSERT INTO user_info (type, filePath, userName, status)
+                VALUES (?, ?, ?, ?)
+                ''',
+                (account_type, file_name, user_name, status)
+            )
+
+        conn.commit()
+
+    for cookie_path in cookie_paths_to_delete:
+        cookie_file = Path(BASE_DIR / "cookiesFile" / cookie_path)
+        if cookie_file.exists():
+            try:
+                cookie_file.unlink()
+            except OSError:
+                pass
+
+
+async def locator_to_data_url(locator):
+    await locator.wait_for(state="visible", timeout=30000)
+    image_bytes = await locator.screenshot(type="png")
+    return "data:image/png;base64," + base64.b64encode(image_bytes).decode("utf-8")
+
 # 抖音登录
 async def douyin_cookie_gen(id,status_queue):
     url_changed_event = asyncio.Event()
@@ -45,10 +113,9 @@ async def douyin_cookie_gen(id,status_queue):
         await page.goto("https://creator.douyin.com/")
         original_url = page.url
         img_locator = page.get_by_role("img", name="二维码")
-        # 获取 src 属性值
-        src = await img_locator.get_attribute("src")
-        print("✅ 图片地址:", src)
-        status_queue.put(src)
+        qr_data = await locator_to_data_url(img_locator)
+        print("✅ 二维码已生成")
+        status_queue.put(qr_data)
         # 监听页面的 'framenavigated' 事件，只关注主框架的变化
         page.on('framenavigated',
                 lambda frame: asyncio.create_task(on_url_change()) if frame == page.main_frame else None)
@@ -79,14 +146,8 @@ async def douyin_cookie_gen(id,status_queue):
         await page.close()
         await context.close()
         await browser.close()
-        with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                                INSERT INTO user_info (type, filePath, userName, status)
-                                VALUES (?, ?, ?, ?)
-                                ''', (3, f"{uuid_v1}.json", id, 1))
-            conn.commit()
-            print("✅ 用户状态已记录")
+        save_login_account(3, id, f"{uuid_v1}.json", 1)
+        print("✅ 用户状态已记录")
         status_queue.put("200")
 
 
@@ -125,10 +186,9 @@ async def get_tencent_cookie(id,status_queue):
         # 获取 iframe 中的第一个 img 元素
         img_locator = iframe_locator.get_by_role("img").first
 
-        # 获取 src 属性值
-        src = await img_locator.get_attribute("src")
-        print("✅ 图片地址:", src)
-        status_queue.put(src)
+        qr_data = await locator_to_data_url(img_locator)
+        print("✅ 二维码已生成")
+        status_queue.put(qr_data)
 
         try:
             # 等待 URL 变化或超时
@@ -157,15 +217,8 @@ async def get_tencent_cookie(id,status_queue):
         await page.close()
         await context.close()
         await browser.close()
-
-        with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                                INSERT INTO user_info (type, filePath, userName, status)
-                                VALUES (?, ?, ?, ?)
-                                ''', (2, f"{uuid_v1}.json", id, 1))
-            conn.commit()
-            print("✅ 用户状态已记录")
+        save_login_account(2, id, f"{uuid_v1}.json", 1)
+        print("✅ 用户状态已记录")
         status_queue.put("200")
 
 # 快手登录
@@ -195,11 +248,10 @@ async def get_ks_cookie(id,status_queue):
         await page.get_by_role("link", name="立即登录").click()
         await page.get_by_text("扫码登录").click()
         img_locator = page.get_by_role("img", name="qrcode")
-        # 获取 src 属性值
-        src = await img_locator.get_attribute("src")
+        qr_data = await locator_to_data_url(img_locator)
         original_url = page.url
-        print("✅ 图片地址:", src)
-        status_queue.put(src)
+        print("✅ 二维码已生成")
+        status_queue.put(qr_data)
         # 监听页面的 'framenavigated' 事件，只关注主框架的变化
         page.on('framenavigated',
                 lambda frame: asyncio.create_task(on_url_change()) if frame == page.main_frame else None)
@@ -231,15 +283,8 @@ async def get_ks_cookie(id,status_queue):
         await page.close()
         await context.close()
         await browser.close()
-
-        with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                                        INSERT INTO user_info (type, filePath, userName, status)
-                                        VALUES (?, ?, ?, ?)
-                                        ''', (4, f"{uuid_v1}.json", id, 1))
-            conn.commit()
-            print("✅ 用户状态已记录")
+        save_login_account(4, id, f"{uuid_v1}.json", 1)
+        print("✅ 用户状态已记录")
         status_queue.put("200")
 
 # 小红书登录
@@ -269,11 +314,10 @@ async def xiaohongshu_cookie_gen(id,status_queue):
         await page.locator('img.css-wemwzq').click()
 
         img_locator = page.get_by_role("img").nth(2)
-        # 获取 src 属性值
-        src = await img_locator.get_attribute("src")
+        qr_data = await locator_to_data_url(img_locator)
         original_url = page.url
-        print("✅ 图片地址:", src)
-        status_queue.put(src)
+        print("✅ 二维码已生成")
+        status_queue.put(qr_data)
         # 监听页面的 'framenavigated' 事件，只关注主框架的变化
         page.on('framenavigated',
                 lambda frame: asyncio.create_task(on_url_change()) if frame == page.main_frame else None)
@@ -305,15 +349,8 @@ async def xiaohongshu_cookie_gen(id,status_queue):
         await page.close()
         await context.close()
         await browser.close()
-
-        with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                           INSERT INTO user_info (type, filePath, userName, status)
-                           VALUES (?, ?, ?, ?)
-                           ''', (1, f"{uuid_v1}.json", id, 1))
-            conn.commit()
-            print("✅ 用户状态已记录")
+        save_login_account(1, id, f"{uuid_v1}.json", 1)
+        print("✅ 用户状态已记录")
         status_queue.put("200")
 
 # a = asyncio.run(xiaohongshu_cookie_gen(4,None))

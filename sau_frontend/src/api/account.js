@@ -2,7 +2,7 @@ import { http } from '@/utils/request'
 
 // 账号管理相关API
 export const accountApi = {
-  // 获取有效账号列表（带验证）
+  // 显式验证全部账号
   getValidAccounts() {
     return http.get('/getValidAccounts')
   },
@@ -10,6 +10,11 @@ export const accountApi = {
   // 获取账号列表（不带验证，快速加载）
   getAccounts() {
     return http.get('/getAccounts')
+  },
+
+  // 验证单个账号
+  validateAccount(id) {
+    return http.get(`/validateAccount?id=${id}`)
   },
 
   // 添加账号

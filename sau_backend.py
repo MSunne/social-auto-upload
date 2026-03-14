@@ -5,16 +5,44 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from queue import Queue
+from queue import Empty, Queue
+import conf as app_conf
 from flask_cors import CORS
 from myUtils.auth import check_cookie
 from flask import Flask, request, jsonify, Response, render_template, send_from_directory
 from conf import BASE_DIR
 from myUtils.login import get_tencent_cookie, douyin_cookie_gen, get_ks_cookie, xiaohongshu_cookie_gen
 from myUtils.postVideo import post_video_tencent, post_video_DouYin, post_video_ks, post_video_xhs
+from utils.cloud_agent import CloudAgent
+from utils.cloud_qr_bridge import CloudLoginBridge
 
 active_queues = {}
 app = Flask(__name__)
+PLATFORM_LABELS = {
+    '1': '小红书',
+    '2': '视频号',
+    '3': '抖音',
+    '4': '快手'
+}
+
+
+def parse_bool(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+CLOUD_AGENT_ENABLED = parse_bool(getattr(app_conf, 'CLOUD_AGENT_ENABLED', False))
+CLOUD_DEMO_URL = str(getattr(app_conf, 'CLOUD_DEMO_URL', '')).strip()
+CLOUD_DEVICE_NAME = str(getattr(app_conf, 'CLOUD_DEVICE_NAME', '')).strip() or None
+CLOUD_AGENT_KEY = str(getattr(app_conf, 'CLOUD_AGENT_KEY', '')).strip()
+CLOUD_AGENT_POLL_INTERVAL = int(getattr(app_conf, 'CLOUD_AGENT_POLL_INTERVAL', 5))
+cloud_agent = None
+cloud_agent_lock = threading.Lock()
 
 #允许所有来源跨域访问
 CORS(app)
@@ -24,6 +52,129 @@ app.config['MAX_CONTENT_LENGTH'] = 160 * 1024 * 1024
 
 # 获取当前目录（假设 index.html 和 assets 在这里）
 current_dir = os.path.dirname(os.path.abspath(__file__))
+
+
+def serialize_account_row(row, status=None):
+    row_status = row['status'] if status is None else status
+    return [row['id'], row['type'], row['filePath'], row['userName'], row_status]
+
+
+async def validate_account_rows(conn, rows):
+    validated_rows = []
+    updates = []
+
+    for row in rows:
+        is_valid = await check_cookie(row['type'], row['filePath'])
+        status = 1 if is_valid else 0
+        validated_rows.append(serialize_account_row(row, status))
+        if row['status'] != status:
+            updates.append((status, row['id']))
+
+    if updates:
+        cursor = conn.cursor()
+        cursor.executemany(
+            '''
+            UPDATE user_info
+            SET status = ?
+            WHERE id = ?
+            ''',
+            updates
+        )
+        conn.commit()
+
+    return validated_rows
+
+
+def get_request_payload():
+    if request.is_json:
+        return request.get_json(silent=True) or {}
+    return request.values.to_dict()
+
+
+def relay_remote_login_status(status_queue, bridge):
+    try:
+        bridge.push_log("本地浏览器已启动，等待二维码...")
+
+        while True:
+            msg = status_queue.get(timeout=240)
+
+            if msg == "200":
+                bridge.push_login_success()
+                break
+
+            if msg == "500":
+                bridge.push_login_failed()
+                break
+
+            if isinstance(msg, str) and msg:
+                bridge.push_qr(msg)
+                bridge.push_log("二维码已就绪，请在远端页面扫码")
+    except Empty:
+        try:
+            bridge.push_login_failed("本地登录超时，未等到扫码完成")
+        except Exception:
+            pass
+    except Exception as exc:
+        try:
+            bridge.push_login_failed(f"远端同步失败: {exc}")
+        except Exception:
+            pass
+
+
+def get_cloud_agent_config():
+    blocked_reason = None
+    if not CLOUD_AGENT_ENABLED:
+        blocked_reason = "CLOUD_AGENT_ENABLED 未开启"
+    elif not CLOUD_DEMO_URL:
+        blocked_reason = "CLOUD_DEMO_URL 未配置"
+    elif not CLOUD_AGENT_KEY:
+        blocked_reason = "CLOUD_AGENT_KEY 未配置"
+
+    return {
+        "enabled": CLOUD_AGENT_ENABLED,
+        "cloudUrl": CLOUD_DEMO_URL,
+        "deviceName": CLOUD_DEVICE_NAME,
+        "agentKeyConfigured": bool(CLOUD_AGENT_KEY),
+        "pollInterval": CLOUD_AGENT_POLL_INTERVAL,
+        "startEligible": blocked_reason is None,
+        "blockedReason": blocked_reason
+    }
+
+
+def ensure_cloud_agent_started():
+    global cloud_agent
+
+    if not CLOUD_AGENT_ENABLED or not CLOUD_DEMO_URL or not CLOUD_AGENT_KEY:
+        return
+
+    with cloud_agent_lock:
+        if cloud_agent is None:
+            cloud_agent = CloudAgent(
+                cloud_base_url=CLOUD_DEMO_URL,
+                agent_key=CLOUD_AGENT_KEY,
+                run_login_fn=run_async_function,
+                relay_fn=relay_remote_login_status,
+                device_name=CLOUD_DEVICE_NAME,
+                poll_interval=CLOUD_AGENT_POLL_INTERVAL
+            )
+            cloud_agent.start()
+
+
+def should_boot_background_services():
+    flask_run_from_cli = os.environ.get('FLASK_RUN_FROM_CLI') == 'true'
+    werkzeug_run_main = os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
+
+    if flask_run_from_cli:
+        debug_enabled = parse_bool(os.environ.get('FLASK_DEBUG', False))
+        if debug_enabled:
+            return werkzeug_run_main
+        return True
+    return True
+
+
+@app.before_request
+def bootstrap_cloud_agent():
+    ensure_cloud_agent_started()
 
 # 处理所有静态资源请求（未来打包用）
 @app.route('/assets/<filename>')
@@ -198,9 +349,10 @@ def getAccounts():
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute('''
-            SELECT * FROM user_info''')
+            SELECT * FROM user_info
+            ORDER BY id DESC''')
             rows = cursor.fetchall()
-            rows_list = [list(row) for row in rows]
+            rows_list = [serialize_account_row(row) for row in rows]
 
             print("\n📋 当前数据表内容（快速获取）：")
             for row in rows:
@@ -224,33 +376,61 @@ def getAccounts():
 @app.route("/getValidAccounts",methods=['GET'])
 async def getValidAccounts():
     with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
+        conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute('''
-        SELECT * FROM user_info''')
+        SELECT * FROM user_info
+        ORDER BY id DESC''')
         rows = cursor.fetchall()
-        rows_list = [list(row) for row in rows]
         print("\n📋 当前数据表内容：")
         for row in rows:
             print(row)
-        for row in rows_list:
-            flag = await check_cookie(row[1],row[2])
-            if not flag:
-                row[4] = 0
-                cursor.execute('''
-                UPDATE user_info 
-                SET status = ? 
-                WHERE id = ?
-                ''', (0,row[0]))
-                conn.commit()
-                print("✅ 用户状态已更新")
-        for row in rows:
-            print(row)
+        rows_list = await validate_account_rows(conn, rows)
         return jsonify(
                         {
                             "code": 200,
                             "msg": None,
                             "data": rows_list
                         }),200
+
+
+@app.route("/validateAccount", methods=['GET'])
+async def validateAccount():
+    account_id = request.args.get('id')
+
+    if not account_id or not account_id.isdigit():
+        return jsonify({
+            "code": 400,
+            "msg": "Invalid or missing account ID",
+            "data": None
+        }), 400
+
+    with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            SELECT * FROM user_info
+            WHERE id = ?
+            ''',
+            (int(account_id),)
+        )
+        row = cursor.fetchone()
+
+        if not row:
+            return jsonify({
+                "code": 404,
+                "msg": "account not found",
+                "data": None
+            }), 404
+
+        validated_rows = await validate_account_rows(conn, [row])
+
+        return jsonify({
+            "code": 200,
+            "msg": "account validated successfully",
+            "data": validated_rows[0]
+        }), 200
 
 @app.route('/deleteFile', methods=['GET'])
 def delete_file():
@@ -398,6 +578,79 @@ def login():
     response.headers['Content-Type'] = 'text/event-stream'
     response.headers['Connection'] = 'keep-alive'
     return response
+
+
+@app.route('/remoteLogin', methods=['GET', 'POST'])
+def remote_login():
+    data = get_request_payload()
+    type = str(data.get('type', '')).strip()
+    account_name = str(data.get('id') or data.get('accountName') or '').strip()
+    cloud_url = str(data.get('cloudUrl') or '').strip()
+    device_name = str(data.get('deviceName') or '').strip() or None
+    platform_name = PLATFORM_LABELS.get(type)
+
+    if not platform_name:
+        return jsonify({
+            "code": 400,
+            "msg": "不支持的平台类型",
+            "data": None
+        }), 400
+
+    if not account_name:
+        return jsonify({
+            "code": 400,
+            "msg": "账号名称不能为空",
+            "data": None
+        }), 400
+
+    if not cloud_url:
+        return jsonify({
+            "code": 400,
+            "msg": "cloudUrl 不能为空",
+            "data": None
+        }), 400
+
+    try:
+        bridge = CloudLoginBridge(cloud_url, platform_name, account_name, device_name=device_name)
+        session_data = bridge.create_session()
+        status_queue = Queue()
+
+        threading.Thread(
+            target=run_async_function,
+            args=(type, account_name, status_queue),
+            daemon=True
+        ).start()
+        threading.Thread(
+            target=relay_remote_login_status,
+            args=(status_queue, bridge),
+            daemon=True
+        ).start()
+
+        return jsonify({
+            "code": 200,
+            "msg": "远端扫码登录已启动",
+            "data": session_data
+        }), 200
+    except Exception as exc:
+        return jsonify({
+            "code": 500,
+            "msg": f"启动远端扫码登录失败: {exc}",
+            "data": None
+        }), 500
+
+
+@app.route('/cloudAgentStatus', methods=['GET'])
+def cloud_agent_status():
+    ensure_cloud_agent_started()
+    agent_status = cloud_agent.status() if cloud_agent else None
+    return jsonify({
+        "code": 200,
+        "msg": "success",
+        "data": {
+            "config": get_cloud_agent_config(),
+            "agent": agent_status
+        }
+    }), 200
 
 @app.route('/postVideo', methods=['POST'])
 def postVideo():
@@ -681,27 +934,38 @@ def download_cookie():
 
 # 包装函数：在线程中运行异步函数
 def run_async_function(type,id,status_queue):
-    match type:
-        case '1':
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(xiaohongshu_cookie_gen(id, status_queue))
-            loop.close()
-        case '2':
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(get_tencent_cookie(id,status_queue))
-            loop.close()
-        case '3':
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(douyin_cookie_gen(id,status_queue))
-            loop.close()
-        case '4':
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(get_ks_cookie(id,status_queue))
-            loop.close()
+    try:
+        match type:
+            case '1':
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(xiaohongshu_cookie_gen(id, status_queue))
+                loop.close()
+            case '2':
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(get_tencent_cookie(id,status_queue))
+                loop.close()
+            case '3':
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(douyin_cookie_gen(id,status_queue))
+                loop.close()
+            case '4':
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(get_ks_cookie(id,status_queue))
+                loop.close()
+            case _:
+                raise ValueError(f"unsupported login type: {type}")
+    except Exception as exc:
+        print(f"登录线程执行失败: {exc}")
+        if status_queue is not None:
+            status_queue.put("500")
+
+
+if should_boot_background_services():
+    ensure_cloud_agent_started()
 
 # SSE 流生成器函数
 def sse_stream(status_queue):
@@ -714,4 +978,5 @@ def sse_stream(status_queue):
             time.sleep(0.1)
 
 if __name__ == '__main__':
+    ensure_cloud_agent_started()
     app.run(host='0.0.0.0' ,port=5409)

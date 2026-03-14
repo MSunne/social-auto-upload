@@ -19,9 +19,12 @@
               />
               <div class="action-buttons">
                 <el-button type="primary" @click="handleAddAccount">添加账号</el-button>
-                <el-button type="info" @click="fetchAccounts" :loading="false">
+                <el-button type="warning" @click="validateAllAccounts" :loading="validatingAllAccounts">
+                  验证全部
+                </el-button>
+                <el-button type="info" @click="refreshAccountsList" :loading="appStore.isAccountRefreshing">
                   <el-icon :class="{ 'is-loading': appStore.isAccountRefreshing }"><Refresh /></el-icon>
-                  <span v-if="appStore.isAccountRefreshing">刷新中</span>
+                  <span>{{ appStore.isAccountRefreshing ? '刷新中' : '刷新列表' }}</span>
                 </el-button>
               </div>
             </div>
@@ -49,8 +52,6 @@
                     <el-tag
                       :type="getStatusTagType(scope.row.status)"
                       effect="plain"
-                      :class="{'clickable-status': isStatusClickable(scope.row.status)}"
-                      @click="handleStatusClick(scope.row)"
                     >
                       <el-icon :class="scope.row.status === '验证中' ? 'is-loading' : ''" v-if="scope.row.status === '验证中'">
                         <Loading />
@@ -62,6 +63,8 @@
                 <el-table-column label="操作">
                   <template #default="scope">
                     <el-button size="small" @click="handleEdit(scope.row)">编辑</el-button>
+                    <el-button size="small" type="success" :loading="isAccountValidating(scope.row.id)" @click="handleValidateAccount(scope.row)">验证账号</el-button>
+                    <el-button size="small" type="warning" @click="handleReLogin(scope.row)">重新登录</el-button>
                     <el-button size="small" type="primary" :icon="Download" @click="handleDownloadCookie(scope.row)">下载Cookie</el-button>
                     <el-button size="small" type="info" :icon="Upload" @click="handleUploadCookie(scope.row)">上传Cookie</el-button>
                     <el-button size="small" type="danger" @click="handleDelete(scope.row)">删除</el-button>
@@ -89,9 +92,12 @@
               />
               <div class="action-buttons">
                 <el-button type="primary" @click="handleAddAccount">添加账号</el-button>
-                <el-button type="info" @click="fetchAccounts" :loading="false">
+                <el-button type="warning" @click="validateAllAccounts" :loading="validatingAllAccounts">
+                  验证全部
+                </el-button>
+                <el-button type="info" @click="refreshAccountsList" :loading="appStore.isAccountRefreshing">
                   <el-icon :class="{ 'is-loading': appStore.isAccountRefreshing }"><Refresh /></el-icon>
-                  <span v-if="appStore.isAccountRefreshing">刷新中</span>
+                  <span>{{ appStore.isAccountRefreshing ? '刷新中' : '刷新列表' }}</span>
                 </el-button>
               </div>
             </div>
@@ -119,8 +125,6 @@
                     <el-tag
                       :type="getStatusTagType(scope.row.status)"
                       effect="plain"
-                      :class="{'clickable-status': isStatusClickable(scope.row.status)}"
-                      @click="handleStatusClick(scope.row)"
                     >
                       <el-icon :class="scope.row.status === '验证中' ? 'is-loading' : ''" v-if="scope.row.status === '验证中'">
                         <Loading />
@@ -132,6 +136,8 @@
                 <el-table-column label="操作">
                   <template #default="scope">
                     <el-button size="small" @click="handleEdit(scope.row)">编辑</el-button>
+                    <el-button size="small" type="success" :loading="isAccountValidating(scope.row.id)" @click="handleValidateAccount(scope.row)">验证账号</el-button>
+                    <el-button size="small" type="warning" @click="handleReLogin(scope.row)">重新登录</el-button>
                     <el-button size="small" type="primary" :icon="Download" @click="handleDownloadCookie(scope.row)">下载Cookie</el-button>
                     <el-button size="small" type="info" :icon="Upload" @click="handleUploadCookie(scope.row)">上传Cookie</el-button>
                     <el-button size="small" type="danger" @click="handleDelete(scope.row)">删除</el-button>
@@ -159,9 +165,12 @@
               />
               <div class="action-buttons">
                 <el-button type="primary" @click="handleAddAccount">添加账号</el-button>
-                <el-button type="info" @click="fetchAccounts" :loading="false">
+                <el-button type="warning" @click="validateAllAccounts" :loading="validatingAllAccounts">
+                  验证全部
+                </el-button>
+                <el-button type="info" @click="refreshAccountsList" :loading="appStore.isAccountRefreshing">
                   <el-icon :class="{ 'is-loading': appStore.isAccountRefreshing }"><Refresh /></el-icon>
-                  <span v-if="appStore.isAccountRefreshing">刷新中</span>
+                  <span>{{ appStore.isAccountRefreshing ? '刷新中' : '刷新列表' }}</span>
                 </el-button>
               </div>
             </div>
@@ -189,8 +198,6 @@
                     <el-tag
                       :type="getStatusTagType(scope.row.status)"
                       effect="plain"
-                      :class="{'clickable-status': isStatusClickable(scope.row.status)}"
-                      @click="handleStatusClick(scope.row)"
                     >
                       <el-icon :class="scope.row.status === '验证中' ? 'is-loading' : ''" v-if="scope.row.status === '验证中'">
                         <Loading />
@@ -202,6 +209,8 @@
                 <el-table-column label="操作">
                   <template #default="scope">
                     <el-button size="small" @click="handleEdit(scope.row)">编辑</el-button>
+                    <el-button size="small" type="success" :loading="isAccountValidating(scope.row.id)" @click="handleValidateAccount(scope.row)">验证账号</el-button>
+                    <el-button size="small" type="warning" @click="handleReLogin(scope.row)">重新登录</el-button>
                     <el-button size="small" type="primary" :icon="Download" @click="handleDownloadCookie(scope.row)">下载Cookie</el-button>
                     <el-button size="small" type="info" :icon="Upload" @click="handleUploadCookie(scope.row)">上传Cookie</el-button>
                     <el-button size="small" type="danger" @click="handleDelete(scope.row)">删除</el-button>
@@ -229,9 +238,12 @@
               />
               <div class="action-buttons">
                 <el-button type="primary" @click="handleAddAccount">添加账号</el-button>
-                <el-button type="info" @click="fetchAccounts" :loading="false">
+                <el-button type="warning" @click="validateAllAccounts" :loading="validatingAllAccounts">
+                  验证全部
+                </el-button>
+                <el-button type="info" @click="refreshAccountsList" :loading="appStore.isAccountRefreshing">
                   <el-icon :class="{ 'is-loading': appStore.isAccountRefreshing }"><Refresh /></el-icon>
-                  <span v-if="appStore.isAccountRefreshing">刷新中</span>
+                  <span>{{ appStore.isAccountRefreshing ? '刷新中' : '刷新列表' }}</span>
                 </el-button>
               </div>
             </div>
@@ -259,8 +271,6 @@
                     <el-tag
                       :type="getStatusTagType(scope.row.status)"
                       effect="plain"
-                      :class="{'clickable-status': isStatusClickable(scope.row.status)}"
-                      @click="handleStatusClick(scope.row)"
                     >
                       <el-icon :class="scope.row.status === '验证中' ? 'is-loading' : ''" v-if="scope.row.status === '验证中'">
                         <Loading />
@@ -272,6 +282,8 @@
                 <el-table-column label="操作">
                   <template #default="scope">
                     <el-button size="small" @click="handleEdit(scope.row)">编辑</el-button>
+                    <el-button size="small" type="success" :loading="isAccountValidating(scope.row.id)" @click="handleValidateAccount(scope.row)">验证账号</el-button>
+                    <el-button size="small" type="warning" @click="handleReLogin(scope.row)">重新登录</el-button>
                     <el-button size="small" type="primary" :icon="Download" @click="handleDownloadCookie(scope.row)">下载Cookie</el-button>
                     <el-button size="small" type="info" :icon="Upload" @click="handleUploadCookie(scope.row)">上传Cookie</el-button>
                     <el-button size="small" type="danger" @click="handleDelete(scope.row)">删除</el-button>
@@ -299,9 +311,12 @@
               />
               <div class="action-buttons">
                 <el-button type="primary" @click="handleAddAccount">添加账号</el-button>
-                <el-button type="info" @click="fetchAccounts" :loading="false">
+                <el-button type="warning" @click="validateAllAccounts" :loading="validatingAllAccounts">
+                  验证全部
+                </el-button>
+                <el-button type="info" @click="refreshAccountsList" :loading="appStore.isAccountRefreshing">
                   <el-icon :class="{ 'is-loading': appStore.isAccountRefreshing }"><Refresh /></el-icon>
-                  <span v-if="appStore.isAccountRefreshing">刷新中</span>
+                  <span>{{ appStore.isAccountRefreshing ? '刷新中' : '刷新列表' }}</span>
                 </el-button>
               </div>
             </div>
@@ -329,8 +344,6 @@
                     <el-tag
                       :type="getStatusTagType(scope.row.status)"
                       effect="plain"
-                      :class="{'clickable-status': isStatusClickable(scope.row.status)}"
-                      @click="handleStatusClick(scope.row)"
                     >
                       <el-icon :class="scope.row.status === '验证中' ? 'is-loading' : ''" v-if="scope.row.status === '验证中'">
                         <Loading />
@@ -342,6 +355,8 @@
                 <el-table-column label="操作">
                   <template #default="scope">
                     <el-button size="small" @click="handleEdit(scope.row)">编辑</el-button>
+                    <el-button size="small" type="success" :loading="isAccountValidating(scope.row.id)" @click="handleValidateAccount(scope.row)">验证账号</el-button>
+                    <el-button size="small" type="warning" @click="handleReLogin(scope.row)">重新登录</el-button>
                     <el-button size="small" type="primary" :icon="Download" @click="handleDownloadCookie(scope.row)">下载Cookie</el-button>
                     <el-button size="small" type="info" :icon="Upload" @click="handleUploadCookie(scope.row)">上传Cookie</el-button>
                     <el-button size="small" type="danger" @click="handleDelete(scope.row)">删除</el-button>
@@ -361,7 +376,7 @@
     <!-- 添加/编辑账号对话框 -->
     <el-dialog
       v-model="dialogVisible"
-      :title="dialogType === 'add' ? '添加账号' : '编辑账号'"
+      :title="dialogType === 'add' ? '添加账号' : dialogType === 'relogin' ? '重新登录账号' : '编辑账号'"
       width="500px"
       :close-on-click-modal="false"
       :close-on-press-escape="!sseConnecting"
@@ -373,7 +388,7 @@
             v-model="accountForm.platform" 
             placeholder="请选择平台" 
             style="width: 100%"
-            :disabled="dialogType === 'edit' || sseConnecting"
+            :disabled="dialogType === 'edit' || dialogType === 'relogin' || sseConnecting"
           >
             <el-option label="快手" value="快手" />
             <el-option label="抖音" value="抖音" />
@@ -446,74 +461,109 @@ const activeTab = ref('all')
 // 搜索关键词
 const searchKeyword = ref('')
 
-// 获取账号数据（快速，不验证）
-const fetchAccountsQuick = async () => {
-  try {
-    const res = await accountApi.getAccounts()
-    if (res.code === 200 && res.data) {
-      // 将所有账号的状态暂时设为"验证中"
-      const accountsWithPendingStatus = res.data.map(account => {
-        const updatedAccount = [...account];
-        updatedAccount[4] = -1; // -1 表示验证中的临时状态
-        return updatedAccount;
-      });
-      accountStore.setAccounts(accountsWithPendingStatus);
-    }
-  } catch (error) {
-    console.error('快速获取账号数据失败:', error)
+// 正在验证的账号
+const validatingAccountIds = ref([])
+const validatingAllAccounts = ref(false)
+
+const setAccountValidating = (accountId, isValidating) => {
+  const ids = new Set(validatingAccountIds.value)
+  if (isValidating) {
+    ids.add(accountId)
+  } else {
+    ids.delete(accountId)
   }
+  validatingAccountIds.value = Array.from(ids)
 }
 
-// 获取账号数据（带验证）
-const fetchAccounts = async () => {
+const isAccountValidating = (accountId) => {
+  return validatingAccountIds.value.includes(accountId)
+}
+
+// 获取账号列表（不做校验）
+const fetchAccounts = async (showSuccessMessage = false) => {
   if (appStore.isAccountRefreshing) return
 
   appStore.setAccountRefreshing(true)
 
   try {
-    const res = await accountApi.getValidAccounts()
+    const res = await accountApi.getAccounts()
     if (res.code === 200 && res.data) {
       accountStore.setAccounts(res.data)
-      ElMessage.success('账号数据获取成功')
+      if (showSuccessMessage) {
+        ElMessage.success('账号列表已刷新')
+      }
       // 标记为已访问
       if (appStore.isFirstTimeAccountManagement) {
         appStore.setAccountManagementVisited()
       }
     } else {
-      ElMessage.error('获取账号数据失败')
+      ElMessage.error('获取账号列表失败')
     }
   } catch (error) {
-    console.error('获取账号数据失败:', error)
-    ElMessage.error('获取账号数据失败')
+    console.error('获取账号列表失败:', error)
+    ElMessage.error('获取账号列表失败')
   } finally {
     appStore.setAccountRefreshing(false)
   }
 }
 
-// 后台验证所有账号（优化版本，使用setTimeout避免阻塞UI）
-const validateAllAccountsInBackground = async () => {
-  // 使用setTimeout将验证过程放在下一个事件循环，避免阻塞UI
-  setTimeout(async () => {
-    try {
-      const res = await accountApi.getValidAccounts()
-      if (res.code === 200 && res.data) {
-        accountStore.setAccounts(res.data)
-      }
-    } catch (error) {
-      console.error('后台验证账号失败:', error)
-    }
-  }, 0)
+const refreshAccountsList = () => {
+  fetchAccounts(true)
 }
 
-// 页面加载时获取账号数据
-onMounted(() => {
-  // 快速获取账号列表（不验证），立即显示
-  fetchAccountsQuick()
+const handleValidateAccount = async (row) => {
+  if (validatingAllAccounts.value || isAccountValidating(row.id)) return
 
-  // 在后台验证所有账号
-  setTimeout(() => {
-    validateAllAccountsInBackground()
-  }, 100) // 稍微延迟一下，让用户看到快速加载的效果
+  setAccountValidating(row.id, true)
+  accountStore.updateAccount(row.id, { status: '验证中' })
+
+  try {
+    const res = await accountApi.validateAccount(row.id)
+    if (res.code === 200) {
+      await fetchAccounts()
+      ElMessage.success(`账号 ${row.name} 验证完成`)
+    } else {
+      ElMessage.error(res.msg || '账号验证失败')
+      await fetchAccounts()
+    }
+  } catch (error) {
+    console.error('验证账号失败:', error)
+    ElMessage.error('验证账号失败')
+    await fetchAccounts()
+  } finally {
+    setAccountValidating(row.id, false)
+  }
+}
+
+const validateAllAccounts = async () => {
+  if (validatingAllAccounts.value) return
+
+  validatingAllAccounts.value = true
+  accountStore.accounts.forEach(account => {
+    accountStore.updateAccount(account.id, { status: '验证中' })
+  })
+
+  try {
+    const res = await accountApi.getValidAccounts()
+    if (res.code === 200 && res.data) {
+      accountStore.setAccounts(res.data)
+      ElMessage.success('账号验证完成')
+    } else {
+      ElMessage.error(res.msg || '账号验证失败')
+      await fetchAccounts()
+    }
+  } catch (error) {
+    console.error('批量验证账号失败:', error)
+    ElMessage.error('批量验证账号失败')
+    await fetchAccounts()
+  } finally {
+    validatingAllAccounts.value = false
+  }
+}
+
+// 页面加载时只获取账号列表，不自动校验
+onMounted(() => {
+  fetchAccounts()
 })
 
 // 获取平台标签类型
@@ -527,11 +577,6 @@ const getPlatformTagType = (platform) => {
   return typeMap[platform] || 'info'
 }
 
-// 判断状态是否可点击（异常状态可点击）
-const isStatusClickable = (status) => {
-  return status === '异常'; // 只有异常状态可点击，验证中不可点击
-}
-
 // 获取状态标签类型
 const getStatusTagType = (status) => {
   if (status === '验证中') {
@@ -540,14 +585,6 @@ const getStatusTagType = (status) => {
     return 'success'; // 正常使用绿色
   } else {
     return 'danger'; // 无效使用红色
-  }
-}
-
-// 处理状态点击事件
-const handleStatusClick = (row) => {
-  if (isStatusClickable(row.status)) {
-    // 触发重新登录流程
-    handleReLogin(row)
   }
 }
 
@@ -583,7 +620,7 @@ const handleSearch = () => {
 
 // 对话框相关
 const dialogVisible = ref(false)
-const dialogType = ref('add') // 'add' 或 'edit'
+const dialogType = ref('add') // 'add'、'edit' 或 'relogin'
 const accountFormRef = ref(null)
 
 // 账号表单
@@ -732,7 +769,7 @@ const handleUploadCookie = (row) => {
 // 重新登录账号
 const handleReLogin = (row) => {
   // 设置表单信息
-  dialogType.value = 'edit'
+  dialogType.value = 'relogin'
   Object.assign(accountForm, {
     id: row.id,
     name: row.name,
@@ -829,7 +866,7 @@ const connectSSE = (platform, name) => {
             sseConnecting.value = false
 
             // 根据是否是重新登录显示不同提示
-            ElMessage.success(dialogType.value === 'edit' ? '重新登录成功' : '账号添加成功')
+            ElMessage.success(dialogType.value === 'relogin' ? '重新登录成功' : '账号添加成功')
 
             // 显示更新账号信息提示
             ElMessage({
