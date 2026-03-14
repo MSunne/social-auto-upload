@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>发布任务详情</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f4f7fb;
+      color: #111827;
+    }
+    .page {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 28px 20px 40px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 18px;
+      padding: 20px;
+      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+      margin-bottom: 20px;
+    }
+    h1, h2 {
+      margin: 0 0 16px;
+    }
+    .meta-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+    .meta-item {
+      border-radius: 12px;
+      background: #f8fafc;
+      padding: 12px 14px;
+    }
+    .label {
+      color: #6b7280;
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+    .value {
+      font-size: 14px;
+      word-break: break-all;
+    }
+    .status {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      background: #fef3c7;
+      color: #92400e;
+    }
+    .status-ok {
+      background: #dcfce7;
+      color: #166534;
+    }
+    .status-fail {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+    .screenshot {
+      width: 100%;
+      border-radius: 16px;
+      border: 1px solid #dbe3f5;
+      background: #fff;
+    }
+    .message {
+      color: #374151;
+      line-height: 1.7;
+    }
+    .muted {
+      color: #6b7280;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="card">
+      <h1>发布任务详情</h1>
+      <div class="meta-grid">
+        <div class="meta-item">
+          <div class="label">状态</div>
+          <div class="value">
+            <span class="status{% if task.status == 'success' %} status-ok{% elif task.status == 'failed' %} status-fail{% endif %}">{{ task.status }}</span>
+          </div>
+        </div>
+        <div class="meta-item">
+          <div class="label">设备</div>
+          <div class="value">{{ task.deviceName }}</div>
+        </div>
+        <div class="meta-item">
+          <div class="label">平台</div>
+          <div class="value">{{ task.platform }}</div>
+        </div>
+        <div class="meta-item">
+          <div class="label">账号</div>
+          <div class="value">{{ task.accountName }}</div>
+        </div>
+        <div class="meta-item">
+          <div class="label">作品标题</div>
+          <div class="value">{{ task.title }}</div>
+        </div>
+        <div class="meta-item">
+          <div class="label">素材文件</div>
+          <div class="value">{{ task.fileName }}</div>
+        </div>
+        <div class="meta-item">
+          <div class="label">任务创建时间</div>
+          <div class="value">{{ task.createdAt or '-' }}</div>
+        </div>
+        <div class="meta-item">
+          <div class="label">最后更新时间</div>
+          <div class="value">{{ task.updatedAt or '-' }}</div>
+        </div>
+        <div class="meta-item">
+          <div class="label">平台定时发布时间</div>
+          <div class="value">{{ task.platformPublishAt or '-' }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>状态说明</h2>
+      <p class="message">{{ task.message or '-' }}</p>
+      {% if task.verificationData %}
+      <p class="muted">当前任务已进入人工验证分支，自动发布不会继续等待。你可以根据下方截图与提示在 OmniCord 中决定是否改为人工协助发布。</p>
+      {% endif %}
+    </div>
+
+    {% if task.verificationData %}
+    <div class="card">
+      <h2>{{ task.verificationData.title or '人工验证截图' }}</h2>
+      {% if task.verificationData.message %}
+      <p class="message">{{ task.verificationData.message }}</p>
+      {% endif %}
+      {% if task.verificationData.screenshotData %}
+      <img class="screenshot" src="{{ task.verificationData.screenshotData }}" alt="verification screenshot">
+      {% endif %}
+      {% if task.verificationData.inputHints %}
+      <p class="muted">输入提示：{{ task.verificationData.inputHints | join(' / ') }}</p>
+      {% endif %}
+      {% if task.verificationData.options %}
+      <p class="muted">可见验证方式：{{ task.verificationData.options | join(' / ') }}</p>
+      {% endif %}
+      {% if task.artifactPath %}
+      <p class="muted">本地截图存档：{{ task.artifactPath }}</p>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</body>
+</html>

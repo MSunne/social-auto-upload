@@ -6,16 +6,29 @@ from queue import Queue
 import requests
 
 from utils.cloud_qr_bridge import CloudLoginBridge
+from utils.device_meta import get_device_code, get_local_ip
 
 
 class CloudAgent:
-    def __init__(self, cloud_base_url, agent_key, run_login_fn, relay_fn, device_name=None, poll_interval=5):
+    def __init__(
+        self,
+        cloud_base_url,
+        agent_key,
+        run_login_fn,
+        relay_fn,
+        device_name=None,
+        poll_interval=5,
+        heartbeat_interval=30,
+        device_code=None,
+    ):
         self.cloud_base_url = cloud_base_url.rstrip('/')
         self.agent_key = agent_key
         self.run_login_fn = run_login_fn
         self.relay_fn = relay_fn
         self.device_name = device_name or socket.gethostname()
         self.poll_interval = max(2, int(poll_interval))
+        self.heartbeat_interval = max(10, int(heartbeat_interval))
+        self.device_code = device_code or get_device_code()
 
         self._thread = None
         self._thread_lock = threading.Lock()
@@ -26,7 +39,9 @@ class CloudAgent:
             "running": False,
             "busy": False,
             "deviceName": self.device_name,
+            "deviceCode": self.device_code,
             "cloudUrl": self.cloud_base_url,
+            "localIp": get_local_ip(),
             "lastHeartbeatAt": None,
             "lastTaskAt": None,
             "lastError": None,
@@ -53,15 +68,21 @@ class CloudAgent:
     def _agent_payload(self):
         return {
             "deviceName": self.device_name,
-            "agentKey": self.agent_key
+            "agentKey": self.agent_key,
+            "deviceCode": self.device_code,
+            "localIp": get_local_ip(),
         }
 
     def _loop(self):
         self._update_state(running=True, lastError=None)
+        last_heartbeat_at = 0.0
 
         while not self._stop.is_set():
             try:
-                self._heartbeat()
+                now = time.monotonic()
+                if now - last_heartbeat_at >= self.heartbeat_interval:
+                    self._heartbeat()
+                    last_heartbeat_at = now
 
                 if not self._busy.is_set():
                     task = self._claim_task()
@@ -93,7 +114,11 @@ class CloudAgent:
         if result.get("code") != 200:
             raise RuntimeError(result.get("msg") or "agent heartbeat failed")
 
-        self._update_state(lastHeartbeatAt=time.strftime("%Y-%m-%d %H:%M:%S"), lastError=None)
+        self._update_state(
+            lastHeartbeatAt=time.strftime("%Y-%m-%d %H:%M:%S"),
+            localIp=get_local_ip(),
+            lastError=None,
+        )
 
     def _claim_task(self):
         response = requests.post(
@@ -109,6 +134,7 @@ class CloudAgent:
 
     def _execute_task(self, task):
         bridge = None
+        action_stop_event = threading.Event()
         try:
             bridge = CloudLoginBridge(
                 self.cloud_base_url,
@@ -124,9 +150,15 @@ class CloudAgent:
             )
 
             status_queue = Queue()
+            command_queue = Queue()
+            threading.Thread(
+                target=bridge.poll_actions_loop,
+                args=(command_queue, action_stop_event),
+                daemon=True
+            ).start()
             threading.Thread(
                 target=self.run_login_fn,
-                args=(str(task["platformType"]), task["accountName"], status_queue),
+                args=(str(task["platformType"]), task["accountName"], status_queue, command_queue),
                 daemon=True
             ).start()
             self.relay_fn(status_queue, bridge)
@@ -138,5 +170,6 @@ class CloudAgent:
                     pass
             self._update_state(lastError=str(exc))
         finally:
+            action_stop_event.set()
             self._busy.clear()
             self._update_state(busy=False, currentTask=None)

@@ -1,4 +1,5 @@
 import socket
+import time
 
 import requests
 
@@ -68,6 +69,9 @@ class CloudLoginBridge:
     def push_qr(self, qr_data):
         self.send_event("qr_ready", {"qrData": qr_data})
 
+    def push_verification(self, verification_data):
+        self.send_event("verification_required", verification_data)
+
     def push_login_success(self, message="扫码登录成功，本地 token 已保存"):
         self.send_event("login_success", {"message": message})
 
@@ -76,3 +80,34 @@ class CloudLoginBridge:
 
     def push_log(self, message):
         self.send_event("log", {"message": message})
+
+    def fetch_next_action(self):
+        if not self.session_id or not self.writer_token:
+            raise RuntimeError("云端会话尚未创建")
+
+        response = requests.get(
+            f"{self.cloud_base_url}/api/sessions/{self.session_id}/actions/next",
+            headers={
+                "X-Writer-Token": self.writer_token
+            },
+            timeout=self.timeout
+        )
+        response.raise_for_status()
+        payload = response.json()
+
+        if payload.get("code") != 200:
+            raise RuntimeError(payload.get("msg") or "获取远端操作失败")
+
+        return payload.get("data")
+
+    def poll_actions_loop(self, command_queue, stop_event, interval=1.2):
+        while not stop_event.is_set():
+            try:
+                action = self.fetch_next_action()
+                if action:
+                    command_queue.put(action)
+            except Exception:
+                time.sleep(max(interval, 1.0))
+                continue
+
+            time.sleep(max(interval, 0.5))

@@ -30,6 +30,13 @@ def get_db_connection():
     return conn
 
 
+def ensure_column(cursor, table_name, column_name, definition):
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    columns = {row["name"] if isinstance(row, sqlite3.Row) else row[1] for row in cursor.fetchall()}
+    if column_name not in columns:
+        cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+
+
 def init_db():
     with get_db_connection() as conn:
         cursor = conn.cursor()
@@ -44,6 +51,7 @@ def init_db():
                 device_name TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
                 qr_data TEXT,
+                verification_data TEXT,
                 message TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -70,6 +78,9 @@ def init_db():
             CREATE TABLE IF NOT EXISTS agent_devices (
                 device_name TEXT PRIMARY KEY,
                 agent_key TEXT NOT NULL,
+                device_code TEXT,
+                local_ip TEXT,
+                public_ip TEXT,
                 status TEXT NOT NULL DEFAULT 'offline',
                 last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -95,12 +106,56 @@ def init_db():
             )
             '''
         )
+        cursor.execute(
+            '''
+            CREATE TABLE IF NOT EXISTS session_actions (
+                action_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                action_type TEXT NOT NULL,
+                payload TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                consumed_at DATETIME
+            )
+            '''
+        )
+        cursor.execute(
+            '''
+            CREATE TABLE IF NOT EXISTS publish_task_mirror (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_uuid TEXT NOT NULL,
+                device_name TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                account_name TEXT NOT NULL,
+                title TEXT NOT NULL,
+                file_name TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                source TEXT,
+                status TEXT NOT NULL,
+                message TEXT,
+                run_at DATETIME,
+                platform_publish_at DATETIME,
+                verification_data TEXT,
+                artifact_path TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                started_at DATETIME,
+                finished_at DATETIME,
+                UNIQUE(device_name, task_uuid)
+            )
+            '''
+        )
+        ensure_column(cursor, "login_sessions", "verification_data", "TEXT")
+        ensure_column(cursor, "agent_devices", "device_code", "TEXT")
+        ensure_column(cursor, "agent_devices", "local_ip", "TEXT")
+        ensure_column(cursor, "agent_devices", "public_ip", "TEXT")
         conn.commit()
 
 
 def serialize_session(row):
     if row is None:
         return None
+    verification_data = row["verification_data"]
     return {
         "sessionId": row["session_id"],
         "viewerToken": row["viewer_token"],
@@ -109,6 +164,7 @@ def serialize_session(row):
         "deviceName": row["device_name"],
         "status": row["status"],
         "qrData": row["qr_data"],
+        "verificationData": json.loads(verification_data) if verification_data else None,
         "message": row["message"],
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"]
@@ -131,10 +187,41 @@ def serialize_device(row):
     online = is_device_online(row["last_seen"])
     return {
         "deviceName": row["device_name"],
+        "deviceCode": row["device_code"],
+        "localIp": row["local_ip"],
+        "publicIp": row["public_ip"],
         "status": "online" if online else "offline",
         "lastSeen": row["last_seen"],
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"]
+    }
+
+
+def serialize_publish_task(row, include_screenshot=True):
+    verification_data = row["verification_data"]
+    verification_payload = json.loads(verification_data) if verification_data else None
+    if verification_payload and not include_screenshot:
+        verification_payload = dict(verification_payload)
+        verification_payload.pop("screenshotData", None)
+    return {
+        "taskUuid": row["task_uuid"],
+        "deviceName": row["device_name"],
+        "platform": row["platform"],
+        "accountName": row["account_name"],
+        "title": row["title"],
+        "fileName": row["file_name"],
+        "filePath": row["file_path"],
+        "source": row["source"],
+        "status": row["status"],
+        "message": row["message"],
+        "runAt": row["run_at"],
+        "platformPublishAt": row["platform_publish_at"],
+        "verificationData": verification_payload,
+        "artifactPath": row["artifact_path"],
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+        "startedAt": row["started_at"],
+        "finishedAt": row["finished_at"],
     }
 
 
@@ -237,6 +324,54 @@ def load_session_by_viewer_token(viewer_token):
         return cursor.fetchone()
 
 
+def create_session_action(session_id, action_type, payload):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            INSERT INTO session_actions (session_id, action_type, payload, status)
+            VALUES (?, ?, ?, 'pending')
+            ''',
+            (session_id, action_type, json.dumps(payload or {}, ensure_ascii=False))
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+
+def consume_next_session_action(session_id):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            SELECT * FROM session_actions
+            WHERE session_id = ? AND status = 'pending'
+            ORDER BY action_id ASC
+            LIMIT 1
+            ''',
+            (session_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+
+        cursor.execute(
+            '''
+            UPDATE session_actions
+            SET status = 'consumed', consumed_at = CURRENT_TIMESTAMP
+            WHERE action_id = ?
+            ''',
+            (row["action_id"],)
+        )
+        conn.commit()
+
+    return {
+        "actionId": row["action_id"],
+        "actionType": row["action_type"],
+        "payload": json.loads(row["payload"] or "{}"),
+        "createdAt": row["created_at"],
+    }
+
+
 def load_device(device_name):
     with get_db_connection() as conn:
         cursor = conn.cursor()
@@ -320,7 +455,7 @@ def update_task_status(cursor, session_id, status, error=None, finished=False):
         )
 
 
-def upsert_agent_device(device_name, agent_key):
+def upsert_agent_device(device_name, agent_key, device_code=None, local_ip=None, public_ip=None):
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -337,22 +472,97 @@ def upsert_agent_device(device_name, agent_key):
 
         cursor.execute(
             '''
-            INSERT INTO agent_devices (device_name, agent_key, status, last_seen, updated_at)
-            VALUES (?, ?, 'online', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            INSERT INTO agent_devices (device_name, agent_key, device_code, local_ip, public_ip, status, last_seen, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'online', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT(device_name)
             DO UPDATE SET
+                device_code = COALESCE(excluded.device_code, agent_devices.device_code),
+                local_ip = COALESCE(excluded.local_ip, agent_devices.local_ip),
+                public_ip = COALESCE(excluded.public_ip, agent_devices.public_ip),
                 status = 'online',
                 last_seen = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
             ''',
-            (device_name, agent_key)
+            (device_name, agent_key, device_code, local_ip, public_ip)
         )
         conn.commit()
+
+
+def upsert_publish_task(task_payload):
+    verification_data = task_payload.get("verificationData")
+    verification_json = json.dumps(verification_data, ensure_ascii=False) if verification_data else None
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            INSERT INTO publish_task_mirror (
+                task_uuid, device_name, platform, account_name, title, file_name, file_path, source,
+                status, message, run_at, platform_publish_at, verification_data, artifact_path,
+                created_at, updated_at, started_at, finished_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(device_name, task_uuid)
+            DO UPDATE SET
+                platform = excluded.platform,
+                account_name = excluded.account_name,
+                title = excluded.title,
+                file_name = excluded.file_name,
+                file_path = excluded.file_path,
+                source = excluded.source,
+                status = excluded.status,
+                message = excluded.message,
+                run_at = excluded.run_at,
+                platform_publish_at = excluded.platform_publish_at,
+                verification_data = excluded.verification_data,
+                artifact_path = excluded.artifact_path,
+                updated_at = excluded.updated_at,
+                started_at = excluded.started_at,
+                finished_at = excluded.finished_at
+            ''',
+            (
+                task_payload["taskUuid"],
+                task_payload["deviceName"],
+                task_payload["platformName"],
+                task_payload["accountName"],
+                task_payload["title"],
+                task_payload["fileName"],
+                task_payload["filePath"],
+                task_payload.get("source"),
+                task_payload["status"],
+                task_payload.get("message"),
+                task_payload.get("runAt"),
+                task_payload.get("platformPublishAt"),
+                verification_json,
+                task_payload.get("artifactPath"),
+                task_payload.get("createdAt") or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                task_payload.get("updatedAt") or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                task_payload.get("startedAt"),
+                task_payload.get("finishedAt"),
+            ),
+        )
+        conn.commit()
+
+
+def load_publish_task(task_uuid):
+    with get_db_connection() as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            SELECT * FROM publish_task_mirror
+            WHERE task_uuid = ?
+            ORDER BY id DESC
+            LIMIT 1
+            ''',
+            (task_uuid,),
+        )
+        return cursor.fetchone()
 
 
 def apply_session_event(session_row, event_type, payload):
     next_status = session_row["status"]
     next_qr_data = session_row["qr_data"]
+    next_verification_data = session_row["verification_data"]
     next_message = session_row["message"]
 
     with get_db_connection() as conn:
@@ -361,16 +571,25 @@ def apply_session_event(session_row, event_type, payload):
         if event_type == "qr_ready":
             next_status = "waiting_scan"
             next_qr_data = payload.get("qrData")
+            next_verification_data = None
             next_message = payload.get("message") or "二维码已就绪，请使用手机扫码登录"
             upsert_account_mirror(cursor, session_row, "等待扫码", next_message)
             update_task_status(cursor, session_row["session_id"], "running")
+        elif event_type == "verification_required":
+            next_status = "waiting_verify"
+            next_verification_data = json.dumps(payload, ensure_ascii=False)
+            next_message = payload.get("message") or "检测到需要额外验证，请在远端页面继续操作"
+            upsert_account_mirror(cursor, session_row, "等待验证", next_message)
+            update_task_status(cursor, session_row["session_id"], "running")
         elif event_type == "login_success":
             next_status = "success"
+            next_verification_data = None
             next_message = payload.get("message") or "扫码登录成功，本地 token 已保存"
             upsert_account_mirror(cursor, session_row, "正常", next_message)
             update_task_status(cursor, session_row["session_id"], "success", finished=True)
         elif event_type == "login_failed":
             next_status = "failed"
+            next_verification_data = None
             next_message = payload.get("message") or "扫码登录失败或超时"
             upsert_account_mirror(cursor, session_row, "异常", next_message)
             update_task_status(cursor, session_row["session_id"], "failed", error=next_message, finished=True)
@@ -382,10 +601,10 @@ def apply_session_event(session_row, event_type, payload):
         cursor.execute(
             '''
             UPDATE login_sessions
-            SET status = ?, qr_data = ?, message = ?, updated_at = CURRENT_TIMESTAMP
+            SET status = ?, qr_data = ?, verification_data = ?, message = ?, updated_at = CURRENT_TIMESTAMP
             WHERE session_id = ?
             ''',
-            (next_status, next_qr_data, next_message, session_row["session_id"])
+            (next_status, next_qr_data, next_verification_data, next_message, session_row["session_id"])
         )
         conn.commit()
 
@@ -442,11 +661,20 @@ def collect_dashboard_snapshot():
             }
             for row in cursor.fetchall()
         ]
+        cursor.execute(
+            '''
+            SELECT * FROM publish_task_mirror
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 30
+            '''
+        )
+        publish_tasks = [serialize_publish_task(row, include_screenshot=False) for row in cursor.fetchall()]
 
     return {
         "devices": devices,
         "accounts": accounts,
-        "tasks": tasks
+        "tasks": tasks,
+        "publishTasks": publish_tasks,
     }
 
 
@@ -503,6 +731,22 @@ def api_dashboard():
     return jsonify({"code": 200, "msg": "success", "data": collect_dashboard_snapshot()}), 200
 
 
+@app.route('/api/publish-tasks')
+def api_publish_tasks():
+    with get_db_connection() as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            SELECT * FROM publish_task_mirror
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 100
+            '''
+        )
+        tasks = [serialize_publish_task(row, include_screenshot=False) for row in cursor.fetchall()]
+    return jsonify({"code": 200, "msg": "success", "data": tasks}), 200
+
+
 @app.route('/api/sessions', methods=['POST'])
 def create_session():
     payload = request.get_json(silent=True) or {}
@@ -532,12 +776,15 @@ def agent_heartbeat():
     payload = request.get_json(silent=True) or {}
     device_name = str(payload.get("deviceName") or "").strip()
     agent_key = str(payload.get("agentKey") or "").strip()
+    device_code = str(payload.get("deviceCode") or "").strip() or None
+    local_ip = str(payload.get("localIp") or "").strip() or None
+    public_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or request.remote_addr
 
     if not device_name or not agent_key:
         return jsonify({"code": 400, "msg": "deviceName 和 agentKey 不能为空", "data": None}), 400
 
     try:
-        upsert_agent_device(device_name, agent_key)
+        upsert_agent_device(device_name, agent_key, device_code=device_code, local_ip=local_ip, public_ip=public_ip)
     except PermissionError as exc:
         return jsonify({"code": 403, "msg": str(exc), "data": None}), 403
 
@@ -604,6 +851,28 @@ def agent_next_task():
     }), 200
 
 
+@app.route('/api/publish-tasks/sync', methods=['POST'])
+def sync_publish_task():
+    payload = request.get_json(silent=True) or {}
+    device_name = str(payload.get("deviceName") or "").strip()
+    agent_key = str(payload.get("agentKey") or "").strip()
+    task = payload.get("task") or {}
+
+    if not device_name or not agent_key:
+        return jsonify({"code": 400, "msg": "deviceName 和 agentKey 不能为空", "data": None}), 400
+    if not task or not task.get("taskUuid"):
+        return jsonify({"code": 400, "msg": "task 不能为空", "data": None}), 400
+
+    try:
+        upsert_agent_device(device_name, agent_key)
+    except PermissionError as exc:
+        return jsonify({"code": 403, "msg": str(exc), "data": None}), 403
+
+    task["deviceName"] = device_name
+    upsert_publish_task(task)
+    return jsonify({"code": 200, "msg": "publish task synced", "data": {"taskUuid": task["taskUuid"]}}), 200
+
+
 @app.route('/tasks/create', methods=['POST'])
 def create_task_from_dashboard():
     device_name = str(request.form.get("deviceName") or "").strip()
@@ -615,6 +884,18 @@ def create_task_from_dashboard():
 
     task = create_login_task(device_name, platform, account_name)
     return redirect(url_for('view_session', viewer_token=task["viewerToken"]))
+
+
+@app.route('/p/<task_uuid>')
+def view_publish_task(task_uuid):
+    task_row = load_publish_task(task_uuid)
+    if not task_row:
+        return "publish task not found", 404
+
+    return render_template(
+        'publish_task.html',
+        task=serialize_publish_task(task_row, include_screenshot=True),
+    )
 
 
 @app.route('/api/sessions/<session_id>/events', methods=['POST'])
@@ -643,6 +924,37 @@ def session_event(session_id):
     publish_session_event(session_id, event)
 
     return jsonify({"code": 200, "msg": "event accepted", "data": serialize_session(updated_session)}), 200
+
+
+@app.route('/api/sessions/<session_id>/actions/next')
+def session_next_action(session_id):
+    writer_token = request.headers.get("X-Writer-Token", "")
+    session_row = load_session_by_id(session_id)
+    if not session_row:
+        return jsonify({"code": 404, "msg": "session not found", "data": None}), 404
+
+    if writer_token != session_row["writer_token"]:
+        return jsonify({"code": 403, "msg": "invalid writer token", "data": None}), 403
+
+    action = consume_next_session_action(session_id)
+    return jsonify({"code": 200, "msg": "success", "data": action}), 200
+
+
+@app.route('/api/view/<viewer_token>/actions', methods=['POST'])
+def create_viewer_action(viewer_token):
+    session_row = load_session_by_viewer_token(viewer_token)
+    if not session_row:
+        return jsonify({"code": 404, "msg": "session not found", "data": None}), 404
+
+    payload = request.get_json(silent=True) or {}
+    action_type = str(payload.get("actionType") or "").strip()
+    action_payload = payload.get("payload") or {}
+
+    if not action_type:
+        return jsonify({"code": 400, "msg": "actionType 不能为空", "data": None}), 400
+
+    action_id = create_session_action(session_row["session_id"], action_type, action_payload)
+    return jsonify({"code": 200, "msg": "action queued", "data": {"actionId": action_id}}), 200
 
 
 @app.route('/s/<viewer_token>')

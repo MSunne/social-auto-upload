@@ -34,6 +34,32 @@ cursor.execute('''CREATE TABLE IF NOT EXISTS file_records (
 )
 ''')
 
+cursor.execute('''CREATE TABLE IF NOT EXISTS publish_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_uuid TEXT NOT NULL UNIQUE,
+    source TEXT NOT NULL DEFAULT 'local_api',
+    platform_type INTEGER NOT NULL,
+    platform_name TEXT NOT NULL,
+    account_name TEXT NOT NULL,
+    account_file_path TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    title TEXT NOT NULL,
+    run_at DATETIME,
+    platform_publish_at DATETIME,
+    status TEXT NOT NULL DEFAULT 'pending',
+    message TEXT,
+    payload_json TEXT NOT NULL,
+    verification_data TEXT,
+    artifact_path TEXT,
+    worker_name TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    started_at DATETIME,
+    finished_at DATETIME
+)
+''')
+
 
 # 提交更改
 conn.commit()

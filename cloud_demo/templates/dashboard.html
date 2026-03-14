@@ -111,7 +111,7 @@
 <body>
   <div class="page">
     <h1>Cloud QR Demo</h1>
-    <p class="tip">本页展示云端镜像状态，并支持直接对在线设备下发扫码登录任务。</p>
+    <p class="tip">本页展示设备、账号、登录任务与发布任务镜像状态，并支持直接对在线设备下发扫码登录任务。</p>
 
     <div class="card">
       <h2>在线设备与新建任务</h2>
@@ -136,6 +136,11 @@
     </div>
 
     <div class="card">
+      <h2>最近发布任务</h2>
+      <div id="publishTasksPanel"></div>
+    </div>
+
+    <div class="card">
       <h2>最近登录任务</h2>
       <div id="tasksPanel"></div>
     </div>
@@ -145,6 +150,7 @@
     const dashboardState = {{ snapshot | tojson }};
     const devicesPanel = document.getElementById('devicesPanel');
     const accountsPanel = document.getElementById('accountsPanel');
+    const publishTasksPanel = document.getElementById('publishTasksPanel');
     const tasksPanel = document.getElementById('tasksPanel');
     const deviceSelect = document.getElementById('deviceName');
     const submitButton = document.getElementById('submitButton');
@@ -163,7 +169,7 @@
       if (status === 'online' || status === '正常' || status === 'success') {
         return 'status-ok';
       }
-      if (status === 'waiting_scan' || status === 'running' || status === '等待扫码') {
+      if (status === 'waiting_scan' || status === 'waiting_verify' || status === 'running' || status === 'pending' || status === 'scheduled' || status === 'needs_verify' || status === '等待扫码' || status === '等待验证') {
         return 'status-wait';
       }
       return 'status-fail';
@@ -176,17 +182,23 @@
         devicesPanel.innerHTML = `
           <table>
             <thead>
-              <tr>
-                <th>设备</th>
-                <th>在线状态</th>
-                <th>最近心跳</th>
-              </tr>
-            </thead>
-            <tbody>
+            <tr>
+              <th>设备</th>
+              <th>设备码</th>
+              <th>在线状态</th>
+              <th>本地 IP</th>
+              <th>公网 IP</th>
+              <th>最近心跳</th>
+            </tr>
+          </thead>
+          <tbody>
               ${devices.map((row) => `
                 <tr>
                   <td>${escapeHtml(row.deviceName)}</td>
+                  <td class="muted">${escapeHtml(row.deviceCode || '-')}</td>
                   <td><span class="status ${statusClass(row.status)}">${escapeHtml(row.status)}</span></td>
+                  <td class="muted">${escapeHtml(row.localIp || '-')}</td>
+                  <td class="muted">${escapeHtml(row.publicIp || '-')}</td>
                   <td class="muted">${escapeHtml(row.lastSeen || '-')}</td>
                 </tr>
               `).join('')}
@@ -288,9 +300,49 @@
       `;
     }
 
+    function renderPublishTasks(tasks) {
+      if (!tasks.length) {
+        publishTasksPanel.innerHTML = '<div class="empty">还没有发布任务镜像。</div>';
+        return;
+      }
+
+      publishTasksPanel.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>设备</th>
+              <th>平台</th>
+              <th>账号</th>
+              <th>作品</th>
+              <th>状态</th>
+              <th>详情</th>
+              <th>更新时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tasks.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.deviceName)}</td>
+                <td>${escapeHtml(row.platform)}</td>
+                <td>${escapeHtml(row.accountName)}</td>
+                <td>
+                  <div>${escapeHtml(row.title)}</div>
+                  <div class="muted">${escapeHtml(row.fileName || row.filePath || '-')}</div>
+                </td>
+                <td><span class="status ${statusClass(row.status)}">${escapeHtml(row.status)}</span></td>
+                <td><a href="/p/${encodeURIComponent(row.taskUuid)}" target="_blank">打开</a></td>
+                <td class="muted">${escapeHtml(row.updatedAt || '-')}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
     function renderSnapshot(snapshot) {
       renderDevices(snapshot.devices || []);
       renderAccounts(snapshot.accounts || []);
+      renderPublishTasks(snapshot.publishTasks || []);
       renderTasks(snapshot.tasks || []);
     }
 

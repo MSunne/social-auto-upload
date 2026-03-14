@@ -1,0 +1,21 @@
+{
+  "name": "@omnibull/openclaw-plugin",
+  "version": "0.1.0",
+  "description": "OpenClaw plugin for local OmniBull account, material, and publish workflows",
+  "type": "module",
+  "files": [
+    "index.js",
+    "openclaw.plugin.json",
+    "skills",
+    "README.md"
+  ],
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ],
+    "install": {
+      "localPath": "openclaw_extensions/omnibull",
+      "defaultChoice": "link"
+    }
+  }
+}

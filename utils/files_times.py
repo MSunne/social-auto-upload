@@ -1,6 +1,4 @@
-from datetime import timedelta
-
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from conf import BASE_DIR
@@ -71,8 +69,9 @@ def generate_schedule_time_next_day(total_videos, videos_per_day = 1, daily_time
         daily_video_index = video % videos_per_day
 
         # Calculate the time for the current video
-        hour = daily_times[daily_video_index]
-        time_offset = timedelta(days=day, hours=hour - current_time.hour, minutes=-current_time.minute,
+        raw_time = daily_times[daily_video_index]
+        hour, minute = normalize_daily_time(raw_time)
+        time_offset = timedelta(days=day, hours=hour - current_time.hour, minutes=minute - current_time.minute,
                                 seconds=-current_time.second, microseconds=-current_time.microsecond)
         timestamp = current_time + time_offset
 
@@ -81,3 +80,17 @@ def generate_schedule_time_next_day(total_videos, videos_per_day = 1, daily_time
     if timestamps:
         schedule = [int(time.timestamp()) for time in schedule]
     return schedule
+
+
+def normalize_daily_time(value):
+    if isinstance(value, str):
+        value = value.strip()
+        if ":" in value:
+            hour_str, minute_str = value.split(":", 1)
+            return int(hour_str), int(minute_str)
+        return int(value), 0
+
+    if isinstance(value, (int, float)):
+        return int(value), 0
+
+    raise ValueError(f"unsupported daily time value: {value}")

@@ -11,3 +11,12 @@ CLOUD_DEMO_URL = ""  # for example: https://your-cloud-demo.example.com
 CLOUD_DEVICE_NAME = ""
 CLOUD_AGENT_KEY = "change-me"
 CLOUD_AGENT_POLL_INTERVAL = 5
+CLOUD_AGENT_HEARTBEAT_INTERVAL = 30
+CLOUD_DEVICE_CODE = ""
+
+OMNIBULL_PUBLISH_WORKERS = 3
+OMNIBULL_TASK_RETENTION_DAYS = 7
+OMNIBULL_API_KEY = ""
+OMNIBULL_MATERIAL_ROOTS = {
+    # "openclawWorkspace": "/Users/yourname/.openclaw/workspace",
+}

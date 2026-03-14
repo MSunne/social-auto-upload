@@ -1,9 +1,11 @@
 import asyncio
 import os
+import secrets
 import sqlite3
 import threading
 import time
 import uuid
+import socket
 from pathlib import Path
 from queue import Empty, Queue
 import conf as app_conf
@@ -12,9 +14,18 @@ from myUtils.auth import check_cookie
 from flask import Flask, request, jsonify, Response, render_template, send_from_directory
 from conf import BASE_DIR
 from myUtils.login import get_tencent_cookie, douyin_cookie_gen, get_ks_cookie, xiaohongshu_cookie_gen
-from myUtils.postVideo import post_video_tencent, post_video_DouYin, post_video_ks, post_video_xhs
 from utils.cloud_agent import CloudAgent
 from utils.cloud_qr_bridge import CloudLoginBridge
+from utils.cloud_sync import CloudSyncClient
+from utils.device_meta import get_device_code
+from utils.materials import (
+    build_material_roots,
+    list_material_directory,
+    list_material_roots,
+    read_material_file,
+    resolve_material_reference,
+)
+from utils.publish_task_manager import PublishTaskManager
 
 active_queues = {}
 app = Flask(__name__)
@@ -41,8 +52,25 @@ CLOUD_DEMO_URL = str(getattr(app_conf, 'CLOUD_DEMO_URL', '')).strip()
 CLOUD_DEVICE_NAME = str(getattr(app_conf, 'CLOUD_DEVICE_NAME', '')).strip() or None
 CLOUD_AGENT_KEY = str(getattr(app_conf, 'CLOUD_AGENT_KEY', '')).strip()
 CLOUD_AGENT_POLL_INTERVAL = int(getattr(app_conf, 'CLOUD_AGENT_POLL_INTERVAL', 5))
+CLOUD_AGENT_HEARTBEAT_INTERVAL = int(getattr(app_conf, 'CLOUD_AGENT_HEARTBEAT_INTERVAL', 30))
+OMNIBULL_PUBLISH_WORKERS = int(getattr(app_conf, 'OMNIBULL_PUBLISH_WORKERS', 3))
+OMNIBULL_TASK_RETENTION_DAYS = int(getattr(app_conf, 'OMNIBULL_TASK_RETENTION_DAYS', 7))
+OMNIBULL_API_KEY = str(getattr(app_conf, 'OMNIBULL_API_KEY', '')).strip()
+OMNIBULL_MATERIAL_ROOTS = build_material_roots(
+    BASE_DIR,
+    getattr(app_conf, 'OMNIBULL_MATERIAL_ROOTS', None),
+)
+RESOLVED_DEVICE_NAME = CLOUD_DEVICE_NAME or socket.gethostname()
+DEVICE_CODE = str(getattr(app_conf, 'CLOUD_DEVICE_CODE', '')).strip() or get_device_code()
 cloud_agent = None
 cloud_agent_lock = threading.Lock()
+publish_task_manager = PublishTaskManager(
+    Path(BASE_DIR / "db" / "database.db"),
+    worker_count=OMNIBULL_PUBLISH_WORKERS,
+    retention_days=OMNIBULL_TASK_RETENTION_DAYS,
+    sync_client=CloudSyncClient(CLOUD_DEMO_URL, RESOLVED_DEVICE_NAME, CLOUD_AGENT_KEY) if CLOUD_DEMO_URL and CLOUD_AGENT_KEY else None,
+    material_roots=OMNIBULL_MATERIAL_ROOTS,
+)
 
 #允许所有来源跨域访问
 CORS(app)
@@ -57,6 +85,23 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 def serialize_account_row(row, status=None):
     row_status = row['status'] if status is None else status
     return [row['id'], row['type'], row['filePath'], row['userName'], row_status]
+
+
+def serialize_account_detail(row, status=None):
+    row_status = row['status'] if status is None else status
+    cookie_path = Path(BASE_DIR / "cookiesFile" / row['filePath'])
+    platform_type = int(row['type'])
+    return {
+        "id": row['id'],
+        "platformType": platform_type,
+        "platformName": PLATFORM_LABELS.get(str(platform_type), "未知平台"),
+        "filePath": row['filePath'],
+        "cookieFilePath": row['filePath'],
+        "cookieAbsolutePath": str(cookie_path.resolve()),
+        "userName": row['userName'],
+        "status": row_status,
+        "cookieExists": cookie_path.exists(),
+    }
 
 
 async def validate_account_rows(conn, rows):
@@ -91,6 +136,175 @@ def get_request_payload():
     return request.values.to_dict()
 
 
+def extract_skill_api_key():
+    auth_header = str(request.headers.get("Authorization") or "").strip()
+    if auth_header.lower().startswith("bearer "):
+        return auth_header.split(" ", 1)[1].strip()
+    return str(request.headers.get("X-Omnibull-Key") or "").strip()
+
+
+def ensure_skill_api_authorized():
+    if not OMNIBULL_API_KEY:
+        return None
+    provided = extract_skill_api_key()
+    if provided and secrets.compare_digest(provided, OMNIBULL_API_KEY):
+        return None
+    return jsonify({
+        "code": 401,
+        "msg": "OmniBull skill API 鉴权失败",
+        "data": None,
+    }), 401
+
+
+def fetch_account_rows(account_ids=None):
+    with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        if account_ids:
+            placeholders = ",".join("?" for _ in account_ids)
+            cursor.execute(
+                f'''
+                SELECT * FROM user_info
+                WHERE id IN ({placeholders})
+                ORDER BY id DESC
+                ''',
+                [int(account_id) for account_id in account_ids],
+            )
+        else:
+            cursor.execute(
+                '''
+                SELECT * FROM user_info
+                ORDER BY id DESC
+                '''
+            )
+        return cursor.fetchall()
+
+
+def fetch_account_rows_by_file_paths(account_file_paths):
+    with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        placeholders = ",".join("?" for _ in account_file_paths)
+        cursor.execute(
+            f'''
+            SELECT * FROM user_info
+            WHERE filePath IN ({placeholders})
+            ORDER BY id DESC
+            ''',
+            account_file_paths,
+        )
+        return cursor.fetchall()
+
+
+def resolve_account_file_paths(account_ids=None, account_file_paths=None):
+    account_file_paths = [str(value).strip() for value in (account_file_paths or []) if str(value).strip()]
+    if account_file_paths:
+        rows = fetch_account_rows_by_file_paths(account_file_paths)
+        found_paths = {row["filePath"] for row in rows}
+        missing = sorted(set(account_file_paths) - found_paths)
+        if missing:
+            raise ValueError(f"以下账号文件路径不存在: {missing}")
+        return account_file_paths
+
+    account_ids = [int(account_id) for account_id in (account_ids or [])]
+    if not account_ids:
+        raise ValueError("缺少账号信息")
+
+    rows = fetch_account_rows(account_ids=account_ids)
+    resolved = [row["filePath"] for row in rows]
+    missing = sorted(set(account_ids) - {row["id"] for row in rows})
+    if missing:
+        raise ValueError(f"以下账号不存在: {missing}")
+    return resolved
+
+
+def resolve_skill_file_items(files):
+    file_items = []
+    for item in files or []:
+        if isinstance(item, str):
+            resolved = resolve_material_reference(OMNIBULL_MATERIAL_ROOTS, absolute_path=item)
+        elif isinstance(item, dict):
+            resolved = resolve_material_reference(
+                OMNIBULL_MATERIAL_ROOTS,
+                root_name=item.get("root") or item.get("materialRoot"),
+                relative_path=item.get("path") or item.get("relativePath"),
+                absolute_path=item.get("absolutePath"),
+            )
+        else:
+            raise ValueError("files 中存在不支持的素材格式")
+
+        absolute_path = Path(resolved["absolutePath"])
+        if not absolute_path.exists():
+            raise ValueError(f"素材不存在: {absolute_path}")
+        if not absolute_path.is_file():
+            raise ValueError(f"素材不是文件: {absolute_path}")
+
+        file_items.append(
+            {
+                "root": resolved["rootName"],
+                "path": resolved["relativePath"],
+                "absolutePath": str(absolute_path),
+            }
+        )
+    return file_items
+
+
+def build_skill_status_payload():
+    ensure_publish_task_manager_started()
+    agent_status = cloud_agent.status() if cloud_agent else None
+
+    with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT COUNT(*) AS count FROM user_info")
+        account_total = cursor.fetchone()["count"]
+
+        cursor.execute(
+            '''
+            SELECT status, COUNT(*) AS count
+            FROM user_info
+            GROUP BY status
+            '''
+        )
+        account_statuses = {
+            str(row["status"]): row["count"]
+            for row in cursor.fetchall()
+        }
+
+        publish_task_counts = {}
+        try:
+            cursor.execute(
+                '''
+                SELECT status, COUNT(*) AS count
+                FROM publish_tasks
+                GROUP BY status
+                '''
+            )
+            publish_task_counts = {
+                row["status"]: row["count"]
+                for row in cursor.fetchall()
+            }
+        except sqlite3.OperationalError:
+            publish_task_counts = {}
+
+    return {
+        "deviceName": RESOLVED_DEVICE_NAME,
+        "deviceCode": DEVICE_CODE,
+        "materialRoots": list_material_roots(OMNIBULL_MATERIAL_ROOTS),
+        "skillApiAuthEnabled": bool(OMNIBULL_API_KEY),
+        "cloudAgentConfig": get_cloud_agent_config(),
+        "cloudAgent": agent_status,
+        "accounts": {
+            "total": account_total,
+            "byStatus": account_statuses,
+        },
+        "publishTasks": {
+            "byStatus": publish_task_counts,
+        },
+    }
+
+
 def relay_remote_login_status(status_queue, bridge):
     try:
         bridge.push_log("本地浏览器已启动，等待二维码...")
@@ -105,6 +319,25 @@ def relay_remote_login_status(status_queue, bridge):
             if msg == "500":
                 bridge.push_login_failed()
                 break
+
+            if isinstance(msg, dict):
+                event_type = msg.get("type")
+                payload = msg.get("payload") or {}
+
+                if event_type == "qr_ready" and payload.get("qrData"):
+                    bridge.push_qr(payload["qrData"])
+                    bridge.push_log(payload.get("message") or "二维码已就绪，请在远端页面扫码")
+                    continue
+
+                if event_type == "verification_required":
+                    bridge.push_verification(payload)
+                    if payload.get("message"):
+                        bridge.push_log(payload["message"])
+                    continue
+
+                if event_type == "log" and payload.get("message"):
+                    bridge.push_log(payload["message"])
+                    continue
 
             if isinstance(msg, str) and msg:
                 bridge.push_qr(msg)
@@ -133,12 +366,18 @@ def get_cloud_agent_config():
     return {
         "enabled": CLOUD_AGENT_ENABLED,
         "cloudUrl": CLOUD_DEMO_URL,
-        "deviceName": CLOUD_DEVICE_NAME,
+        "deviceName": RESOLVED_DEVICE_NAME,
+        "deviceCode": DEVICE_CODE,
         "agentKeyConfigured": bool(CLOUD_AGENT_KEY),
         "pollInterval": CLOUD_AGENT_POLL_INTERVAL,
+        "heartbeatInterval": CLOUD_AGENT_HEARTBEAT_INTERVAL,
         "startEligible": blocked_reason is None,
         "blockedReason": blocked_reason
     }
+
+
+def ensure_publish_task_manager_started():
+    publish_task_manager.start()
 
 
 def ensure_cloud_agent_started():
@@ -154,8 +393,10 @@ def ensure_cloud_agent_started():
                 agent_key=CLOUD_AGENT_KEY,
                 run_login_fn=run_async_function,
                 relay_fn=relay_remote_login_status,
-                device_name=CLOUD_DEVICE_NAME,
-                poll_interval=CLOUD_AGENT_POLL_INTERVAL
+                device_name=RESOLVED_DEVICE_NAME,
+                poll_interval=CLOUD_AGENT_POLL_INTERVAL,
+                heartbeat_interval=CLOUD_AGENT_HEARTBEAT_INTERVAL,
+                device_code=DEVICE_CODE,
             )
             cloud_agent.start()
 
@@ -174,6 +415,7 @@ def should_boot_background_services():
 
 @app.before_request
 def bootstrap_cloud_agent():
+    ensure_publish_task_manager_started()
     ensure_cloud_agent_started()
 
 # 处理所有静态资源请求（未来打包用）
@@ -614,17 +856,27 @@ def remote_login():
         bridge = CloudLoginBridge(cloud_url, platform_name, account_name, device_name=device_name)
         session_data = bridge.create_session()
         status_queue = Queue()
+        command_queue = Queue()
+        action_stop_event = threading.Event()
 
         threading.Thread(
             target=run_async_function,
-            args=(type, account_name, status_queue),
+            args=(type, account_name, status_queue, command_queue),
             daemon=True
         ).start()
         threading.Thread(
-            target=relay_remote_login_status,
-            args=(status_queue, bridge),
+            target=bridge.poll_actions_loop,
+            args=(command_queue, action_stop_event),
             daemon=True
         ).start()
+
+        def relay_and_stop():
+            try:
+                relay_remote_login_status(status_queue, bridge)
+            finally:
+                action_stop_event.set()
+
+        threading.Thread(target=relay_and_stop, daemon=True).start()
 
         return jsonify({
             "code": 200,
@@ -652,34 +904,282 @@ def cloud_agent_status():
         }
     }), 200
 
+
+@app.route('/api/skill/status', methods=['GET'])
+def skill_status():
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    ensure_cloud_agent_started()
+    payload = build_skill_status_payload()
+    return jsonify({
+        "code": 200,
+        "msg": "success",
+        "data": payload,
+    }), 200
+
+
+@app.route('/api/skill/accounts', methods=['GET'])
+async def skill_accounts():
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    validate_cookies = parse_bool(request.args.get('validate'))
+    rows = fetch_account_rows()
+
+    if validate_cookies:
+        with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
+            conn.row_factory = sqlite3.Row
+            validated_rows = await validate_account_rows(conn, rows)
+        status_map = {row[0]: row[-1] for row in validated_rows}
+        data = [serialize_account_detail(row, status_map.get(row["id"])) for row in rows]
+    else:
+        data = [serialize_account_detail(row) for row in rows]
+
+    return jsonify({
+        "code": 200,
+        "msg": "success",
+        "data": data,
+    }), 200
+
+
+@app.route('/api/skill/accounts/<int:account_id>', methods=['GET'])
+def skill_account_detail(account_id):
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    rows = fetch_account_rows(account_ids=[account_id])
+    if not rows:
+        return jsonify({"code": 404, "msg": "账号不存在", "data": None}), 404
+
+    return jsonify({
+        "code": 200,
+        "msg": "success",
+        "data": serialize_account_detail(rows[0]),
+    }), 200
+
+
+@app.route('/api/skill/accounts/validate', methods=['POST'])
+async def skill_accounts_validate():
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    data = request.get_json(silent=True) or {}
+    validate_all = parse_bool(data.get("validateAll"))
+    account_ids = data.get("accountIds") or []
+    account_id = data.get("accountId")
+
+    if account_id is not None:
+        account_ids.append(account_id)
+
+    if validate_all:
+        rows = fetch_account_rows()
+    else:
+        normalized_ids = []
+        for value in account_ids:
+            try:
+                normalized_ids.append(int(value))
+            except (TypeError, ValueError):
+                continue
+        if not normalized_ids:
+            return jsonify({"code": 400, "msg": "缺少可校验的账号ID", "data": None}), 400
+        rows = fetch_account_rows(account_ids=normalized_ids)
+
+    if not rows:
+        return jsonify({"code": 404, "msg": "未找到可校验账号", "data": None}), 404
+
+    with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
+        conn.row_factory = sqlite3.Row
+        validated_rows = await validate_account_rows(conn, rows)
+
+    status_map = {row[0]: row[-1] for row in validated_rows}
+    payload = [serialize_account_detail(row, status_map.get(row["id"])) for row in rows]
+    return jsonify({
+        "code": 200,
+        "msg": "success",
+        "data": payload,
+    }), 200
+
+
+@app.route('/api/skill/materials/roots', methods=['GET'])
+def skill_material_roots():
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    return jsonify({
+        "code": 200,
+        "msg": "success",
+        "data": list_material_roots(OMNIBULL_MATERIAL_ROOTS),
+    }), 200
+
+
+@app.route('/api/skill/materials/list', methods=['GET'])
+def skill_material_list():
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    root_name = request.args.get("root")
+    relative_path = request.args.get("path", "")
+    if not root_name:
+        return jsonify({"code": 400, "msg": "缺少 root 参数", "data": None}), 400
+
+    try:
+        payload = list_material_directory(
+            OMNIBULL_MATERIAL_ROOTS,
+            root_name=root_name,
+            relative_path=relative_path,
+            limit=request.args.get("limit", 200),
+        )
+    except Exception as exc:
+        return jsonify({"code": 400, "msg": str(exc), "data": None}), 400
+
+    return jsonify({
+        "code": 200,
+        "msg": "success",
+        "data": payload,
+    }), 200
+
+
+@app.route('/api/skill/materials/file', methods=['GET'])
+def skill_material_file():
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    root_name = request.args.get("root")
+    relative_path = request.args.get("path", "")
+    if not root_name or not relative_path:
+        return jsonify({"code": 400, "msg": "缺少 root 或 path 参数", "data": None}), 400
+
+    try:
+        payload = read_material_file(
+            OMNIBULL_MATERIAL_ROOTS,
+            root_name=root_name,
+            relative_path=relative_path,
+            max_bytes=request.args.get("maxBytes", 65536),
+        )
+    except Exception as exc:
+        return jsonify({"code": 400, "msg": str(exc), "data": None}), 400
+
+    return jsonify({
+        "code": 200,
+        "msg": "success",
+        "data": payload,
+    }), 200
+
+
+@app.route('/api/skill/publish', methods=['POST'])
+def skill_publish():
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    data = request.get_json(silent=True) or {}
+    platform_type = data.get("platformType")
+    title = str(data.get("title") or "").strip()
+    files = data.get("files") or []
+
+    if platform_type is None:
+        return jsonify({"code": 400, "msg": "缺少 platformType", "data": None}), 400
+    if not title:
+        return jsonify({"code": 400, "msg": "缺少 title", "data": None}), 400
+    if not files:
+        return jsonify({"code": 400, "msg": "缺少 files", "data": None}), 400
+
+    try:
+        account_file_paths = resolve_account_file_paths(
+            account_ids=data.get("accountIds") or [],
+            account_file_paths=data.get("accountFilePaths") or [],
+        )
+        file_items = resolve_skill_file_items(files)
+        publish_payload = {
+            "type": platform_type,
+            "title": title,
+            "tags": data.get("tags") or [],
+            "accountList": account_file_paths,
+            "fileItems": file_items,
+            "runAt": data.get("runAt"),
+            "enableTimer": 1 if parse_bool(data.get("enableTimer")) else 0,
+            "videosPerDay": data.get("videosPerDay") or 1,
+            "startDays": data.get("startDays") or 0,
+            "dailyTimes": data.get("dailyTimes") or [],
+            "category": data.get("category"),
+            "isDraft": parse_bool(data.get("isDraft")),
+            "productLink": data.get("productLink") or "",
+            "productTitle": data.get("productTitle") or "",
+        }
+        thumbnail = data.get("thumbnail")
+        if thumbnail:
+            publish_payload["thumbnailItem"] = resolve_skill_file_items([thumbnail])[0]
+
+        ensure_publish_task_manager_started()
+        tasks = publish_task_manager.enqueue_from_request(publish_payload, source="openclaw_skill")
+    except Exception as exc:
+        return jsonify({"code": 400, "msg": str(exc), "data": None}), 400
+
+    return jsonify({
+        "code": 200,
+        "msg": "发布任务已入队",
+        "data": {
+            "taskCount": len(tasks),
+            "tasks": tasks,
+        },
+    }), 200
+
+
+@app.route('/api/skill/publish/tasks', methods=['GET'])
+def skill_publish_tasks():
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    ensure_publish_task_manager_started()
+    tasks = publish_task_manager.list_tasks(
+        limit=request.args.get("limit", 100),
+        status=request.args.get("status"),
+    )
+    return jsonify({
+        "code": 200,
+        "msg": "success",
+        "data": tasks,
+    }), 200
+
+
+@app.route('/api/skill/publish/tasks/<task_uuid>', methods=['GET'])
+def skill_publish_task_detail(task_uuid):
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    ensure_publish_task_manager_started()
+    task = publish_task_manager.get_task(task_uuid)
+    if not task:
+        return jsonify({"code": 404, "msg": "任务不存在", "data": None}), 404
+
+    return jsonify({
+        "code": 200,
+        "msg": "success",
+        "data": task,
+    }), 200
+
 @app.route('/postVideo', methods=['POST'])
 def postVideo():
-    # 获取JSON数据
     data = request.get_json()
 
     if not data:
         return jsonify({"code": 400, "msg": "请求数据不能为空", "data": None}), 400
 
-    # 从JSON数据中提取fileList和accountList
     file_list = data.get('fileList', [])
     account_list = data.get('accountList', [])
     type = data.get('type')
     title = data.get('title')
-    tags = data.get('tags')
-    category = data.get('category')
-    enableTimer = data.get('enableTimer')
-    if category == 0:
-        category = None
-    productLink = data.get('productLink', '')
-    productTitle = data.get('productTitle', '')
-    thumbnail_path = data.get('thumbnail', '')
-    is_draft = data.get('isDraft', False)  # 新增参数：是否保存为草稿
 
-    videos_per_day = data.get('videosPerDay')
-    daily_times = data.get('dailyTimes')
-    start_days = data.get('startDays')
-
-    # 参数校验
     if not file_list:
         return jsonify({"code": 400, "msg": "文件列表不能为空", "data": None}), 400
     if not account_list:
@@ -689,34 +1189,18 @@ def postVideo():
     if not title:
         return jsonify({"code": 400, "msg": "标题不能为空", "data": None}), 400
 
-    # 打印获取到的数据（仅作为示例）
     print("File List:", file_list)
     print("Account List:", account_list)
 
     try:
-        match type:
-            case 1:
-                post_video_xhs(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
-                                   start_days)
-            case 2:
-                post_video_tencent(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
-                                   start_days, is_draft)
-            case 3:
-                post_video_DouYin(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
-                          start_days, thumbnail_path, productLink, productTitle)
-            case 4:
-                post_video_ks(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
-                          start_days)
-            case _:
-                return jsonify({"code": 400, "msg": f"不支持的平台类型: {type}", "data": None}), 400
-
-        # 返回响应给客户端
-        return jsonify(
-            {
-                "code": 200,
-                "msg": "发布任务已提交",
-                "data": None
-            }), 200
+        ensure_publish_task_manager_started()
+        tasks = publish_task_manager.enqueue_from_request(data, source="local_api")
+    except ValueError as exc:
+        return jsonify({
+            "code": 400,
+            "msg": str(exc),
+            "data": None,
+        }), 400
     except Exception as e:
         print(f"发布视频时出错: {str(e)}")
         return jsonify({
@@ -724,6 +1208,16 @@ def postVideo():
             "msg": f"发布失败: {str(e)}",
             "data": None
         }), 500
+
+    return jsonify(
+        {
+            "code": 200,
+            "msg": "发布任务已入队",
+            "data": {
+                "taskCount": len(tasks),
+                "tasks": tasks,
+            }
+        }), 200
 
 
 @app.route('/updateUserinfo', methods=['POST'])
@@ -769,47 +1263,63 @@ def postVideoBatch():
 
     if not isinstance(data_list, list):
         return jsonify({"code": 400, "msg": "Expected a JSON array", "data": None}), 400
-    for data in data_list:
-        # 从JSON数据中提取fileList和accountList
-        file_list = data.get('fileList', [])
-        account_list = data.get('accountList', [])
-        type = data.get('type')
-        title = data.get('title')
-        tags = data.get('tags')
-        category = data.get('category')
-        enableTimer = data.get('enableTimer')
-        if category == 0:
-            category = None
-        productLink = data.get('productLink', '')
-        productTitle = data.get('productTitle', '')
-        is_draft = data.get('isDraft', False)
+    try:
+        ensure_publish_task_manager_started()
+        all_tasks = []
+        for data in data_list:
+            print("File List:", data.get('fileList', []))
+            print("Account List:", data.get('accountList', []))
+            all_tasks.extend(publish_task_manager.enqueue_from_request(data, source="local_batch_api"))
+    except ValueError as exc:
+        return jsonify({"code": 400, "msg": str(exc), "data": None}), 400
+    except Exception as exc:
+        return jsonify({"code": 500, "msg": f"批量发布入队失败: {exc}", "data": None}), 500
 
-        videos_per_day = data.get('videosPerDay')
-        daily_times = data.get('dailyTimes')
-        start_days = data.get('startDays')
-        # 打印获取到的数据（仅作为示例）
-        print("File List:", file_list)
-        print("Account List:", account_list)
-        match type:
-            case 1:
-                post_video_xhs(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
-                               start_days)
-            case 2:
-                post_video_tencent(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
-                                   start_days, is_draft)
-            case 3:
-                post_video_DouYin(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
-                          start_days, productLink, productTitle)
-            case 4:
-                post_video_ks(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
-                          start_days)
-    # 返回响应给客户端
     return jsonify(
         {
             "code": 200,
-            "msg": None,
-            "data": None
+            "msg": "批量发布任务已入队",
+            "data": {
+                "taskCount": len(all_tasks),
+                "tasks": all_tasks,
+            }
         }), 200
+
+
+@app.route('/publishTasks', methods=['GET'])
+def get_publish_tasks():
+    ensure_publish_task_manager_started()
+    status = request.args.get('status')
+    limit = request.args.get('limit', 100)
+
+    try:
+        tasks = publish_task_manager.list_tasks(limit=limit, status=status)
+    except Exception as exc:
+        return jsonify({"code": 500, "msg": f"获取发布任务失败: {exc}", "data": None}), 500
+
+    return jsonify({
+        "code": 200,
+        "msg": "success",
+        "data": tasks,
+    }), 200
+
+
+@app.route('/publishTaskDetail', methods=['GET'])
+def get_publish_task_detail():
+    ensure_publish_task_manager_started()
+    task_uuid = request.args.get('id') or request.args.get('taskUuid')
+    if not task_uuid:
+        return jsonify({"code": 400, "msg": "缺少任务ID", "data": None}), 400
+
+    task = publish_task_manager.get_task(task_uuid)
+    if not task:
+        return jsonify({"code": 404, "msg": "任务不存在", "data": None}), 404
+
+    return jsonify({
+        "code": 200,
+        "msg": "success",
+        "data": task,
+    }), 200
 
 # Cookie文件上传API
 @app.route('/uploadCookie', methods=['POST'])
@@ -933,28 +1443,28 @@ def download_cookie():
 
 
 # 包装函数：在线程中运行异步函数
-def run_async_function(type,id,status_queue):
+def run_async_function(type,id,status_queue,command_queue=None):
     try:
         match type:
             case '1':
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                loop.run_until_complete(xiaohongshu_cookie_gen(id, status_queue))
+                loop.run_until_complete(xiaohongshu_cookie_gen(id, status_queue, command_queue))
                 loop.close()
             case '2':
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                loop.run_until_complete(get_tencent_cookie(id,status_queue))
+                loop.run_until_complete(get_tencent_cookie(id,status_queue, command_queue))
                 loop.close()
             case '3':
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                loop.run_until_complete(douyin_cookie_gen(id,status_queue))
+                loop.run_until_complete(douyin_cookie_gen(id,status_queue, command_queue))
                 loop.close()
             case '4':
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                loop.run_until_complete(get_ks_cookie(id,status_queue))
+                loop.run_until_complete(get_ks_cookie(id,status_queue, command_queue))
                 loop.close()
             case _:
                 raise ValueError(f"unsupported login type: {type}")
@@ -965,6 +1475,7 @@ def run_async_function(type,id,status_queue):
 
 
 if should_boot_background_services():
+    ensure_publish_task_manager_started()
     ensure_cloud_agent_started()
 
 # SSE 流生成器函数
@@ -978,5 +1489,6 @@ def sse_stream(status_queue):
             time.sleep(0.1)
 
 if __name__ == '__main__':
+    ensure_publish_task_manager_started()
     ensure_cloud_agent_started()
     app.run(host='0.0.0.0' ,port=5409)

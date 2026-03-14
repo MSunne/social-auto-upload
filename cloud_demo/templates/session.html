@@ -18,8 +18,8 @@
       color: #111827;
     }
     .panel {
-      width: min(92vw, 460px);
-      background: rgba(255, 255, 255, 0.92);
+      width: min(92vw, 720px);
+      background: rgba(255, 255, 255, 0.94);
       backdrop-filter: blur(10px);
       border-radius: 24px;
       padding: 28px 24px 24px;
@@ -57,16 +57,45 @@
       color: #4b5563;
       font-size: 14px;
     }
+    .success {
+      color: #166534;
+    }
+    .failed {
+      color: #991b1b;
+    }
+    .wait {
+      color: #92400e;
+    }
+    .stack {
+      display: grid;
+      gap: 18px;
+    }
+    .card {
+      border-radius: 20px;
+      border: 1px solid #dbe3f5;
+      background: linear-gradient(145deg, #ffffff, #eef3ff);
+      padding: 18px;
+    }
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+    }
+    .qr-shell,
+    .verify-shell {
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+    }
     .qr-shell {
       width: 260px;
       height: 260px;
-      margin: 0 auto 18px;
+      margin: 0 auto;
       border-radius: 24px;
-      display: grid;
-      place-items: center;
-      background: linear-gradient(145deg, #ffffff, #eef3ff);
       border: 1px solid #dbe3f5;
-      overflow: hidden;
+      background: #fff;
+    }
+    .verify-shell {
+      width: 100%;
     }
     .qr-image {
       width: 220px;
@@ -76,17 +105,61 @@
       background: #fff;
       border-radius: 16px;
     }
+    .verify-image {
+      width: min(100%, 620px);
+      border-radius: 18px;
+      border: 1px solid #e5e7eb;
+      object-fit: contain;
+      background: #fff;
+      display: none;
+    }
     .placeholder {
       width: 180px;
       color: #6b7280;
       font-size: 14px;
       line-height: 1.6;
     }
-    .success {
-      color: #166534;
+    .hidden {
+      display: none !important;
     }
-    .failed {
-      color: #991b1b;
+    .option-grid {
+      display: grid;
+      gap: 10px;
+      margin-top: 16px;
+    }
+    .option-button,
+    .submit-button {
+      border: none;
+      border-radius: 14px;
+      padding: 12px 16px;
+      background: #2563eb;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .option-button.secondary {
+      background: #0f766e;
+    }
+    .input-group {
+      display: grid;
+      gap: 10px;
+      margin-top: 16px;
+      text-align: left;
+    }
+    .assist-input {
+      width: 100%;
+      box-sizing: border-box;
+      border-radius: 14px;
+      border: 1px solid #d1d5db;
+      padding: 12px 14px;
+      font-size: 14px;
+    }
+    .assist-help {
+      color: #6b7280;
+      font-size: 13px;
+      text-align: left;
+      line-height: 1.6;
     }
   </style>
 </head>
@@ -97,34 +170,168 @@
     <p class="meta">{{ session.accountName }} · {{ session.deviceName }}</p>
     <p id="status" class="status">当前状态：{{ session.status }}</p>
     <p id="message" class="message">{{ session.message or '等待本地 agent 返回二维码' }}</p>
-    <div class="qr-shell">
-      <img id="qrImage" class="qr-image" src="{{ session.qrData or '' }}" alt="二维码">
-      <div id="placeholder" class="placeholder">等待本地 agent 生成二维码并同步到云端</div>
+
+    <div class="stack">
+      <section id="qrSection" class="card">
+        <h2>二维码</h2>
+        <div class="qr-shell">
+          <img id="qrImage" class="qr-image" src="{{ session.qrData or '' }}" alt="二维码">
+          <div id="placeholder" class="placeholder">等待本地 agent 生成二维码并同步到云端</div>
+        </div>
+      </section>
+
+      <section id="verifySection" class="card hidden">
+        <h2 id="verifyTitle">需要额外验证</h2>
+        <p id="verifyHint" class="assist-help">本地浏览器检测到额外验证，本页会同步当前验证界面与可选操作。</p>
+        <div class="verify-shell">
+          <img id="verifyImage" class="verify-image" alt="验证界面">
+        </div>
+        <div id="verifyOptions" class="option-grid"></div>
+        <div class="input-group">
+          <input id="assistInput" class="assist-input" placeholder="输入验证码、短信验证码或登录密码">
+          <button id="sendInputButton" class="submit-button secondary" type="button">发送到本地验证框</button>
+          <button id="sendAndSubmitButton" class="submit-button secondary" type="button">发送验证码并提交</button>
+          <button id="pressEnterButton" class="submit-button" type="button">发送回车</button>
+        </div>
+        <div id="inputHints" class="assist-help"></div>
+      </section>
     </div>
   </div>
 
   <script>
     const statusEl = document.getElementById('status')
     const messageEl = document.getElementById('message')
+    const qrSectionEl = document.getElementById('qrSection')
     const qrImageEl = document.getElementById('qrImage')
     const placeholderEl = document.getElementById('placeholder')
+    const verifySectionEl = document.getElementById('verifySection')
+    const verifyTitleEl = document.getElementById('verifyTitle')
+    const verifyHintEl = document.getElementById('verifyHint')
+    const verifyImageEl = document.getElementById('verifyImage')
+    const verifyOptionsEl = document.getElementById('verifyOptions')
+    const assistInputEl = document.getElementById('assistInput')
+    const sendInputButtonEl = document.getElementById('sendInputButton')
+    const sendAndSubmitButtonEl = document.getElementById('sendAndSubmitButton')
+    const pressEnterButtonEl = document.getElementById('pressEnterButton')
+    const inputHintsEl = document.getElementById('inputHints')
+
+    let latestSession = {{ session | tojson }}
+
+    function setStatusClass(status) {
+      statusEl.className = 'status'
+      if (status === 'success') statusEl.classList.add('success')
+      if (status === 'failed') statusEl.classList.add('failed')
+      if (status === 'waiting_scan' || status === 'waiting_verify') statusEl.classList.add('wait')
+    }
+
+    async function sendAction(actionType, payload) {
+      const response = await fetch('{{ url_for("create_viewer_action", viewer_token=session.viewerToken) }}', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          actionType,
+          payload,
+        }),
+      })
+      const result = await response.json()
+      if (result.code !== 200) {
+        throw new Error(result.msg || '发送远端操作失败')
+      }
+      messageEl.textContent = '远端操作已发送到本地浏览器，请稍候页面同步最新状态'
+    }
+
+    function renderVerification(session) {
+      const verificationData = session.verificationData
+      if (!verificationData) {
+        verifySectionEl.classList.add('hidden')
+        return
+      }
+
+      verifySectionEl.classList.remove('hidden')
+      verifyTitleEl.textContent = verificationData.title || '需要额外验证'
+      verifyHintEl.textContent = verificationData.message || '请在本页协助本地浏览器完成验证'
+
+      if (verificationData.screenshotData) {
+        verifyImageEl.src = verificationData.screenshotData
+        verifyImageEl.style.display = 'block'
+      } else {
+        verifyImageEl.style.display = 'none'
+      }
+
+      verifyOptionsEl.innerHTML = ''
+      const options = verificationData.options || []
+      options.forEach((optionText) => {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = 'option-button'
+        button.textContent = optionText
+        button.addEventListener('click', () => {
+          sendAction('select_option', { text: optionText }).catch((error) => {
+            messageEl.textContent = error.message
+          })
+        })
+        verifyOptionsEl.appendChild(button)
+      })
+
+      const hints = verificationData.inputHints || []
+      if (verificationData.supportsTextInput || hints.length) {
+        inputHintsEl.textContent = hints.length
+          ? `本地检测到输入框：${hints.join(' / ')}`
+          : '本地检测到验证输入框，可直接把验证码或密码发送到本地浏览器'
+      } else {
+        inputHintsEl.textContent = '如果验证界面出现输入框，本页也可以继续发送验证码或密码'
+      }
+    }
 
     function applySession(session) {
       if (!session) return
+      latestSession = session
 
       statusEl.textContent = `当前状态：${session.status}`
-      statusEl.className = 'status'
-      if (session.status === 'success') statusEl.classList.add('success')
-      if (session.status === 'failed') statusEl.classList.add('failed')
-
+      setStatusClass(session.status)
       messageEl.textContent = session.message || ''
 
       if (session.qrData) {
         qrImageEl.src = session.qrData
         qrImageEl.style.display = 'block'
         placeholderEl.style.display = 'none'
+      } else {
+        qrImageEl.style.display = 'none'
+        placeholderEl.style.display = 'block'
       }
+
+      renderVerification(session)
     }
+
+    sendInputButtonEl.addEventListener('click', () => {
+      const text = assistInputEl.value.trim()
+      if (!text) {
+        messageEl.textContent = '先输入验证码或密码'
+        return
+      }
+      sendAction('fill_text', { text }).catch((error) => {
+        messageEl.textContent = error.message
+      })
+    })
+
+    pressEnterButtonEl.addEventListener('click', () => {
+      sendAction('press_key', { key: 'Enter' }).catch((error) => {
+        messageEl.textContent = error.message
+      })
+    })
+
+    sendAndSubmitButtonEl.addEventListener('click', () => {
+      const text = assistInputEl.value.trim()
+      if (!text) {
+        messageEl.textContent = '先输入验证码或密码'
+        return
+      }
+      sendAction('fill_text_and_submit', { text }).catch((error) => {
+        messageEl.textContent = error.message
+      })
+    })
 
     fetch('{{ state_url }}')
       .then(response => response.json())
@@ -140,6 +347,8 @@
         eventSource.close()
       }
     }
+
+    applySession(latestSession)
   </script>
 </body>
 </html>
