@@ -19,10 +19,14 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 
 	healthHandler := handlers.NewHealthHandler(app)
 	authHandler := handlers.NewAuthHandler(app)
+	overviewHandler := handlers.NewOverviewHandler(app)
 	deviceHandler := handlers.NewDeviceHandler(app)
 	accountHandler := handlers.NewAccountHandler(app)
+	materialHandler := handlers.NewMaterialHandler(app)
 	skillHandler := handlers.NewSkillHandler(app)
 	taskHandler := handlers.NewTaskHandler(app)
+	aiHandler := handlers.NewAIHandler(app)
+	billingHandler := handlers.NewBillingHandler(app)
 	agentHandler := handlers.NewAgentHandler(app)
 	fileHandler := handlers.NewFileHandler(app)
 
@@ -40,14 +44,30 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 		api.Group(func(private chi.Router) {
 			private.Use(authmiddleware.RequireUser(app))
 
+			private.Route("/overview", func(overview chi.Router) {
+				overview.Get("/summary", overviewHandler.Summary)
+			})
+
+			private.Get("/history", overviewHandler.History)
+
 			private.Route("/devices", func(devices chi.Router) {
 				devices.Get("/", deviceHandler.List)
 				devices.Post("/claim", deviceHandler.Claim)
+				devices.Get("/{deviceId}", deviceHandler.Detail)
 				devices.Patch("/{deviceId}", deviceHandler.Update)
+			})
+
+			private.Route("/materials", func(materials chi.Router) {
+				materials.Get("/roots", materialHandler.Roots)
+				materials.Get("/list", materialHandler.List)
+				materials.Get("/file", materialHandler.File)
 			})
 
 			private.Route("/accounts", func(accounts chi.Router) {
 				accounts.Get("/", accountHandler.List)
+				accounts.Get("/{accountId}", accountHandler.Detail)
+				accounts.Delete("/{accountId}", accountHandler.Delete)
+				accounts.Post("/{accountId}/validate", accountHandler.Validate)
 				accounts.Post("/remote-login", accountHandler.CreateRemoteLogin)
 				accounts.Get("/login-sessions/{sessionId}", accountHandler.GetLoginSession)
 				accounts.Post("/login-sessions/{sessionId}/actions", accountHandler.CreateLoginAction)
@@ -56,7 +76,9 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 			private.Route("/skills", func(skills chi.Router) {
 				skills.Get("/", skillHandler.List)
 				skills.Post("/", skillHandler.Create)
+				skills.Get("/{skillId}", skillHandler.Detail)
 				skills.Patch("/{skillId}", skillHandler.Update)
+				skills.Delete("/{skillId}", skillHandler.Delete)
 				skills.Get("/{skillId}/assets", skillHandler.ListAssets)
 				skills.Post("/{skillId}/assets", skillHandler.CreateAsset)
 				skills.Post("/{skillId}/upload", skillHandler.UploadAsset)
@@ -66,15 +88,40 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 				tasks.Get("/", taskHandler.List)
 				tasks.Post("/", taskHandler.Create)
 				tasks.Get("/{taskId}", taskHandler.Detail)
+				tasks.Get("/{taskId}/events", taskHandler.Events)
+				tasks.Get("/{taskId}/artifacts", taskHandler.Artifacts)
+				tasks.Get("/{taskId}/materials", taskHandler.Materials)
+				tasks.Post("/{taskId}/cancel", taskHandler.Cancel)
+				tasks.Post("/{taskId}/retry", taskHandler.Retry)
+				tasks.Patch("/{taskId}", taskHandler.Update)
+				tasks.Delete("/{taskId}", taskHandler.Delete)
+			})
+
+			private.Route("/ai", func(ai chi.Router) {
+				ai.Get("/models", aiHandler.ListModels)
+				ai.Get("/jobs", aiHandler.ListJobs)
+				ai.Post("/jobs", aiHandler.CreateJob)
+				ai.Get("/jobs/{jobId}", aiHandler.DetailJob)
+			})
+
+			private.Route("/billing", func(billing chi.Router) {
+				billing.Get("/packages", billingHandler.ListPackages)
+				billing.Get("/ledger", billingHandler.Ledger)
 			})
 		})
 
 		api.Route("/agent", func(agent chi.Router) {
 			agent.Post("/heartbeat", agentHandler.Heartbeat)
+			agent.Post("/accounts/sync", agentHandler.SyncAccount)
+			agent.Post("/materials/roots/sync", materialHandler.SyncRoots)
+			agent.Post("/materials/directory/sync", materialHandler.SyncDirectory)
+			agent.Post("/materials/file/sync", materialHandler.SyncFile)
 			agent.Get("/login-tasks/{deviceCode}", agentHandler.ListLoginTasks)
 			agent.Post("/login-sessions/{sessionId}/event", agentHandler.PushLoginEvent)
 			agent.Get("/login-sessions/{sessionId}/actions", agentHandler.ListLoginActions)
 			agent.Get("/publish-tasks/{deviceCode}", agentHandler.ListPublishTasks)
+			agent.Post("/publish-tasks/{taskId}/claim", agentHandler.ClaimPublishTask)
+			agent.Post("/publish-tasks/{taskId}/renew", agentHandler.RenewPublishTaskLease)
 			agent.Post("/publish-tasks/sync", agentHandler.SyncPublishTask)
 		})
 	})

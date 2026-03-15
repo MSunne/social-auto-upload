@@ -45,6 +45,107 @@ func (h *AccountHandler) List(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, items)
 }
 
+func (h *AccountHandler) Detail(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	accountID := strings.TrimSpace(chi.URLParam(r, "accountId"))
+	if accountID == "" {
+		render.Error(w, http.StatusBadRequest, "accountId is required")
+		return
+	}
+
+	account, err := h.app.Store.GetOwnedAccountByID(r.Context(), accountID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load account")
+		return
+	}
+	if account == nil {
+		render.Error(w, http.StatusNotFound, "Account not found")
+		return
+	}
+	render.JSON(w, http.StatusOK, account)
+}
+
+func (h *AccountHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	accountID := strings.TrimSpace(chi.URLParam(r, "accountId"))
+	if accountID == "" {
+		render.Error(w, http.StatusBadRequest, "accountId is required")
+		return
+	}
+
+	deleted, err := h.app.Store.DeleteOwnedAccount(r.Context(), accountID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to delete account")
+		return
+	}
+	if !deleted {
+		render.Error(w, http.StatusNotFound, "Account not found")
+		return
+	}
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "account",
+		ResourceID:   &accountID,
+		Action:       "delete",
+		Title:        "删除平台账号镜像",
+		Source:       "accounts",
+		Status:       "success",
+		Message:      auditStringPtr("云端账号镜像已删除"),
+	})
+	render.JSON(w, http.StatusOK, map[string]any{"deleted": true})
+}
+
+func (h *AccountHandler) Validate(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	accountID := strings.TrimSpace(chi.URLParam(r, "accountId"))
+	if accountID == "" {
+		render.Error(w, http.StatusBadRequest, "accountId is required")
+		return
+	}
+
+	account, err := h.app.Store.GetOwnedAccountByID(r.Context(), accountID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load account")
+		return
+	}
+	if account == nil {
+		render.Error(w, http.StatusNotFound, "Account not found")
+		return
+	}
+
+	message := "等待本地 OmniBull 重新验证账号"
+	session, err := h.app.Store.CreateLoginSession(r.Context(), store.CreateLoginSessionInput{
+		ID:          uuid.NewString(),
+		DeviceID:    account.DeviceID,
+		UserID:      user.ID,
+		Platform:    account.Platform,
+		AccountName: account.AccountName,
+		Status:      "pending",
+		Message:     &message,
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to create validation session")
+		return
+	}
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "login_session",
+		ResourceID:   &session.ID,
+		Action:       "validate",
+		Title:        "发起账号重新验证",
+		Source:       account.Platform,
+		Status:       session.Status,
+		Message:      session.Message,
+		Payload: mustJSONBytes(map[string]any{
+			"deviceId":    account.DeviceID,
+			"accountId":   account.ID,
+			"accountName": account.AccountName,
+		}),
+	})
+
+	render.JSON(w, http.StatusCreated, session)
+}
+
 func (h *AccountHandler) CreateRemoteLogin(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 
@@ -89,6 +190,20 @@ func (h *AccountHandler) CreateRemoteLogin(w http.ResponseWriter, r *http.Reques
 		render.Error(w, http.StatusInternalServerError, "Failed to create remote login session")
 		return
 	}
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "login_session",
+		ResourceID:   &session.ID,
+		Action:       "create",
+		Title:        "发起远程登录",
+		Source:       payload.Platform,
+		Status:       session.Status,
+		Message:      session.Message,
+		Payload: mustJSONBytes(map[string]any{
+			"deviceId":    payload.DeviceID,
+			"accountName": payload.AccountName,
+		}),
+	})
 
 	render.JSON(w, http.StatusCreated, session)
 }
@@ -161,6 +276,17 @@ func (h *AccountHandler) CreateLoginAction(w http.ResponseWriter, r *http.Reques
 		render.Error(w, http.StatusInternalServerError, "Failed to create login action")
 		return
 	}
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "login_session_action",
+		ResourceID:   &action.ID,
+		Action:       payload.ActionType,
+		Title:        "提交登录会话动作",
+		Source:       session.Platform,
+		Status:       action.Status,
+		Message:      auditStringPtr("用户在云端提交了验证动作"),
+		Payload:      payloadBytes,
+	})
 
 	render.JSON(w, http.StatusCreated, action)
 }

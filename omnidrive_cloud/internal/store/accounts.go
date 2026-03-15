@@ -67,6 +67,39 @@ func (s *Store) ListAccountsByOwner(ctx context.Context, ownerUserID string, dev
 	return items, rows.Err()
 }
 
+func (s *Store) GetOwnedAccountByID(ctx context.Context, accountID string, ownerUserID string) (*domain.PlatformAccount, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT pa.id, pa.device_id, pa.platform, pa.account_name, pa.status, pa.last_message,
+		       pa.last_authenticated_at, pa.created_at, pa.updated_at
+		FROM platform_accounts pa
+		INNER JOIN devices d ON d.id = pa.device_id
+		WHERE pa.id = $1 AND d.owner_user_id = $2
+	`, accountID, ownerUserID)
+
+	account, err := scanPlatformAccount(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return account, nil
+}
+
+func (s *Store) DeleteOwnedAccount(ctx context.Context, accountID string, ownerUserID string) (bool, error) {
+	commandTag, err := s.pool.Exec(ctx, `
+		DELETE FROM platform_accounts pa
+		USING devices d
+		WHERE pa.device_id = d.id
+		  AND pa.id = $1
+		  AND d.owner_user_id = $2
+	`, accountID, ownerUserID)
+	if err != nil {
+		return false, err
+	}
+	return commandTag.RowsAffected() > 0, nil
+}
+
 func scanLoginSession(row pgx.Row) (*domain.LoginSession, error) {
 	var session domain.LoginSession
 	var qrData *string
@@ -207,6 +240,24 @@ func (s *Store) UpsertPlatformAccountFromLogin(ctx context.Context, session *dom
 		    updated_at = NOW()
 	`, uuid.NewString(), session.DeviceID, session.Platform, session.AccountName, session.Message)
 	return err
+}
+
+func (s *Store) UpsertPlatformAccount(ctx context.Context, deviceID string, platform string, accountName string, status string, lastMessage *string, lastAuthenticatedAt *time.Time) (*domain.PlatformAccount, error) {
+	row := s.pool.QueryRow(ctx, `
+		INSERT INTO platform_accounts (
+			id, device_id, platform, account_name, status, last_message, last_authenticated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (device_id, platform, account_name) DO UPDATE
+		SET status = EXCLUDED.status,
+		    last_message = EXCLUDED.last_message,
+		    last_authenticated_at = COALESCE(EXCLUDED.last_authenticated_at, platform_accounts.last_authenticated_at),
+		    updated_at = NOW()
+		RETURNING id, device_id, platform, account_name, status, last_message,
+		          last_authenticated_at, created_at, updated_at
+	`, uuid.NewString(), deviceID, platform, accountName, status, lastMessage, lastAuthenticatedAt)
+
+	return scanPlatformAccount(row)
 }
 
 func scanLoginAction(row pgx.Row) (*domain.LoginSessionAction, error) {

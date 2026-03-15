@@ -64,6 +64,27 @@ func (h *SkillHandler) List(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, items)
 }
 
+func (h *SkillHandler) Detail(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	skillID := strings.TrimSpace(chi.URLParam(r, "skillId"))
+	if skillID == "" {
+		render.Error(w, http.StatusBadRequest, "skillId is required")
+		return
+	}
+
+	skill, err := h.app.Store.GetOwnedSkillByID(r.Context(), skillID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load skill")
+		return
+	}
+	if skill == nil {
+		render.Error(w, http.StatusNotFound, "Skill not found")
+		return
+	}
+
+	render.JSON(w, http.StatusOK, skill)
+}
+
 func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 
@@ -112,6 +133,20 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to create skill")
 		return
 	}
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "skill",
+		ResourceID:   &skill.ID,
+		Action:       "create",
+		Title:        "创建产品技能",
+		Source:       skill.OutputType,
+		Status:       "success",
+		Message:      auditStringPtr("产品技能已创建"),
+		Payload: mustJSONBytes(map[string]any{
+			"name":      skill.Name,
+			"modelName": skill.ModelName,
+		}),
+	})
 
 	render.JSON(w, http.StatusCreated, skill)
 }
@@ -159,8 +194,80 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusNotFound, "Skill not found")
 		return
 	}
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "skill",
+		ResourceID:   &skill.ID,
+		Action:       "update",
+		Title:        "更新产品技能",
+		Source:       skill.OutputType,
+		Status:       "success",
+		Message:      auditStringPtr("产品技能已更新"),
+		Payload: mustJSONBytes(map[string]any{
+			"name":      payload.Name,
+			"modelName": payload.ModelName,
+			"isEnabled": payload.IsEnabled,
+		}),
+	})
 
 	render.JSON(w, http.StatusOK, skill)
+}
+
+func (h *SkillHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	skillID := strings.TrimSpace(chi.URLParam(r, "skillId"))
+	if skillID == "" {
+		render.Error(w, http.StatusBadRequest, "skillId is required")
+		return
+	}
+
+	skill, err := h.app.Store.GetOwnedSkillByID(r.Context(), skillID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load skill")
+		return
+	}
+	if skill == nil {
+		render.Error(w, http.StatusNotFound, "Skill not found")
+		return
+	}
+
+	taskCount, accountCount, err := h.app.Store.GetSkillUsageSummary(r.Context(), skillID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to inspect skill usage")
+		return
+	}
+	if taskCount > 0 {
+		render.JSON(w, http.StatusConflict, map[string]any{
+			"error": "Skill is still referenced by publish tasks",
+			"usage": map[string]any{
+				"publishTaskCount":     taskCount,
+				"distinctAccountCount": accountCount,
+			},
+		})
+		return
+	}
+
+	deleted, err := h.app.Store.DeleteSkill(r.Context(), skillID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to delete skill")
+		return
+	}
+	if !deleted {
+		render.Error(w, http.StatusNotFound, "Skill not found")
+		return
+	}
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "skill",
+		ResourceID:   &skillID,
+		Action:       "delete",
+		Title:        "删除产品技能",
+		Source:       skill.OutputType,
+		Status:       "success",
+		Message:      auditStringPtr("产品技能已删除"),
+	})
+
+	render.JSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
 
 func (h *SkillHandler) ListAssets(w http.ResponseWriter, r *http.Request) {
@@ -235,6 +342,20 @@ func (h *SkillHandler) CreateAsset(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to create skill asset")
 		return
 	}
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "skill_asset",
+		ResourceID:   &asset.ID,
+		Action:       "create",
+		Title:        "添加技能资产",
+		Source:       payload.AssetType,
+		Status:       "success",
+		Message:      auditStringPtr("技能资产元数据已创建"),
+		Payload: mustJSONBytes(map[string]any{
+			"skillId":  skillID,
+			"fileName": asset.FileName,
+		}),
+	})
 
 	render.JSON(w, http.StatusCreated, asset)
 }
@@ -309,6 +430,21 @@ func (h *SkillHandler) UploadAsset(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to create asset metadata")
 		return
 	}
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "skill_asset",
+		ResourceID:   &asset.ID,
+		Action:       "upload",
+		Title:        "上传技能资产",
+		Source:       assetType,
+		Status:       "success",
+		Message:      auditStringPtr("技能资产文件已上传"),
+		Payload: mustJSONBytes(map[string]any{
+			"skillId":   skillID,
+			"fileName":  asset.FileName,
+			"publicUrl": asset.PublicURL,
+		}),
+	})
 
 	render.JSON(w, http.StatusCreated, asset)
 }

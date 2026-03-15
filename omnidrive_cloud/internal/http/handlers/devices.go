@@ -40,6 +40,27 @@ func (h *DeviceHandler) List(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, items)
 }
 
+func (h *DeviceHandler) Detail(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	deviceID := strings.TrimSpace(chi.URLParam(r, "deviceId"))
+	if deviceID == "" {
+		render.Error(w, http.StatusBadRequest, "deviceId is required")
+		return
+	}
+
+	device, err := h.app.Store.GetOwnedDevice(r.Context(), deviceID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device")
+		return
+	}
+	if device == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+
+	render.JSON(w, http.StatusOK, device)
+}
+
 func (h *DeviceHandler) Claim(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 
@@ -63,6 +84,20 @@ func (h *DeviceHandler) Claim(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusNotFound, "Device code not found or already claimed by another user")
 		return
 	}
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "device",
+		ResourceID:   &device.ID,
+		Action:       "claim",
+		Title:        "认领 OmniBull 设备",
+		Source:       "devices",
+		Status:       "success",
+		Message:      auditStringPtr("设备已绑定到当前云端账户"),
+		Payload: mustJSONBytes(map[string]any{
+			"deviceCode": device.DeviceCode,
+			"name":       device.Name,
+		}),
+	})
 
 	render.JSON(w, http.StatusOK, device)
 }
@@ -94,6 +129,21 @@ func (h *DeviceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusNotFound, "Device not found")
 		return
 	}
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "device",
+		ResourceID:   &device.ID,
+		Action:       "update",
+		Title:        "更新设备配置",
+		Source:       "devices",
+		Status:       "success",
+		Message:      auditStringPtr("设备配置已更新"),
+		Payload: mustJSONBytes(map[string]any{
+			"name":                  payload.Name,
+			"defaultReasoningModel": payload.DefaultReasoningModel,
+			"isEnabled":             payload.IsEnabled,
+		}),
+	})
 
 	render.JSON(w, http.StatusOK, device)
 }

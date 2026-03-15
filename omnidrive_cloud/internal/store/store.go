@@ -10,6 +10,7 @@ import (
 )
 
 const onlineWindow = 45 * time.Second
+const publishTaskLeaseWindow = 90 * time.Second
 
 type Store struct {
 	pool *pgxpool.Pool
@@ -126,6 +127,32 @@ type CreateSkillAssetInput struct {
 	SizeBytes   *int64
 }
 
+type SyncMaterialRootInput struct {
+	DeviceID    string
+	RootName    string
+	RootPath    string
+	IsAvailable bool
+	IsDirectory bool
+}
+
+type SyncMaterialEntryInput struct {
+	DeviceID     string
+	RootName     string
+	RootPath     string
+	RelativePath string
+	ParentPath   string
+	Name         string
+	Kind         string
+	AbsolutePath *string
+	SizeBytes    *int64
+	ModifiedAt   *string
+	Extension    *string
+	MimeType     *string
+	IsText       bool
+	PreviewText  *string
+	IsAvailable  bool
+}
+
 type UpdateSkillInput struct {
 	Name             *string
 	Description      *string
@@ -152,6 +179,31 @@ type CreatePublishTaskInput struct {
 	RunAt        *time.Time
 }
 
+type ReplacePublishTaskMaterialRefInput struct {
+	TaskID       string
+	DeviceID     string
+	RootName     string
+	RelativePath string
+	Role         string
+	Name         string
+	Kind         string
+	AbsolutePath *string
+	SizeBytes    *int64
+	ModifiedAt   *string
+	Extension    *string
+	MimeType     *string
+	IsText       bool
+	PreviewText  *string
+}
+
+type ListPublishTasksFilter struct {
+	DeviceID    string
+	Status      string
+	Platform    string
+	AccountName string
+	Limit       int
+}
+
 type SyncPublishTaskInput struct {
 	ID                  string
 	DeviceID            string
@@ -165,10 +217,89 @@ type SyncPublishTaskInput struct {
 	Status              string
 	Message             *string
 	VerificationPayload []byte
+	LeaseToken          *string
 	RunAt               *time.Time
 	FinishedAt          *time.Time
 }
 
+type UpdatePublishTaskInput struct {
+	Title        *string
+	ContentText  *string
+	MediaPayload []byte
+	MediaTouched bool
+	Status       *string
+	Message      *string
+	RunAt        *time.Time
+}
+
+type CreatePublishTaskEventInput struct {
+	ID        string
+	TaskID    string
+	EventType string
+	Source    string
+	Status    string
+	Message   *string
+	Payload   []byte
+}
+
+type UpsertPublishTaskArtifactInput struct {
+	TaskID       string
+	ArtifactKey  string
+	ArtifactType string
+	Source       string
+	Title        *string
+	FileName     *string
+	MimeType     *string
+	StorageKey   *string
+	PublicURL    *string
+	SizeBytes    *int64
+	TextContent  *string
+	Payload      []byte
+}
+
+type CreateAIJobInput struct {
+	ID           string
+	OwnerUserID  string
+	JobType      string
+	ModelName    string
+	Prompt       *string
+	InputPayload []byte
+	Status       string
+	Message      *string
+}
+
+type CreateAuditEventInput struct {
+	ID           string
+	OwnerUserID  string
+	ResourceType string
+	ResourceID   *string
+	Action       string
+	Title        string
+	Source       string
+	Status       string
+	Message      *string
+	Payload      []byte
+}
+
+type OverviewSummary struct {
+	DeviceCount          int64                `json:"deviceCount"`
+	OnlineDeviceCount    int64                `json:"onlineDeviceCount"`
+	AccountCount         int64                `json:"accountCount"`
+	MaterialRootCount    int64                `json:"materialRootCount"`
+	MaterialEntryCount   int64                `json:"materialEntryCount"`
+	SkillCount           int64                `json:"skillCount"`
+	TaskCount            int64                `json:"taskCount"`
+	NeedsVerifyTaskCount int64                `json:"needsVerifyTaskCount"`
+	AIJobCount           int64                `json:"aiJobCount"`
+	BalanceCredits       int64                `json:"balanceCredits"`
+	RecentTasks          []domain.PublishTask `json:"recentTasks"`
+	RecentAIJobs         []domain.AIJob       `json:"recentAiJobs"`
+}
+
 func (s *Store) Ping(ctx context.Context) error {
 	return s.pool.Ping(ctx)
+}
+
+func PublishTaskLeaseTTL() time.Duration {
+	return publishTaskLeaseWindow
 }

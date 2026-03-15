@@ -23,11 +23,14 @@ The primary API contract is:
 
 Start with these modules:
 
-1. Device management
-2. Social account management
-3. Remote login session modal and second-factor actions
-4. Product skill management
-5. Task center
+1. Dashboard overview
+2. Device management
+3. Social account management
+4. Remote login session modal and second-factor actions
+5. Material browser
+6. Product skill management
+7. Task center
+8. History and billing
 
 ## Design Sources
 
@@ -62,29 +65,62 @@ Key screens to prioritize:
 - `POST /api/v1/auth/register`
 - `POST /api/v1/auth/login`
 - `GET /api/v1/auth/me`
+- `GET /api/v1/overview/summary`
+- `GET /api/v1/history`
 - `GET /api/v1/devices`
+- `GET /api/v1/devices/{deviceId}`
 - `POST /api/v1/devices/claim`
 - `PATCH /api/v1/devices/{deviceId}`
 - `GET /api/v1/accounts`
+- `GET /api/v1/accounts/{accountId}`
+- `DELETE /api/v1/accounts/{accountId}`
+- `POST /api/v1/accounts/{accountId}/validate`
 - `POST /api/v1/accounts/remote-login`
 - `GET /api/v1/accounts/login-sessions/{sessionId}`
 - `POST /api/v1/accounts/login-sessions/{sessionId}/actions`
+- `GET /api/v1/materials/roots`
+- `GET /api/v1/materials/list`
+- `GET /api/v1/materials/file`
 - `GET /api/v1/skills`
 - `POST /api/v1/skills`
+- `GET /api/v1/skills/{skillId}`
 - `PATCH /api/v1/skills/{skillId}`
+- `DELETE /api/v1/skills/{skillId}`
 - `GET /api/v1/skills/{skillId}/assets`
 - `POST /api/v1/skills/{skillId}/assets`
 - `POST /api/v1/skills/{skillId}/upload`
 - `GET /api/v1/tasks`
 - `POST /api/v1/tasks`
 - `GET /api/v1/tasks/{taskId}`
+- `GET /api/v1/tasks/{taskId}/events`
+- `GET /api/v1/tasks/{taskId}/artifacts`
+- `GET /api/v1/tasks/{taskId}/materials`
+- `POST /api/v1/tasks/{taskId}/cancel`
+- `POST /api/v1/tasks/{taskId}/retry`
+- `PATCH /api/v1/tasks/{taskId}`
+- `DELETE /api/v1/tasks/{taskId}`
+- `GET /api/v1/ai/models`
+- `GET /api/v1/ai/jobs`
+- `POST /api/v1/ai/jobs`
+- `GET /api/v1/ai/jobs/{jobId}`
+- `GET /api/v1/billing/packages`
+- `GET /api/v1/billing/ledger`
 
 ## UX Priorities
 
 1. Device online status must be obvious.
 2. Remote login modal must support QR display and second-factor action buttons.
 3. Task detail must display `needs_verify` clearly.
-4. Skill pages should show both metadata and attached asset previews.
+4. Task detail should also show the event timeline from `/tasks/{taskId}/events`.
+5. Task detail should also render task artifacts from `/tasks/{taskId}/artifacts`, especially verification screenshots and text evidence.
+6. Task detail should also render selected input materials from `/tasks/{taskId}/materials`.
+7. Task detail should support explicit cancel and retry actions.
+8. Materials page should let users switch by device, root, and path, with file preview for text content.
+9. Skill pages should show both metadata and attached asset previews.
+10. Skill delete should surface the backend `409` usage summary instead of silently failing.
+11. Dashboard cards should read directly from `/overview/summary`, including material counts.
+12. History should render mixed item types using `kind`, `source`, and `status`, including `audit` items.
+13. Billing can start read-only with package cards and ledger table.
 
 ## Notes For Implementation
 
@@ -93,4 +129,7 @@ Key screens to prioritize:
 - Verification payloads are structured JSON; do not hardcode a single shape.
 - Skill file upload uses `multipart/form-data` and returns a previewable `publicUrl`.
 - Task verification payloads may include `screenshotUrl` instead of raw base64.
+- Task list supports optional filters: `deviceId`, `status`, `platform`, `accountName`, `limit`.
+- Task create and task update both support optional `materialRefs`, each item using `root`, `path`, and optional `role`.
 - Frontend should keep list pages and detail drawers synchronized with query invalidation.
+- AI jobs are currently queue records; build UI around creation, listing, and detail, not around immediate completion.

@@ -1,0 +1,170 @@
+@import "tailwindcss";
+
+/* ─── OmniDrive Design Token System ─── */
+@theme inline {
+  --color-background: #09090b;
+  --color-foreground: #fafafa;
+
+  /* Surface hierarchy */
+  --color-surface: rgba(14, 14, 18, 0.85);
+  --color-surface-elevated: rgba(24, 24, 30, 0.92);
+  --color-surface-hover: rgba(34, 34, 42, 0.88);
+
+  /* Borders */
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.14);
+
+  /* Text */
+  --color-text-primary: #fafafa;
+  --color-text-secondary: #a1a1aa;
+  --color-text-muted: #71717a;
+
+  /* Brand accent — vibrant cyan-purple spectrum */
+  --color-accent: #a855f7;
+  --color-accent-strong: #c084fc;
+  --color-accent-glow: rgba(168, 85, 247, 0.35);
+
+  /* Secondary accent — neon cyan */
+  --color-cyan: #06d6a0;
+  --color-cyan-glow: rgba(6, 214, 160, 0.30);
+
+  /* Status */
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-info: #3b82f6;
+
+  /* Fonts */
+  --font-sans: var(--font-inter), "Inter", system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), "Geist Mono", "JetBrains Mono", monospace;
+
+  /* Radius */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.5rem;
+  --radius-full: 9999px;
+}
+
+/* ─── Base Reset ─── */
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+}
+
+/* ─── Cyber-grade Background ─── */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(ellipse 70% 50% at 10% 5%, var(--color-accent-glow), transparent),
+    radial-gradient(ellipse 50% 40% at 90% 10%, var(--color-cyan-glow), transparent),
+    radial-gradient(ellipse 60% 60% at 50% 100%, rgba(168, 85, 247, 0.08), transparent),
+    var(--color-background);
+  pointer-events: none;
+}
+
+/* ─── Scrollbar styling ─── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.12);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.22);
+}
+
+/* ─── Glass Card utility ─── */
+.glass-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  backdrop-filter: blur(24px) saturate(1.5);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  border-radius: var(--radius-xl);
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.03),
+    0 16px 48px rgba(0,0,0,0.4),
+    inset 0 1px 0 rgba(255,255,255,0.04);
+}
+
+.glass-card-elevated {
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border-strong);
+  backdrop-filter: blur(32px) saturate(1.6);
+  -webkit-backdrop-filter: blur(32px) saturate(1.6);
+  border-radius: var(--radius-xl);
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.05),
+    0 24px 64px rgba(0,0,0,0.5),
+    inset 0 1px 0 rgba(255,255,255,0.06);
+}
+
+/* ─── Glow Border ─── */
+.glow-border {
+  position: relative;
+}
+.glow-border::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, var(--color-accent), var(--color-cyan), var(--color-accent));
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  z-index: -1;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+  padding: 1px;
+}
+.glow-border:hover::before {
+  opacity: 0.6;
+}
+
+/* ─── Neon text ─── */
+.text-glow {
+  text-shadow: 0 0 20px var(--color-accent-glow), 0 0 40px rgba(168, 85, 247, 0.15);
+}
+
+/* ─── Pulse dot for status ─── */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.4); }
+}
+.pulse-online {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+/* ─── Skeleton loading shimmer ─── */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.8s ease-in-out infinite;
+  border-radius: var(--radius-md);
+}

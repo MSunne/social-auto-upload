@@ -68,7 +68,9 @@ Phase 1 targets the operational backbone required by the current UI and the alre
 5. Remote login session creation and verification action relay
 6. Product skill CRUD
 7. Publish task mirror and manual verification tracking
-8. Basic AI model registry and package listing placeholders
+8. Overview summary and history feed
+9. Basic AI model registry, AI job records, and package listing
+10. Local material root and file mirror for OmniBull devices
 
 ## Core Modules
 
@@ -109,11 +111,15 @@ Phase 1 targets the operational backbone required by the current UI and the alre
 - list publish tasks
 - view publish task details
 - track `needs_verify` state and screenshot metadata
+- keep a per-task event timeline for cloud edits and agent execution evidence
+- store structured task artifacts such as verification screenshots, logs, and local output references
+- store task-to-material snapshot references so local input files remain traceable even after directory changes
+- support task claim / lease / renew so one device execution worker owns the task for a bounded time
 
 ### AI Jobs
 
-- reserve schema for image, video, and chat generation jobs
-- store request parameters and output URLs
+- store image, video, and chat generation job requests
+- store request parameters, queue state, and future output metadata
 
 ### Billing
 
@@ -131,7 +137,8 @@ Phase 1 targets the operational backbone required by the current UI and the alre
 ### Devices
 
 - `devices`
-- `device_heartbeats`
+- device online status is derived from `last_seen_at`
+- local material roots and mirrored directory/file snapshots are attached to devices
 
 ### Social Publishing
 
@@ -139,6 +146,8 @@ Phase 1 targets the operational backbone required by the current UI and the alre
 - `login_sessions`
 - `login_session_actions`
 - `publish_tasks`
+- `publish_task_events`
+- `publish_task_artifacts`
 
 ### Product Skills
 
@@ -149,12 +158,12 @@ Phase 1 targets the operational backbone required by the current UI and the alre
 
 - `ai_models`
 - `ai_jobs`
-- `ai_job_outputs`
+- output metadata can stay in `ai_jobs.output_payload` in the current phase
 
 ### Billing
 
 - `billing_packages`
-- `payment_orders`
+- `wallet_ledgers`
 
 ## Communication Model
 

@@ -192,3 +192,31 @@ func (s *Store) CreateSkillAsset(ctx context.Context, input CreateSkillAssetInpu
 
 	return scanSkillAsset(row)
 }
+
+func (s *Store) GetSkillUsageSummary(ctx context.Context, skillID string, ownerUserID string) (int64, int64, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*)::BIGINT,
+		       COUNT(DISTINCT account_name)::BIGINT
+		FROM publish_tasks pt
+		INNER JOIN devices d ON d.id = pt.device_id
+		WHERE pt.skill_id = $1 AND d.owner_user_id = $2
+	`, skillID, ownerUserID)
+
+	var taskCount int64
+	var accountCount int64
+	if err := row.Scan(&taskCount, &accountCount); err != nil {
+		return 0, 0, err
+	}
+	return taskCount, accountCount, nil
+}
+
+func (s *Store) DeleteSkill(ctx context.Context, skillID string, ownerUserID string) (bool, error) {
+	commandTag, err := s.pool.Exec(ctx, `
+		DELETE FROM product_skills
+		WHERE id = $1 AND owner_user_id = $2
+	`, skillID, ownerUserID)
+	if err != nil {
+		return false, err
+	}
+	return commandTag.RowsAffected() > 0, nil
+}
