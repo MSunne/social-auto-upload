@@ -51,6 +51,7 @@ type syncPublishTaskRequest struct {
 	MediaPayload        interface{}                      `json:"mediaPayload"`
 	Status              string                           `json:"status"`
 	Message             *string                          `json:"message"`
+	ExecutionPayload    interface{}                      `json:"executionPayload"`
 	VerificationPayload interface{}                      `json:"verificationPayload"`
 	Artifacts           []syncPublishTaskArtifactRequest `json:"artifacts"`
 	LeaseToken          *string                          `json:"leaseToken"`
@@ -85,6 +86,24 @@ type claimPublishTaskRequest struct {
 type renewPublishTaskLeaseRequest struct {
 	DeviceCode string `json:"deviceCode"`
 	LeaseToken string `json:"leaseToken"`
+}
+
+type releasePublishTaskLeaseRequest struct {
+	DeviceCode string  `json:"deviceCode"`
+	LeaseToken string  `json:"leaseToken"`
+	Message    *string `json:"message"`
+}
+
+type syncSkillStateRequest struct {
+	DeviceCode string `json:"deviceCode"`
+	Items      []struct {
+		SkillID        string  `json:"skillId"`
+		SyncStatus     string  `json:"syncStatus"`
+		SyncedRevision *string `json:"syncedRevision"`
+		AssetCount     *int64  `json:"assetCount"`
+		Message        *string `json:"message"`
+		LastSyncedAt   *string `json:"lastSyncedAt"`
+	} `json:"items"`
 }
 
 func NewAgentHandler(app *appstate.App) *AgentHandler {
@@ -382,6 +401,270 @@ func (h *AgentHandler) ListPublishTasks(w http.ResponseWriter, r *http.Request) 
 	render.JSON(w, http.StatusOK, items)
 }
 
+func (h *AgentHandler) ListSkills(w http.ResponseWriter, r *http.Request) {
+	deviceCode := strings.TrimSpace(chi.URLParam(r, "deviceCode"))
+	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
+	if deviceCode == "" || agentKey == "" {
+		render.Error(w, http.StatusBadRequest, "deviceCode and X-Agent-Key are required")
+		return
+	}
+
+	device, err := h.app.Store.GetDeviceByCode(r.Context(), deviceCode)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device")
+		return
+	}
+	if device == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+	if !agentKeyMatches(device, agentKey) {
+		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+		return
+	}
+	if !device.IsEnabled {
+		render.Error(w, http.StatusConflict, "Device is disabled")
+		return
+	}
+	if device.OwnerUserID == nil || strings.TrimSpace(*device.OwnerUserID) == "" {
+		render.JSON(w, http.StatusOK, map[string]any{
+			"items": []domain.AgentSkillPackage{},
+		})
+		return
+	}
+
+	var since *time.Time
+	if rawSince := strings.TrimSpace(r.URL.Query().Get("since")); rawSince != "" {
+		parsed, err := time.Parse(time.RFC3339, rawSince)
+		if err != nil {
+			render.Error(w, http.StatusBadRequest, "since must be RFC3339")
+			return
+		}
+		since = &parsed
+	}
+
+	limit := 0
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		var parsed int
+		if _, err := fmt.Sscanf(rawLimit, "%d", &parsed); err != nil || parsed < 0 {
+			render.Error(w, http.StatusBadRequest, "limit must be a positive integer")
+			return
+		}
+		limit = parsed
+	}
+
+	skills, err := h.app.Store.ListEnabledSkillsByOwner(r.Context(), *device.OwnerUserID, since, limit)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load skills")
+		return
+	}
+
+	items := make([]domain.AgentSkillPackage, 0, len(skills))
+	for _, skill := range skills {
+		assets, err := h.app.Store.ListSkillAssets(r.Context(), skill.ID, *device.OwnerUserID)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to load skill assets")
+			return
+		}
+		syncState, err := h.app.Store.GetDeviceSkillSyncState(r.Context(), device.ID, skill.ID)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to load skill sync state")
+			return
+		}
+		items = append(items, domain.AgentSkillPackage{
+			Revision: buildSkillRevision(&skill),
+			Skill:    skill,
+			Assets:   assets,
+			Sync:     syncState,
+		})
+	}
+
+	render.JSON(w, http.StatusOK, map[string]any{
+		"items":      items,
+		"serverTime": time.Now().UTC(),
+	})
+}
+
+func (h *AgentHandler) SyncSkillStates(w http.ResponseWriter, r *http.Request) {
+	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
+	if agentKey == "" {
+		render.Error(w, http.StatusBadRequest, "X-Agent-Key is required")
+		return
+	}
+
+	var payload syncSkillStateRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	payload.DeviceCode = strings.TrimSpace(payload.DeviceCode)
+	if payload.DeviceCode == "" {
+		render.Error(w, http.StatusBadRequest, "deviceCode is required")
+		return
+	}
+
+	device, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device")
+		return
+	}
+	if device == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+	if !agentKeyMatches(device, agentKey) {
+		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+		return
+	}
+	if device.OwnerUserID == nil || strings.TrimSpace(*device.OwnerUserID) == "" {
+		render.Error(w, http.StatusConflict, "Device is not claimed")
+		return
+	}
+
+	results := make([]domain.DeviceSkillSyncState, 0, len(payload.Items))
+	for _, item := range payload.Items {
+		skillID := strings.TrimSpace(item.SkillID)
+		syncStatus := strings.TrimSpace(item.SyncStatus)
+		if skillID == "" || syncStatus == "" {
+			continue
+		}
+		skill, err := h.app.Store.GetOwnedSkillByID(r.Context(), skillID, *device.OwnerUserID)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to validate skill sync payload")
+			return
+		}
+		if skill == nil {
+			continue
+		}
+		var lastSyncedAt *time.Time
+		if item.LastSyncedAt != nil && strings.TrimSpace(*item.LastSyncedAt) != "" {
+			parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(*item.LastSyncedAt))
+			if err != nil {
+				render.Error(w, http.StatusBadRequest, "lastSyncedAt must be RFC3339")
+				return
+			}
+			lastSyncedAt = &parsed
+		}
+		syncedRevision := normalizeTrimmedString(item.SyncedRevision)
+		message := normalizeTrimmedString(item.Message)
+		assetCount := int64(0)
+		if item.AssetCount != nil {
+			assetCount = *item.AssetCount
+		}
+		state, err := h.app.Store.UpsertDeviceSkillSyncState(r.Context(), store.UpsertDeviceSkillSyncStateInput{
+			DeviceID:       device.ID,
+			SkillID:        skillID,
+			SyncStatus:     syncStatus,
+			SyncedRevision: syncedRevision,
+			AssetCount:     assetCount,
+			Message:        message,
+			LastSyncedAt:   lastSyncedAt,
+		})
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to sync skill states")
+			return
+		}
+		results = append(results, *state)
+	}
+
+	render.JSON(w, http.StatusOK, map[string]any{
+		"items": results,
+	})
+}
+
+func (h *AgentHandler) PublishTaskPackage(w http.ResponseWriter, r *http.Request) {
+	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
+	deviceCode := strings.TrimSpace(r.URL.Query().Get("deviceCode"))
+	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
+	if taskID == "" || deviceCode == "" || agentKey == "" {
+		render.Error(w, http.StatusBadRequest, "taskId, deviceCode, and X-Agent-Key are required")
+		return
+	}
+
+	device, err := h.app.Store.GetDeviceByCode(r.Context(), deviceCode)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device")
+		return
+	}
+	if device == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+	if !agentKeyMatches(device, agentKey) {
+		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+		return
+	}
+	if !device.IsEnabled {
+		render.Error(w, http.StatusConflict, "Device is disabled")
+		return
+	}
+
+	task, err := h.app.Store.GetPublishTaskByID(r.Context(), taskID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load publish task")
+		return
+	}
+	if task == nil || task.DeviceID != device.ID {
+		render.Error(w, http.StatusNotFound, "Publish task not found")
+		return
+	}
+
+	var account *domain.PlatformAccount
+	if task.AccountID != nil && strings.TrimSpace(*task.AccountID) != "" && device.OwnerUserID != nil {
+		account, err = h.app.Store.GetOwnedAccountByID(r.Context(), strings.TrimSpace(*task.AccountID), *device.OwnerUserID)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to load task account")
+			return
+		}
+	}
+	if account == nil {
+		account, err = h.app.Store.GetAccountByDeviceTarget(r.Context(), device.ID, task.Platform, task.AccountName)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to load task account")
+			return
+		}
+	}
+
+	var skill *domain.ProductSkill
+	skillAssets := make([]domain.ProductSkillAsset, 0)
+	if task.SkillID != nil && strings.TrimSpace(*task.SkillID) != "" && device.OwnerUserID != nil {
+		skill, err = h.app.Store.GetOwnedSkillByID(r.Context(), strings.TrimSpace(*task.SkillID), *device.OwnerUserID)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to load task skill")
+			return
+		}
+		if skill != nil {
+			skillAssets, err = h.app.Store.ListSkillAssets(r.Context(), skill.ID, *device.OwnerUserID)
+			if err != nil {
+				render.Error(w, http.StatusInternalServerError, "Failed to load task skill assets")
+				return
+			}
+		}
+	}
+
+	materials, err := h.app.Store.ListPublishTaskMaterialRefsByTaskID(r.Context(), task.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load task materials")
+		return
+	}
+	runtimeState, err := h.app.Store.GetPublishTaskRuntimeStateByTaskID(r.Context(), task.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load task runtime state")
+		return
+	}
+	readiness := buildPublishTaskReadiness(r.Context(), h.app, task, device, account, skill)
+
+	render.JSON(w, http.StatusOK, domain.AgentPublishTaskPackage{
+		Task:        *task,
+		Account:     account,
+		Skill:       skill,
+		SkillAssets: skillAssets,
+		Materials:   materials,
+		Readiness:   readiness,
+		Runtime:     runtimeState,
+	})
+}
+
 func (h *AgentHandler) ClaimPublishTask(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
@@ -521,6 +804,95 @@ func (h *AgentHandler) RenewPublishTaskLease(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+func (h *AgentHandler) ReleasePublishTaskLease(w http.ResponseWriter, r *http.Request) {
+	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
+	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
+	if taskID == "" || agentKey == "" {
+		render.Error(w, http.StatusBadRequest, "taskId and X-Agent-Key are required")
+		return
+	}
+
+	var payload releasePublishTaskLeaseRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	payload.DeviceCode = strings.TrimSpace(payload.DeviceCode)
+	payload.LeaseToken = strings.TrimSpace(payload.LeaseToken)
+	payload.Message = normalizeTrimmedString(payload.Message)
+	if payload.DeviceCode == "" || payload.LeaseToken == "" {
+		render.Error(w, http.StatusBadRequest, "deviceCode and leaseToken are required")
+		return
+	}
+
+	device, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device")
+		return
+	}
+	if device == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+	if !agentKeyMatches(device, agentKey) {
+		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+		return
+	}
+
+	task, err := h.app.Store.ReleasePublishTaskLeaseByAgent(r.Context(), taskID, device.ID, payload.LeaseToken, payload.Message)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to release publish task lease")
+		return
+	}
+	if task == nil {
+		render.Error(w, http.StatusConflict, "Publish task lease is not releasable")
+		return
+	}
+	if err := h.app.Store.DeletePublishTaskRuntimeState(r.Context(), task.ID); err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to clear task runtime state")
+		return
+	}
+
+	eventType := "released"
+	defaultMessage := "本地执行器已释放任务租约并重新排队"
+	if task.Status == "cancelled" {
+		eventType = "cancelled"
+		defaultMessage = "本地执行器已确认取消任务"
+	}
+	message := payload.Message
+	if message == nil {
+		message = &defaultMessage
+	}
+	_, _ = h.app.Store.CreatePublishTaskEvent(r.Context(), store.CreatePublishTaskEventInput{
+		ID:        uuid.NewString(),
+		TaskID:    task.ID,
+		EventType: eventType,
+		Source:    "agent",
+		Status:    task.Status,
+		Message:   message,
+		Payload: mustJSONBytes(map[string]any{
+			"deviceId": device.ID,
+		}),
+	})
+	if device.OwnerUserID != nil {
+		recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+			OwnerUserID:  *device.OwnerUserID,
+			ResourceType: "publish_task",
+			ResourceID:   &task.ID,
+			Action:       "agent_release",
+			Title:        "本地设备释放任务租约",
+			Source:       task.Platform,
+			Status:       task.Status,
+			Message:      message,
+			Payload: mustJSONBytes(map[string]any{
+				"deviceId": device.ID,
+			}),
+		})
+	}
+
+	render.JSON(w, http.StatusOK, task)
+}
+
 func (h *AgentHandler) SyncPublishTask(w http.ResponseWriter, r *http.Request) {
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
 	if agentKey == "" {
@@ -596,6 +968,15 @@ func (h *AgentHandler) SyncPublishTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var executionPayload []byte
+	executionTouched := payload.ExecutionPayload != nil
+	if executionTouched {
+		executionPayload, err = json.Marshal(payload.ExecutionPayload)
+		if err != nil {
+			render.Error(w, http.StatusBadRequest, "executionPayload must be valid json")
+			return
+		}
+	}
 	var verificationPayload []byte
 	if payload.VerificationPayload != nil {
 		verificationPayload, err = h.prepareVerificationPayload(r.Context(), "publish-verify", payload.ID, payload.VerificationPayload)
@@ -643,6 +1024,24 @@ func (h *AgentHandler) SyncPublishTask(w http.ResponseWriter, r *http.Request) {
 		}
 		cleanupReplacedArtifactFiles(h.app, r.Context(), existingArtifacts, updatedArtifacts)
 	}
+	lastAgentSyncAt := time.Now().UTC()
+	runtimeState, err := h.app.Store.UpsertPublishTaskRuntimeState(r.Context(), store.UpsertPublishTaskRuntimeStateInput{
+		TaskID:           task.ID,
+		ExecutionPayload: executionPayload,
+		ExecutionTouched: executionTouched,
+		LastAgentSyncAt:  &lastAgentSyncAt,
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to sync publish task runtime state")
+		return
+	}
+	if task.Status == "pending" || task.Status == "cancelled" || task.Status == "failed" || task.Status == "success" || task.Status == "completed" {
+		if err := h.app.Store.DeletePublishTaskRuntimeState(r.Context(), task.ID); err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to clear publish task runtime state")
+			return
+		}
+		runtimeState = nil
+	}
 	if device.OwnerUserID != nil {
 		_, _ = h.app.Store.CreatePublishTaskEvent(r.Context(), store.CreatePublishTaskEventInput{
 			ID:        uuid.NewString(),
@@ -656,6 +1055,7 @@ func (h *AgentHandler) SyncPublishTask(w http.ResponseWriter, r *http.Request) {
 				"skillId":             task.SkillID,
 				"verificationPayload": json.RawMessage(task.VerificationPayload),
 				"artifactCount":       len(artifactInputs),
+				"hasRuntimeState":     runtimeState != nil,
 				"finishedAt":          task.FinishedAt,
 			}),
 		})
@@ -915,6 +1315,13 @@ func normalizeTrimmedStringPtr(value string) *string {
 		return nil
 	}
 	return &trimmed
+}
+
+func buildSkillRevision(skill *domain.ProductSkill) string {
+	if skill == nil {
+		return ""
+	}
+	return skill.UpdatedAt.UTC().Format(time.RFC3339Nano)
 }
 
 func firstNonEmptyString(values ...*string) *string {

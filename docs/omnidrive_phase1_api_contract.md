@@ -46,6 +46,7 @@ This document is the contract target for the cloud backend and the frontend impl
   - `activeLoginSessions`
   - `recentAccounts`
   - `materialRoots`
+  - `skillSyncStates`
 
 ### `POST /devices/claim`
 
@@ -171,6 +172,7 @@ This document is the contract target for the cloud backend and the frontend impl
   - `assets`
   - `recentTasks`
   - `recentAiJobs`
+  - `deviceSyncs`
 
 ### `DELETE /skills/{skillId}`
 
@@ -230,7 +232,12 @@ This document is the contract target for the cloud backend and the frontend impl
   - `artifacts`
   - `materials`
   - `actions`
+  - `readiness`
+  - optional `runtime`
 - `actions` exposes backend-computed booleans such as `canEdit`, `canCancel`, `canRetry`, `canDelete`
+- `actions` also includes `canResume` and `canResolveManual` for `needs_verify` handling
+- `readiness` exposes backend-computed execution checks for device/account/skill/material availability
+- `runtime` exposes the latest agent-side execution snapshot and `lastAgentSyncAt`
 
 ### `GET /tasks/{taskId}/events`
 
@@ -259,6 +266,22 @@ This document is the contract target for the cloud backend and the frontend impl
 - `running` tasks return to `pending`
 - `cancel_requested` tasks become `cancelled`
 - intended for stuck executions that should not wait for lease expiry
+
+### `POST /tasks/{taskId}/resume`
+
+- resume a `needs_verify` task back to `pending`
+- clears verification payload and any active lease state
+- preserves prior artifacts and timeline so the operator can keep the evidence trail
+
+### `POST /tasks/{taskId}/manual-resolve`
+
+- manually resolve a `needs_verify` task into one final state
+- request:
+  - `status` must be one of `success`, `completed`, `failed`, `cancelled`
+  - optional `message`
+  - optional `textEvidence`
+  - optional `payload`
+- stores optional manual evidence as a structured task artifact with key `manual-resolution`
 
 ### `POST /tasks/{taskId}/retry`
 
@@ -373,6 +396,27 @@ This document is the contract target for the cloud backend and the frontend impl
 
 - local agent upserts a mirrored social account state into cloud
 
+### `GET /agent/skills/{deviceCode}?since=...&limit=...`
+
+- local agent pulls enabled product skills for one claimed device
+- each item includes:
+  - `revision`
+  - `skill`
+  - `assets`
+  - optional current `sync` state for that device
+- optional `since` must be RFC3339
+
+### `POST /agent/skills/sync`
+
+- local agent reports per-skill sync status back to cloud
+- each item supports:
+  - `skillId`
+  - `syncStatus`
+  - optional `syncedRevision`
+  - optional `assetCount`
+  - optional `message`
+  - optional `lastSyncedAt`
+
 ### `POST /agent/materials/roots/sync`
 
 - sync allowed material roots from the local OmniBull machine
@@ -397,6 +441,19 @@ This document is the contract target for the cloud backend and the frontend impl
 - expired `running` leases are automatically recovered back to `pending`
 - expired `cancel_requested` leases are automatically recovered to `cancelled`
 
+### `GET /agent/publish-tasks/{taskId}/package?deviceCode=...`
+
+- local agent fetches one publish-task execution package
+- returns:
+  - `task`
+  - optional `account`
+  - optional `skill`
+  - `skillAssets`
+  - `materials`
+- also includes `readiness` so SAU can detect missing materials or disabled dependencies before it touches third-party platforms
+- may include `runtime` so SAU or OpenClaw can inspect the latest local execution snapshot
+- intended to give SAU one complete execution payload before talking to third-party platforms
+
 ### `POST /agent/publish-tasks/{taskId}/claim`
 
 - request body: `deviceCode`
@@ -411,17 +468,27 @@ This document is the contract target for the cloud backend and the frontend impl
 - extends the task lease for a running or cancel-requested task
 - if an old lease has already expired, the task may be recovered before the next poll
 
+### `POST /agent/publish-tasks/{taskId}/release`
+
+- request body: `deviceCode`, `leaseToken`, optional `message`
+- lets the local agent voluntarily release a claimed task lease
+- `running` tasks go back to `pending`
+- `cancel_requested` tasks become `cancelled`
+- intended for local preflight failures or fast cancel confirmation without waiting for lease expiry
+
 ### `POST /agent/publish-tasks/sync`
 
 - local agent mirrors task execution state back to cloud
 - supports task creation from local side or updating an existing cloud task
 - intended for `pending`, `running`, `success`, `failed`, `needs_verify` and similar states
 - supports optional `artifacts` for screenshots, logs, previews, and other structured evidence
+- supports optional `executionPayload` for current local progress, step, or executor context
 - if `verificationPayload.screenshotData` is provided as base64 or data URL, the backend stores it and rewrites the payload to `screenshotUrl` and storage metadata
 - if the task already exists under another device, the backend returns `409`
 - if the task currently has an active lease, `leaseToken` must match or the backend returns `409`
 - if the incoming status violates the cloud task state machine, the backend returns `409`
 - if an artifact is re-synced with the same `artifactKey` but a new stored file, the backend replaces the old file and cleans up the previous object when possible
+- runtime state is automatically cleared when a task returns to `pending` or reaches a terminal state
 
 ## Public File Delivery
 

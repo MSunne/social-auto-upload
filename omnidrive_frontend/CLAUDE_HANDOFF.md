@@ -120,18 +120,18 @@ Key screens to prioritize:
 
 1. Device online status must be obvious.
 2. Device cards and device detail pages should render the nested `device.load` counters.
-3. Device detail can call `/devices/{deviceId}/workspace` to populate recent tasks, recent accounts, active login sessions, and material roots in one round-trip.
+3. Device detail can call `/devices/{deviceId}/workspace` to populate recent tasks, recent accounts, active login sessions, material roots, and `skillSyncStates` in one round-trip.
 4. Remote login modal must support QR display and second-factor action buttons.
 5. Account list and account detail pages should render the nested `account.load` counters.
 6. Account detail can call `/accounts/{accountId}/workspace` to show related publish tasks and active verification sessions.
 7. Skill list and skill detail pages should render the nested `skill.load` counters.
-8. Skill detail can call `/skills/{skillId}/workspace` to get attached assets, recent dependent publish tasks, and recent AI jobs in one request.
-9. Task detail can call `/tasks/{taskId}/workspace` to get the related device, account, skill, events, artifacts, materials, and backend-computed action flags in one request.
+8. Skill detail can call `/skills/{skillId}/workspace` to get attached assets, recent dependent publish tasks, recent AI jobs, and `deviceSyncs` in one request.
+9. Task detail can call `/tasks/{taskId}/workspace` to get the related device, account, skill, events, artifacts, materials, backend-computed action flags, `readiness` checks, and optional `runtime` snapshot in one request.
 10. Task detail must display `needs_verify` clearly.
 11. Task detail should also show the event timeline from `/tasks/{taskId}/events`.
 12. Task detail should also render task artifacts from `/tasks/{taskId}/artifacts`, especially verification screenshots and text evidence.
 13. Task detail should also render selected input materials from `/tasks/{taskId}/materials`.
-14. Task detail should support explicit cancel, retry, and force-release actions and can trust the backend `actions` booleans from `/tasks/{taskId}/workspace`.
+14. Task detail should support explicit cancel, retry, force-release, resume, and manual-resolve actions and can trust the backend `actions` booleans from `/tasks/{taskId}/workspace`.
 15. Materials page should let users switch by device, root, and path, with file preview for text content.
 16. Skill pages should show both metadata and attached asset previews.
 17. Skill delete should surface the backend `409` usage summary instead of silently failing.

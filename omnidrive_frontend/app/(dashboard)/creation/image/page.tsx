@@ -45,16 +45,7 @@ const MODELS = [
   },
 ];
 
-const STYLES = [
-  "写实摄影",
-  "插画风格",
-  "赛博朋克",
-  "水彩画",
-  "3D 渲染",
-  "扁平设计",
-  "像素艺术",
-  "油画风格",
-];
+
 
 const RATIOS = [
   { label: "1:1", w: 1024, h: 1024 },
@@ -102,7 +93,7 @@ const mockHistory = [
 export default function ImageCreationPage() {
   const [prompt, setPrompt] = useState("");
   const [selectedModel, setSelectedModel] = useState("imagen3");
-  const [selectedStyle, setSelectedStyle] = useState("写实摄影");
+
   const [selectedRatio, setSelectedRatio] = useState("1:1");
   const [count, setCount] = useState(1);
   const [generating, setGenerating] = useState(false);
@@ -292,34 +283,13 @@ export default function ImageCreationPage() {
           </div>
         </motion.div>
 
-        {/* Style, Ratio & Count */}
+        {/* Ratio & Count */}
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.15 }}
-          className="glass-card p-4 space-y-4"
+          className="glass-card p-4"
         >
-          <div>
-            <label className="mb-3 block text-xs font-semibold text-text-muted uppercase tracking-wider">
-              风格预设
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {STYLES.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => setSelectedStyle(s)}
-                  className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-all ${
-                    selectedStyle === s
-                      ? "border-cyan/50 bg-cyan/10 text-cyan text-glow-cyan"
-                      : "border-border bg-transparent text-text-muted hover:text-text-secondary hover:border-border"
-                  }`}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
-
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="mb-2 block text-xs font-semibold text-text-muted uppercase tracking-wider">
@@ -378,15 +348,13 @@ export default function ImageCreationPage() {
         </motion.button>
       </div>
 
-      {/* ── Right: Preview & History ── */}
-      <div className="flex h-full flex-col gap-4 lg:col-span-8 xl:col-span-9 overflow-hidden">
-        
-        {/* Top: Main Preview Area — fixed height so it never pushes history out */}
+      {/* ── Middle: Main Image Preview ── */}
+      <div className="hidden lg:flex flex-col h-full lg:col-span-6 xl:col-span-7 pb-4 overflow-hidden">
         <motion.div
           initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.1 }}
-          className="glow-border relative h-[calc(100%-200px)] overflow-hidden rounded-2xl bg-surface-elevated cyber-grid border border-border shadow-2xl flex items-center justify-center"
+          className="glow-border relative flex-1 min-h-0 w-full overflow-hidden rounded-2xl bg-surface-elevated cyber-grid border border-border shadow-2xl flex items-center justify-center"
         >
           <AnimatePresence mode="wait">
             {selectedHistoryItem?.status === "generating" || generating ? (
@@ -397,18 +365,22 @@ export default function ImageCreationPage() {
                 exit={{ opacity: 0 }}
                 className="flex flex-col items-center justify-center gap-6"
               >
-                <div className="relative h-24 w-24">
-                  <div className="absolute inset-0 rounded-full border-4 border-surface border-t-accent animate-spin" />
-                  <div className="absolute inset-2 rounded-full border-4 border-surface border-b-cyan animate-[spin_1.5s_reverse_infinite]" />
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <Sparkles className="h-6 w-6 text-accent animate-pulse" />
-                  </div>
+                <div className="relative h-32 w-32 flex items-center justify-center">
+                  <div className="absolute inset-0 rounded-full border-[1px] border-accent/20 animate-[spin_4s_linear_infinite]" />
+                  <div className="absolute inset-2 rounded-full border-2 border-transparent border-t-accent border-b-cyan animate-[spin_2s_ease-in-out_infinite]" />
+                  <div className="absolute inset-6 rounded-full border-[1px] border-dashed border-cyan/40 animate-[spin_3s_reverse_infinite]" />
+                  <Sparkles className="h-8 w-8 text-accent animate-pulse z-10 drop-shadow-[0_0_8px_rgba(177,73,255,0.8)]" />
                 </div>
-                <div className="text-center space-y-2">
-                  <h3 className="text-xl font-bold tracking-widest text-glow text-accent-strong uppercase">
-                    Model Computing
+                <div className="text-center space-y-3">
+                  <h3 className="text-2xl font-black tracking-[0.2em] text-accent text-glow uppercase">
+                    Rendering
                   </h3>
-                  <p className="text-sm text-text-muted">正在连接神经网络节点渲染图像细节区...</p>
+                  <div className="flex flex-col items-center gap-1">
+                    <p className="text-xs text-text-muted tracking-wider">正在连接神经网络节点渲染图像细节区</p>
+                    <div className="w-48 h-1 bg-surface rounded-full overflow-hidden mt-2">
+                      <div className="h-full bg-gradient-to-r from-cyan to-accent w-1/2 rounded-full animate-[pulse_2s_ease-in-out_infinite] shadow-[0_0_10px_rgba(177,73,255,0.5)]" />
+                    </div>
+                  </div>
                 </div>
               </motion.div>
             ) : selectedHistoryItem?.imageUrl ? (
@@ -417,31 +389,31 @@ export default function ImageCreationPage() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="group relative h-full w-full"
+                className="group relative h-full w-full bg-black/30"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img 
                   src={selectedHistoryItem.imageUrl} 
                   alt="Preview" 
-                  className="h-full w-full object-contain p-4"
+                  className="h-full w-full object-contain p-2"
                 />
                 
-                {/* Floating Toolbar inside preview */}
-                <div className="absolute bottom-6 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-2xl border border-white/10 bg-black/40 p-2 backdrop-blur-xl opacity-0 transition-opacity group-hover:opacity-100 shadow-2xl">
-                  <button className="flex h-10 w-10 items-center justify-center rounded-xl text-white hover:bg-white/20 transition-colors tooltip" title="下载原图">
-                    <Download className="h-5 w-5" />
+                {/* Floating Toolbar */}
+                <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-2xl border border-white/10 bg-black/40 p-2 backdrop-blur-xl opacity-0 transition-opacity group-hover:opacity-100 shadow-2xl">
+                  <button className="flex h-9 w-9 items-center justify-center rounded-xl text-white hover:bg-white/20 transition-colors" title="下载原图">
+                    <Download className="h-4 w-4" />
                   </button>
-                  <div className="h-6 w-px bg-white/20" />
-                  <button className="flex h-10 w-10 items-center justify-center rounded-xl text-white hover:bg-white/20 transition-colors tooltip" title="复制链接">
-                    <Copy className="h-5 w-5" />
+                  <div className="h-5 w-px bg-white/20" />
+                  <button className="flex h-9 w-9 items-center justify-center rounded-xl text-white hover:bg-white/20 transition-colors" title="复制链接">
+                    <Copy className="h-4 w-4" />
                   </button>
-                  <button className="flex h-10 flex-col items-center justify-center px-4 rounded-xl text-white hover:bg-white/20 transition-colors tooltip" title="相似重绘">
-                    <RotateCcw className="h-4 w-4 mb-0.5" />
-                    <span className="text-[10px]">重绘</span>
+                  <button className="flex h-9 flex-col items-center justify-center px-3 rounded-xl text-white hover:bg-white/20 transition-colors" title="相似重绘">
+                    <RotateCcw className="h-3.5 w-3.5 mb-0.5" />
+                    <span className="text-[9px]">重绘</span>
                   </button>
                 </div>
                 
-                {/* Status Badge inside preview */}
+                {/* Status Badge */}
                 <div className="absolute left-6 top-6 flex items-center gap-2 rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 backdrop-blur-md">
                   <span className="flex h-2 w-2 rounded-full bg-success pulse-online" />
                   <span className="text-xs font-medium text-white">{selectedHistoryItem.model} • 渲染完成</span>
@@ -461,57 +433,61 @@ export default function ImageCreationPage() {
             )}
           </AnimatePresence>
         </motion.div>
+      </div>
 
-        {/* Bottom: History Thumbnails */}
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="h-[180px] shrink-0"
-        >
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-medium text-text-secondary flex items-center gap-2">
-              <Layers className="h-4 w-4" /> 历史记录库
-            </h3>
-            <span className="text-xs text-text-muted cursor-pointer hover:text-accent transition-colors">查看全部 →</span>
-          </div>
-          
-          <div className="flex h-[140px] gap-4 overflow-x-auto pb-2 scrollbar-hide">
-            {mockHistory.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => setSelectedHistoryId(item.id)}
-                className={cn(
-                  "group relative aspect-[4/3] h-full shrink-0 overflow-hidden rounded-xl border-2 transition-all",
-                  selectedHistoryId === item.id 
-                    ? "border-accent shadow-[0_0_15px_rgba(177,73,255,0.3)]" 
-                    : "border-border hover:border-accent/50 opacity-70 hover:opacity-100"
-                )}
-              >
+      {/* ── Right: History List ── */}
+      <div className="flex h-full flex-col gap-4 lg:col-span-2 xl:col-span-2 overflow-hidden border-l border-border/50 pl-5 pb-4">
+        <h3 className="shrink-0 text-sm font-semibold text-text-secondary flex items-center gap-2 uppercase tracking-widest border-b border-border/50 pb-3">
+          <Layers className="h-4 w-4 text-accent" /> 图片素材库
+        </h3>
+        
+        <div className="flex-1 overflow-y-auto space-y-3 pr-1 custom-scrollbar">
+          {mockHistory.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setSelectedHistoryId(item.id)}
+              className={cn(
+                "group relative w-full overflow-hidden rounded-xl border-2 transition-all text-left flex flex-col",
+                selectedHistoryId === item.id 
+                  ? "border-accent bg-accent/5 shadow-[0_0_15px_rgba(177,73,255,0.1)]" 
+                  : "border-border bg-surface hover:border-accent/40 hover:bg-surface-hover"
+              )}
+            >
+              {/* Thumbnail */}
+              <div className="relative w-full aspect-square bg-black shrink-0 border-b border-border/50">
                 {item.imageUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={item.imageUrl} alt="" className="h-full w-full object-cover" />
+                  <img src={item.imageUrl} className="h-full w-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt=""/>
                 ) : (
-                  <div className="flex h-full w-full items-center justify-center bg-surface-hover cyber-grid">
-                     <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent/30 border-t-accent" />
+                  <div className="flex h-full w-full items-center justify-center cyber-grid bg-surface-elevated">
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-accent/30 border-t-accent" />
                   </div>
                 )}
-                
-                {/* Meta overlay for thumbnail */}
-                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 text-left">
-                  <p className="line-clamp-1 text-[10px] text-white/90">{item.prompt}</p>
-                </div>
-                
-                {/* Status indicator badge */}
+                {/* Status overlay */}
                 {item.status === "generating" && (
-                  <div className="absolute top-2 right-2 rounded bg-black/60 px-1.5 py-0.5 backdrop-blur-sm text-[9px] text-warning flex items-center gap-1">
-                    <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" /> 生成中
+                  <div className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/80 backdrop-blur text-[9px] text-warning flex items-center gap-1">
+                    <span className="h-1 w-1 bg-warning rounded-full animate-pulse" />生成中
                   </div>
                 )}
-              </button>
-            ))}
-          </div>
-        </motion.div>
+              </div>
+              
+              {/* Info */}
+              <div className="p-2.5 flex-1 w-full">
+                <p className="text-[11px] leading-tight text-text-primary line-clamp-2 mb-1.5">
+                  {item.prompt}
+                </p>
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] text-text-muted uppercase">{item.model}</span>
+                  {item.status === "generating" ? (
+                    <span className="text-[9px] text-warning flex items-center gap-1"><div className="h-1 w-1 bg-warning rounded-full animate-pulse"/>执行中</span>
+                  ) : (
+                    <span className="text-[9px] text-success">已完成</span>
+                  )}
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

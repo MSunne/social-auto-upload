@@ -132,6 +132,21 @@ func (s *Store) GetOwnedAccountByID(ctx context.Context, accountID string, owner
 	return account, nil
 }
 
+func (s *Store) GetAccountByDeviceTarget(ctx context.Context, deviceID string, platform string, accountName string) (*domain.PlatformAccount, error) {
+	row := s.pool.QueryRow(ctx, platformAccountQueryWithLoad(`
+		WHERE pa.device_id = $1 AND pa.platform = $2 AND pa.account_name = $3
+	`), deviceID, platform, accountName)
+
+	account, err := scanPlatformAccountWithLoad(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return account, nil
+}
+
 func (s *Store) ListPublishTasksByAccountTarget(ctx context.Context, ownerUserID string, deviceID string, platform string, accountName string, limit int) ([]domain.PublishTask, error) {
 	query := `
 		SELECT pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.platform, pt.account_name,

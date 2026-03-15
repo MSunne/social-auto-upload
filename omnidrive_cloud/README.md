@@ -42,7 +42,7 @@ go run ./cmd/omnidrive-api
 - user register / login / `me`
 - device heartbeat, claim, list, update
 - device list and detail now include workload counters for mirrored accounts, materials, tasks, and login sessions
-- device workspace endpoint aggregates recent tasks, active login sessions, recent accounts, and material roots
+- device workspace endpoint aggregates recent tasks, active login sessions, recent accounts, material roots, and device skill sync states
 - account mirror list
 - account list and detail now include workload counters for related tasks and active login sessions
 - account workspace endpoint aggregates recent tasks and active login sessions for one mirrored platform account
@@ -55,16 +55,22 @@ go run ./cmd/omnidrive-api
 - successful login event mirroring back into platform account state
 - product skill asset metadata
 - skill list and detail now include workload counters for attached assets and related publish tasks
-- skill workspace endpoint aggregates attached assets, recent publish tasks, and recent AI jobs for one skill
+- skill workspace endpoint aggregates attached assets, recent publish tasks, recent AI jobs, and device sync states for one skill
 - product skill multipart upload with public file URL
 - skill detail and guarded delete
 - publish task create, detail, update, delete, device polling, and task status sync
 - publish task workspace endpoint aggregates related device/account/skill, timeline, artifacts, materials, and backend-computed action flags
+- publish task workspace now also includes a backend-computed readiness block so cloud and local executors can detect missing materials or disabled dependencies early
+- `needs_verify` tasks can now either be resumed back to `pending` or manually resolved into a final state with structured evidence
 - cloud-side force-release endpoint can manually free a stuck leased publish task before the lease naturally expires
+- task workspace and agent package can now expose a lightweight runtime snapshot from the local executor, such as current step or progress
 - publish task event timeline for cloud edits and agent execution evidence
 - structured publish task artifacts for verification screenshots and future outputs
 - task-to-material snapshot references for mirrored local files
+- agent-side publish-task package endpoint that resolves task, account, skill, skill assets, and materials into one execution payload
+- agent-side publish-task package also includes readiness checks for device/account/skill/material availability
 - publish task lease claim / renew flow for safer device-side execution
+- agent-side lease release endpoint so local SAU can requeue work or confirm cancellation without waiting for TTL expiry
 - `runAt` is respected by device polling and claim, so future tasks are not executed early
 - invalid agent-side status regressions are rejected with `409`
 - retry clears old task artifacts so each new attempt starts clean
@@ -74,6 +80,7 @@ go run ./cmd/omnidrive-api
 - deleting a skill also attempts to remove uploaded skill asset files from local object storage
 - expired running leases auto-recover so tasks do not remain stuck forever
 - material root, directory, and file-preview mirror APIs for local OmniBull content browsing
+- agent-side skill package pull and skill sync-state push APIs for local OmniBull / OpenClaw consumers
 - verification screenshot extraction and file URL generation during task sync
 - `needs_verify` tasks are retained for manual handling but no longer re-polled as executable device tasks
 - device/task mismatch during agent sync is rejected with `409`

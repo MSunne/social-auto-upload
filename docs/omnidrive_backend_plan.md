@@ -87,6 +87,7 @@ Phase 1 targets the operational backbone required by the current UI and the alre
 - enable / disable device
 - list device online status and basic runtime metrics
 - expose per-device workload counters and a device workspace view so the cloud can see what each OmniBull is currently handling
+- expose per-device skill sync states so the cloud can verify whether local SAU/OpenClaw has consumed the latest cloud strategy
 
 ### Agent Bridge
 
@@ -95,6 +96,9 @@ Phase 1 targets the operational backbone required by the current UI and the alre
 - consume login actions
 - push login session events
 - mirror publish task state
+- pull enabled skill packages for one device
+- sync per-skill revision / asset sync status back to cloud
+- fetch one full publish-task execution package before talking to third-party platforms
 
 ### Accounts
 
@@ -111,6 +115,7 @@ Phase 1 targets the operational backbone required by the current UI and the alre
 - detect whether a skill is used by accounts or tasks before delete
 - expose per-skill workload counters and a skill workspace view so the cloud can show attached assets and recent dependent tasks without extra joins in the frontend
 - include AI-job dependency tracking in skill workload and delete guards so one skill can safely back image/video/chat generation flows
+- allow local OmniBull agents to pull enabled skills with asset bundles and report per-device sync revisions
 
 ### Tasks
 
@@ -123,6 +128,10 @@ Phase 1 targets the operational backbone required by the current UI and the alre
 - store task-to-material snapshot references so local input files remain traceable even after directory changes
 - support task claim / lease / renew so one device execution worker owns the task for a bounded time
 - allow cloud operators to manually force-release a stuck active task lease without waiting for TTL expiry
+- expose an agent task-package endpoint that resolves account, skill, skill assets, and material refs into one execution payload
+- allow the local agent to voluntarily release a lease back to `pending` or confirm a `cancel_requested` task as `cancelled`
+- provide cloud-side `needs_verify` handling so operators can either resume automation or manually resolve the task with evidence
+- mirror a lightweight agent execution snapshot so cloud task detail can show current step / progress without touching SAU login or publish internals
 
 ### AI Jobs
 
@@ -182,12 +191,15 @@ Phase 1 targets the operational backbone required by the current UI and the alre
 - cloud creates a login session or publish intent
 - local agent polls for pending work
 - local agent claims work atomically
+- local agent pulls one full publish-task package after claim or before execution
+- local agent pulls enabled skill packages and their asset bundles by device
 
 ### OmniBull -> Cloud
 
 - local agent sends heartbeats
 - local agent sends login QR / verification updates
 - local agent mirrors account and publish task status
+- local agent mirrors skill sync revisions and sync health
 
 This keeps the local device behind NAT and avoids direct inbound access from cloud.
 

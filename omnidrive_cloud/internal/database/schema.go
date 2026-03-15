@@ -100,6 +100,20 @@ CREATE TABLE IF NOT EXISTS product_skill_assets (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS device_skill_sync_states (
+    id TEXT PRIMARY KEY,
+    device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    skill_id TEXT NOT NULL REFERENCES product_skills(id) ON DELETE CASCADE,
+    sync_status TEXT NOT NULL DEFAULT 'pending',
+    synced_revision TEXT,
+    asset_count BIGINT NOT NULL DEFAULT 0,
+    message TEXT,
+    last_synced_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(device_id, skill_id)
+);
+
 CREATE TABLE IF NOT EXISTS device_material_roots (
     id TEXT PRIMARY KEY,
     device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
@@ -188,6 +202,14 @@ CREATE TABLE IF NOT EXISTS publish_task_artifacts (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(task_id, artifact_key)
+);
+
+CREATE TABLE IF NOT EXISTS publish_task_runtime_states (
+    task_id TEXT PRIMARY KEY REFERENCES publish_tasks(id) ON DELETE CASCADE,
+    execution_payload JSONB,
+    last_agent_sync_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS publish_task_material_refs (
@@ -295,6 +317,8 @@ CREATE INDEX IF NOT EXISTS idx_login_sessions_user_id ON login_sessions(user_id)
 CREATE INDEX IF NOT EXISTS idx_login_session_actions_session_id ON login_session_actions(session_id);
 CREATE INDEX IF NOT EXISTS idx_product_skills_owner_user_id ON product_skills(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_product_skill_assets_skill_id ON product_skill_assets(skill_id);
+CREATE INDEX IF NOT EXISTS idx_device_skill_sync_states_device_id ON device_skill_sync_states(device_id);
+CREATE INDEX IF NOT EXISTS idx_device_skill_sync_states_skill_id ON device_skill_sync_states(skill_id);
 CREATE INDEX IF NOT EXISTS idx_device_material_roots_device_id ON device_material_roots(device_id);
 CREATE INDEX IF NOT EXISTS idx_device_material_entries_device_id ON device_material_entries(device_id);
 CREATE INDEX IF NOT EXISTS idx_device_material_entries_parent_path ON device_material_entries(device_id, root_name, parent_path);
@@ -304,6 +328,7 @@ CREATE INDEX IF NOT EXISTS idx_publish_tasks_lease_expires_at ON publish_tasks(l
 CREATE INDEX IF NOT EXISTS idx_publish_tasks_status_platform ON publish_tasks(status, platform);
 CREATE INDEX IF NOT EXISTS idx_publish_task_events_task_id ON publish_task_events(task_id);
 CREATE INDEX IF NOT EXISTS idx_publish_task_artifacts_task_id ON publish_task_artifacts(task_id);
+CREATE INDEX IF NOT EXISTS idx_publish_task_runtime_states_last_agent_sync_at ON publish_task_runtime_states(last_agent_sync_at);
 CREATE INDEX IF NOT EXISTS idx_publish_task_material_refs_task_id ON publish_task_material_refs(task_id);
 CREATE INDEX IF NOT EXISTS idx_ai_models_category ON ai_models(category);
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_owner_user_id ON ai_jobs(owner_user_id);

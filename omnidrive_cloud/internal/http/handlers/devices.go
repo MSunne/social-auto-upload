@@ -110,12 +110,19 @@ func (h *DeviceHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	skillSyncStates, err := h.app.Store.ListSkillSyncStatesByDevice(r.Context(), user.ID, deviceID, 12)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device skill sync states")
+		return
+	}
+
 	render.JSON(w, http.StatusOK, domain.DeviceWorkspace{
 		Device:              *device,
 		RecentTasks:         recentTasks,
 		ActiveLoginSessions: activeLoginSessions,
 		RecentAccounts:      recentAccounts,
 		MaterialRoots:       materialRoots,
+		SkillSyncStates:     skillSyncStates,
 	})
 }
 

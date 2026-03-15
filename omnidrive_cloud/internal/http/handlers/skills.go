@@ -121,12 +121,18 @@ func (h *SkillHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to load skill AI jobs")
 		return
 	}
+	deviceSyncs, err := h.app.Store.ListSkillSyncStatesBySkill(r.Context(), user.ID, skillID, 12)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load skill sync states")
+		return
+	}
 
 	render.JSON(w, http.StatusOK, domain.ProductSkillWorkspace{
 		Skill:        *skill,
 		Assets:       assets,
 		RecentTasks:  recentTasks,
 		RecentAIJobs: recentAIJobs,
+		DeviceSyncs:  deviceSyncs,
 	})
 }
 

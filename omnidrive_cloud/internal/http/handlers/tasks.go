@@ -46,6 +46,17 @@ type updateTaskRequest struct {
 	RunAt        *string                   `json:"runAt"`
 }
 
+type resumeTaskRequest struct {
+	Message *string `json:"message"`
+}
+
+type manualResolveTaskRequest struct {
+	Status       string      `json:"status"`
+	Message      *string     `json:"message"`
+	TextEvidence *string     `json:"textEvidence"`
+	Payload      interface{} `json:"payload"`
+}
+
 type taskMaterialRefRequest struct {
 	Root string  `json:"root"`
 	Path string  `json:"path"`
@@ -285,6 +296,13 @@ func (h *TaskHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if account == nil {
+		account, err = h.app.Store.GetAccountByDeviceTarget(r.Context(), task.DeviceID, task.Platform, task.AccountName)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to load task account")
+			return
+		}
+	}
 
 	var skill *domain.ProductSkill
 	if task.SkillID != nil && strings.TrimSpace(*task.SkillID) != "" {
@@ -310,6 +328,12 @@ func (h *TaskHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to load task materials")
 		return
 	}
+	runtimeState, err := h.app.Store.GetPublishTaskRuntimeStateByTaskID(r.Context(), task.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load task runtime state")
+		return
+	}
+	readiness := buildPublishTaskReadiness(r.Context(), h.app, task, device, account, skill)
 
 	render.JSON(w, http.StatusOK, domain.PublishTaskWorkspace{
 		Task:      *task,
@@ -320,6 +344,8 @@ func (h *TaskHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 		Artifacts: artifacts,
 		Materials: materials,
 		Actions:   computePublishTaskActions(task),
+		Readiness: readiness,
+		Runtime:   runtimeState,
 	})
 }
 
@@ -569,6 +595,10 @@ func (h *TaskHandler) Retry(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to clear previous task artifacts")
 		return
 	}
+	if err := h.app.Store.DeletePublishTaskRuntimeState(r.Context(), task.ID); err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to clear previous task runtime state")
+		return
+	}
 
 	_, _ = h.app.Store.CreatePublishTaskEvent(r.Context(), store.CreatePublishTaskEventInput{
 		ID:        uuid.NewString(),
@@ -615,6 +645,10 @@ func (h *TaskHandler) ForceRelease(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusConflict, "Task is not in a releasable leased state")
 		return
 	}
+	if err := h.app.Store.DeletePublishTaskRuntimeState(r.Context(), task.ID); err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to clear task runtime state")
+		return
+	}
 
 	_, _ = h.app.Store.CreatePublishTaskEvent(r.Context(), store.CreatePublishTaskEventInput{
 		ID:        uuid.NewString(),
@@ -633,6 +667,155 @@ func (h *TaskHandler) ForceRelease(w http.ResponseWriter, r *http.Request) {
 		Source:       task.Platform,
 		Status:       task.Status,
 		Message:      task.Message,
+	})
+
+	render.JSON(w, http.StatusOK, task)
+}
+
+func (h *TaskHandler) Resume(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
+	if taskID == "" {
+		render.Error(w, http.StatusBadRequest, "taskId is required")
+		return
+	}
+
+	var payload resumeTaskRequest
+	if err := render.DecodeJSON(r, &payload); err != nil && err.Error() != "EOF" {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	payload.Message = normalizeTrimmedString(payload.Message)
+
+	task, err := h.app.Store.ResumePublishTaskFromVerification(r.Context(), taskID, user.ID, payload.Message)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to resume task")
+		return
+	}
+	if task == nil {
+		render.Error(w, http.StatusConflict, "Task is not resumable from needs_verify")
+		return
+	}
+	if err := h.app.Store.DeletePublishTaskRuntimeState(r.Context(), task.ID); err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to clear task runtime state")
+		return
+	}
+
+	message := payload.Message
+	if message == nil {
+		message = auditStringPtr("人工验证后任务已恢复为待执行")
+	}
+	_, _ = h.app.Store.CreatePublishTaskEvent(r.Context(), store.CreatePublishTaskEventInput{
+		ID:        uuid.NewString(),
+		TaskID:    task.ID,
+		EventType: "resumed",
+		Source:    "cloud",
+		Status:    task.Status,
+		Message:   message,
+	})
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "publish_task",
+		ResourceID:   &task.ID,
+		Action:       "resume",
+		Title:        "恢复发布任务",
+		Source:       task.Platform,
+		Status:       task.Status,
+		Message:      message,
+	})
+
+	render.JSON(w, http.StatusOK, task)
+}
+
+func (h *TaskHandler) ManualResolve(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
+	if taskID == "" {
+		render.Error(w, http.StatusBadRequest, "taskId is required")
+		return
+	}
+
+	var payload manualResolveTaskRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	payload.Status = strings.TrimSpace(payload.Status)
+	payload.Message = normalizeTrimmedString(payload.Message)
+	payload.TextEvidence = normalizeTrimmedString(payload.TextEvidence)
+	if payload.Status != "success" && payload.Status != "completed" && payload.Status != "failed" && payload.Status != "cancelled" {
+		render.Error(w, http.StatusBadRequest, "status must be one of success, completed, failed, cancelled")
+		return
+	}
+
+	task, err := h.app.Store.ResolvePublishTaskManually(r.Context(), taskID, user.ID, payload.Status, payload.Message)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to resolve task manually")
+		return
+	}
+	if task == nil {
+		render.Error(w, http.StatusConflict, "Task is not manually resolvable")
+		return
+	}
+
+	var artifactCount int
+	if payload.TextEvidence != nil || payload.Payload != nil {
+		var artifactPayload []byte
+		if payload.Payload != nil {
+			artifactPayload = mustJSONBytes(payload.Payload)
+		}
+		title := "人工处理记录"
+		if _, err := h.app.Store.UpsertPublishTaskArtifacts(r.Context(), []store.UpsertPublishTaskArtifactInput{{
+			TaskID:       task.ID,
+			ArtifactKey:  "manual-resolution",
+			ArtifactType: "manual_note",
+			Source:       "cloud",
+			Title:        &title,
+			TextContent:  payload.TextEvidence,
+			Payload:      artifactPayload,
+		}}); err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to persist manual resolution evidence")
+			return
+		}
+		artifactCount = 1
+	}
+
+	message := payload.Message
+	if message == nil {
+		switch payload.Status {
+		case "success", "completed":
+			message = auditStringPtr("任务已人工处理完成")
+		case "failed":
+			message = auditStringPtr("任务已人工标记为失败")
+		case "cancelled":
+			message = auditStringPtr("任务已人工取消")
+		}
+	}
+	_, _ = h.app.Store.CreatePublishTaskEvent(r.Context(), store.CreatePublishTaskEventInput{
+		ID:        uuid.NewString(),
+		TaskID:    task.ID,
+		EventType: "manual_resolved",
+		Source:    "cloud",
+		Status:    task.Status,
+		Message:   message,
+		Payload: mustJSONBytes(map[string]any{
+			"artifactCount": artifactCount,
+			"status":        payload.Status,
+		}),
+	})
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "publish_task",
+		ResourceID:   &task.ID,
+		Action:       "manual_resolve",
+		Title:        "人工处理发布任务",
+		Source:       task.Platform,
+		Status:       task.Status,
+		Message:      message,
+		Payload: mustJSONBytes(map[string]any{
+			"artifactCount": artifactCount,
+			"status":        payload.Status,
+		}),
 	})
 
 	render.JSON(w, http.StatusOK, task)
@@ -782,14 +965,14 @@ func computePublishTaskActions(task *domain.PublishTask) domain.PublishTaskActio
 
 	switch task.Status {
 	case "pending":
-		return domain.PublishTaskActionState{CanEdit: true, CanCancel: true, CanRetry: false, CanDelete: true, CanForceRelease: false}
+		return domain.PublishTaskActionState{CanEdit: true, CanCancel: true, CanRetry: false, CanDelete: true, CanForceRelease: false, CanResume: false, CanResolveManual: false}
 	case "running", "cancel_requested":
-		return domain.PublishTaskActionState{CanEdit: false, CanCancel: task.Status == "running", CanRetry: false, CanDelete: false, CanForceRelease: true}
+		return domain.PublishTaskActionState{CanEdit: false, CanCancel: task.Status == "running", CanRetry: false, CanDelete: false, CanForceRelease: true, CanResume: false, CanResolveManual: false}
 	case "needs_verify":
-		return domain.PublishTaskActionState{CanEdit: true, CanCancel: true, CanRetry: true, CanDelete: true, CanForceRelease: false}
+		return domain.PublishTaskActionState{CanEdit: true, CanCancel: true, CanRetry: true, CanDelete: true, CanForceRelease: false, CanResume: true, CanResolveManual: true}
 	case "failed", "cancelled", "success", "completed":
-		return domain.PublishTaskActionState{CanEdit: true, CanCancel: false, CanRetry: true, CanDelete: true, CanForceRelease: false}
+		return domain.PublishTaskActionState{CanEdit: true, CanCancel: false, CanRetry: true, CanDelete: true, CanForceRelease: false, CanResume: false, CanResolveManual: false}
 	default:
-		return domain.PublishTaskActionState{CanEdit: true, CanCancel: false, CanRetry: false, CanDelete: true, CanForceRelease: false}
+		return domain.PublishTaskActionState{CanEdit: true, CanCancel: false, CanRetry: false, CanDelete: true, CanForceRelease: false, CanResume: false, CanResolveManual: false}
 	}
 }

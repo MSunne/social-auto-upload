@@ -127,6 +127,16 @@ type CreateSkillAssetInput struct {
 	SizeBytes   *int64
 }
 
+type UpsertDeviceSkillSyncStateInput struct {
+	DeviceID       string
+	SkillID        string
+	SyncStatus     string
+	SyncedRevision *string
+	AssetCount     int64
+	Message        *string
+	LastSyncedAt   *time.Time
+}
+
 type SyncMaterialRootInput struct {
 	DeviceID    string
 	RootName    string
@@ -220,6 +230,13 @@ type SyncPublishTaskInput struct {
 	LeaseToken          *string
 	RunAt               *time.Time
 	FinishedAt          *time.Time
+}
+
+type UpsertPublishTaskRuntimeStateInput struct {
+	TaskID           string
+	ExecutionPayload []byte
+	ExecutionTouched bool
+	LastAgentSyncAt  *time.Time
 }
 
 type UpdatePublishTaskInput struct {

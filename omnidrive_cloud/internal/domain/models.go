@@ -52,11 +52,12 @@ type DeviceLoad struct {
 }
 
 type DeviceWorkspace struct {
-	Device              Device            `json:"device"`
-	RecentTasks         []PublishTask     `json:"recentTasks"`
-	ActiveLoginSessions []LoginSession    `json:"activeLoginSessions"`
-	RecentAccounts      []PlatformAccount `json:"recentAccounts"`
-	MaterialRoots       []MaterialRoot    `json:"materialRoots"`
+	Device              Device                 `json:"device"`
+	RecentTasks         []PublishTask          `json:"recentTasks"`
+	ActiveLoginSessions []LoginSession         `json:"activeLoginSessions"`
+	RecentAccounts      []PlatformAccount      `json:"recentAccounts"`
+	MaterialRoots       []MaterialRoot         `json:"materialRoots"`
+	SkillSyncStates     []DeviceSkillSyncState `json:"skillSyncStates"`
 }
 
 type PlatformAccount struct {
@@ -152,11 +153,25 @@ type ProductSkillAsset struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
+type DeviceSkillSyncState struct {
+	ID             string     `json:"id"`
+	DeviceID       string     `json:"deviceId"`
+	SkillID        string     `json:"skillId"`
+	SyncStatus     string     `json:"syncStatus"`
+	SyncedRevision *string    `json:"syncedRevision"`
+	AssetCount     int64      `json:"assetCount"`
+	Message        *string    `json:"message"`
+	LastSyncedAt   *time.Time `json:"lastSyncedAt"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
+}
+
 type ProductSkillWorkspace struct {
-	Skill        ProductSkill        `json:"skill"`
-	Assets       []ProductSkillAsset `json:"assets"`
-	RecentTasks  []PublishTask       `json:"recentTasks"`
-	RecentAIJobs []AIJob             `json:"recentAiJobs"`
+	Skill        ProductSkill           `json:"skill"`
+	Assets       []ProductSkillAsset    `json:"assets"`
+	RecentTasks  []PublishTask          `json:"recentTasks"`
+	RecentAIJobs []AIJob                `json:"recentAiJobs"`
+	DeviceSyncs  []DeviceSkillSyncState `json:"deviceSyncs"`
 }
 
 type MaterialRoot struct {
@@ -218,11 +233,32 @@ type PublishTask struct {
 }
 
 type PublishTaskActionState struct {
-	CanEdit         bool `json:"canEdit"`
-	CanCancel       bool `json:"canCancel"`
-	CanRetry        bool `json:"canRetry"`
-	CanDelete       bool `json:"canDelete"`
-	CanForceRelease bool `json:"canForceRelease"`
+	CanEdit          bool `json:"canEdit"`
+	CanCancel        bool `json:"canCancel"`
+	CanRetry         bool `json:"canRetry"`
+	CanDelete        bool `json:"canDelete"`
+	CanForceRelease  bool `json:"canForceRelease"`
+	CanResume        bool `json:"canResume"`
+	CanResolveManual bool `json:"canResolveManual"`
+}
+
+type PublishTaskReadiness struct {
+	DeviceReady            bool     `json:"deviceReady"`
+	AccountReady           bool     `json:"accountReady"`
+	SkillReady             bool     `json:"skillReady"`
+	MaterialsReady         bool     `json:"materialsReady"`
+	TotalMaterialCount     int64    `json:"totalMaterialCount"`
+	AvailableMaterialCount int64    `json:"availableMaterialCount"`
+	MissingMaterialCount   int64    `json:"missingMaterialCount"`
+	Issues                 []string `json:"issues"`
+}
+
+type PublishTaskRuntimeState struct {
+	TaskID           string          `json:"taskId"`
+	ExecutionPayload json.RawMessage `json:"executionPayload,omitempty"`
+	LastAgentSyncAt  *time.Time      `json:"lastAgentSyncAt"`
+	CreatedAt        time.Time       `json:"createdAt"`
+	UpdatedAt        time.Time       `json:"updatedAt"`
 }
 
 type PublishTaskWorkspace struct {
@@ -234,6 +270,25 @@ type PublishTaskWorkspace struct {
 	Artifacts []PublishTaskArtifact    `json:"artifacts"`
 	Materials []PublishTaskMaterialRef `json:"materials"`
 	Actions   PublishTaskActionState   `json:"actions"`
+	Readiness PublishTaskReadiness     `json:"readiness"`
+	Runtime   *PublishTaskRuntimeState `json:"runtime,omitempty"`
+}
+
+type AgentSkillPackage struct {
+	Revision string                `json:"revision"`
+	Skill    ProductSkill          `json:"skill"`
+	Assets   []ProductSkillAsset   `json:"assets"`
+	Sync     *DeviceSkillSyncState `json:"sync,omitempty"`
+}
+
+type AgentPublishTaskPackage struct {
+	Task        PublishTask              `json:"task"`
+	Account     *PlatformAccount         `json:"account,omitempty"`
+	Skill       *ProductSkill            `json:"skill,omitempty"`
+	SkillAssets []ProductSkillAsset      `json:"skillAssets"`
+	Materials   []PublishTaskMaterialRef `json:"materials"`
+	Readiness   PublishTaskReadiness     `json:"readiness"`
+	Runtime     *PublishTaskRuntimeState `json:"runtime,omitempty"`
 }
 
 type PublishTaskEvent struct {

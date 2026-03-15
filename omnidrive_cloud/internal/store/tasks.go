@@ -357,6 +357,50 @@ func (s *Store) RenewPublishTaskLease(ctx context.Context, taskID string, device
 	return task, nil
 }
 
+func (s *Store) ReleasePublishTaskLeaseByAgent(ctx context.Context, taskID string, deviceID string, leaseToken string, message *string) (*domain.PublishTask, error) {
+	row := s.pool.QueryRow(ctx, `
+		UPDATE publish_tasks
+		SET status = CASE
+		        WHEN status = 'cancel_requested' THEN 'cancelled'
+		        ELSE 'pending'
+		    END,
+		    message = COALESCE($4, CASE
+		        WHEN status = 'cancel_requested' THEN '本地设备已确认取消任务'
+		        ELSE '本地设备已释放任务租约并重新排队'
+		    END),
+		    lease_owner_device_id = NULL,
+		    lease_token = NULL,
+		    lease_expires_at = NULL,
+		    cancel_requested_at = CASE
+		        WHEN status = 'cancel_requested' THEN cancel_requested_at
+		        ELSE NULL
+		    END,
+		    finished_at = CASE
+		        WHEN status = 'cancel_requested' THEN NOW()
+		        ELSE NULL
+		    END,
+		    updated_at = NOW()
+		WHERE id = $1
+		  AND device_id = $2
+		  AND lease_owner_device_id = $2
+		  AND lease_token = $3
+		  AND status IN ('running', 'cancel_requested')
+		RETURNING id, device_id, account_id, skill_id, platform, account_name,
+		          title, content_text, media_payload, status, message, verification_payload,
+		          lease_owner_device_id, lease_token, lease_expires_at, attempt_count, cancel_requested_at,
+		          run_at, finished_at, created_at, updated_at
+	`, taskID, deviceID, leaseToken, message)
+
+	task, err := scanPublishTask(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return task, nil
+}
+
 func (s *Store) RequestCancelPublishTask(ctx context.Context, taskID string, ownerUserID string) (*domain.PublishTask, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE publish_tasks pt
@@ -478,6 +522,80 @@ func (s *Store) ForceReleasePublishTaskLease(ctx context.Context, taskID string,
 		          pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at, pt.attempt_count, pt.cancel_requested_at,
 		          pt.run_at, pt.finished_at, pt.created_at, pt.updated_at
 	`, taskID, ownerUserID)
+
+	task, err := scanPublishTask(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return task, nil
+}
+
+func (s *Store) ResumePublishTaskFromVerification(ctx context.Context, taskID string, ownerUserID string, message *string) (*domain.PublishTask, error) {
+	row := s.pool.QueryRow(ctx, `
+		UPDATE publish_tasks pt
+		SET status = 'pending',
+		    message = COALESCE($3, '等待继续执行'),
+		    verification_payload = NULL,
+		    lease_owner_device_id = NULL,
+		    lease_token = NULL,
+		    lease_expires_at = NULL,
+		    cancel_requested_at = NULL,
+		    finished_at = NULL,
+		    updated_at = NOW()
+		FROM devices d
+		WHERE pt.device_id = d.id
+		  AND pt.id = $1
+		  AND d.owner_user_id = $2
+		  AND pt.status = 'needs_verify'
+		RETURNING pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.platform, pt.account_name,
+		          pt.title, pt.content_text, pt.media_payload, pt.status, pt.message, pt.verification_payload,
+		          pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at, pt.attempt_count, pt.cancel_requested_at,
+		          pt.run_at, pt.finished_at, pt.created_at, pt.updated_at
+	`, taskID, ownerUserID, message)
+
+	task, err := scanPublishTask(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return task, nil
+}
+
+func (s *Store) ResolvePublishTaskManually(ctx context.Context, taskID string, ownerUserID string, status string, message *string) (*domain.PublishTask, error) {
+	row := s.pool.QueryRow(ctx, `
+		UPDATE publish_tasks pt
+		SET status = $3,
+		    message = COALESCE($4, CASE
+		        WHEN $3 IN ('success', 'completed') THEN '任务已由人工处理完成'
+		        WHEN $3 = 'failed' THEN '任务已人工标记为失败'
+		        WHEN $3 = 'cancelled' THEN '任务已人工取消'
+		        ELSE pt.message
+		    END),
+		    verification_payload = NULL,
+		    lease_owner_device_id = NULL,
+		    lease_token = NULL,
+		    lease_expires_at = NULL,
+		    cancel_requested_at = CASE
+		        WHEN $3 = 'cancelled' THEN COALESCE(pt.cancel_requested_at, NOW())
+		        ELSE NULL
+		    END,
+		    finished_at = NOW(),
+		    updated_at = NOW()
+		FROM devices d
+		WHERE pt.device_id = d.id
+		  AND pt.id = $1
+		  AND d.owner_user_id = $2
+		  AND pt.status = 'needs_verify'
+		RETURNING pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.platform, pt.account_name,
+		          pt.title, pt.content_text, pt.media_payload, pt.status, pt.message, pt.verification_payload,
+		          pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at, pt.attempt_count, pt.cancel_requested_at,
+		          pt.run_at, pt.finished_at, pt.created_at, pt.updated_at
+	`, taskID, ownerUserID, status, message)
 
 	task, err := scanPublishTask(row)
 	if err != nil {
@@ -639,6 +757,26 @@ func scanPublishTaskMaterialRef(row pgx.Row) (*domain.PublishTaskMaterialRef, er
 	item.Extension = extension
 	item.MimeType = mimeType
 	item.PreviewText = previewText
+	return &item, nil
+}
+
+func scanPublishTaskRuntimeState(row pgx.Row) (*domain.PublishTaskRuntimeState, error) {
+	var item domain.PublishTaskRuntimeState
+	var executionPayload []byte
+	var lastAgentSyncAt *time.Time
+
+	if err := row.Scan(
+		&item.TaskID,
+		&executionPayload,
+		&lastAgentSyncAt,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		return nil, err
+	}
+
+	item.ExecutionPayload = bytesOrNil(executionPayload)
+	item.LastAgentSyncAt = lastAgentSyncAt
 	return &item, nil
 }
 
@@ -851,6 +989,105 @@ func (s *Store) ListPublishTaskMaterialRefsByOwner(ctx context.Context, taskID s
 		items = append(items, *ref)
 	}
 	return items, rows.Err()
+}
+
+func (s *Store) ListPublishTaskMaterialRefsByTaskID(ctx context.Context, taskID string) ([]domain.PublishTaskMaterialRef, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT refs.id, refs.task_id, refs.device_id, refs.root_name, refs.relative_path, refs.role,
+		       refs.name, refs.kind, refs.absolute_path, refs.size_bytes, refs.modified_at, refs.extension,
+		       refs.mime_type, refs.is_text, refs.preview_text, refs.created_at, refs.updated_at
+		FROM publish_task_material_refs refs
+		WHERE refs.task_id = $1
+		ORDER BY refs.created_at ASC
+	`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.PublishTaskMaterialRef, 0)
+	for rows.Next() {
+		ref, scanErr := scanPublishTaskMaterialRef(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *ref)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) CountPublishTaskAvailableMaterials(ctx context.Context, taskID string) (int64, int64, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT
+			COUNT(*)::BIGINT AS total_count,
+			COALESCE(SUM(
+				CASE
+					WHEN entries.relative_path IS NOT NULL AND entries.is_available = TRUE THEN 1
+					ELSE 0
+				END
+			), 0)::BIGINT AS available_count
+		FROM publish_task_material_refs refs
+		LEFT JOIN device_material_entries entries
+		  ON entries.device_id = refs.device_id
+		 AND entries.root_name = refs.root_name
+		 AND entries.relative_path = refs.relative_path
+		WHERE refs.task_id = $1
+	`, taskID)
+
+	var totalCount int64
+	var availableCount int64
+	if err := row.Scan(&totalCount, &availableCount); err != nil {
+		return 0, 0, err
+	}
+	return totalCount, availableCount, nil
+}
+
+func (s *Store) GetPublishTaskRuntimeStateByTaskID(ctx context.Context, taskID string) (*domain.PublishTaskRuntimeState, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT task_id, execution_payload, last_agent_sync_at, created_at, updated_at
+		FROM publish_task_runtime_states
+		WHERE task_id = $1
+	`, taskID)
+
+	item, err := scanPublishTaskRuntimeState(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return item, nil
+}
+
+func (s *Store) UpsertPublishTaskRuntimeState(ctx context.Context, input UpsertPublishTaskRuntimeStateInput) (*domain.PublishTaskRuntimeState, error) {
+	var executionPayload any
+	if input.ExecutionTouched {
+		executionPayload = input.ExecutionPayload
+	}
+	row := s.pool.QueryRow(ctx, `
+		INSERT INTO publish_task_runtime_states (
+			task_id, execution_payload, last_agent_sync_at
+		)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (task_id) DO UPDATE
+		SET execution_payload = CASE
+		        WHEN $4::boolean THEN $2::jsonb
+		        ELSE publish_task_runtime_states.execution_payload
+		    END,
+		    last_agent_sync_at = COALESCE($3, publish_task_runtime_states.last_agent_sync_at),
+		    updated_at = NOW()
+		RETURNING task_id, execution_payload, last_agent_sync_at, created_at, updated_at
+	`, input.TaskID, executionPayload, input.LastAgentSyncAt, input.ExecutionTouched)
+
+	return scanPublishTaskRuntimeState(row)
+}
+
+func (s *Store) DeletePublishTaskRuntimeState(ctx context.Context, taskID string) error {
+	_, err := s.pool.Exec(ctx, `
+		DELETE FROM publish_task_runtime_states
+		WHERE task_id = $1
+	`, taskID)
+	return err
 }
 
 func (s *Store) DeletePublishTaskArtifactsByOwner(ctx context.Context, taskID string, ownerUserID string) (int64, error) {

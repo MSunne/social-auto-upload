@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"omnidrive_cloud/internal/domain"
@@ -99,6 +101,39 @@ func (s *Store) ListSkillsByOwner(ctx context.Context, ownerUserID string) ([]do
 		WHERE owner_user_id = $1
 		ORDER BY updated_at DESC
 	`), ownerUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.ProductSkill, 0)
+	for rows.Next() {
+		skill, scanErr := scanSkillWithLoad(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *skill)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) ListEnabledSkillsByOwner(ctx context.Context, ownerUserID string, since *time.Time, limit int) ([]domain.ProductSkill, error) {
+	query := skillQueryWithLoad(`
+		WHERE owner_user_id = $1
+		  AND is_enabled = TRUE
+	`)
+	args := []any{ownerUserID}
+	if since != nil {
+		query += ` AND updated_at > $2`
+		args = append(args, since.UTC())
+	}
+	query += ` ORDER BY updated_at DESC`
+	if limit > 0 {
+		query += fmt.Sprintf(` LIMIT $%d`, len(args)+1)
+		args = append(args, limit)
+	}
+
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -241,6 +276,33 @@ func scanSkillAsset(row pgx.Row) (*domain.ProductSkillAsset, error) {
 	return &asset, nil
 }
 
+func scanDeviceSkillSyncState(row pgx.Row) (*domain.DeviceSkillSyncState, error) {
+	var item domain.DeviceSkillSyncState
+	var syncedRevision *string
+	var message *string
+	var lastSyncedAt *time.Time
+
+	if err := row.Scan(
+		&item.ID,
+		&item.DeviceID,
+		&item.SkillID,
+		&item.SyncStatus,
+		&syncedRevision,
+		&item.AssetCount,
+		&message,
+		&lastSyncedAt,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		return nil, err
+	}
+
+	item.SyncedRevision = syncedRevision
+	item.Message = message
+	item.LastSyncedAt = lastSyncedAt
+	return &item, nil
+}
+
 func (s *Store) ListSkillAssets(ctx context.Context, skillID string, ownerUserID string) ([]domain.ProductSkillAsset, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, skill_id, owner_user_id, asset_type, file_name, mime_type,
@@ -263,6 +325,114 @@ func (s *Store) ListSkillAssets(ctx context.Context, skillID string, ownerUserID
 		items = append(items, *asset)
 	}
 	return items, rows.Err()
+}
+
+func (s *Store) ListSkillSyncStatesByDevice(ctx context.Context, ownerUserID string, deviceID string, limit int) ([]domain.DeviceSkillSyncState, error) {
+	query := `
+		SELECT dsss.id, dsss.device_id, dsss.skill_id, dsss.sync_status, dsss.synced_revision,
+		       dsss.asset_count, dsss.message, dsss.last_synced_at, dsss.created_at, dsss.updated_at
+		FROM device_skill_sync_states dsss
+		INNER JOIN devices d ON d.id = dsss.device_id
+		INNER JOIN product_skills ps ON ps.id = dsss.skill_id
+		WHERE d.id = $1
+		  AND d.owner_user_id = $2
+		  AND ps.owner_user_id = $2
+		ORDER BY COALESCE(dsss.last_synced_at, dsss.updated_at) DESC, dsss.updated_at DESC
+	`
+	args := []any{deviceID, ownerUserID}
+	if limit > 0 {
+		query += ` LIMIT $3`
+		args = append(args, limit)
+	}
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.DeviceSkillSyncState, 0)
+	for rows.Next() {
+		item, scanErr := scanDeviceSkillSyncState(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) ListSkillSyncStatesBySkill(ctx context.Context, ownerUserID string, skillID string, limit int) ([]domain.DeviceSkillSyncState, error) {
+	query := `
+		SELECT dsss.id, dsss.device_id, dsss.skill_id, dsss.sync_status, dsss.synced_revision,
+		       dsss.asset_count, dsss.message, dsss.last_synced_at, dsss.created_at, dsss.updated_at
+		FROM device_skill_sync_states dsss
+		INNER JOIN devices d ON d.id = dsss.device_id
+		INNER JOIN product_skills ps ON ps.id = dsss.skill_id
+		WHERE dsss.skill_id = $1
+		  AND d.owner_user_id = $2
+		  AND ps.owner_user_id = $2
+		ORDER BY COALESCE(dsss.last_synced_at, dsss.updated_at) DESC, dsss.updated_at DESC
+	`
+	args := []any{skillID, ownerUserID}
+	if limit > 0 {
+		query += ` LIMIT $3`
+		args = append(args, limit)
+	}
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.DeviceSkillSyncState, 0)
+	for rows.Next() {
+		item, scanErr := scanDeviceSkillSyncState(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) GetDeviceSkillSyncState(ctx context.Context, deviceID string, skillID string) (*domain.DeviceSkillSyncState, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT id, device_id, skill_id, sync_status, synced_revision, asset_count, message,
+		       last_synced_at, created_at, updated_at
+		FROM device_skill_sync_states
+		WHERE device_id = $1 AND skill_id = $2
+	`, deviceID, skillID)
+
+	item, err := scanDeviceSkillSyncState(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return item, nil
+}
+
+func (s *Store) UpsertDeviceSkillSyncState(ctx context.Context, input UpsertDeviceSkillSyncStateInput) (*domain.DeviceSkillSyncState, error) {
+	row := s.pool.QueryRow(ctx, `
+		INSERT INTO device_skill_sync_states (
+			id, device_id, skill_id, sync_status, synced_revision, asset_count, message, last_synced_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (device_id, skill_id) DO UPDATE
+		SET sync_status = EXCLUDED.sync_status,
+		    synced_revision = EXCLUDED.synced_revision,
+		    asset_count = EXCLUDED.asset_count,
+		    message = EXCLUDED.message,
+		    last_synced_at = EXCLUDED.last_synced_at,
+		    updated_at = NOW()
+		RETURNING id, device_id, skill_id, sync_status, synced_revision, asset_count, message,
+		          last_synced_at, created_at, updated_at
+	`, uuid.NewString(), input.DeviceID, input.SkillID, input.SyncStatus, input.SyncedRevision, input.AssetCount, input.Message, input.LastSyncedAt)
+
+	return scanDeviceSkillSyncState(row)
 }
 
 func (s *Store) CreateSkillAsset(ctx context.Context, input CreateSkillAssetInput) (*domain.ProductSkillAsset, error) {
