@@ -710,6 +710,31 @@ func (s *Store) ListPublishTaskArtifactsByOwner(ctx context.Context, taskID stri
 	return items, rows.Err()
 }
 
+func (s *Store) ListPublishTaskArtifactsByTaskID(ctx context.Context, taskID string) ([]domain.PublishTaskArtifact, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, task_id, artifact_key, artifact_type, source, title,
+		       file_name, mime_type, storage_key, public_url, size_bytes,
+		       text_content, payload, created_at, updated_at
+		FROM publish_task_artifacts
+		WHERE task_id = $1
+		ORDER BY updated_at DESC, created_at DESC
+	`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.PublishTaskArtifact, 0)
+	for rows.Next() {
+		artifact, scanErr := scanPublishTaskArtifact(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *artifact)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) ReplacePublishTaskMaterialRefs(ctx context.Context, taskID string, ownerUserID string, items []ReplacePublishTaskMaterialRefInput) ([]domain.PublishTaskMaterialRef, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

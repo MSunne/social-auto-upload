@@ -71,6 +71,7 @@ Phase 1 targets the operational backbone required by the current UI and the alre
 8. Overview summary and history feed
 9. Basic AI model registry, AI job records, and package listing
 10. Local material root and file mirror for OmniBull devices
+11. Filterable merged history feed for the cloud console
 
 ## Core Modules
 
@@ -85,6 +86,7 @@ Phase 1 targets the operational backbone required by the current UI and the alre
 - claim device by `device_code`
 - enable / disable device
 - list device online status and basic runtime metrics
+- expose per-device workload counters and a device workspace view so the cloud can see what each OmniBull is currently handling
 
 ### Agent Bridge
 
@@ -99,17 +101,21 @@ Phase 1 targets the operational backbone required by the current UI and the alre
 - list mirrored social accounts per device
 - view account status and latest auth time
 - create remote login session for a device
+- expose per-account workload counters and an account workspace view so account detail pages can pull related tasks and active verification sessions in one request
+- guard account deletion when publish tasks or active verification sessions still depend on that mirrored account
 
 ### Skills
 
 - create, update, delete product skills
 - attach files and generation policy
 - detect whether a skill is used by accounts or tasks before delete
+- expose per-skill workload counters and a skill workspace view so the cloud can show attached assets and recent dependent tasks without extra joins in the frontend
 
 ### Tasks
 
 - list publish tasks
 - view publish task details
+- expose a task workspace view that aggregates related device/account/skill context, timeline, materials, artifacts, and backend action flags
 - track `needs_verify` state and screenshot metadata
 - keep a per-task event timeline for cloud edits and agent execution evidence
 - store structured task artifacts such as verification screenshots, logs, and local output references

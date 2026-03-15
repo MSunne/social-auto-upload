@@ -30,10 +30,22 @@ This document is the contract target for the cloud backend and the frontend impl
 ### `GET /devices`
 
 - list all devices owned by the current user
+- each device includes a nested `load` object with account, material, task, and login-session counts
 
 ### `GET /devices/{deviceId}`
 
 - fetch one device detail
+- includes the same nested `load` object as the device list
+
+### `GET /devices/{deviceId}/workspace`
+
+- fetch one device workspace payload
+- includes:
+  - `device`
+  - `recentTasks`
+  - `activeLoginSessions`
+  - `recentAccounts`
+  - `materialRoots`
 
 ### `POST /devices/claim`
 
@@ -51,27 +63,44 @@ This document is the contract target for the cloud backend and the frontend impl
 - fetch dashboard summary counts for the current user
 - includes recent publish tasks and recent AI jobs
 - also includes `materialRootCount` and `materialEntryCount`
+- also includes task breakdown counts such as `pendingTaskCount`, `runningTaskCount`, `needsVerifyTaskCount`, `failedTaskCount`
+- also includes `activeLoginSessionCount`
 
 ## History
 
-### `GET /history`
+### `GET /history?kind=...&status=...&limit=...`
 
 - returns a merged recent activity feed
 - combines publish tasks, AI jobs, and cloud-side audit events
+- optional filters:
+  - `kind`
+  - `status`
+  - `limit`
 
 ## Accounts
 
 ### `GET /accounts?deviceId=...`
 
 - list mirrored platform accounts
+- each account includes a nested `load` object with related task and login-session counters
 
 ### `GET /accounts/{accountId}`
 
 - fetch one account detail
+- includes the same nested `load` object as the account list
+
+### `GET /accounts/{accountId}/workspace`
+
+- fetch one account workspace payload
+- includes:
+  - `account`
+  - `recentTasks`
+  - `activeLoginSessions`
 
 ### `DELETE /accounts/{accountId}`
 
 - remove one mirrored account from cloud
+- returns `409` with usage summary if the account is still referenced by publish tasks or active login sessions
 
 ### `POST /accounts/{accountId}/validate`
 
@@ -117,6 +146,7 @@ This document is the contract target for the cloud backend and the frontend impl
 ### `GET /skills`
 
 - list product skills under the current user
+- each skill includes a nested `load` object with asset and related task counters
 
 ### `POST /skills`
 
@@ -129,11 +159,21 @@ This document is the contract target for the cloud backend and the frontend impl
 ### `GET /skills/{skillId}`
 
 - fetch one skill detail
+- includes the same nested `load` object as the skill list
+
+### `GET /skills/{skillId}/workspace`
+
+- fetch one skill workspace payload
+- includes:
+  - `skill`
+  - `assets`
+  - `recentTasks`
 
 ### `DELETE /skills/{skillId}`
 
 - delete a skill
 - returns `409` with usage summary if the skill is still referenced by publish tasks
+- deletes stored skill asset files referenced by that skill when possible
 
 ### `GET /skills/{skillId}/assets`
 
@@ -175,6 +215,20 @@ This document is the contract target for the cloud backend and the frontend impl
 
 - fetch publish task detail, including verification payload if present
 
+### `GET /tasks/{taskId}/workspace`
+
+- fetch one publish task workspace payload
+- includes:
+  - `task`
+  - `device`
+  - `account`
+  - `skill`
+  - `events`
+  - `artifacts`
+  - `materials`
+  - `actions`
+- `actions` exposes backend-computed booleans such as `canEdit`, `canCancel`, `canRetry`, `canDelete`
+
 ### `GET /tasks/{taskId}/events`
 
 - fetch the publish task timeline
@@ -201,6 +255,7 @@ This document is the contract target for the cloud backend and the frontend impl
 - reset a non-running task back to `pending`
 - clears verification payload and any lease state
 - clears previous task artifacts so the next attempt starts with a clean evidence set
+- deletes stored artifact files referenced by the previous attempt when possible
 
 ### `PATCH /tasks/{taskId}`
 
@@ -210,6 +265,7 @@ This document is the contract target for the cloud backend and the frontend impl
 ### `DELETE /tasks/{taskId}`
 
 - delete one publish task
+- also removes stored artifact files referenced by that task when possible
 
 ## AI
 
@@ -258,6 +314,7 @@ This document is the contract target for the cloud backend and the frontend impl
 ### `GET /agent/login-tasks/{deviceCode}`
 
 - returns pending login sessions for the device
+- disabled devices receive `409`
 
 ### `POST /agent/login-sessions/{sessionId}/event`
 
@@ -291,6 +348,7 @@ This document is the contract target for the cloud backend and the frontend impl
 - local agent polls actionable publish tasks for the device
 - current phase returns `pending` and `running`
 - tasks with future `runAt` stay hidden until their scheduled time arrives
+- disabled devices receive `409`
 - `needs_verify` stays in task detail and timeline, but is no longer re-queued for automatic execution
 - expired `running` leases are automatically recovered back to `pending`
 - expired `cancel_requested` leases are automatically recovered to `cancelled`
@@ -300,6 +358,7 @@ This document is the contract target for the cloud backend and the frontend impl
 - request body: `deviceCode`
 - atomically moves a `pending` task into `running`
 - tasks with future `runAt` cannot be claimed yet
+- disabled devices cannot claim tasks
 - returns `leaseToken` and `leaseExpiresAt`
 
 ### `POST /agent/publish-tasks/{taskId}/renew`
@@ -318,6 +377,7 @@ This document is the contract target for the cloud backend and the frontend impl
 - if the task already exists under another device, the backend returns `409`
 - if the task currently has an active lease, `leaseToken` must match or the backend returns `409`
 - if the incoming status violates the cloud task state machine, the backend returns `409`
+- if an artifact is re-synced with the same `artifactKey` but a new stored file, the backend replaces the old file and cleans up the previous object when possible
 
 ## Public File Delivery
 

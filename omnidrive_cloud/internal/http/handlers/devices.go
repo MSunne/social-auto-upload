@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	appstate "omnidrive_cloud/internal/app"
+	"omnidrive_cloud/internal/domain"
 	httpcontext "omnidrive_cloud/internal/http/context"
 	"omnidrive_cloud/internal/http/render"
 	"omnidrive_cloud/internal/store"
@@ -59,6 +60,63 @@ func (h *DeviceHandler) Detail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	render.JSON(w, http.StatusOK, device)
+}
+
+func (h *DeviceHandler) Workspace(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	deviceID := strings.TrimSpace(chi.URLParam(r, "deviceId"))
+	if deviceID == "" {
+		render.Error(w, http.StatusBadRequest, "deviceId is required")
+		return
+	}
+
+	device, err := h.app.Store.GetOwnedDevice(r.Context(), deviceID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device")
+		return
+	}
+	if device == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+
+	recentTasks, err := h.app.Store.ListPublishTasksByOwner(r.Context(), user.ID, store.ListPublishTasksFilter{
+		DeviceID: deviceID,
+		Limit:    8,
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device tasks")
+		return
+	}
+
+	activeLoginSessions, err := h.app.Store.ListActiveLoginSessionsByOwner(r.Context(), user.ID, deviceID, 6)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device login sessions")
+		return
+	}
+
+	recentAccounts, err := h.app.Store.ListAccountsByOwner(r.Context(), user.ID, deviceID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device accounts")
+		return
+	}
+	if len(recentAccounts) > 8 {
+		recentAccounts = recentAccounts[:8]
+	}
+
+	materialRoots, err := h.app.Store.ListMaterialRootsByOwner(r.Context(), user.ID, deviceID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device material roots")
+		return
+	}
+
+	render.JSON(w, http.StatusOK, domain.DeviceWorkspace{
+		Device:              *device,
+		RecentTasks:         recentTasks,
+		ActiveLoginSessions: activeLoginSessions,
+		RecentAccounts:      recentAccounts,
+		MaterialRoots:       materialRoots,
+	})
 }
 
 func (h *DeviceHandler) Claim(w http.ResponseWriter, r *http.Request) {

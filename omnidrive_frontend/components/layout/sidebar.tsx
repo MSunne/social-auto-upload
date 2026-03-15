@@ -17,6 +17,7 @@ import {
   LogOut,
   ChevronRight,
   Zap,
+  Layers,
 } from "lucide-react";
 
 const navGroups = [
@@ -38,6 +39,7 @@ const navGroups = [
     label: "管理中心",
     items: [
       { href: "/nodes", label: "OpenClaw 配置", icon: Server },
+      { href: "/skills", label: "产品技能库", icon: Layers },
       { href: "/tasks", label: "OpenClaw 任务", icon: ListTodo },
     ],
   },
@@ -55,10 +57,10 @@ export function Sidebar() {
   const { user, logout } = useAuthStore();
 
   return (
-    <aside className="fixed left-0 top-0 z-40 flex h-screen w-[260px] flex-col border-r border-border bg-surface/60 backdrop-blur-2xl">
+    <aside className="fixed left-0 top-0 z-40 flex h-screen w-[260px] flex-col border-r border-accent/10 bg-surface/60 backdrop-blur-2xl" style={{ boxShadow: 'inset -1px 0 0 rgba(177,73,255,0.08), 4px 0 40px rgba(177,73,255,0.04)' }}>
       {/* Brand */}
       <div className="flex items-center gap-3 px-5 py-6">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-accent to-cyan">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-accent via-pink to-cyan shadow-lg shadow-accent/30">
           <Zap className="h-5 w-5 text-background" />
         </div>
         <div>
@@ -89,14 +91,14 @@ export function Sidebar() {
                       className={cn(
                         "group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200",
                         isActive
-                          ? "bg-accent/15 text-accent-strong"
-                          : "text-text-secondary hover:bg-surface-hover hover:text-text-primary",
+                          ? "bg-accent/15 text-accent-strong shadow-[0_0_20px_rgba(177,73,255,0.12)]"
+                          : "text-text-secondary hover:bg-surface-hover hover:text-text-primary hover:shadow-[0_0_12px_rgba(177,73,255,0.06)]",
                       )}
                     >
                       {isActive && (
                         <motion.div
                           layoutId="navIndicator"
-                          className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-accent"
+                          className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-gradient-to-b from-accent to-cyan shadow-[0_0_12px_var(--color-accent-glow)]"
                           transition={{
                             type: "spring",
                             stiffness: 350,
@@ -122,7 +124,7 @@ export function Sidebar() {
       <div className="border-t border-border p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-accent/30 to-cyan/30 text-xs font-bold text-text-primary">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-accent/40 to-cyan/40 text-xs font-bold text-text-primary shadow-sm shadow-accent/20">
               {user?.name?.charAt(0)?.toUpperCase() ?? "U"}
             </div>
             <div className="min-w-0">

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	appstate "omnidrive_cloud/internal/app"
+	"omnidrive_cloud/internal/domain"
 	httpcontext "omnidrive_cloud/internal/http/context"
 	"omnidrive_cloud/internal/http/render"
 	"omnidrive_cloud/internal/store"
@@ -65,11 +66,64 @@ func (h *AccountHandler) Detail(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, account)
 }
 
+func (h *AccountHandler) Workspace(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	accountID := strings.TrimSpace(chi.URLParam(r, "accountId"))
+	if accountID == "" {
+		render.Error(w, http.StatusBadRequest, "accountId is required")
+		return
+	}
+
+	account, err := h.app.Store.GetOwnedAccountByID(r.Context(), accountID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load account")
+		return
+	}
+	if account == nil {
+		render.Error(w, http.StatusNotFound, "Account not found")
+		return
+	}
+
+	recentTasks, err := h.app.Store.ListPublishTasksByAccountTarget(r.Context(), user.ID, account.DeviceID, account.Platform, account.AccountName, 8)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load account tasks")
+		return
+	}
+
+	activeLoginSessions, err := h.app.Store.ListLoginSessionsByAccountTarget(r.Context(), user.ID, account.DeviceID, account.Platform, account.AccountName, 6)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load account login sessions")
+		return
+	}
+
+	render.JSON(w, http.StatusOK, domain.PlatformAccountWorkspace{
+		Account:             *account,
+		RecentTasks:         recentTasks,
+		ActiveLoginSessions: activeLoginSessions,
+	})
+}
+
 func (h *AccountHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	accountID := strings.TrimSpace(chi.URLParam(r, "accountId"))
 	if accountID == "" {
 		render.Error(w, http.StatusBadRequest, "accountId is required")
+		return
+	}
+
+	taskCount, activeLoginSessionCount, err := h.app.Store.GetAccountUsageSummary(r.Context(), accountID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to inspect account usage")
+		return
+	}
+	if taskCount > 0 || activeLoginSessionCount > 0 {
+		render.JSON(w, http.StatusConflict, map[string]any{
+			"error": "Account is still referenced by tasks or active login sessions",
+			"usage": map[string]any{
+				"publishTaskCount":        taskCount,
+				"activeLoginSessionCount": activeLoginSessionCount,
+			},
+		})
 		return
 	}
 

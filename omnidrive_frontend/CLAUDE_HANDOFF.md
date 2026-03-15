@@ -67,12 +67,15 @@ Key screens to prioritize:
 - `GET /api/v1/auth/me`
 - `GET /api/v1/overview/summary`
 - `GET /api/v1/history`
+- `GET /api/v1/history?kind=...&status=...&limit=...`
 - `GET /api/v1/devices`
 - `GET /api/v1/devices/{deviceId}`
+- `GET /api/v1/devices/{deviceId}/workspace`
 - `POST /api/v1/devices/claim`
 - `PATCH /api/v1/devices/{deviceId}`
 - `GET /api/v1/accounts`
 - `GET /api/v1/accounts/{accountId}`
+- `GET /api/v1/accounts/{accountId}/workspace`
 - `DELETE /api/v1/accounts/{accountId}`
 - `POST /api/v1/accounts/{accountId}/validate`
 - `POST /api/v1/accounts/remote-login`
@@ -84,6 +87,7 @@ Key screens to prioritize:
 - `GET /api/v1/skills`
 - `POST /api/v1/skills`
 - `GET /api/v1/skills/{skillId}`
+- `GET /api/v1/skills/{skillId}/workspace`
 - `PATCH /api/v1/skills/{skillId}`
 - `DELETE /api/v1/skills/{skillId}`
 - `GET /api/v1/skills/{skillId}/assets`
@@ -92,6 +96,7 @@ Key screens to prioritize:
 - `GET /api/v1/tasks`
 - `POST /api/v1/tasks`
 - `GET /api/v1/tasks/{taskId}`
+- `GET /api/v1/tasks/{taskId}/workspace`
 - `GET /api/v1/tasks/{taskId}/events`
 - `GET /api/v1/tasks/{taskId}/artifacts`
 - `GET /api/v1/tasks/{taskId}/materials`
@@ -109,18 +114,26 @@ Key screens to prioritize:
 ## UX Priorities
 
 1. Device online status must be obvious.
-2. Remote login modal must support QR display and second-factor action buttons.
-3. Task detail must display `needs_verify` clearly.
-4. Task detail should also show the event timeline from `/tasks/{taskId}/events`.
-5. Task detail should also render task artifacts from `/tasks/{taskId}/artifacts`, especially verification screenshots and text evidence.
-6. Task detail should also render selected input materials from `/tasks/{taskId}/materials`.
-7. Task detail should support explicit cancel and retry actions.
-8. Materials page should let users switch by device, root, and path, with file preview for text content.
-9. Skill pages should show both metadata and attached asset previews.
-10. Skill delete should surface the backend `409` usage summary instead of silently failing.
-11. Dashboard cards should read directly from `/overview/summary`, including material counts.
-12. History should render mixed item types using `kind`, `source`, and `status`, including `audit` items.
-13. Billing can start read-only with package cards and ledger table.
+2. Device cards and device detail pages should render the nested `device.load` counters.
+3. Device detail can call `/devices/{deviceId}/workspace` to populate recent tasks, recent accounts, active login sessions, and material roots in one round-trip.
+4. Remote login modal must support QR display and second-factor action buttons.
+5. Account list and account detail pages should render the nested `account.load` counters.
+6. Account detail can call `/accounts/{accountId}/workspace` to show related publish tasks and active verification sessions.
+7. Skill list and skill detail pages should render the nested `skill.load` counters.
+8. Skill detail can call `/skills/{skillId}/workspace` to get attached assets and recent dependent publish tasks in one request.
+9. Task detail can call `/tasks/{taskId}/workspace` to get the related device, account, skill, events, artifacts, materials, and backend-computed action flags in one request.
+10. Task detail must display `needs_verify` clearly.
+11. Task detail should also show the event timeline from `/tasks/{taskId}/events`.
+12. Task detail should also render task artifacts from `/tasks/{taskId}/artifacts`, especially verification screenshots and text evidence.
+13. Task detail should also render selected input materials from `/tasks/{taskId}/materials`.
+14. Task detail should support explicit cancel and retry actions and can trust the backend `actions` booleans from `/tasks/{taskId}/workspace`.
+15. Materials page should let users switch by device, root, and path, with file preview for text content.
+16. Skill pages should show both metadata and attached asset previews.
+17. Skill delete should surface the backend `409` usage summary instead of silently failing.
+18. Account delete should also surface the backend `409` usage summary instead of silently failing.
+19. Dashboard cards should read directly from `/overview/summary`, including material counts, task breakdown counts, and `activeLoginSessionCount`.
+20. History should render mixed item types using `kind`, `source`, and `status`, including `audit` items, and can use backend filters for tabs.
+21. Billing can start read-only with package cards and ledger table.
 
 ## Notes For Implementation
 

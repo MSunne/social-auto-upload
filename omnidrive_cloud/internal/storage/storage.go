@@ -81,6 +81,15 @@ func (s *Service) ReadBytes(_ context.Context, storageKey string) ([]byte, strin
 	return data, contentType, nil
 }
 
+func (s *Service) DeleteObject(_ context.Context, storageKey string) error {
+	storageKey = sanitizeStorageKey(storageKey)
+	fullPath := filepath.Join(s.rootDir, storageKey)
+	if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func (s *Service) publicURLFor(storageKey string) string {
 	path := "/api/v1/files/" + storageKey
 	if s.publicBaseURL == "" {

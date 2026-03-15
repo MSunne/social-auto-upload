@@ -30,22 +30,62 @@ type Device struct {
 	CreatedAt             time.Time       `json:"createdAt"`
 	UpdatedAt             time.Time       `json:"updatedAt"`
 	Status                string          `json:"status"`
+	Load                  DeviceLoad      `json:"load"`
 }
 
 func (d Device) GetAgentKey() string {
 	return d.AgentKey
 }
 
+type DeviceLoad struct {
+	AccountCount                  int64 `json:"accountCount"`
+	ActiveAccountCount            int64 `json:"activeAccountCount"`
+	MaterialRootCount             int64 `json:"materialRootCount"`
+	MaterialEntryCount            int64 `json:"materialEntryCount"`
+	PendingTaskCount              int64 `json:"pendingTaskCount"`
+	RunningTaskCount              int64 `json:"runningTaskCount"`
+	NeedsVerifyTaskCount          int64 `json:"needsVerifyTaskCount"`
+	CancelRequestedTaskCount      int64 `json:"cancelRequestedTaskCount"`
+	FailedTaskCount               int64 `json:"failedTaskCount"`
+	ActiveLoginSessionCount       int64 `json:"activeLoginSessionCount"`
+	VerificationLoginSessionCount int64 `json:"verificationLoginSessionCount"`
+}
+
+type DeviceWorkspace struct {
+	Device              Device            `json:"device"`
+	RecentTasks         []PublishTask     `json:"recentTasks"`
+	ActiveLoginSessions []LoginSession    `json:"activeLoginSessions"`
+	RecentAccounts      []PlatformAccount `json:"recentAccounts"`
+	MaterialRoots       []MaterialRoot    `json:"materialRoots"`
+}
+
 type PlatformAccount struct {
-	ID                  string     `json:"id"`
-	DeviceID            string     `json:"deviceId"`
-	Platform            string     `json:"platform"`
-	AccountName         string     `json:"accountName"`
-	Status              string     `json:"status"`
-	LastMessage         *string    `json:"lastMessage"`
-	LastAuthenticatedAt *time.Time `json:"lastAuthenticatedAt"`
-	CreatedAt           time.Time  `json:"createdAt"`
-	UpdatedAt           time.Time  `json:"updatedAt"`
+	ID                  string              `json:"id"`
+	DeviceID            string              `json:"deviceId"`
+	Platform            string              `json:"platform"`
+	AccountName         string              `json:"accountName"`
+	Status              string              `json:"status"`
+	LastMessage         *string             `json:"lastMessage"`
+	LastAuthenticatedAt *time.Time          `json:"lastAuthenticatedAt"`
+	CreatedAt           time.Time           `json:"createdAt"`
+	UpdatedAt           time.Time           `json:"updatedAt"`
+	Load                PlatformAccountLoad `json:"load"`
+}
+
+type PlatformAccountLoad struct {
+	TaskCount                     int64 `json:"taskCount"`
+	PendingTaskCount              int64 `json:"pendingTaskCount"`
+	RunningTaskCount              int64 `json:"runningTaskCount"`
+	NeedsVerifyTaskCount          int64 `json:"needsVerifyTaskCount"`
+	FailedTaskCount               int64 `json:"failedTaskCount"`
+	ActiveLoginSessionCount       int64 `json:"activeLoginSessionCount"`
+	VerificationLoginSessionCount int64 `json:"verificationLoginSessionCount"`
+}
+
+type PlatformAccountWorkspace struct {
+	Account             PlatformAccount `json:"account"`
+	RecentTasks         []PublishTask   `json:"recentTasks"`
+	ActiveLoginSessions []LoginSession  `json:"activeLoginSessions"`
 }
 
 type LoginSession struct {
@@ -73,17 +113,27 @@ type LoginSessionAction struct {
 }
 
 type ProductSkill struct {
-	ID               string          `json:"id"`
-	OwnerUserID      string          `json:"ownerUserId"`
-	Name             string          `json:"name"`
-	Description      string          `json:"description"`
-	OutputType       string          `json:"outputType"`
-	ModelName        string          `json:"modelName"`
-	PromptTemplate   *string         `json:"promptTemplate"`
-	ReferencePayload json.RawMessage `json:"referencePayload,omitempty"`
-	IsEnabled        bool            `json:"isEnabled"`
-	CreatedAt        time.Time       `json:"createdAt"`
-	UpdatedAt        time.Time       `json:"updatedAt"`
+	ID               string           `json:"id"`
+	OwnerUserID      string           `json:"ownerUserId"`
+	Name             string           `json:"name"`
+	Description      string           `json:"description"`
+	OutputType       string           `json:"outputType"`
+	ModelName        string           `json:"modelName"`
+	PromptTemplate   *string          `json:"promptTemplate"`
+	ReferencePayload json.RawMessage  `json:"referencePayload,omitempty"`
+	IsEnabled        bool             `json:"isEnabled"`
+	CreatedAt        time.Time        `json:"createdAt"`
+	UpdatedAt        time.Time        `json:"updatedAt"`
+	Load             ProductSkillLoad `json:"load"`
+}
+
+type ProductSkillLoad struct {
+	AssetCount           int64 `json:"assetCount"`
+	TaskCount            int64 `json:"taskCount"`
+	PendingTaskCount     int64 `json:"pendingTaskCount"`
+	RunningTaskCount     int64 `json:"runningTaskCount"`
+	NeedsVerifyTaskCount int64 `json:"needsVerifyTaskCount"`
+	FailedTaskCount      int64 `json:"failedTaskCount"`
 }
 
 type ProductSkillAsset struct {
@@ -98,6 +148,12 @@ type ProductSkillAsset struct {
 	SizeBytes   *int64    `json:"sizeBytes"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+type ProductSkillWorkspace struct {
+	Skill       ProductSkill        `json:"skill"`
+	Assets      []ProductSkillAsset `json:"assets"`
+	RecentTasks []PublishTask       `json:"recentTasks"`
 }
 
 type MaterialRoot struct {
@@ -156,6 +212,24 @@ type PublishTask struct {
 	FinishedAt          *time.Time      `json:"finishedAt"`
 	CreatedAt           time.Time       `json:"createdAt"`
 	UpdatedAt           time.Time       `json:"updatedAt"`
+}
+
+type PublishTaskActionState struct {
+	CanEdit   bool `json:"canEdit"`
+	CanCancel bool `json:"canCancel"`
+	CanRetry  bool `json:"canRetry"`
+	CanDelete bool `json:"canDelete"`
+}
+
+type PublishTaskWorkspace struct {
+	Task      PublishTask              `json:"task"`
+	Device    *Device                  `json:"device,omitempty"`
+	Account   *PlatformAccount         `json:"account,omitempty"`
+	Skill     *ProductSkill            `json:"skill,omitempty"`
+	Events    []PublishTaskEvent       `json:"events"`
+	Artifacts []PublishTaskArtifact    `json:"artifacts"`
+	Materials []PublishTaskMaterialRef `json:"materials"`
+	Actions   PublishTaskActionState   `json:"actions"`
 }
 
 type PublishTaskEvent struct {

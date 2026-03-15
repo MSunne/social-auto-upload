@@ -227,6 +227,10 @@ func (h *AgentHandler) ListLoginTasks(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusForbidden, "Agent key mismatch")
 		return
 	}
+	if !device.IsEnabled {
+		render.Error(w, http.StatusConflict, "Device is disabled")
+		return
+	}
 
 	items, err := h.app.Store.ListPendingLoginTasksByDevice(r.Context(), device.ID)
 	if err != nil {
@@ -363,6 +367,10 @@ func (h *AgentHandler) ListPublishTasks(w http.ResponseWriter, r *http.Request) 
 		render.Error(w, http.StatusForbidden, "Agent key mismatch")
 		return
 	}
+	if !device.IsEnabled {
+		render.Error(w, http.StatusConflict, "Device is disabled")
+		return
+	}
 
 	h.recordRecoveredPublishTasks(r.Context(), device)
 
@@ -404,6 +412,10 @@ func (h *AgentHandler) ClaimPublishTask(w http.ResponseWriter, r *http.Request) 
 	}
 	if !agentKeyMatches(device, agentKey) {
 		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+		return
+	}
+	if !device.IsEnabled {
+		render.Error(w, http.StatusConflict, "Device is disabled")
 		return
 	}
 
@@ -613,16 +625,23 @@ func (h *AgentHandler) SyncPublishTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	existingArtifacts, err := h.app.Store.ListPublishTaskArtifactsByTaskID(r.Context(), task.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to inspect existing publish task artifacts")
+		return
+	}
 	artifactInputs, err := h.preparePublishTaskArtifacts(r.Context(), task.ID, verificationPayload, payload.Artifacts)
 	if err != nil {
 		render.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if len(artifactInputs) > 0 {
-		if _, err := h.app.Store.UpsertPublishTaskArtifacts(r.Context(), artifactInputs); err != nil {
+		updatedArtifacts, err := h.app.Store.UpsertPublishTaskArtifacts(r.Context(), artifactInputs)
+		if err != nil {
 			render.Error(w, http.StatusInternalServerError, "Failed to sync publish task artifacts")
 			return
 		}
+		cleanupReplacedArtifactFiles(h.app, r.Context(), existingArtifacts, updatedArtifacts)
 	}
 	if device.OwnerUserID != nil {
 		_, _ = h.app.Store.CreatePublishTaskEvent(r.Context(), store.CreatePublishTaskEventInput{

@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"omnidrive_cloud/internal/domain"
 )
@@ -18,7 +20,11 @@ func (s *Store) GetOverviewSummary(ctx context.Context, ownerUserID string) (*Ov
 			COALESCE((SELECT COUNT(*) FROM device_material_entries me INNER JOIN devices d ON d.id = me.device_id WHERE d.owner_user_id = $1 AND me.is_available = TRUE), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM product_skills WHERE owner_user_id = $1), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM publish_tasks pt INNER JOIN devices d ON d.id = pt.device_id WHERE d.owner_user_id = $1), 0)::BIGINT,
+			COALESCE((SELECT COUNT(*) FROM publish_tasks pt INNER JOIN devices d ON d.id = pt.device_id WHERE d.owner_user_id = $1 AND pt.status = 'pending'), 0)::BIGINT,
+			COALESCE((SELECT COUNT(*) FROM publish_tasks pt INNER JOIN devices d ON d.id = pt.device_id WHERE d.owner_user_id = $1 AND pt.status = 'running'), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM publish_tasks pt INNER JOIN devices d ON d.id = pt.device_id WHERE d.owner_user_id = $1 AND pt.status = 'needs_verify'), 0)::BIGINT,
+			COALESCE((SELECT COUNT(*) FROM publish_tasks pt INNER JOIN devices d ON d.id = pt.device_id WHERE d.owner_user_id = $1 AND pt.status = 'failed'), 0)::BIGINT,
+			COALESCE((SELECT COUNT(*) FROM login_sessions ls INNER JOIN devices d ON d.id = ls.device_id WHERE d.owner_user_id = $1 AND ls.status IN ('pending', 'running', 'verification_required')), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE owner_user_id = $1), 0)::BIGINT,
 			COALESCE((SELECT balance_after FROM wallet_ledgers WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1), 0)::BIGINT
 	`, ownerUserID).Scan(
@@ -29,7 +35,11 @@ func (s *Store) GetOverviewSummary(ctx context.Context, ownerUserID string) (*Ov
 		&summary.MaterialEntryCount,
 		&summary.SkillCount,
 		&summary.TaskCount,
+		&summary.PendingTaskCount,
+		&summary.RunningTaskCount,
 		&summary.NeedsVerifyTaskCount,
+		&summary.FailedTaskCount,
+		&summary.ActiveLoginSessionCount,
 		&summary.AIJobCount,
 		&summary.BalanceCredits,
 	); err != nil {
@@ -53,8 +63,8 @@ func (s *Store) GetOverviewSummary(ctx context.Context, ownerUserID string) (*Ov
 	return summary, nil
 }
 
-func (s *Store) ListHistoryByOwner(ctx context.Context, ownerUserID string) ([]domain.HistoryItem, error) {
-	rows, err := s.pool.Query(ctx, `
+func (s *Store) ListHistoryByOwner(ctx context.Context, ownerUserID string, filter ListHistoryFilter) ([]domain.HistoryItem, error) {
+	query := `
 		SELECT id, kind, title, status, source, message, created_at, updated_at, finished_at
 		FROM (
 			SELECT
@@ -101,9 +111,29 @@ func (s *Store) ListHistoryByOwner(ctx context.Context, ownerUserID string) ([]d
 			FROM audit_events ae
 			WHERE ae.owner_user_id = $1
 		) history
-		ORDER BY updated_at DESC
-		LIMIT 100
-	`, ownerUserID)
+		WHERE 1 = 1
+	`
+	args := []any{ownerUserID}
+	argIndex := 2
+	if kind := strings.TrimSpace(filter.Kind); kind != "" {
+		query += fmt.Sprintf(" AND kind = $%d", argIndex)
+		args = append(args, kind)
+		argIndex++
+	}
+	if status := strings.TrimSpace(filter.Status); status != "" {
+		query += fmt.Sprintf(" AND status = $%d", argIndex)
+		args = append(args, status)
+		argIndex++
+	}
+	query += " ORDER BY updated_at DESC"
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	query += fmt.Sprintf(" LIMIT $%d", argIndex)
+	args = append(args, limit)
+
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

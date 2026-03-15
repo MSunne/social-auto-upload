@@ -281,19 +281,29 @@ type CreateAuditEventInput struct {
 	Payload      []byte
 }
 
+type ListHistoryFilter struct {
+	Kind   string
+	Status string
+	Limit  int
+}
+
 type OverviewSummary struct {
-	DeviceCount          int64                `json:"deviceCount"`
-	OnlineDeviceCount    int64                `json:"onlineDeviceCount"`
-	AccountCount         int64                `json:"accountCount"`
-	MaterialRootCount    int64                `json:"materialRootCount"`
-	MaterialEntryCount   int64                `json:"materialEntryCount"`
-	SkillCount           int64                `json:"skillCount"`
-	TaskCount            int64                `json:"taskCount"`
-	NeedsVerifyTaskCount int64                `json:"needsVerifyTaskCount"`
-	AIJobCount           int64                `json:"aiJobCount"`
-	BalanceCredits       int64                `json:"balanceCredits"`
-	RecentTasks          []domain.PublishTask `json:"recentTasks"`
-	RecentAIJobs         []domain.AIJob       `json:"recentAiJobs"`
+	DeviceCount             int64                `json:"deviceCount"`
+	OnlineDeviceCount       int64                `json:"onlineDeviceCount"`
+	AccountCount            int64                `json:"accountCount"`
+	MaterialRootCount       int64                `json:"materialRootCount"`
+	MaterialEntryCount      int64                `json:"materialEntryCount"`
+	SkillCount              int64                `json:"skillCount"`
+	TaskCount               int64                `json:"taskCount"`
+	PendingTaskCount        int64                `json:"pendingTaskCount"`
+	RunningTaskCount        int64                `json:"runningTaskCount"`
+	NeedsVerifyTaskCount    int64                `json:"needsVerifyTaskCount"`
+	FailedTaskCount         int64                `json:"failedTaskCount"`
+	ActiveLoginSessionCount int64                `json:"activeLoginSessionCount"`
+	AIJobCount              int64                `json:"aiJobCount"`
+	BalanceCredits          int64                `json:"balanceCredits"`
+	RecentTasks             []domain.PublishTask `json:"recentTasks"`
+	RecentAIJobs            []domain.AIJob       `json:"recentAiJobs"`
 }
 
 func (s *Store) Ping(ctx context.Context) error {

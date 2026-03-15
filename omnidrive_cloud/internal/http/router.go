@@ -54,6 +54,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 				devices.Get("/", deviceHandler.List)
 				devices.Post("/claim", deviceHandler.Claim)
 				devices.Get("/{deviceId}", deviceHandler.Detail)
+				devices.Get("/{deviceId}/workspace", deviceHandler.Workspace)
 				devices.Patch("/{deviceId}", deviceHandler.Update)
 			})
 
@@ -66,6 +67,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 			private.Route("/accounts", func(accounts chi.Router) {
 				accounts.Get("/", accountHandler.List)
 				accounts.Get("/{accountId}", accountHandler.Detail)
+				accounts.Get("/{accountId}/workspace", accountHandler.Workspace)
 				accounts.Delete("/{accountId}", accountHandler.Delete)
 				accounts.Post("/{accountId}/validate", accountHandler.Validate)
 				accounts.Post("/remote-login", accountHandler.CreateRemoteLogin)
@@ -77,6 +79,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 				skills.Get("/", skillHandler.List)
 				skills.Post("/", skillHandler.Create)
 				skills.Get("/{skillId}", skillHandler.Detail)
+				skills.Get("/{skillId}/workspace", skillHandler.Workspace)
 				skills.Patch("/{skillId}", skillHandler.Update)
 				skills.Delete("/{skillId}", skillHandler.Delete)
 				skills.Get("/{skillId}/assets", skillHandler.ListAssets)
@@ -88,6 +91,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 				tasks.Get("/", taskHandler.List)
 				tasks.Post("/", taskHandler.Create)
 				tasks.Get("/{taskId}", taskHandler.Detail)
+				tasks.Get("/{taskId}/workspace", taskHandler.Workspace)
 				tasks.Get("/{taskId}/events", taskHandler.Events)
 				tasks.Get("/{taskId}/artifacts", taskHandler.Artifacts)
 				tasks.Get("/{taskId}/materials", taskHandler.Materials)

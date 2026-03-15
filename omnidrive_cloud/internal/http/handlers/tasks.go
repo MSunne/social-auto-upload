@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	appstate "omnidrive_cloud/internal/app"
+	"omnidrive_cloud/internal/domain"
 	httpcontext "omnidrive_cloud/internal/http/context"
 	"omnidrive_cloud/internal/http/render"
 	"omnidrive_cloud/internal/store"
@@ -250,6 +251,76 @@ func (h *TaskHandler) Detail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	render.JSON(w, http.StatusOK, task)
+}
+
+func (h *TaskHandler) Workspace(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
+	if taskID == "" {
+		render.Error(w, http.StatusBadRequest, "taskId is required")
+		return
+	}
+
+	task, err := h.app.Store.GetPublishTaskByOwner(r.Context(), taskID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load task")
+		return
+	}
+	if task == nil {
+		render.Error(w, http.StatusNotFound, "Task not found")
+		return
+	}
+
+	device, err := h.app.Store.GetOwnedDevice(r.Context(), task.DeviceID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load task device")
+		return
+	}
+
+	var account *domain.PlatformAccount
+	if task.AccountID != nil && strings.TrimSpace(*task.AccountID) != "" {
+		account, err = h.app.Store.GetOwnedAccountByID(r.Context(), strings.TrimSpace(*task.AccountID), user.ID)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to load task account")
+			return
+		}
+	}
+
+	var skill *domain.ProductSkill
+	if task.SkillID != nil && strings.TrimSpace(*task.SkillID) != "" {
+		skill, err = h.app.Store.GetOwnedSkillByID(r.Context(), strings.TrimSpace(*task.SkillID), user.ID)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to load task skill")
+			return
+		}
+	}
+
+	events, err := h.app.Store.ListPublishTaskEventsByOwner(r.Context(), task.ID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load task events")
+		return
+	}
+	artifacts, err := h.app.Store.ListPublishTaskArtifactsByOwner(r.Context(), task.ID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load task artifacts")
+		return
+	}
+	materials, err := h.app.Store.ListPublishTaskMaterialRefsByOwner(r.Context(), task.ID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load task materials")
+		return
+	}
+
+	render.JSON(w, http.StatusOK, domain.PublishTaskWorkspace{
+		Task:      *task,
+		Device:    device,
+		Account:   account,
+		Skill:     skill,
+		Events:    events,
+		Artifacts: artifacts,
+		Materials: materials,
+		Actions:   computePublishTaskActions(task),
+	})
 }
 
 func (h *TaskHandler) Events(w http.ResponseWriter, r *http.Request) {
@@ -630,5 +701,55 @@ func cleanupArtifactFiles(app *appstate.App, ctx context.Context, artifacts []do
 		}
 		seen[key] = struct{}{}
 		_ = app.Storage.DeleteObject(ctx, key)
+	}
+}
+
+func cleanupReplacedArtifactFiles(app *appstate.App, ctx context.Context, previous []domain.PublishTaskArtifact, current []domain.PublishTaskArtifact) {
+	if app == nil || app.Storage == nil {
+		return
+	}
+
+	previousByKey := make(map[string]string, len(previous))
+	for _, artifact := range previous {
+		if artifact.StorageKey == nil || strings.TrimSpace(*artifact.StorageKey) == "" {
+			continue
+		}
+		previousByKey[artifact.ArtifactKey] = strings.TrimSpace(*artifact.StorageKey)
+	}
+
+	seen := make(map[string]struct{}, len(current))
+	for _, artifact := range current {
+		if artifact.StorageKey == nil || strings.TrimSpace(*artifact.StorageKey) == "" {
+			continue
+		}
+		newKey := strings.TrimSpace(*artifact.StorageKey)
+		oldKey, exists := previousByKey[artifact.ArtifactKey]
+		if !exists || oldKey == "" || oldKey == newKey {
+			continue
+		}
+		if _, done := seen[oldKey]; done {
+			continue
+		}
+		seen[oldKey] = struct{}{}
+		_ = app.Storage.DeleteObject(ctx, oldKey)
+	}
+}
+
+func computePublishTaskActions(task *domain.PublishTask) domain.PublishTaskActionState {
+	if task == nil {
+		return domain.PublishTaskActionState{}
+	}
+
+	switch task.Status {
+	case "pending":
+		return domain.PublishTaskActionState{CanEdit: true, CanCancel: true, CanRetry: false, CanDelete: true}
+	case "running", "cancel_requested":
+		return domain.PublishTaskActionState{CanEdit: false, CanCancel: task.Status == "running", CanRetry: false, CanDelete: false}
+	case "needs_verify":
+		return domain.PublishTaskActionState{CanEdit: true, CanCancel: true, CanRetry: true, CanDelete: true}
+	case "failed", "cancelled", "success", "completed":
+		return domain.PublishTaskActionState{CanEdit: true, CanCancel: false, CanRetry: true, CanDelete: true}
+	default:
+		return domain.PublishTaskActionState{CanEdit: true, CanCancel: false, CanRetry: false, CanDelete: true}
 	}
 }

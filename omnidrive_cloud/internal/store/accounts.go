@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,14 +36,63 @@ func scanPlatformAccount(row pgx.Row) (*domain.PlatformAccount, error) {
 	return &account, nil
 }
 
-func (s *Store) ListAccountsByOwner(ctx context.Context, ownerUserID string, deviceID string) ([]domain.PlatformAccount, error) {
-	query := `
-		SELECT pa.id, pa.device_id, pa.platform, pa.account_name, pa.status, pa.last_message,
-		       pa.last_authenticated_at, pa.created_at, pa.updated_at
+func scanPlatformAccountWithLoad(row pgx.Row) (*domain.PlatformAccount, error) {
+	var account domain.PlatformAccount
+	var lastMessage *string
+	var lastAuthenticatedAt *time.Time
+
+	if err := row.Scan(
+		&account.ID,
+		&account.DeviceID,
+		&account.Platform,
+		&account.AccountName,
+		&account.Status,
+		&lastMessage,
+		&lastAuthenticatedAt,
+		&account.CreatedAt,
+		&account.UpdatedAt,
+		&account.Load.TaskCount,
+		&account.Load.PendingTaskCount,
+		&account.Load.RunningTaskCount,
+		&account.Load.NeedsVerifyTaskCount,
+		&account.Load.FailedTaskCount,
+		&account.Load.ActiveLoginSessionCount,
+		&account.Load.VerificationLoginSessionCount,
+	); err != nil {
+		return nil, err
+	}
+
+	account.LastMessage = lastMessage
+	account.LastAuthenticatedAt = lastAuthenticatedAt
+	return &account, nil
+}
+
+const platformAccountSelectColumns = `
+	pa.id, pa.device_id, pa.platform, pa.account_name, pa.status, pa.last_message,
+	pa.last_authenticated_at, pa.created_at, pa.updated_at
+`
+
+const platformAccountLoadColumns = `
+	COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.device_id = pa.device_id AND pt.platform = pa.platform AND pt.account_name = pa.account_name), 0)::BIGINT AS task_count,
+	COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.device_id = pa.device_id AND pt.platform = pa.platform AND pt.account_name = pa.account_name AND pt.status = 'pending'), 0)::BIGINT AS pending_task_count,
+	COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.device_id = pa.device_id AND pt.platform = pa.platform AND pt.account_name = pa.account_name AND pt.status = 'running'), 0)::BIGINT AS running_task_count,
+	COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.device_id = pa.device_id AND pt.platform = pa.platform AND pt.account_name = pa.account_name AND pt.status = 'needs_verify'), 0)::BIGINT AS needs_verify_task_count,
+	COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.device_id = pa.device_id AND pt.platform = pa.platform AND pt.account_name = pa.account_name AND pt.status = 'failed'), 0)::BIGINT AS failed_task_count,
+	COALESCE((SELECT COUNT(*) FROM login_sessions ls WHERE ls.device_id = pa.device_id AND ls.platform = pa.platform AND ls.account_name = pa.account_name AND ls.status IN ('pending', 'running', 'verification_required')), 0)::BIGINT AS active_login_session_count,
+	COALESCE((SELECT COUNT(*) FROM login_sessions ls WHERE ls.device_id = pa.device_id AND ls.platform = pa.platform AND ls.account_name = pa.account_name AND ls.status = 'verification_required'), 0)::BIGINT AS verification_login_session_count
+`
+
+func platformAccountQueryWithLoad(whereClause string) string {
+	return fmt.Sprintf(`
+		SELECT %s, %s
 		FROM platform_accounts pa
 		INNER JOIN devices d ON d.id = pa.device_id
-		WHERE d.owner_user_id = $1
-	`
+		%s
+	`, platformAccountSelectColumns, platformAccountLoadColumns, whereClause)
+}
+
+func (s *Store) ListAccountsByOwner(ctx context.Context, ownerUserID string, deviceID string) ([]domain.PlatformAccount, error) {
+	query := platformAccountQueryWithLoad(`WHERE d.owner_user_id = $1`)
 	args := []any{ownerUserID}
 	if deviceID != "" {
 		query += ` AND pa.device_id = $2`
@@ -58,7 +108,7 @@ func (s *Store) ListAccountsByOwner(ctx context.Context, ownerUserID string, dev
 
 	items := make([]domain.PlatformAccount, 0)
 	for rows.Next() {
-		account, scanErr := scanPlatformAccount(rows)
+		account, scanErr := scanPlatformAccountWithLoad(rows)
 		if scanErr != nil {
 			return nil, scanErr
 		}
@@ -68,15 +118,11 @@ func (s *Store) ListAccountsByOwner(ctx context.Context, ownerUserID string, dev
 }
 
 func (s *Store) GetOwnedAccountByID(ctx context.Context, accountID string, ownerUserID string) (*domain.PlatformAccount, error) {
-	row := s.pool.QueryRow(ctx, `
-		SELECT pa.id, pa.device_id, pa.platform, pa.account_name, pa.status, pa.last_message,
-		       pa.last_authenticated_at, pa.created_at, pa.updated_at
-		FROM platform_accounts pa
-		INNER JOIN devices d ON d.id = pa.device_id
+	row := s.pool.QueryRow(ctx, platformAccountQueryWithLoad(`
 		WHERE pa.id = $1 AND d.owner_user_id = $2
-	`, accountID, ownerUserID)
+	`), accountID, ownerUserID)
 
-	account, err := scanPlatformAccount(row)
+	account, err := scanPlatformAccountWithLoad(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -84,6 +130,43 @@ func (s *Store) GetOwnedAccountByID(ctx context.Context, accountID string, owner
 		return nil, err
 	}
 	return account, nil
+}
+
+func (s *Store) ListPublishTasksByAccountTarget(ctx context.Context, ownerUserID string, deviceID string, platform string, accountName string, limit int) ([]domain.PublishTask, error) {
+	query := `
+		SELECT pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.platform, pt.account_name,
+		       pt.title, pt.content_text, pt.media_payload, pt.status, pt.message,
+		       pt.verification_payload, pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at,
+		       pt.attempt_count, pt.cancel_requested_at, pt.run_at, pt.finished_at, pt.created_at, pt.updated_at
+		FROM publish_tasks pt
+		INNER JOIN devices d ON d.id = pt.device_id
+		WHERE d.owner_user_id = $1
+		  AND pt.device_id = $2
+		  AND pt.platform = $3
+		  AND pt.account_name = $4
+		ORDER BY pt.updated_at DESC
+	`
+	args := []any{ownerUserID, deviceID, platform, accountName}
+	if limit > 0 {
+		query += ` LIMIT $5`
+		args = append(args, limit)
+	}
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.PublishTask, 0)
+	for rows.Next() {
+		task, scanErr := scanPublishTask(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *task)
+	}
+	return items, rows.Err()
 }
 
 func (s *Store) DeleteOwnedAccount(ctx context.Context, accountID string, ownerUserID string) (bool, error) {
@@ -98,6 +181,42 @@ func (s *Store) DeleteOwnedAccount(ctx context.Context, accountID string, ownerU
 		return false, err
 	}
 	return commandTag.RowsAffected() > 0, nil
+}
+
+func (s *Store) GetAccountUsageSummary(ctx context.Context, accountID string, ownerUserID string) (int64, int64, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT
+			COALESCE((
+				SELECT COUNT(*)
+				FROM publish_tasks pt
+				INNER JOIN platform_accounts pa ON pa.id = $1
+				INNER JOIN devices d ON d.id = pa.device_id
+				WHERE pa.id = $1
+				  AND d.owner_user_id = $2
+				  AND pt.device_id = pa.device_id
+				  AND pt.platform = pa.platform
+				  AND pt.account_name = pa.account_name
+			), 0)::BIGINT,
+			COALESCE((
+				SELECT COUNT(*)
+				FROM login_sessions ls
+				INNER JOIN platform_accounts pa ON pa.id = $1
+				INNER JOIN devices d ON d.id = pa.device_id
+				WHERE pa.id = $1
+				  AND d.owner_user_id = $2
+				  AND ls.device_id = pa.device_id
+				  AND ls.platform = pa.platform
+				  AND ls.account_name = pa.account_name
+				  AND ls.status IN ('pending', 'running', 'verification_required')
+			), 0)::BIGINT
+	`, accountID, ownerUserID)
+
+	var taskCount int64
+	var activeLoginSessionCount int64
+	if err := row.Scan(&taskCount, &activeLoginSessionCount); err != nil {
+		return 0, 0, err
+	}
+	return taskCount, activeLoginSessionCount, nil
 }
 
 func scanLoginSession(row pgx.Row) (*domain.LoginSession, error) {
@@ -174,6 +293,93 @@ func (s *Store) GetOwnedLoginSession(ctx context.Context, sessionID string, owne
 		return nil, err
 	}
 	return session, nil
+}
+
+func (s *Store) ListActiveLoginSessionsByOwner(ctx context.Context, ownerUserID string, deviceID string, limit int) ([]domain.LoginSession, error) {
+	query := `
+		SELECT ls.id, ls.device_id, ls.user_id, ls.platform, ls.account_name, ls.status, ls.qr_data,
+		       ls.verification_payload, ls.message, ls.created_at, ls.updated_at
+		FROM login_sessions ls
+		INNER JOIN devices d ON d.id = ls.device_id
+		WHERE d.owner_user_id = $1
+		  AND ls.status IN ('pending', 'running', 'verification_required')
+	`
+	args := []any{ownerUserID}
+	if deviceID != "" {
+		query += ` AND ls.device_id = $2`
+		args = append(args, deviceID)
+	}
+	query += ` ORDER BY ls.updated_at DESC`
+	if limit > 0 {
+		query += ` LIMIT $3`
+		if deviceID == "" {
+			query = `
+				SELECT ls.id, ls.device_id, ls.user_id, ls.platform, ls.account_name, ls.status, ls.qr_data,
+				       ls.verification_payload, ls.message, ls.created_at, ls.updated_at
+				FROM login_sessions ls
+				INNER JOIN devices d ON d.id = ls.device_id
+				WHERE d.owner_user_id = $1
+				  AND ls.status IN ('pending', 'running', 'verification_required')
+				ORDER BY ls.updated_at DESC
+				LIMIT $2
+			`
+			args = []any{ownerUserID, limit}
+		} else {
+			args = append(args, limit)
+		}
+	}
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.LoginSession, 0)
+	for rows.Next() {
+		session, scanErr := scanLoginSession(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *session)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) ListLoginSessionsByAccountTarget(ctx context.Context, ownerUserID string, deviceID string, platform string, accountName string, limit int) ([]domain.LoginSession, error) {
+	query := `
+		SELECT ls.id, ls.device_id, ls.user_id, ls.platform, ls.account_name, ls.status, ls.qr_data,
+		       ls.verification_payload, ls.message, ls.created_at, ls.updated_at
+		FROM login_sessions ls
+		INNER JOIN devices d ON d.id = ls.device_id
+		WHERE d.owner_user_id = $1
+		  AND ls.device_id = $2
+		  AND ls.platform = $3
+		  AND ls.account_name = $4
+		  AND ls.status IN ('pending', 'running', 'verification_required')
+		ORDER BY ls.updated_at DESC
+	`
+	args := []any{ownerUserID, deviceID, platform, accountName}
+	if limit > 0 {
+		query += ` LIMIT $5`
+		args = append(args, limit)
+	}
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.LoginSession, 0)
+	for rows.Next() {
+		session, scanErr := scanLoginSession(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *session)
+	}
+	return items, rows.Err()
 }
 
 func (s *Store) ListPendingLoginTasksByDevice(ctx context.Context, deviceID string) ([]domain.LoginSession, error) {

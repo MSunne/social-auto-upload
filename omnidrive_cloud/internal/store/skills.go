@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 
@@ -35,14 +36,65 @@ func scanSkill(row pgx.Row) (*domain.ProductSkill, error) {
 	return &skill, nil
 }
 
-func (s *Store) ListSkillsByOwner(ctx context.Context, ownerUserID string) ([]domain.ProductSkill, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, owner_user_id, name, description, output_type, model_name,
-		       prompt_template, reference_payload, is_enabled, created_at, updated_at
+func scanSkillWithLoad(row pgx.Row) (*domain.ProductSkill, error) {
+	var skill domain.ProductSkill
+	var promptTemplate *string
+	var referencePayload []byte
+
+	if err := row.Scan(
+		&skill.ID,
+		&skill.OwnerUserID,
+		&skill.Name,
+		&skill.Description,
+		&skill.OutputType,
+		&skill.ModelName,
+		&promptTemplate,
+		&referencePayload,
+		&skill.IsEnabled,
+		&skill.CreatedAt,
+		&skill.UpdatedAt,
+		&skill.Load.AssetCount,
+		&skill.Load.TaskCount,
+		&skill.Load.PendingTaskCount,
+		&skill.Load.RunningTaskCount,
+		&skill.Load.NeedsVerifyTaskCount,
+		&skill.Load.FailedTaskCount,
+	); err != nil {
+		return nil, err
+	}
+
+	skill.PromptTemplate = promptTemplate
+	skill.ReferencePayload = bytesOrNil(referencePayload)
+	return &skill, nil
+}
+
+const skillSelectColumns = `
+	id, owner_user_id, name, description, output_type, model_name,
+	prompt_template, reference_payload, is_enabled, created_at, updated_at
+`
+
+const skillLoadColumns = `
+	COALESCE((SELECT COUNT(*) FROM product_skill_assets psa WHERE psa.skill_id = product_skills.id AND psa.owner_user_id = product_skills.owner_user_id), 0)::BIGINT AS asset_count,
+	COALESCE((SELECT COUNT(*) FROM publish_tasks pt INNER JOIN devices d ON d.id = pt.device_id WHERE pt.skill_id = product_skills.id AND d.owner_user_id = product_skills.owner_user_id), 0)::BIGINT AS task_count,
+	COALESCE((SELECT COUNT(*) FROM publish_tasks pt INNER JOIN devices d ON d.id = pt.device_id WHERE pt.skill_id = product_skills.id AND d.owner_user_id = product_skills.owner_user_id AND pt.status = 'pending'), 0)::BIGINT AS pending_task_count,
+	COALESCE((SELECT COUNT(*) FROM publish_tasks pt INNER JOIN devices d ON d.id = pt.device_id WHERE pt.skill_id = product_skills.id AND d.owner_user_id = product_skills.owner_user_id AND pt.status = 'running'), 0)::BIGINT AS running_task_count,
+	COALESCE((SELECT COUNT(*) FROM publish_tasks pt INNER JOIN devices d ON d.id = pt.device_id WHERE pt.skill_id = product_skills.id AND d.owner_user_id = product_skills.owner_user_id AND pt.status = 'needs_verify'), 0)::BIGINT AS needs_verify_task_count,
+	COALESCE((SELECT COUNT(*) FROM publish_tasks pt INNER JOIN devices d ON d.id = pt.device_id WHERE pt.skill_id = product_skills.id AND d.owner_user_id = product_skills.owner_user_id AND pt.status = 'failed'), 0)::BIGINT AS failed_task_count
+`
+
+func skillQueryWithLoad(whereClause string) string {
+	return fmt.Sprintf(`
+		SELECT %s, %s
 		FROM product_skills
+		%s
+	`, skillSelectColumns, skillLoadColumns, whereClause)
+}
+
+func (s *Store) ListSkillsByOwner(ctx context.Context, ownerUserID string) ([]domain.ProductSkill, error) {
+	rows, err := s.pool.Query(ctx, skillQueryWithLoad(`
 		WHERE owner_user_id = $1
 		ORDER BY updated_at DESC
-	`, ownerUserID)
+	`), ownerUserID)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +102,7 @@ func (s *Store) ListSkillsByOwner(ctx context.Context, ownerUserID string) ([]do
 
 	items := make([]domain.ProductSkill, 0)
 	for rows.Next() {
-		skill, scanErr := scanSkill(rows)
+		skill, scanErr := scanSkillWithLoad(rows)
 		if scanErr != nil {
 			return nil, scanErr
 		}
@@ -107,14 +159,11 @@ func (s *Store) UpdateSkill(ctx context.Context, skillID string, ownerUserID str
 }
 
 func (s *Store) GetOwnedSkillByID(ctx context.Context, skillID string, ownerUserID string) (*domain.ProductSkill, error) {
-	row := s.pool.QueryRow(ctx, `
-		SELECT id, owner_user_id, name, description, output_type, model_name,
-		       prompt_template, reference_payload, is_enabled, created_at, updated_at
-		FROM product_skills
+	row := s.pool.QueryRow(ctx, skillQueryWithLoad(`
 		WHERE id = $1 AND owner_user_id = $2
-	`, skillID, ownerUserID)
+	`), skillID, ownerUserID)
 
-	skill, err := scanSkill(row)
+	skill, err := scanSkillWithLoad(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -122,6 +171,40 @@ func (s *Store) GetOwnedSkillByID(ctx context.Context, skillID string, ownerUser
 		return nil, err
 	}
 	return skill, nil
+}
+
+func (s *Store) ListPublishTasksBySkill(ctx context.Context, ownerUserID string, skillID string, limit int) ([]domain.PublishTask, error) {
+	query := `
+		SELECT pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.platform, pt.account_name,
+		       pt.title, pt.content_text, pt.media_payload, pt.status, pt.message,
+		       pt.verification_payload, pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at,
+		       pt.attempt_count, pt.cancel_requested_at, pt.run_at, pt.finished_at, pt.created_at, pt.updated_at
+		FROM publish_tasks pt
+		INNER JOIN devices d ON d.id = pt.device_id
+		WHERE pt.skill_id = $1 AND d.owner_user_id = $2
+		ORDER BY pt.updated_at DESC
+	`
+	args := []any{skillID, ownerUserID}
+	if limit > 0 {
+		query += ` LIMIT $3`
+		args = append(args, limit)
+	}
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.PublishTask, 0)
+	for rows.Next() {
+		task, scanErr := scanPublishTask(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *task)
+	}
+	return items, rows.Err()
 }
 
 func scanSkillAsset(row pgx.Row) (*domain.ProductSkillAsset, error) {

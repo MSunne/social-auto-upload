@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -55,15 +56,95 @@ func scanDevice(row pgx.Row) (*domain.Device, error) {
 	return &device, nil
 }
 
-func (s *Store) ListDevicesByOwner(ctx context.Context, ownerUserID string) ([]domain.Device, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
-		       default_reasoning_model, is_enabled, runtime_payload, last_seen_at, notes,
-		       created_at, updated_at
+func scanDeviceWithLoad(row pgx.Row) (*domain.Device, error) {
+	var device domain.Device
+	var localIP *string
+	var publicIP *string
+	var model *string
+	var notes *string
+	var agentKey *string
+	var runtimePayload []byte
+	var ownerUserID *string
+	var lastSeenAt *time.Time
+
+	if err := row.Scan(
+		&device.ID,
+		&ownerUserID,
+		&device.DeviceCode,
+		&agentKey,
+		&device.Name,
+		&localIP,
+		&publicIP,
+		&model,
+		&device.IsEnabled,
+		&runtimePayload,
+		&lastSeenAt,
+		&notes,
+		&device.CreatedAt,
+		&device.UpdatedAt,
+		&device.Load.AccountCount,
+		&device.Load.ActiveAccountCount,
+		&device.Load.MaterialRootCount,
+		&device.Load.MaterialEntryCount,
+		&device.Load.PendingTaskCount,
+		&device.Load.RunningTaskCount,
+		&device.Load.NeedsVerifyTaskCount,
+		&device.Load.CancelRequestedTaskCount,
+		&device.Load.FailedTaskCount,
+		&device.Load.ActiveLoginSessionCount,
+		&device.Load.VerificationLoginSessionCount,
+	); err != nil {
+		return nil, err
+	}
+
+	device.OwnerUserID = ownerUserID
+	if agentKey != nil {
+		device.AgentKey = *agentKey
+	}
+	device.LocalIP = localIP
+	device.PublicIP = publicIP
+	device.DefaultReasoningModel = model
+	device.RuntimePayload = bytesOrNil(runtimePayload)
+	device.LastSeenAt = lastSeenAt
+	device.Notes = notes
+	device.Status = computeDeviceStatus(lastSeenAt)
+
+	return &device, nil
+}
+
+const deviceSelectColumns = `
+	id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
+	default_reasoning_model, is_enabled, runtime_payload, last_seen_at, notes,
+	created_at, updated_at
+`
+
+const deviceLoadColumns = `
+	COALESCE((SELECT COUNT(*) FROM platform_accounts pa WHERE pa.device_id = devices.id), 0)::BIGINT AS account_count,
+	COALESCE((SELECT COUNT(*) FROM platform_accounts pa WHERE pa.device_id = devices.id AND pa.status = 'active'), 0)::BIGINT AS active_account_count,
+	COALESCE((SELECT COUNT(*) FROM device_material_roots mr WHERE mr.device_id = devices.id AND mr.is_available = TRUE), 0)::BIGINT AS material_root_count,
+	COALESCE((SELECT COUNT(*) FROM device_material_entries me WHERE me.device_id = devices.id AND me.is_available = TRUE), 0)::BIGINT AS material_entry_count,
+	COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.device_id = devices.id AND pt.status = 'pending'), 0)::BIGINT AS pending_task_count,
+	COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.device_id = devices.id AND pt.status = 'running'), 0)::BIGINT AS running_task_count,
+	COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.device_id = devices.id AND pt.status = 'needs_verify'), 0)::BIGINT AS needs_verify_task_count,
+	COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.device_id = devices.id AND pt.status = 'cancel_requested'), 0)::BIGINT AS cancel_requested_task_count,
+	COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.device_id = devices.id AND pt.status = 'failed'), 0)::BIGINT AS failed_task_count,
+	COALESCE((SELECT COUNT(*) FROM login_sessions ls WHERE ls.device_id = devices.id AND ls.status IN ('pending', 'running', 'verification_required')), 0)::BIGINT AS active_login_session_count,
+	COALESCE((SELECT COUNT(*) FROM login_sessions ls WHERE ls.device_id = devices.id AND ls.status = 'verification_required'), 0)::BIGINT AS verification_login_session_count
+`
+
+func deviceQueryWithLoad(whereClause string) string {
+	return fmt.Sprintf(`
+		SELECT %s, %s
 		FROM devices
+		%s
+	`, deviceSelectColumns, deviceLoadColumns, whereClause)
+}
+
+func (s *Store) ListDevicesByOwner(ctx context.Context, ownerUserID string) ([]domain.Device, error) {
+	rows, err := s.pool.Query(ctx, deviceQueryWithLoad(`
 		WHERE owner_user_id = $1
 		ORDER BY updated_at DESC
-	`, ownerUserID)
+	`), ownerUserID)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +152,7 @@ func (s *Store) ListDevicesByOwner(ctx context.Context, ownerUserID string) ([]d
 
 	items := make([]domain.Device, 0)
 	for rows.Next() {
-		device, scanErr := scanDevice(rows)
+		device, scanErr := scanDeviceWithLoad(rows)
 		if scanErr != nil {
 			return nil, scanErr
 		}
@@ -99,14 +180,10 @@ func (s *Store) GetDeviceByID(ctx context.Context, deviceID string) (*domain.Dev
 }
 
 func (s *Store) GetOwnedDevice(ctx context.Context, deviceID string, ownerUserID string) (*domain.Device, error) {
-	row := s.pool.QueryRow(ctx, `
-		SELECT id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
-		       default_reasoning_model, is_enabled, runtime_payload, last_seen_at, notes,
-		       created_at, updated_at
-		FROM devices
+	row := s.pool.QueryRow(ctx, deviceQueryWithLoad(`
 		WHERE id = $1 AND owner_user_id = $2
-	`, deviceID, ownerUserID)
-	device, err := scanDevice(row)
+	`), deviceID, ownerUserID)
+	device, err := scanDeviceWithLoad(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -154,7 +231,7 @@ func (s *Store) ClaimDevice(ctx context.Context, deviceCode string, ownerUserID 
 		}
 		return nil, err
 	}
-	return device, nil
+	return s.GetOwnedDevice(ctx, device.ID, ownerUserID)
 }
 
 func (s *Store) UpdateDevice(ctx context.Context, deviceID string, ownerUserID string, input UpdateDeviceInput) (*domain.Device, error) {
@@ -177,7 +254,7 @@ func (s *Store) UpdateDevice(ctx context.Context, deviceID string, ownerUserID s
 		}
 		return nil, err
 	}
-	return device, nil
+	return s.GetOwnedDevice(ctx, device.ID, ownerUserID)
 }
 
 func (s *Store) UpsertHeartbeatDevice(ctx context.Context, input HeartbeatInput) (*domain.Device, error) {

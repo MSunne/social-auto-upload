@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	appstate "omnidrive_cloud/internal/app"
+	"omnidrive_cloud/internal/domain"
 	httpcontext "omnidrive_cloud/internal/http/context"
 	"omnidrive_cloud/internal/http/render"
 	"omnidrive_cloud/internal/store"
@@ -85,6 +87,43 @@ func (h *SkillHandler) Detail(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, skill)
 }
 
+func (h *SkillHandler) Workspace(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	skillID := strings.TrimSpace(chi.URLParam(r, "skillId"))
+	if skillID == "" {
+		render.Error(w, http.StatusBadRequest, "skillId is required")
+		return
+	}
+
+	skill, err := h.app.Store.GetOwnedSkillByID(r.Context(), skillID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load skill")
+		return
+	}
+	if skill == nil {
+		render.Error(w, http.StatusNotFound, "Skill not found")
+		return
+	}
+
+	assets, err := h.app.Store.ListSkillAssets(r.Context(), skillID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load skill assets")
+		return
+	}
+
+	recentTasks, err := h.app.Store.ListPublishTasksBySkill(r.Context(), user.ID, skillID, 8)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load skill tasks")
+		return
+	}
+
+	render.JSON(w, http.StatusOK, domain.ProductSkillWorkspace{
+		Skill:       *skill,
+		Assets:      assets,
+		RecentTasks: recentTasks,
+	})
+}
+
 func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 
@@ -131,6 +170,11 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to create skill")
+		return
+	}
+	skill, err = h.app.Store.GetOwnedSkillByID(r.Context(), skill.ID, user.ID)
+	if err != nil || skill == nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to reload created skill")
 		return
 	}
 	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
@@ -194,6 +238,11 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusNotFound, "Skill not found")
 		return
 	}
+	skill, err = h.app.Store.GetOwnedSkillByID(r.Context(), skill.ID, user.ID)
+	if err != nil || skill == nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to reload updated skill")
+		return
+	}
 	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
 		OwnerUserID:  user.ID,
 		ResourceType: "skill",
@@ -247,6 +296,12 @@ func (h *SkillHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	assets, err := h.app.Store.ListSkillAssets(r.Context(), skillID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to inspect skill assets")
+		return
+	}
+
 	deleted, err := h.app.Store.DeleteSkill(r.Context(), skillID, user.ID)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to delete skill")
@@ -256,6 +311,7 @@ func (h *SkillHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusNotFound, "Skill not found")
 		return
 	}
+	cleanupSkillAssetFiles(h.app, r.Context(), assets)
 	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
 		OwnerUserID:  user.ID,
 		ResourceType: "skill",
@@ -358,6 +414,24 @@ func (h *SkillHandler) CreateAsset(w http.ResponseWriter, r *http.Request) {
 	})
 
 	render.JSON(w, http.StatusCreated, asset)
+}
+
+func cleanupSkillAssetFiles(app *appstate.App, ctx context.Context, assets []domain.ProductSkillAsset) {
+	if app == nil || app.Storage == nil {
+		return
+	}
+	seen := make(map[string]struct{}, len(assets))
+	for _, asset := range assets {
+		if asset.StorageKey == nil || strings.TrimSpace(*asset.StorageKey) == "" {
+			continue
+		}
+		key := strings.TrimSpace(*asset.StorageKey)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		_ = app.Storage.DeleteObject(ctx, key)
+	}
 }
 
 func (h *SkillHandler) UploadAsset(w http.ResponseWriter, r *http.Request) {

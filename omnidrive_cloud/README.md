@@ -41,7 +41,12 @@ go run ./cmd/omnidrive-api
 
 - user register / login / `me`
 - device heartbeat, claim, list, update
+- device list and detail now include workload counters for mirrored accounts, materials, tasks, and login sessions
+- device workspace endpoint aggregates recent tasks, active login sessions, recent accounts, and material roots
 - account mirror list
+- account list and detail now include workload counters for related tasks and active login sessions
+- account workspace endpoint aggregates recent tasks and active login sessions for one mirrored platform account
+- account delete is guarded and returns usage summary when tasks or active verification sessions still reference that account
 - remote login session create and query
 - remote login action queue for second-factor input
 - local agent polling for login tasks and actions
@@ -49,9 +54,12 @@ go run ./cmd/omnidrive-api
 - local agent pushing login result back to cloud
 - successful login event mirroring back into platform account state
 - product skill asset metadata
+- skill list and detail now include workload counters for attached assets and related publish tasks
+- skill workspace endpoint aggregates attached assets and recent publish tasks for one skill
 - product skill multipart upload with public file URL
 - skill detail and guarded delete
 - publish task create, detail, update, delete, device polling, and task status sync
+- publish task workspace endpoint aggregates related device/account/skill, timeline, artifacts, materials, and backend-computed action flags
 - publish task event timeline for cloud edits and agent execution evidence
 - structured publish task artifacts for verification screenshots and future outputs
 - task-to-material snapshot references for mirrored local files
@@ -59,6 +67,10 @@ go run ./cmd/omnidrive-api
 - `runAt` is respected by device polling and claim, so future tasks are not executed early
 - invalid agent-side status regressions are rejected with `409`
 - retry clears old task artifacts so each new attempt starts clean
+- retry and delete attempt to remove stored artifact files from local object storage
+- repeated artifact sync with the same `artifactKey` replaces the old stored file and cleans up the previous object when possible
+- disabled devices can stay online but cannot poll or claim new cloud work
+- deleting a skill also attempts to remove uploaded skill asset files from local object storage
 - expired running leases auto-recover so tasks do not remain stuck forever
 - material root, directory, and file-preview mirror APIs for local OmniBull content browsing
 - verification screenshot extraction and file URL generation during task sync
@@ -67,6 +79,8 @@ go run ./cmd/omnidrive-api
 - active lease token mismatch during agent sync is rejected with `409`
 - task list filtering by device, status, platform, account name, and limit
 - dashboard summary and merged history feed
+- dashboard summary now includes task breakdown counters and active login-session count for richer control-center cards
+- history feed supports filtering by kind, status, and limit
 - cloud-side audit trail for device, skill, task, AI job, and login-session actions
 - AI model listing, AI job create/list/detail
 - billing package list and wallet ledger read
