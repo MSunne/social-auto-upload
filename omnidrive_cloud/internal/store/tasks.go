@@ -443,6 +443,52 @@ func (s *Store) RetryPublishTask(ctx context.Context, taskID string, ownerUserID
 	return task, nil
 }
 
+func (s *Store) ForceReleasePublishTaskLease(ctx context.Context, taskID string, ownerUserID string) (*domain.PublishTask, error) {
+	row := s.pool.QueryRow(ctx, `
+		UPDATE publish_tasks pt
+		SET status = CASE
+		        WHEN pt.status = 'cancel_requested' THEN 'cancelled'
+		        ELSE 'pending'
+		    END,
+		    message = CASE
+		        WHEN pt.status = 'cancel_requested' THEN '任务租约已由云端手动释放并标记为取消'
+		        ELSE '任务租约已由云端手动释放并重新排队'
+		    END,
+		    lease_owner_device_id = NULL,
+		    lease_token = NULL,
+		    lease_expires_at = NULL,
+		    cancel_requested_at = CASE
+		        WHEN pt.status = 'cancel_requested' THEN pt.cancel_requested_at
+		        ELSE NULL
+		    END,
+		    finished_at = CASE
+		        WHEN pt.status = 'cancel_requested' THEN NOW()
+		        ELSE NULL
+		    END,
+		    updated_at = NOW()
+		FROM devices d
+		WHERE pt.device_id = d.id
+		  AND pt.id = $1
+		  AND d.owner_user_id = $2
+		  AND pt.status IN ('running', 'cancel_requested')
+		  AND pt.lease_owner_device_id IS NOT NULL
+		  AND pt.lease_token IS NOT NULL
+		RETURNING pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.platform, pt.account_name,
+		          pt.title, pt.content_text, pt.media_payload, pt.status, pt.message, pt.verification_payload,
+		          pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at, pt.attempt_count, pt.cancel_requested_at,
+		          pt.run_at, pt.finished_at, pt.created_at, pt.updated_at
+	`, taskID, ownerUserID)
+
+	task, err := scanPublishTask(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return task, nil
+}
+
 func (s *Store) RecoverExpiredPublishTaskLeases(ctx context.Context, deviceID string) ([]domain.PublishTask, error) {
 	rows, err := s.pool.Query(ctx, `
 		UPDATE publish_tasks

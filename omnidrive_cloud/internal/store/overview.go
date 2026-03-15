@@ -26,6 +26,9 @@ func (s *Store) GetOverviewSummary(ctx context.Context, ownerUserID string) (*Ov
 			COALESCE((SELECT COUNT(*) FROM publish_tasks pt INNER JOIN devices d ON d.id = pt.device_id WHERE d.owner_user_id = $1 AND pt.status = 'failed'), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM login_sessions ls INNER JOIN devices d ON d.id = ls.device_id WHERE d.owner_user_id = $1 AND ls.status IN ('pending', 'running', 'verification_required')), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE owner_user_id = $1), 0)::BIGINT,
+			COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE owner_user_id = $1 AND status = 'queued'), 0)::BIGINT,
+			COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE owner_user_id = $1 AND status = 'running'), 0)::BIGINT,
+			COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE owner_user_id = $1 AND status = 'failed'), 0)::BIGINT,
 			COALESCE((SELECT balance_after FROM wallet_ledgers WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1), 0)::BIGINT
 	`, ownerUserID).Scan(
 		&summary.DeviceCount,
@@ -41,6 +44,9 @@ func (s *Store) GetOverviewSummary(ctx context.Context, ownerUserID string) (*Ov
 		&summary.FailedTaskCount,
 		&summary.ActiveLoginSessionCount,
 		&summary.AIJobCount,
+		&summary.QueuedAIJobCount,
+		&summary.RunningAIJobCount,
+		&summary.FailedAIJobCount,
 		&summary.BalanceCredits,
 	); err != nil {
 		return nil, err
@@ -52,12 +58,9 @@ func (s *Store) GetOverviewSummary(ctx context.Context, ownerUserID string) (*Ov
 	}
 	summary.RecentTasks = recentTasks
 
-	recentAIJobs, err := s.ListAIJobsByOwner(ctx, ownerUserID, "", "")
+	recentAIJobs, err := s.ListAIJobsByOwner(ctx, ownerUserID, ListAIJobsFilter{Limit: 5})
 	if err != nil {
 		return nil, err
-	}
-	if len(recentAIJobs) > 5 {
-		recentAIJobs = recentAIJobs[:5]
 	}
 	summary.RecentAIJobs = recentAIJobs
 	return summary, nil

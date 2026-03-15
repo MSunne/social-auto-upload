@@ -134,6 +134,8 @@ type ProductSkillLoad struct {
 	RunningTaskCount     int64 `json:"runningTaskCount"`
 	NeedsVerifyTaskCount int64 `json:"needsVerifyTaskCount"`
 	FailedTaskCount      int64 `json:"failedTaskCount"`
+	AIJobCount           int64 `json:"aiJobCount"`
+	ActiveAIJobCount     int64 `json:"activeAiJobCount"`
 }
 
 type ProductSkillAsset struct {
@@ -151,9 +153,10 @@ type ProductSkillAsset struct {
 }
 
 type ProductSkillWorkspace struct {
-	Skill       ProductSkill        `json:"skill"`
-	Assets      []ProductSkillAsset `json:"assets"`
-	RecentTasks []PublishTask       `json:"recentTasks"`
+	Skill        ProductSkill        `json:"skill"`
+	Assets       []ProductSkillAsset `json:"assets"`
+	RecentTasks  []PublishTask       `json:"recentTasks"`
+	RecentAIJobs []AIJob             `json:"recentAiJobs"`
 }
 
 type MaterialRoot struct {
@@ -215,10 +218,11 @@ type PublishTask struct {
 }
 
 type PublishTaskActionState struct {
-	CanEdit   bool `json:"canEdit"`
-	CanCancel bool `json:"canCancel"`
-	CanRetry  bool `json:"canRetry"`
-	CanDelete bool `json:"canDelete"`
+	CanEdit         bool `json:"canEdit"`
+	CanCancel       bool `json:"canCancel"`
+	CanRetry        bool `json:"canRetry"`
+	CanDelete       bool `json:"canDelete"`
+	CanForceRelease bool `json:"canForceRelease"`
 }
 
 type PublishTaskWorkspace struct {
@@ -296,6 +300,7 @@ type AIModel struct {
 type AIJob struct {
 	ID            string          `json:"id"`
 	OwnerUserID   string          `json:"ownerUserId"`
+	SkillID       *string         `json:"skillId"`
 	JobType       string          `json:"jobType"`
 	ModelName     string          `json:"modelName"`
 	Prompt        *string         `json:"prompt"`
@@ -307,6 +312,19 @@ type AIJob struct {
 	CreatedAt     time.Time       `json:"createdAt"`
 	UpdatedAt     time.Time       `json:"updatedAt"`
 	FinishedAt    *time.Time      `json:"finishedAt"`
+}
+
+type AIJobActionState struct {
+	CanEdit   bool `json:"canEdit"`
+	CanCancel bool `json:"canCancel"`
+	CanRetry  bool `json:"canRetry"`
+}
+
+type AIJobWorkspace struct {
+	Job     AIJob            `json:"job"`
+	Model   *AIModel         `json:"model,omitempty"`
+	Skill   *ProductSkill    `json:"skill,omitempty"`
+	Actions AIJobActionState `json:"actions"`
 }
 
 type BillingPackage struct {

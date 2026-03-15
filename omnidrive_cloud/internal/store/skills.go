@@ -59,6 +59,8 @@ func scanSkillWithLoad(row pgx.Row) (*domain.ProductSkill, error) {
 		&skill.Load.RunningTaskCount,
 		&skill.Load.NeedsVerifyTaskCount,
 		&skill.Load.FailedTaskCount,
+		&skill.Load.AIJobCount,
+		&skill.Load.ActiveAIJobCount,
 	); err != nil {
 		return nil, err
 	}
@@ -79,7 +81,9 @@ const skillLoadColumns = `
 	COALESCE((SELECT COUNT(*) FROM publish_tasks pt INNER JOIN devices d ON d.id = pt.device_id WHERE pt.skill_id = product_skills.id AND d.owner_user_id = product_skills.owner_user_id AND pt.status = 'pending'), 0)::BIGINT AS pending_task_count,
 	COALESCE((SELECT COUNT(*) FROM publish_tasks pt INNER JOIN devices d ON d.id = pt.device_id WHERE pt.skill_id = product_skills.id AND d.owner_user_id = product_skills.owner_user_id AND pt.status = 'running'), 0)::BIGINT AS running_task_count,
 	COALESCE((SELECT COUNT(*) FROM publish_tasks pt INNER JOIN devices d ON d.id = pt.device_id WHERE pt.skill_id = product_skills.id AND d.owner_user_id = product_skills.owner_user_id AND pt.status = 'needs_verify'), 0)::BIGINT AS needs_verify_task_count,
-	COALESCE((SELECT COUNT(*) FROM publish_tasks pt INNER JOIN devices d ON d.id = pt.device_id WHERE pt.skill_id = product_skills.id AND d.owner_user_id = product_skills.owner_user_id AND pt.status = 'failed'), 0)::BIGINT AS failed_task_count
+	COALESCE((SELECT COUNT(*) FROM publish_tasks pt INNER JOIN devices d ON d.id = pt.device_id WHERE pt.skill_id = product_skills.id AND d.owner_user_id = product_skills.owner_user_id AND pt.status = 'failed'), 0)::BIGINT AS failed_task_count,
+	COALESCE((SELECT COUNT(*) FROM ai_jobs aj WHERE aj.owner_user_id = product_skills.owner_user_id AND aj.skill_id = product_skills.id), 0)::BIGINT AS ai_job_count,
+	COALESCE((SELECT COUNT(*) FROM ai_jobs aj WHERE aj.owner_user_id = product_skills.owner_user_id AND aj.skill_id = product_skills.id AND aj.status IN ('queued', 'running')), 0)::BIGINT AS active_ai_job_count
 `
 
 func skillQueryWithLoad(whereClause string) string {
@@ -276,21 +280,35 @@ func (s *Store) CreateSkillAsset(ctx context.Context, input CreateSkillAssetInpu
 	return scanSkillAsset(row)
 }
 
-func (s *Store) GetSkillUsageSummary(ctx context.Context, skillID string, ownerUserID string) (int64, int64, error) {
+func (s *Store) GetSkillUsageSummary(ctx context.Context, skillID string, ownerUserID string) (int64, int64, int64, error) {
 	row := s.pool.QueryRow(ctx, `
-		SELECT COUNT(*)::BIGINT,
-		       COUNT(DISTINCT account_name)::BIGINT
-		FROM publish_tasks pt
-		INNER JOIN devices d ON d.id = pt.device_id
-		WHERE pt.skill_id = $1 AND d.owner_user_id = $2
+		SELECT
+			COALESCE((
+				SELECT COUNT(*)
+				FROM publish_tasks pt
+				INNER JOIN devices d ON d.id = pt.device_id
+				WHERE pt.skill_id = $1 AND d.owner_user_id = $2
+			), 0)::BIGINT,
+			COALESCE((
+				SELECT COUNT(DISTINCT pt.account_name)
+				FROM publish_tasks pt
+				INNER JOIN devices d ON d.id = pt.device_id
+				WHERE pt.skill_id = $1 AND d.owner_user_id = $2
+			), 0)::BIGINT,
+			COALESCE((
+				SELECT COUNT(*)
+				FROM ai_jobs aj
+				WHERE aj.skill_id = $1 AND aj.owner_user_id = $2
+			), 0)::BIGINT
 	`, skillID, ownerUserID)
 
 	var taskCount int64
 	var accountCount int64
-	if err := row.Scan(&taskCount, &accountCount); err != nil {
-		return 0, 0, err
+	var aiJobCount int64
+	if err := row.Scan(&taskCount, &accountCount, &aiJobCount); err != nil {
+		return 0, 0, 0, err
 	}
-	return taskCount, accountCount, nil
+	return taskCount, accountCount, aiJobCount, nil
 }
 
 func (s *Store) DeleteSkill(ctx context.Context, skillID string, ownerUserID string) (bool, error) {

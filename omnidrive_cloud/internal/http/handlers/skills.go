@@ -116,11 +116,17 @@ func (h *SkillHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to load skill tasks")
 		return
 	}
+	recentAIJobs, err := h.app.Store.ListAIJobsBySkill(r.Context(), user.ID, skillID, 8)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load skill AI jobs")
+		return
+	}
 
 	render.JSON(w, http.StatusOK, domain.ProductSkillWorkspace{
-		Skill:       *skill,
-		Assets:      assets,
-		RecentTasks: recentTasks,
+		Skill:        *skill,
+		Assets:       assets,
+		RecentTasks:  recentTasks,
+		RecentAIJobs: recentAIJobs,
 	})
 }
 
@@ -280,17 +286,18 @@ func (h *SkillHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	taskCount, accountCount, err := h.app.Store.GetSkillUsageSummary(r.Context(), skillID, user.ID)
+	taskCount, accountCount, aiJobCount, err := h.app.Store.GetSkillUsageSummary(r.Context(), skillID, user.ID)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to inspect skill usage")
 		return
 	}
-	if taskCount > 0 {
+	if taskCount > 0 || aiJobCount > 0 {
 		render.JSON(w, http.StatusConflict, map[string]any{
-			"error": "Skill is still referenced by publish tasks",
+			"error": "Skill is still referenced by publish tasks or AI jobs",
 			"usage": map[string]any{
 				"publishTaskCount":     taskCount,
 				"distinctAccountCount": accountCount,
+				"aiJobCount":           aiJobCount,
 			},
 		})
 		return

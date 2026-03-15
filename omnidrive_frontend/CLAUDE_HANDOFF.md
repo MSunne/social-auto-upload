@@ -101,6 +101,7 @@ Key screens to prioritize:
 - `GET /api/v1/tasks/{taskId}/artifacts`
 - `GET /api/v1/tasks/{taskId}/materials`
 - `POST /api/v1/tasks/{taskId}/cancel`
+- `POST /api/v1/tasks/{taskId}/force-release`
 - `POST /api/v1/tasks/{taskId}/retry`
 - `PATCH /api/v1/tasks/{taskId}`
 - `DELETE /api/v1/tasks/{taskId}`
@@ -108,6 +109,10 @@ Key screens to prioritize:
 - `GET /api/v1/ai/jobs`
 - `POST /api/v1/ai/jobs`
 - `GET /api/v1/ai/jobs/{jobId}`
+- `GET /api/v1/ai/jobs/{jobId}/workspace`
+- `PATCH /api/v1/ai/jobs/{jobId}`
+- `POST /api/v1/ai/jobs/{jobId}/cancel`
+- `POST /api/v1/ai/jobs/{jobId}/retry`
 - `GET /api/v1/billing/packages`
 - `GET /api/v1/billing/ledger`
 
@@ -120,20 +125,24 @@ Key screens to prioritize:
 5. Account list and account detail pages should render the nested `account.load` counters.
 6. Account detail can call `/accounts/{accountId}/workspace` to show related publish tasks and active verification sessions.
 7. Skill list and skill detail pages should render the nested `skill.load` counters.
-8. Skill detail can call `/skills/{skillId}/workspace` to get attached assets and recent dependent publish tasks in one request.
+8. Skill detail can call `/skills/{skillId}/workspace` to get attached assets, recent dependent publish tasks, and recent AI jobs in one request.
 9. Task detail can call `/tasks/{taskId}/workspace` to get the related device, account, skill, events, artifacts, materials, and backend-computed action flags in one request.
 10. Task detail must display `needs_verify` clearly.
 11. Task detail should also show the event timeline from `/tasks/{taskId}/events`.
 12. Task detail should also render task artifacts from `/tasks/{taskId}/artifacts`, especially verification screenshots and text evidence.
 13. Task detail should also render selected input materials from `/tasks/{taskId}/materials`.
-14. Task detail should support explicit cancel and retry actions and can trust the backend `actions` booleans from `/tasks/{taskId}/workspace`.
+14. Task detail should support explicit cancel, retry, and force-release actions and can trust the backend `actions` booleans from `/tasks/{taskId}/workspace`.
 15. Materials page should let users switch by device, root, and path, with file preview for text content.
 16. Skill pages should show both metadata and attached asset previews.
 17. Skill delete should surface the backend `409` usage summary instead of silently failing.
 18. Account delete should also surface the backend `409` usage summary instead of silently failing.
-19. Dashboard cards should read directly from `/overview/summary`, including material counts, task breakdown counts, and `activeLoginSessionCount`.
+19. Dashboard cards should read directly from `/overview/summary`, including material counts, task breakdown counts, `activeLoginSessionCount`, and AI breakdown counts.
 20. History should render mixed item types using `kind`, `source`, and `status`, including `audit` items, and can use backend filters for tabs.
 21. Billing can start read-only with package cards and ledger table.
+22. AI detail pages can call `/ai/jobs/{jobId}/workspace` for model metadata, optional linked skill, and backend action flags, then use `PATCH/cancel/retry` to drive the lifecycle UI.
+23. AI job create/update can optionally bind `skillId`; when used, the chosen skill must match the job `jobType`.
+24. Skill delete should surface the backend `409` usage summary for both publish-task and AI-job references.
+25. AI list pages can use backend filters `jobType/status/skillId/limit` instead of client-side slicing.
 
 ## Notes For Implementation
 

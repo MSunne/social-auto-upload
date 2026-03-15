@@ -110,6 +110,7 @@ Phase 1 targets the operational backbone required by the current UI and the alre
 - attach files and generation policy
 - detect whether a skill is used by accounts or tasks before delete
 - expose per-skill workload counters and a skill workspace view so the cloud can show attached assets and recent dependent tasks without extra joins in the frontend
+- include AI-job dependency tracking in skill workload and delete guards so one skill can safely back image/video/chat generation flows
 
 ### Tasks
 
@@ -121,11 +122,14 @@ Phase 1 targets the operational backbone required by the current UI and the alre
 - store structured task artifacts such as verification screenshots, logs, and local output references
 - store task-to-material snapshot references so local input files remain traceable even after directory changes
 - support task claim / lease / renew so one device execution worker owns the task for a bounded time
+- allow cloud operators to manually force-release a stuck active task lease without waiting for TTL expiry
 
 ### AI Jobs
 
 - store image, video, and chat generation job requests
 - store request parameters, queue state, and future output metadata
+- expose AI job workspace and lifecycle controls so later model executors can update queue state without changing the public contract
+- allow AI jobs to optionally bind to a product skill so generated work and skill strategy stay connected in the cloud model
 
 ### Billing
 

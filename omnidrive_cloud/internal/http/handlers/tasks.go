@@ -598,6 +598,46 @@ func (h *TaskHandler) Retry(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, task)
 }
 
+func (h *TaskHandler) ForceRelease(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
+	if taskID == "" {
+		render.Error(w, http.StatusBadRequest, "taskId is required")
+		return
+	}
+
+	task, err := h.app.Store.ForceReleasePublishTaskLease(r.Context(), taskID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to force release task lease")
+		return
+	}
+	if task == nil {
+		render.Error(w, http.StatusConflict, "Task is not in a releasable leased state")
+		return
+	}
+
+	_, _ = h.app.Store.CreatePublishTaskEvent(r.Context(), store.CreatePublishTaskEventInput{
+		ID:        uuid.NewString(),
+		TaskID:    task.ID,
+		EventType: "force_released",
+		Source:    "cloud",
+		Status:    task.Status,
+		Message:   task.Message,
+	})
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "publish_task",
+		ResourceID:   &task.ID,
+		Action:       "force_release",
+		Title:        "手动释放任务租约",
+		Source:       task.Platform,
+		Status:       task.Status,
+		Message:      task.Message,
+	})
+
+	render.JSON(w, http.StatusOK, task)
+}
+
 func (h *TaskHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
@@ -742,14 +782,14 @@ func computePublishTaskActions(task *domain.PublishTask) domain.PublishTaskActio
 
 	switch task.Status {
 	case "pending":
-		return domain.PublishTaskActionState{CanEdit: true, CanCancel: true, CanRetry: false, CanDelete: true}
+		return domain.PublishTaskActionState{CanEdit: true, CanCancel: true, CanRetry: false, CanDelete: true, CanForceRelease: false}
 	case "running", "cancel_requested":
-		return domain.PublishTaskActionState{CanEdit: false, CanCancel: task.Status == "running", CanRetry: false, CanDelete: false}
+		return domain.PublishTaskActionState{CanEdit: false, CanCancel: task.Status == "running", CanRetry: false, CanDelete: false, CanForceRelease: true}
 	case "needs_verify":
-		return domain.PublishTaskActionState{CanEdit: true, CanCancel: true, CanRetry: true, CanDelete: true}
+		return domain.PublishTaskActionState{CanEdit: true, CanCancel: true, CanRetry: true, CanDelete: true, CanForceRelease: false}
 	case "failed", "cancelled", "success", "completed":
-		return domain.PublishTaskActionState{CanEdit: true, CanCancel: false, CanRetry: true, CanDelete: true}
+		return domain.PublishTaskActionState{CanEdit: true, CanCancel: false, CanRetry: true, CanDelete: true, CanForceRelease: false}
 	default:
-		return domain.PublishTaskActionState{CanEdit: true, CanCancel: false, CanRetry: false, CanDelete: true}
+		return domain.PublishTaskActionState{CanEdit: true, CanCancel: false, CanRetry: false, CanDelete: true, CanForceRelease: false}
 	}
 }

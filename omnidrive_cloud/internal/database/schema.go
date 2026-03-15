@@ -232,6 +232,7 @@ CREATE TABLE IF NOT EXISTS ai_models (
 CREATE TABLE IF NOT EXISTS ai_jobs (
     id TEXT PRIMARY KEY,
     owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    skill_id TEXT REFERENCES product_skills(id) ON DELETE SET NULL,
     job_type TEXT NOT NULL,
     model_name TEXT NOT NULL,
     prompt TEXT,
@@ -244,6 +245,8 @@ CREATE TABLE IF NOT EXISTS ai_jobs (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     finished_at TIMESTAMPTZ
 );
+
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS skill_id TEXT REFERENCES product_skills(id) ON DELETE SET NULL;
 
 CREATE TABLE IF NOT EXISTS billing_packages (
     id TEXT PRIMARY KEY,

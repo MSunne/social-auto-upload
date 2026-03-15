@@ -260,12 +260,35 @@ type UpsertPublishTaskArtifactInput struct {
 type CreateAIJobInput struct {
 	ID           string
 	OwnerUserID  string
+	SkillID      *string
 	JobType      string
 	ModelName    string
 	Prompt       *string
 	InputPayload []byte
 	Status       string
 	Message      *string
+}
+
+type UpdateAIJobInput struct {
+	SkillID         *string
+	SkillTouched    bool
+	Prompt          *string
+	Status          *string
+	InputPayload    []byte
+	InputTouched    bool
+	OutputPayload   []byte
+	OutputTouched   bool
+	Message         *string
+	CostCredits     *int64
+	FinishedAt      *time.Time
+	FinishedTouched bool
+}
+
+type ListAIJobsFilter struct {
+	JobType string
+	Status  string
+	SkillID string
+	Limit   int
 }
 
 type CreateAuditEventInput struct {
@@ -301,6 +324,9 @@ type OverviewSummary struct {
 	FailedTaskCount         int64                `json:"failedTaskCount"`
 	ActiveLoginSessionCount int64                `json:"activeLoginSessionCount"`
 	AIJobCount              int64                `json:"aiJobCount"`
+	QueuedAIJobCount        int64                `json:"queuedAiJobCount"`
+	RunningAIJobCount       int64                `json:"runningAiJobCount"`
+	FailedAIJobCount        int64                `json:"failedAiJobCount"`
 	BalanceCredits          int64                `json:"balanceCredits"`
 	RecentTasks             []domain.PublishTask `json:"recentTasks"`
 	RecentAIJobs            []domain.AIJob       `json:"recentAiJobs"`

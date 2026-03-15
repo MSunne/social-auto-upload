@@ -96,6 +96,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 				tasks.Get("/{taskId}/artifacts", taskHandler.Artifacts)
 				tasks.Get("/{taskId}/materials", taskHandler.Materials)
 				tasks.Post("/{taskId}/cancel", taskHandler.Cancel)
+				tasks.Post("/{taskId}/force-release", taskHandler.ForceRelease)
 				tasks.Post("/{taskId}/retry", taskHandler.Retry)
 				tasks.Patch("/{taskId}", taskHandler.Update)
 				tasks.Delete("/{taskId}", taskHandler.Delete)
@@ -106,6 +107,10 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 				ai.Get("/jobs", aiHandler.ListJobs)
 				ai.Post("/jobs", aiHandler.CreateJob)
 				ai.Get("/jobs/{jobId}", aiHandler.DetailJob)
+				ai.Get("/jobs/{jobId}/workspace", aiHandler.WorkspaceJob)
+				ai.Patch("/jobs/{jobId}", aiHandler.UpdateJob)
+				ai.Post("/jobs/{jobId}/cancel", aiHandler.CancelJob)
+				ai.Post("/jobs/{jobId}/retry", aiHandler.RetryJob)
 			})
 
 			private.Route("/billing", func(billing chi.Router) {

@@ -55,11 +55,12 @@ go run ./cmd/omnidrive-api
 - successful login event mirroring back into platform account state
 - product skill asset metadata
 - skill list and detail now include workload counters for attached assets and related publish tasks
-- skill workspace endpoint aggregates attached assets and recent publish tasks for one skill
+- skill workspace endpoint aggregates attached assets, recent publish tasks, and recent AI jobs for one skill
 - product skill multipart upload with public file URL
 - skill detail and guarded delete
 - publish task create, detail, update, delete, device polling, and task status sync
 - publish task workspace endpoint aggregates related device/account/skill, timeline, artifacts, materials, and backend-computed action flags
+- cloud-side force-release endpoint can manually free a stuck leased publish task before the lease naturally expires
 - publish task event timeline for cloud edits and agent execution evidence
 - structured publish task artifacts for verification screenshots and future outputs
 - task-to-material snapshot references for mirrored local files
@@ -80,7 +81,11 @@ go run ./cmd/omnidrive-api
 - task list filtering by device, status, platform, account name, and limit
 - dashboard summary and merged history feed
 - dashboard summary now includes task breakdown counters and active login-session count for richer control-center cards
+- dashboard summary now also includes AI queue/running/failed counters
 - history feed supports filtering by kind, status, and limit
 - cloud-side audit trail for device, skill, task, AI job, and login-session actions
 - AI model listing, AI job create/list/detail
+- AI job workspace, update, cancel, and retry endpoints for future model executors and richer cloud-side operations
+- AI jobs can optionally reference a product skill, and skill deletion is guarded against both publish-task and AI-job dependencies
+- AI job list supports `jobType/status/skillId/limit` filtering for richer cloud control views
 - billing package list and wallet ledger read

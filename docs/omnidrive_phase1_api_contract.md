@@ -65,6 +65,7 @@ This document is the contract target for the cloud backend and the frontend impl
 - also includes `materialRootCount` and `materialEntryCount`
 - also includes task breakdown counts such as `pendingTaskCount`, `runningTaskCount`, `needsVerifyTaskCount`, `failedTaskCount`
 - also includes `activeLoginSessionCount`
+- also includes AI breakdown counts such as `queuedAiJobCount`, `runningAiJobCount`, `failedAiJobCount`
 
 ## History
 
@@ -147,6 +148,7 @@ This document is the contract target for the cloud backend and the frontend impl
 
 - list product skills under the current user
 - each skill includes a nested `load` object with asset and related task counters
+- `load` also includes `aiJobCount` and `activeAiJobCount`
 
 ### `POST /skills`
 
@@ -168,11 +170,12 @@ This document is the contract target for the cloud backend and the frontend impl
   - `skill`
   - `assets`
   - `recentTasks`
+  - `recentAiJobs`
 
 ### `DELETE /skills/{skillId}`
 
 - delete a skill
-- returns `409` with usage summary if the skill is still referenced by publish tasks
+- returns `409` with usage summary if the skill is still referenced by publish tasks or AI jobs
 - deletes stored skill asset files referenced by that skill when possible
 
 ### `GET /skills/{skillId}/assets`
@@ -250,6 +253,13 @@ This document is the contract target for the cloud backend and the frontend impl
 - `pending` tasks become `cancelled`
 - `running` or `needs_verify` tasks become `cancel_requested`
 
+### `POST /tasks/{taskId}/force-release`
+
+- manually releases an active publish-task lease from the cloud side
+- `running` tasks return to `pending`
+- `cancel_requested` tasks become `cancelled`
+- intended for stuck executions that should not wait for lease expiry
+
 ### `POST /tasks/{taskId}/retry`
 
 - reset a non-running task back to `pending`
@@ -277,16 +287,50 @@ This document is the contract target for the cloud backend and the frontend impl
 ### `GET /ai/jobs`
 
 - list AI jobs created by the current user
-- optional filters: `jobType`, `status`
+- optional filters: `jobType`, `status`, `skillId`, `limit`
 
 ### `POST /ai/jobs`
 
 - create a queued AI job record
-- request: `jobType`, `modelName`, optional `prompt`, optional `inputPayload`
+- request: `jobType`, `modelName`, optional `skillId`, optional `prompt`, optional `inputPayload`
+- when `skillId` is provided, the backend validates that the referenced skill belongs to the user and its `outputType` matches `jobType`
 
 ### `GET /ai/jobs/{jobId}`
 
 - fetch one AI job detail
+
+### `GET /ai/jobs/{jobId}/workspace`
+
+- fetch one AI job workspace payload
+- includes:
+  - `job`
+  - `model`
+  - `skill`
+  - `actions`
+
+### `PATCH /ai/jobs/{jobId}`
+
+- update editable AI job fields
+- supports:
+  - `skillId`
+  - `prompt`
+  - `status`
+  - `inputPayload`
+  - `outputPayload`
+  - `message`
+  - `costCredits`
+  - `finishedAt`
+- AI job status transitions are validated by the backend
+
+### `POST /ai/jobs/{jobId}/cancel`
+
+- cancel a queued or running AI job
+
+### `POST /ai/jobs/{jobId}/retry`
+
+- move a finished or failed AI job back to `queued`
+- clears previous `outputPayload`
+- clears `finishedAt`
 
 ## Billing
 
