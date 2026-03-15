@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>OpenOmni 控制面板 - Neon Noir</title>
+<!-- Tailwind CSS CDN -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Google Fonts for a futuristic feel -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&amp;family=JetBrains+Mono:wght@400;700&amp;display=swap" rel="stylesheet"/>
+<script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'bright-black': '#0a0a0c',
+            'neon-purple': '#bc13fe',
+            'neon-green': '#39ff14',
+            'neon-cyan': '#00f3ff',
+            'glass-bg': 'rgba(255, 255, 255, 0.03)',
+            'glass-border': 'rgba(255, 255, 255, 0.1)',
+          },
+          fontFamily: {
+            sans: ['Inter', 'Microsoft YaHei', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          boxShadow: {
+            'neon-purple': '0 0 15px rgba(188, 19, 254, 0.4)',
+            'neon-green': '0 0 15px rgba(57, 255, 20, 0.4)',
+            'neon-cyan': '0 0 15px rgba(0, 243, 255, 0.4)',
+          }
+        }
+      }
+    }
+  </script>
+<style data-purpose="custom-glassmorphism">
+    .glass-card {
+      background: rgba(255, 255, 255, 0.03);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .neon-border-purple { border: 1px solid rgba(188, 19, 254, 0.5); }
+    .neon-border-green { border: 1px solid rgba(57, 255, 20, 0.5); }
+    .neon-border-cyan { border: 1px solid rgba(0, 243, 255, 0.5); }
+    
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
+    ::-webkit-scrollbar-thumb:hover { background: #444; }
+
+    .glow-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 8px;
+    }
+  </style>
+</head>
+<body class="bg-bright-black text-gray-200 font-sans min-h-screen flex">
+<!-- BEGIN: LeftSidebar -->
+<aside class="w-72 border-r border-white/5 bg-black/40 flex flex-col sticky top-0 h-screen overflow-y-auto z-50">
+<div class="p-8">
+<div class="flex items-center gap-3 mb-10">
+<div class="w-10 h-10 rounded-lg bg-gradient-to-br from-neon-purple to-neon-cyan flex items-center justify-center shadow-neon-purple">
+<svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</div>
+<div>
+<h1 class="text-xl font-bold tracking-tight text-white">OpenOmni</h1>
+<p class="text-[10px] text-gray-500 uppercase tracking-widest">AI 全渠道管理系统</p>
+</div>
+</div>
+<nav class="space-y-1">
+<!-- Main Modules -->
+<p class="text-[10px] text-gray-600 font-bold mb-2 ml-3 uppercase tracking-widest">主控台</p>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl bg-neon-purple/10 text-neon-purple border border-neon-purple/20 transition-all" href="#">
+<svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>
+<span class="text-sm font-medium">控制面板</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl text-gray-400 hover:bg-white/5 hover:text-white transition-all" href="#">
+<svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+<span class="text-sm font-medium">OpenClaw 配置</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl text-gray-400 hover:bg-white/5 hover:text-white transition-all" href="#">
+<svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
+<span class="text-sm font-medium">OpenClaw 任务</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl text-gray-400 hover:bg-white/5 hover:text-white transition-all" href="#">
+<svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
+<span class="text-sm font-medium">知识库设置</span>
+</a>
+<!-- Media Accounts -->
+<p class="text-[10px] text-gray-600 font-bold mt-8 mb-2 ml-3 uppercase tracking-widest">媒体渠道</p>
+<div class="space-y-1">
+<a class="flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-white/5 transition-all" href="#">小红书账号管理</a>
+<a class="flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-white/5 transition-all" href="#">抖音账号管理</a>
+<a class="flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-white/5 transition-all" href="#">视频号账号管理</a>
+<a class="flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-white/5 transition-all" href="#">快手账号管理</a>
+<a class="flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-white/5 transition-all" href="#">TK 账号管理</a>
+<a class="flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-white/5 transition-all" href="#">哔哩哔哩账号管理</a>
+<a class="flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-white/5 transition-all" href="#">百家号账号管理</a>
+<a class="flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-white/5 transition-all" href="#">国际媒体管理</a>
+</div>
+</nav>
+<div class="mt-auto pt-8">
+<button class="w-full bg-gradient-to-r from-neon-purple to-indigo-600 text-white font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 shadow-neon-purple transition-transform active:scale-95">
+<svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M12 6v6m0 0v6m0-6h6m-6 0H6" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+          新建分发任务
+        </button>
+</div>
+</div>
+</aside>
+<!-- END: LeftSidebar -->
+<!-- BEGIN: MainContent -->
+<main class="flex-1 flex flex-col min-h-screen overflow-x-hidden">
+<!-- BEGIN: Header -->
+<header class="h-20 border-b border-white/5 px-10 flex items-center justify-between glass-card sticky top-0 z-40">
+<div class="flex items-center gap-4 flex-1">
+<div class="relative w-96">
+<span class="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-500">
+<svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+</span>
+<input class="block w-full pl-10 pr-3 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-neon-cyan focus:border-transparent text-sm text-gray-300" placeholder="搜索任务、账号或分析报告..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-6">
+<div class="flex items-center gap-3 px-4 py-2 rounded-full border border-neon-cyan/30 bg-neon-cyan/5">
+<div class="w-2 h-2 rounded-full bg-neon-cyan animate-pulse shadow-neon-cyan"></div>
+<span class="text-xs text-neon-cyan font-bold uppercase tracking-widest">System Online</span>
+</div>
+<div class="flex -space-x-2">
+<img class="w-8 h-8 rounded-full border-2 border-bright-black" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAd5nGt3R8p5fua6Z7eYvr4YSkrQnP5l1VuMWMasQZeTHG2tBt3Z0iQMcwSwcBSAwRcrGWzoJ_5cK37OgQWXccsapu1D1Cn63-JgxO4wAVb7g3pPwSAn0LG55umSD1dp_L_jAjvPqSJi3Hl8FcFFs-JCZNgQIkA8wIbl5ju8yW4s1sKe4ZX4lmYiC6dQvaQ1eyAnZoZf641Ert0IaZEcSg2zLxFCq96imWR76kiN9YtaQRF_c-42vEruqs57xP_Pr9_UDg-BJN6sA"/>
+<img class="w-8 h-8 rounded-full border-2 border-bright-black" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDpmZmcGlTPPQeGG07ESBB6BKC01LCNQ12No_tiXRNEO7b1-fKDiPmk5lm3C8HQdzmGHPJDEUccWkOxg4q9DOH8-PXaqLqE-T99z7qdSIMexUJjPWawedk86IrN-oBp2LjtnShQfFY7Q0P96xnWQcbRuobHJb3Juma1qbE95C_xkNmScWBJ9Wr94gygsobaDuvqjuLmYDWFaj1yml8NRw2LBeYDIu_7nebbrsGbu2DckPtRVDRkY1Iag_MS4qCXQdxk5dhy-tbd2g"/>
+<div class="w-8 h-8 rounded-full border-2 border-bright-black bg-gray-800 flex items-center justify-center text-[10px] text-gray-400">+12</div>
+</div>
+<button class="relative p-2 text-gray-400 hover:text-white transition-colors">
+<svg class="w-6 h-6" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
+<span class="absolute top-2 right-2 w-2 h-2 bg-neon-purple rounded-full"></span>
+</button>
+<div class="h-8 w-px bg-white/10"></div>
+<div class="flex items-center gap-3">
+<div class="text-right">
+<p class="text-xs font-bold text-white">AI 智控中心</p>
+<p class="text-[10px] text-neon-cyan">超级管理员</p>
+</div>
+<div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-gray-700 to-gray-500 p-0.5">
+<img class="w-full h-full rounded-[10px] object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBYDt6uxlCQ-0RZruH7GHVXc7kMkF1S8s5ZryDqilD2rPJsjsAJFD7ZM-iqZhVl2ybljJ75bbIs8RjgsEWGQshNL2J8bH5urkVmDrIt6l1L7BevmGFesFjm0Vz1sFxZY3DwKaXN_7b665sNsLTq0ASannR5NMcIGkDYEq01fho2U45z8tMex7B6dyt9ZciDOiaikn_xVF-oWkIhjCcHmj6kBCLW_O-_nOnCCGdhbnBo4cKc6aHMkkfXRETSqz1mYRXT73GNk-Ouog"/>
+</div>
+</div>
+</div>
+</header>
+<!-- END: Header -->
+<!-- BEGIN: DashboardBody -->
+<div class="p-10 space-y-8">
+<!-- BEGIN: StatsOverview -->
+<section>
+<div class="mb-6">
+<h2 class="text-3xl font-bold text-white tracking-tight">仪表盘概览</h2>
+<p class="text-gray-500 mt-1">实时监控多平台分发矩阵与AI算力执行状态</p>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+<!-- Stat Card 1 -->
+<div class="glass-card p-6 rounded-2xl relative overflow-hidden group">
+<div class="absolute -right-4 -bottom-4 w-24 h-24 bg-neon-purple/5 rounded-full blur-2xl group-hover:bg-neon-purple/10 transition-colors"></div>
+<div class="flex justify-between items-start mb-4">
+<span class="text-xs font-bold text-gray-400 uppercase tracking-widest">活跃平台账号</span>
+<span class="text-neon-green text-xs font-mono font-bold">+8.2%</span>
+</div>
+<div class="flex items-baseline gap-2">
+<span class="text-4xl font-black text-white font-mono tracking-tighter">142</span>
+<span class="text-gray-600 text-sm">/ 150</span>
+</div>
+<div class="mt-4 w-full bg-white/5 h-1 rounded-full overflow-hidden">
+<div class="bg-neon-purple h-full w-[94%] shadow-neon-purple"></div>
+</div>
+</div>
+<!-- Stat Card 2 -->
+<div class="glass-card p-6 rounded-2xl relative overflow-hidden group">
+<div class="absolute -right-4 -bottom-4 w-24 h-24 bg-neon-cyan/5 rounded-full blur-2xl group-hover:bg-neon-cyan/10 transition-colors"></div>
+<div class="flex justify-between items-start mb-4">
+<span class="text-xs font-bold text-gray-400 uppercase tracking-widest">AI 生成队列</span>
+<div class="flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-neon-cyan animate-pulse"></span>
+<span class="text-neon-cyan text-[10px] font-bold">高速</span>
+</div>
+</div>
+<div class="flex items-baseline gap-2">
+<span class="text-4xl font-black text-white font-mono tracking-tighter">28</span>
+<span class="text-gray-600 text-sm">正在进行</span>
+</div>
+<div class="mt-4 flex gap-1">
+<div class="h-1 flex-1 bg-neon-cyan rounded-full"></div>
+<div class="h-1 flex-1 bg-neon-cyan rounded-full"></div>
+<div class="h-1 flex-1 bg-neon-cyan rounded-full"></div>
+<div class="h-1 flex-1 bg-white/10 rounded-full"></div>
+<div class="h-1 flex-1 bg-white/10 rounded-full"></div>
+</div>
+</div>
+<!-- Stat Card 3 -->
+<div class="glass-card p-6 rounded-2xl relative overflow-hidden group">
+<div class="absolute -right-4 -bottom-4 w-24 h-24 bg-neon-green/5 rounded-full blur-2xl group-hover:bg-neon-green/10 transition-colors"></div>
+<div class="flex justify-between items-start mb-4">
+<span class="text-xs font-bold text-gray-400 uppercase tracking-widest">今日分发总量</span>
+<span class="text-neon-green text-xs font-mono font-bold">↑ 12.5k</span>
+</div>
+<div class="flex items-baseline gap-2">
+<span class="text-4xl font-black text-white font-mono tracking-tighter">1,892</span>
+</div>
+<p class="mt-4 text-[10px] text-gray-500 font-medium">成功率 99.2%</p>
+</div>
+<!-- Stat Card 4 -->
+<div class="glass-card p-6 rounded-2xl relative overflow-hidden group border-l-2 border-l-neon-green/50">
+<div class="absolute -right-4 -bottom-4 w-24 h-24 bg-neon-green/5 rounded-full blur-2xl group-hover:bg-neon-green/10 transition-colors"></div>
+<div class="flex justify-between items-start mb-4">
+<span class="text-xs font-bold text-gray-400 uppercase tracking-widest">AI 算力消耗</span>
+<span class="text-gray-500 text-[10px] font-mono">节点: AWS-G5</span>
+</div>
+<div class="flex items-baseline gap-2">
+<span class="text-4xl font-black text-neon-green font-mono tracking-tighter">84.2%</span>
+</div>
+<div class="mt-4 w-full bg-white/5 h-1 rounded-full overflow-hidden">
+<div class="bg-gradient-to-r from-neon-green/50 to-neon-green h-full w-[84%] shadow-neon-green"></div>
+</div>
+</div>
+</div>
+</section>
+<!-- END: StatsOverview -->
+<!-- BEGIN: ChartsAndFeed -->
+<div class="grid grid-cols-12 gap-8">
+<!-- BEGIN: PerformanceChart -->
+<section class="col-span-12 lg:col-span-8 glass-card rounded-3xl p-8">
+<div class="flex items-center justify-between mb-10">
+<div class="flex items-center gap-3">
+<div class="p-2 rounded-lg bg-neon-purple/20 text-neon-purple">
+<svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+</div>
+<h3 class="text-lg font-bold text-white">OpenClaw 执行状态监控</h3>
+</div>
+<div class="flex items-center gap-2">
+<span class="text-[10px] font-mono px-2 py-0.5 rounded border border-white/10 text-gray-500 uppercase">Live Data</span>
+</div>
+</div>
+<!-- Progress List -->
+<div class="space-y-6 mb-12">
+<div class="space-y-2">
+<div class="flex justify-between text-xs font-bold mb-1">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center text-red-500">
+<svg class="w-4 h-4" fill="currentColor" viewbox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"></path></svg>
+</div>
+<span class="text-gray-300">小红书矩阵</span>
+</div>
+<span class="text-neon-cyan">85% <span class="text-gray-600 ml-1 font-normal">完好率</span></span>
+</div>
+<div class="h-2 w-full bg-white/5 rounded-full overflow-hidden">
+<div class="h-full bg-gradient-to-r from-neon-green to-yellow-400 w-[85%]"></div>
+</div>
+</div>
+<div class="space-y-2">
+<div class="flex justify-between text-xs font-bold mb-1">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-lg bg-neon-purple/10 flex items-center justify-center text-neon-purple">
+<svg class="w-4 h-4" fill="currentColor" viewbox="0 0 24 24"><path d="M11.644 1.59a.75.75 0 01.712 0l9.75 5.25a.75.75 0 010 1.32l-9.75 5.25a.75.75 0 01-.712 0l-9.75-5.25a.75.75 0 010-1.32l9.75-5.25zM3.077 7.5L12 12.305 20.923 7.5 12 2.695 3.077 7.5z"></path></svg>
+</div>
+<span class="text-gray-300">抖音/Tik Tok</span>
+</div>
+<span class="text-neon-cyan">96% <span class="text-gray-600 ml-1 font-normal">完好率</span></span>
+</div>
+<div class="h-2 w-full bg-white/5 rounded-full overflow-hidden">
+<div class="h-full bg-gradient-to-r from-neon-purple to-neon-cyan w-[96%]"></div>
+</div>
+</div>
+<div class="space-y-2">
+<div class="flex justify-between text-xs font-bold mb-1">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400">
+<svg class="w-4 h-4" fill="currentColor" viewbox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.46 14.88l-1.05-1.07c-.42.41-.95.67-1.54.74v1.45h-1.5v-1.45c-.88-.12-1.63-.56-2.12-1.22l1.2-1c.29.42.75.73 1.28.8v-1.48c-.97-.24-1.64-.75-1.64-1.7s.64-1.46 1.64-1.7v-1.4h1.5v1.4c.73.1 1.34.46 1.76.98l-1.15 1.05c-.21-.31-.5-.53-.86-.63v1.54c1.1.28 1.78.88 1.78 1.83 0 .73-.42 1.3-.9 1.66z"></path></svg>
+</div>
+<span class="text-gray-300">Bilibili</span>
+</div>
+<span class="text-neon-cyan">91% <span class="text-gray-600 ml-1 font-normal">完好率</span></span>
+</div>
+<div class="h-2 w-full bg-white/5 rounded-full overflow-hidden">
+<div class="h-full bg-gradient-to-r from-neon-cyan to-blue-500 w-[91%]"></div>
+</div>
+</div>
+</div>
+<!-- Bar Chart Visual -->
+<div class="bg-black/20 rounded-2xl p-6 relative border border-white/5">
+<div class="flex items-end justify-between h-48 gap-4 px-4">
+<div class="flex-1 bg-neon-purple/40 rounded-t-lg h-2/3 group relative">
+<div class="absolute -top-10 left-1/2 -translate-x-1/2 bg-white/10 backdrop-blur text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">流量 68k</div>
+</div>
+<div class="flex-1 bg-neon-purple/60 rounded-t-lg h-3/4"></div>
+<div class="flex-1 bg-neon-green/60 rounded-t-lg h-1/4"></div>
+<div class="flex-1 bg-neon-purple/80 rounded-t-lg h-4/5"></div>
+<div class="flex-1 bg-neon-cyan rounded-t-lg h-full shadow-neon-cyan"></div>
+<div class="flex-1 bg-neon-purple/40 rounded-t-lg h-1/2"></div>
+<div class="flex-1 bg-neon-purple/60 rounded-t-lg h-3/4"></div>
+<div class="flex-1 bg-neon-green/40 rounded-t-lg h-1/3"></div>
+</div>
+<div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+<div class="flex flex-col items-center">
+<svg class="w-8 h-8 text-white/20 mb-2" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+<p class="text-[10px] text-gray-600 font-bold uppercase tracking-widest">实时流量趋势分析</p>
+</div>
+</div>
+</div>
+</section>
+<!-- END: PerformanceChart -->
+<!-- BEGIN: ActivityFeed -->
+<section class="col-span-12 lg:col-span-4 glass-card rounded-3xl p-8">
+<div class="flex items-center justify-between mb-8">
+<h3 class="text-lg font-bold text-white">最近分发任务</h3>
+<a class="text-xs text-neon-purple hover:underline" href="#">查看全部</a>
+</div>
+<div class="space-y-6">
+<!-- Task 1 -->
+<div class="flex gap-4 p-4 rounded-2xl border border-white/5 bg-white/[0.02] hover:bg-white/5 transition-colors group">
+<div class="w-12 h-12 rounded-xl bg-neon-green/10 flex items-center justify-center text-neon-green shadow-sm">
+<svg class="w-6 h-6" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</div>
+<div class="flex-1 min-w-0">
+<div class="flex justify-between items-start">
+<h4 class="text-sm font-bold text-gray-200 truncate">夏季时尚穿搭 AI 生成</h4>
+<span class="text-[10px] text-gray-500 whitespace-nowrap">2分钟前</span>
+</div>
+<p class="text-[10px] text-gray-500 mt-1">分发平台: 小红书, 抖音, 视频号</p>
+<div class="mt-3 flex items-center gap-2">
+<span class="px-2 py-0.5 rounded-full bg-neon-green/20 text-neon-green text-[10px] font-bold">已完成</span>
+</div>
+</div>
+</div>
+<!-- Task 2 -->
+<div class="flex gap-4 p-4 rounded-2xl border border-white/5 bg-white/[0.02] hover:bg-white/5 transition-colors">
+<div class="w-12 h-12 rounded-xl bg-neon-purple/10 flex items-center justify-center text-neon-purple">
+<svg class="w-6 h-6 animate-pulse" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</div>
+<div class="flex-1 min-w-0">
+<div class="flex justify-between items-start">
+<h4 class="text-sm font-bold text-gray-200 truncate">跨境电商产品 3D 渲染</h4>
+<span class="text-[10px] text-gray-500 whitespace-nowrap">正在执行</span>
+</div>
+<p class="text-[10px] text-gray-500 mt-1">分发平台: TK Global, FB</p>
+<div class="mt-3 flex items-center gap-2">
+<div class="w-full bg-white/5 h-1 rounded-full overflow-hidden flex-1">
+<div class="h-full bg-neon-purple w-[74%]"></div>
+</div>
+<span class="text-neon-purple text-[10px] font-bold">74%</span>
+</div>
+</div>
+</div>
+<!-- Task 3 -->
+<div class="flex gap-4 p-4 rounded-2xl border border-white/5 bg-white/[0.02] hover:bg-white/5 transition-colors">
+<div class="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400">
+<svg class="w-6 h-6" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</div>
+<div class="flex-1 min-w-0">
+<div class="flex justify-between items-start">
+<h4 class="text-sm font-bold text-gray-200 truncate">科技新闻 每日简报 (B04)</h4>
+<span class="text-[10px] text-gray-500 whitespace-nowrap">排期中</span>
+</div>
+<p class="text-[10px] text-gray-500 mt-1">分发平台: 百家号, 公众号</p>
+<div class="mt-3 flex items-center gap-2">
+<span class="px-2 py-0.5 rounded-full bg-gray-700/50 text-gray-400 text-[10px] font-bold">队列中</span>
+<span class="text-[10px] text-gray-500 font-mono">预排期: 14:30</span>
+</div>
+</div>
+</div>
+<!-- Task 4 -->
+<div class="flex gap-4 p-4 rounded-2xl border border-white/5 bg-white/[0.02] hover:bg-white/5 transition-colors">
+<div class="w-12 h-12 rounded-xl bg-yellow-500/10 flex items-center justify-center text-yellow-500">
+<svg class="w-6 h-6" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</div>
+<div class="flex-1 min-w-0">
+<div class="flex justify-between items-start">
+<h4 class="text-sm font-bold text-gray-200 truncate">美妆博主 脚本深度改写</h4>
+<span class="text-[10px] text-gray-500 whitespace-nowrap">1小时前</span>
+</div>
+<p class="text-[10px] text-gray-500 mt-1">分发平台: 快手, 抖音</p>
+<div class="mt-3 flex items-center gap-2">
+<span class="px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-500 text-[10px] font-bold">需要审核</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Total Count Info -->
+<div class="mt-10 pt-6 border-t border-white/5 flex items-end justify-between">
+<div>
+<p class="text-[10px] text-gray-500 uppercase tracking-widest font-bold">本月累计分发</p>
+<p class="text-3xl font-black text-white font-mono mt-1">48,291</p>
+</div>
+<div class="text-right">
+<p class="text-[10px] text-gray-500">同比上月</p>
+<p class="text-neon-green font-mono font-bold">+18.4%</p>
+</div>
+</div>
+</section>
+<!-- END: ActivityFeed -->
+</div>
+<!-- END: ChartsAndFeed -->
+<!-- BEGIN: NodeStatusFooter -->
+<footer class="glass-card rounded-3xl p-6 flex items-center justify-between">
+<div class="flex items-center gap-6">
+<div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-neon-purple/20 to-neon-cyan/20 flex items-center justify-center border border-white/10 shadow-neon-purple">
+<svg class="w-8 h-8 text-neon-cyan" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</div>
+<div>
+<div class="flex items-center gap-2">
+<h4 class="text-xl font-bold text-white">节点同步状态: 极佳</h4>
+<span class="flex h-3 w-3 relative">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-neon-green opacity-75"></span>
+<span class="relative inline-flex rounded-full h-3 w-3 bg-neon-green shadow-neon-green"></span>
+</span>
+</div>
+<p class="text-sm text-gray-500 mt-1">所有 OpenClaw 采集器与分发机器人均已同步至最新 v4.2 引擎</p>
+</div>
+</div>
+<div class="flex gap-4">
+<button class="px-6 py-2.5 rounded-xl border border-white/10 text-gray-400 font-bold text-sm hover:bg-white/5 transition-colors">
+            系统日志
+          </button>
+<button class="px-6 py-2.5 rounded-xl bg-neon-green text-black font-black text-sm hover:scale-105 active:scale-95 transition-all shadow-neon-green">
+            开始全局巡检
+          </button>
+</div>
+</footer>
+<!-- END: NodeStatusFooter -->
+</div>
+<!-- END: DashboardBody -->
+</main>
+<!-- END: MainContent -->
+</body></html>

@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#9d25f4",
+                        "accent-green": "#00ff88",
+                        "background-light": "#f7f5f8",
+                        "background-dark": "#0a050e",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .neon-border {
+            position: relative;
+        }
+        .neon-border::after {
+            content: '';
+            position: absolute;
+            top: -1px; left: -1px; right: -1px; bottom: -1px;
+            background: linear-gradient(45deg, #9d25f4, #00ff88, #9d25f4);
+            z-index: -1;
+            border-radius: inherit;
+            opacity: 0.3;
+        }
+        .glass-effect {
+            backdrop-filter: blur(12px);
+            background-color: rgba(26, 16, 34, 0.7);
+            border: 1px solid rgba(157, 37, 244, 0.1);
+        }
+        .bg-mesh {
+            background-color: #0a050e;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(157, 37, 244, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(0, 255, 136, 0.1) 0px, transparent 50%);
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100 min-h-screen bg-mesh">
+<div class="flex h-screen overflow-hidden">
+<!-- Sidebar -->
+<aside class="w-64 flex-shrink-0 flex flex-col glass-effect border-r border-primary/20">
+<div class="p-6 flex items-center gap-3">
+<div class="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-accent-green flex items-center justify-center text-white shadow-[0_0_15px_rgba(157,37,244,0.5)]">
+<span class="material-symbols-outlined">auto_awesome</span>
+</div>
+<div>
+<h1 class="font-bold text-lg tracking-tight">AI 财务中心</h1>
+<p class="text-xs text-primary font-medium uppercase tracking-widest">OpenClaw Pro</p>
+</div>
+</div>
+<nav class="flex-1 px-4 py-4 space-y-1">
+<a class="flex items-center gap-3 px-3 py-2.5 text-slate-400 hover:text-white hover:bg-primary/10 rounded-lg transition-all group" href="#">
+<span class="material-symbols-outlined text-[22px]">dashboard</span>
+<span class="text-sm font-medium">控制面板</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-slate-400 hover:text-white hover:bg-primary/10 rounded-lg transition-all" href="#">
+<span class="material-symbols-outlined text-[22px]">image</span>
+<span class="text-sm font-medium">图片制作</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-slate-400 hover:text-white hover:bg-primary/10 rounded-lg transition-all" href="#">
+<span class="material-symbols-outlined text-[22px]">movie</span>
+<span class="text-sm font-medium">视频制作</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-slate-400 hover:text-white hover:bg-primary/10 rounded-lg transition-all" href="#">
+<span class="material-symbols-outlined text-[22px]">chat_bubble</span>
+<span class="text-sm font-medium">聊天</span>
+</a>
+<div class="pt-4 pb-2 px-3">
+<span class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">配置中心</span>
+</div>
+<a class="flex items-center gap-3 px-3 py-2.5 text-slate-400 hover:text-white hover:bg-primary/10 rounded-lg transition-all" href="#">
+<span class="material-symbols-outlined text-[22px]">settings_input_component</span>
+<span class="text-sm font-medium">OpenClaw 配置</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-slate-400 hover:text-white hover:bg-primary/10 rounded-lg transition-all" href="#">
+<span class="material-symbols-outlined text-[22px]">assignment</span>
+<span class="text-sm font-medium">OpenClaw 任务</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 bg-primary/20 text-primary border border-primary/30 rounded-lg transition-all shadow-[0_0_15px_rgba(157,37,244,0.15)]" href="#">
+<span class="material-symbols-outlined text-[22px] fill-1">account_balance_wallet</span>
+<span class="text-sm font-bold">财务管理</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-slate-400 hover:text-white hover:bg-primary/10 rounded-lg transition-all" href="#">
+<span class="material-symbols-outlined text-[22px]">add_card</span>
+<span class="text-sm font-medium">充值中心</span>
+</a>
+</nav>
+<div class="p-4 border-t border-primary/10">
+<div class="flex items-center gap-3 p-2 rounded-lg bg-slate-900/50">
+<div class="w-8 h-8 rounded-full bg-slate-800 border border-primary/30 overflow-hidden">
+<img class="w-full h-full object-cover" data-alt="User profile avatar gradient pattern" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCdGnfw3-ZjYccdJxwVfhb8pzWfhmt633MWb9Ekotj0WMR8jmlL2mNzOS3qExUqLYVyOFDZWty9RjU0fTuVaTrSNKDPanIQgfwlino6IAXTy6ACEIgjnUIK8kRJMdehHcF3Q8H5HnlNsWW6srVhCxr6b9ND_70UE2yL6ZhAWyhjZ1vzJwN9IBXOYTqg_fuY2SOE-OfoR1wjhyApdIB4sd4iLMmK35HYYAciThTiK-YGkLnIFSCwxdwJPKHhOt7xcuLZmmjezeSNdQ"/>
+</div>
+<div class="flex-1 min-w-0">
+<p class="text-xs font-bold truncate">Premium User</p>
+<p class="text-[10px] text-slate-500">ID: 884291</p>
+</div>
+<span class="material-symbols-outlined text-slate-500 text-sm">logout</span>
+</div>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="flex-1 overflow-y-auto bg-transparent p-8">
+<header class="mb-10">
+<h2 class="text-3xl font-bold tracking-tight bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">财务概览</h2>
+<p class="text-slate-500 mt-1">实时监控您的账户余额与消费支出</p>
+</header>
+<!-- Stats Grid -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+<!-- Card 1 -->
+<div class="relative group">
+<div class="absolute -inset-0.5 bg-gradient-to-r from-primary to-accent-green rounded-xl blur opacity-20 group-hover:opacity-40 transition duration-1000"></div>
+<div class="relative glass-effect p-6 rounded-xl flex flex-col gap-2 border border-white/5">
+<div class="flex justify-between items-start">
+<span class="text-slate-400 text-sm font-medium">总余额</span>
+<div class="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-sm">payments</span>
+</div>
+</div>
+<div class="text-2xl font-bold">¥12,840.00</div>
+<div class="flex items-center gap-1 text-accent-green text-xs font-bold">
+<span class="material-symbols-outlined text-xs">trending_up</span>
+<span>+5.2% 较上周</span>
+</div>
+</div>
+</div>
+<!-- Card 2 -->
+<div class="relative group">
+<div class="absolute -inset-0.5 bg-gradient-to-r from-pink-500 to-primary rounded-xl blur opacity-20 group-hover:opacity-40 transition duration-1000"></div>
+<div class="relative glass-effect p-6 rounded-xl flex flex-col gap-2 border border-white/5">
+<div class="flex justify-between items-start">
+<span class="text-slate-400 text-sm font-medium">本月消费</span>
+<div class="w-8 h-8 rounded-lg bg-pink-500/20 flex items-center justify-center text-pink-500">
+<span class="material-symbols-outlined text-sm">shopping_cart</span>
+</div>
+</div>
+<div class="text-2xl font-bold">¥1,250.00</div>
+<div class="flex items-center gap-1 text-slate-500 text-xs font-bold">
+<span class="material-symbols-outlined text-xs">trending_down</span>
+<span>-12.4% 较上月</span>
+</div>
+</div>
+</div>
+<!-- Card 3 -->
+<div class="relative group">
+<div class="absolute -inset-0.5 bg-gradient-to-r from-accent-green to-cyan-500 rounded-xl blur opacity-20 group-hover:opacity-40 transition duration-1000"></div>
+<div class="relative glass-effect p-6 rounded-xl flex flex-col gap-2 border border-white/5">
+<div class="flex justify-between items-start">
+<span class="text-slate-400 text-sm font-medium">累计消费</span>
+<div class="w-8 h-8 rounded-lg bg-accent-green/20 flex items-center justify-center text-accent-green">
+<span class="material-symbols-outlined text-sm">bar_chart</span>
+</div>
+</div>
+<div class="text-2xl font-bold">¥45,600.00</div>
+<div class="flex items-center gap-1 text-accent-green text-xs font-bold">
+<span class="material-symbols-outlined text-xs">verified</span>
+<span>系统运行正常</span>
+</div>
+</div>
+</div>
+<!-- Card 4 -->
+<div class="relative group">
+<div class="absolute -inset-0.5 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-xl blur opacity-20 group-hover:opacity-40 transition duration-1000"></div>
+<div class="relative glass-effect p-6 rounded-xl flex flex-col gap-2 border border-white/5">
+<div class="flex justify-between items-start">
+<span class="text-slate-400 text-sm font-medium">当前套餐</span>
+<div class="w-8 h-8 rounded-lg bg-yellow-500/20 flex items-center justify-center text-yellow-500">
+<span class="material-symbols-outlined text-sm">workspace_premium</span>
+</div>
+</div>
+<div class="text-xl font-bold">专业旗舰版</div>
+<div class="flex items-center gap-2">
+<div class="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+<div class="w-[75%] h-full bg-gradient-to-r from-yellow-400 to-orange-500"></div>
+</div>
+<span class="text-[10px] text-slate-500">75%</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Charts & Table Section -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+<!-- Trend Chart -->
+<div class="lg:col-span-1 glass-effect rounded-2xl p-6 border border-white/5">
+<div class="flex items-center justify-between mb-6">
+<h3 class="text-lg font-bold flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">show_chart</span>
+                            近期消费走势
+                        </h3>
+<select class="bg-slate-900 border-none text-xs rounded-lg text-slate-400 focus:ring-primary">
+<option>最近7天</option>
+<option>最近30天</option>
+</select>
+</div>
+<div class="h-64 flex flex-col">
+<div class="flex-1 relative">
+<svg class="w-full h-full" preserveaspectratio="none" viewbox="0 0 100 40">
+<defs>
+<lineargradient id="chartGradient" x1="0" x2="0" y1="0" y2="1">
+<stop offset="0%" stop-color="#9d25f4" stop-opacity="0.4"></stop>
+<stop offset="100%" stop-color="#00ff88" stop-opacity="0"></stop>
+</lineargradient>
+</defs>
+<path d="M0,35 Q10,15 20,25 T40,15 T60,30 T80,10 T100,20 L100,40 L0,40 Z" fill="url(#chartGradient)"></path>
+<path d="M0,35 Q10,15 20,25 T40,15 T60,30 T80,10 T100,20" fill="none" stroke="#9d25f4" stroke-width="0.5"></path>
+<path class="opacity-30" d="M0,35 Q10,15 20,25 T40,15 T60,30 T80,10 T100,20" fill="none" stroke="#00ff88" stroke-dasharray="1 1" stroke-width="0.5"></path>
+</svg>
+</div>
+<div class="flex justify-between text-[10px] text-slate-500 mt-4 px-1">
+<span>周一</span>
+<span>周二</span>
+<span>周三</span>
+<span>周四</span>
+<span>周五</span>
+<span>周六</span>
+<span>周日</span>
+</div>
+</div>
+<div class="mt-6 pt-6 border-t border-white/5 flex items-center justify-around">
+<div class="text-center">
+<div class="text-xs text-slate-500">平均每日</div>
+<div class="text-sm font-bold">¥178.57</div>
+</div>
+<div class="w-px h-8 bg-white/5"></div>
+<div class="text-center">
+<div class="text-xs text-slate-500">最高峰值</div>
+<div class="text-sm font-bold text-primary">¥450.00</div>
+</div>
+</div>
+</div>
+<!-- Transaction Table -->
+<div class="lg:col-span-2 glass-effect rounded-2xl p-6 border border-white/5">
+<div class="flex items-center justify-between mb-6">
+<h3 class="text-lg font-bold flex items-center gap-2">
+<span class="material-symbols-outlined text-accent-green">list_alt</span>
+                            财务流水明细
+                        </h3>
+<button class="text-xs text-primary hover:underline font-medium">查看全部</button>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-sm text-left">
+<thead>
+<tr class="text-slate-500 border-b border-white/5">
+<th class="pb-4 font-medium">交易 ID</th>
+<th class="pb-4 font-medium">类型</th>
+<th class="pb-4 font-medium">金额</th>
+<th class="pb-4 font-medium">交易时间</th>
+<th class="pb-4 font-medium">状态</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-white/5">
+<tr class="group hover:bg-white/5 transition-colors">
+<td class="py-4 font-mono text-xs text-slate-400">#TX-99021</td>
+<td class="py-4">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_rgba(157,37,244,0.6)]"></span>
+                                            AI 图片生成扣费
+                                        </div>
+</td>
+<td class="py-4 font-bold text-pink-500">- ¥25.00</td>
+<td class="py-4 text-xs text-slate-400">2023-11-20 14:23</td>
+<td class="py-4">
+<span class="px-2 py-1 rounded bg-accent-green/10 text-accent-green text-[10px] font-bold uppercase tracking-wider">成功</span>
+</td>
+</tr>
+<tr class="group hover:bg-white/5 transition-colors">
+<td class="py-4 font-mono text-xs text-slate-400">#TX-99018</td>
+<td class="py-4">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-accent-green shadow-[0_0_8px_rgba(0,255,136,0.6)]"></span>
+                                            账户快捷充值
+                                        </div>
+</td>
+<td class="py-4 font-bold text-accent-green">+ ¥500.00</td>
+<td class="py-4 text-xs text-slate-400">2023-11-19 10:15</td>
+<td class="py-4">
+<span class="px-2 py-1 rounded bg-accent-green/10 text-accent-green text-[10px] font-bold uppercase tracking-wider">成功</span>
+</td>
+</tr>
+<tr class="group hover:bg-white/5 transition-colors">
+<td class="py-4 font-mono text-xs text-slate-400">#TX-98952</td>
+<td class="py-4">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_rgba(157,37,244,0.6)]"></span>
+                                            视频生成扣费 (4K)
+                                        </div>
+</td>
+<td class="py-4 font-bold text-pink-500">- ¥120.00</td>
+<td class="py-4 text-xs text-slate-400">2023-11-18 22:45</td>
+<td class="py-4">
+<span class="px-2 py-1 rounded bg-accent-green/10 text-accent-green text-[10px] font-bold uppercase tracking-wider">成功</span>
+</td>
+</tr>
+<tr class="group hover:bg-white/5 transition-colors">
+<td class="py-4 font-mono text-xs text-slate-400">#TX-98841</td>
+<td class="py-4">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-slate-500"></span>
+                                            API 接口调用扣费
+                                        </div>
+</td>
+<td class="py-4 font-bold text-pink-500">- ¥0.45</td>
+<td class="py-4 text-xs text-slate-400">2023-11-18 16:10</td>
+<td class="py-4">
+<span class="px-2 py-1 rounded bg-yellow-500/10 text-yellow-500 text-[10px] font-bold uppercase tracking-wider">处理中</span>
+</td>
+</tr>
+<tr class="group hover:bg-white/5 transition-colors">
+<td class="py-4 font-mono text-xs text-slate-400">#TX-98712</td>
+<td class="py-4">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_rgba(157,37,244,0.6)]"></span>
+                                            智能对话扣费
+                                        </div>
+</td>
+<td class="py-4 font-bold text-pink-500">- ¥2.00</td>
+<td class="py-4 text-xs text-slate-400">2023-11-17 11:32</td>
+<td class="py-4">
+<span class="px-2 py-1 rounded bg-accent-green/10 text-accent-green text-[10px] font-bold uppercase tracking-wider">成功</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>

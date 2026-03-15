@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="zh"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#3b82f6",
+                        "accent": "#9d25f4",
+                        "background-light": "#f7f5f8",
+                        "background-dark": "#0a0612",
+                        "panel": "rgba(30, 16, 45, 0.7)",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            background: radial-gradient(circle at top right, #1e0b36, #0a0612);
+            min-height: 100vh;
+        }
+        .glass-panel {
+            background: rgba(27, 16, 35, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(157, 37, 244, 0.2);
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+        }
+        .glow-border-blue {
+            border: 1px solid rgba(59, 130, 246, 0.5);
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.2);
+        }
+        .active-tab-glow {
+            box-shadow: 0 4px 10px -2px rgba(59, 130, 246, 0.5);
+        }
+    </style>
+</head>
+<body class="font-display text-slate-100">
+<div class="flex h-screen overflow-hidden">
+<!-- Side Navigation -->
+<aside class="w-64 flex-shrink-0 glass-panel border-r border-accent/20 flex flex-col p-4">
+<div class="mb-8 px-2">
+<h1 class="text-xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">OpenClaw Task Center</h1>
+<p class="text-slate-400 text-xs mt-1 uppercase tracking-widest">AI Management System</p>
+</div>
+<nav class="flex-1 space-y-1">
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-white/5 transition-colors" href="#">
+<span class="material-symbols-outlined text-primary">dashboard</span>
+<span class="text-sm font-medium">控制面板</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-white/5 transition-colors" href="#">
+<span class="material-symbols-outlined text-primary">image</span>
+<span class="text-sm font-medium">图像生成</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-white/5 transition-colors" href="#">
+<span class="material-symbols-outlined text-primary">movie</span>
+<span class="text-sm font-medium">视频生成</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-white/5 transition-colors" href="#">
+<span class="material-symbols-outlined text-primary">chat</span>
+<span class="text-sm font-medium">聊天对话</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-white/5 transition-colors" href="#">
+<span class="material-symbols-outlined text-primary">settings_input_component</span>
+<span class="text-sm font-medium">OpenClaw配置</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-primary/20 text-white glow-border-blue" href="#">
+<span class="material-symbols-outlined text-primary">list_alt</span>
+<span class="text-sm font-medium">OpenClaw任务</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-white/5 transition-colors" href="#">
+<span class="material-symbols-outlined text-primary">account_balance_wallet</span>
+<span class="text-sm font-medium">财务统计</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-white/5 transition-colors" href="#">
+<span class="material-symbols-outlined text-primary">add_card</span>
+<span class="text-sm font-medium">账户充值</span>
+</a>
+</nav>
+<div class="mt-auto p-3 rounded-xl bg-gradient-to-br from-primary/10 to-accent/10 border border-white/5">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-xs font-bold text-white shadow-lg shadow-primary/20">JS</div>
+<div>
+<p class="text-xs font-medium text-white">Jason Admin</p>
+<p class="text-[10px] text-slate-400">Pro Developer</p>
+</div>
+</div>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="flex-1 flex flex-col overflow-hidden">
+<!-- Tab Header -->
+<header class="h-16 flex items-center border-b border-white/5 px-8 gap-8 bg-black/20">
+<a class="h-full flex items-center text-slate-400 hover:text-white transition-colors text-sm font-medium border-b-2 border-transparent" href="#">
+                    全部
+                </a>
+<a class="h-full flex items-center text-primary font-bold text-sm border-b-2 border-primary active-tab-glow" href="#">
+                    视频任务
+                </a>
+<a class="h-full flex items-center text-slate-400 hover:text-white transition-colors text-sm font-medium border-b-2 border-transparent" href="#">
+                    图像任务
+                </a>
+<a class="h-full flex items-center text-slate-400 hover:text-white transition-colors text-sm font-medium border-b-2 border-transparent" href="#">
+                    聊天任务
+                </a>
+</header>
+<!-- Table Container -->
+<div class="flex-1 overflow-auto p-8">
+<div class="glass-panel rounded-xl overflow-hidden">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-white/5 border-b border-white/5">
+<th class="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">ID</th>
+<th class="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">模型</th>
+<th class="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">提示词</th>
+<th class="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">预览</th>
+<th class="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">状态</th>
+<th class="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider text-right">操作</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-white/5">
+<!-- Row 1 -->
+<tr class="hover:bg-white/[0.02] transition-colors group">
+<td class="px-6 py-4 text-sm font-medium text-slate-300">#VT-9021</td>
+<td class="px-6 py-4">
+<span class="px-2.5 py-1 rounded bg-accent/20 text-accent text-xs font-bold border border-accent/30">Sora-v1</span>
+</td>
+<td class="px-6 py-4 text-sm text-slate-400 max-w-xs truncate">
+                                    赛博朋克霓虹街道，雨夜中疾驰的机车，写实风格，电影光效...
+                                </td>
+<td class="px-6 py-4">
+<div class="w-12 h-12 rounded-lg bg-cover bg-center border border-white/10 group-hover:border-primary/50 transition-all shadow-lg" data-alt="Cyberpunk neon city video thumbnail" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuDU46AnzKI1D6DuJmAQePKmXP4pHetepjmR-GVT4lPvkPbtsHq-7qaRvJ0S2vBXxtDJh4U_ZtDXgC1GYgu3Fp7QaM4khj_86PYgVqbM2oL1j9Usy7aZ4TyPWBAlqFIc_Zo_RaEmvTvXJYBDNM9Ltgg4lGSLxTDUOT7m8bXN5zwksz9Bz-5HDgU7h0BGn0VmdW7lU8lxFp_FeVuFuY6AZNhj7dyF17bNEG-2fEHay_5-uCbi8Ll7w90Kg8QmHoHiTT2e2e1lRXS4vg')"></div>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+<span class="text-sm text-emerald-500 font-medium">已完成</span>
+</div>
+</td>
+<td class="px-6 py-4 text-right">
+<div class="flex justify-end gap-3">
+<button class="text-primary hover:text-white text-xs font-bold uppercase transition-colors">预览</button>
+<button class="text-slate-500 hover:text-white text-xs font-bold uppercase transition-colors">详情</button>
+</div>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="hover:bg-white/[0.02] transition-colors group">
+<td class="px-6 py-4 text-sm font-medium text-slate-300">#VT-9022</td>
+<td class="px-6 py-4">
+<span class="px-2.5 py-1 rounded bg-blue-500/20 text-blue-400 text-xs font-bold border border-blue-500/30">Runway Gen-2</span>
+</td>
+<td class="px-6 py-4 text-sm text-slate-400 max-w-xs truncate">
+                                    深海发光水母群，超现实主义，流体模拟，4K渲染...
+                                </td>
+<td class="px-6 py-4">
+<div class="w-12 h-12 rounded-lg bg-cover bg-center border border-white/10" data-alt="Deep sea jellyfish glowing animation" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuDyw6XMPqqdprHSLCerzEvrullFmv5IBoQrmEcjzwnCFdDSnizKPS8Ioym360an4zCRGfAzVEWEZ1yWVr4OqBr6frvYV2u5MwOhPEbWez-_DiggQvwYqdUmjwLDAhCc-3nWuawnElrkoXJtXqSu86T0a21Sp2phl-OTPuIIKR7zAby6XWRcfADRTILFZnqeNR7EgtmZqSu9fdpeQpapeFFVPf7F58F5-P_XQ0p63evxkdgcfRkzDUTZqk2clUU8iA2oGjS6XD6L9Q')"></div>
+</td>
+<td class="px-6 py-4">
+<div class="flex flex-col gap-1 w-32">
+<div class="flex justify-between text-[10px] text-primary">
+<span>渲染中</span>
+<span>65%</span>
+</div>
+<div class="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+<div class="h-full bg-primary rounded-full shadow-[0_0_8px_rgba(59,130,246,0.6)]" style="width: 65%"></div>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 text-right">
+<div class="flex justify-end gap-3">
+<button class="text-slate-600 cursor-not-allowed text-xs font-bold uppercase">预览</button>
+<button class="text-slate-500 hover:text-white text-xs font-bold uppercase transition-colors">详情</button>
+</div>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="hover:bg-white/[0.02] transition-colors group">
+<td class="px-6 py-4 text-sm font-medium text-slate-300">#VT-9023</td>
+<td class="px-6 py-4">
+<span class="px-2.5 py-1 rounded bg-accent/20 text-accent text-xs font-bold border border-accent/30">Sora-v1</span>
+</td>
+<td class="px-6 py-4 text-sm text-slate-400 max-w-xs truncate">
+                                    在火星上行走的宇航员，宏大场景，星际风格，红沙暴...
+                                </td>
+<td class="px-6 py-4">
+<div class="w-12 h-12 rounded-lg bg-slate-800 flex items-center justify-center border border-white/5">
+<span class="material-symbols-outlined text-slate-600">hide_image</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2 text-red-500">
+<span class="material-symbols-outlined text-sm">error</span>
+<span class="text-sm font-medium">任务失败</span>
+</div>
+</td>
+<td class="px-6 py-4 text-right">
+<div class="flex justify-end gap-3">
+<button class="text-primary hover:text-white text-xs font-bold uppercase transition-colors">重试</button>
+<button class="text-slate-500 hover:text-white text-xs font-bold uppercase transition-colors">详情</button>
+</div>
+</td>
+</tr>
+<!-- Row 4 -->
+<tr class="hover:bg-white/[0.02] transition-colors group">
+<td class="px-6 py-4 text-sm font-medium text-slate-300">#VT-9024</td>
+<td class="px-6 py-4">
+<span class="px-2.5 py-1 rounded bg-indigo-500/20 text-indigo-400 text-xs font-bold border border-indigo-500/30">Pika 1.0</span>
+</td>
+<td class="px-6 py-4 text-sm text-slate-400 max-w-xs truncate">
+                                    极光下的森林小木屋，温馨光感，雪景，慢动作...
+                                </td>
+<td class="px-6 py-4">
+<div class="w-12 h-12 rounded-lg bg-cover bg-center border border-white/10" data-alt="Northern lights cabin snowy landscape" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuAWNGe9zc3TWIdVksOwU1EDsXqcGtjBzp580Ki7DI0_Fq-j2PhUzxsrmGfO1eXFg835-r-bSF1JTNps1YftP8XqbMIYaID6qyt6D0GFQGsLWgGYc-m6dK1X4A4jGQRk_dEIVnvtfaKYwxWFf2ApVMSs3IOa9Zpr-bk_x-go2FBDFaC63PJ_bRpaYWdA_VGmIN6tqaVURz2svqB7fVAOIZkPFWAoJn-j317Ep6yCqvdYHfv9BCgrnsVkLgdLpTyOE9OIRGtavSy6hQ')"></div>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+<span class="text-sm text-emerald-500 font-medium">已完成</span>
+</div>
+</td>
+<td class="px-6 py-4 text-right">
+<div class="flex justify-end gap-3">
+<button class="text-primary hover:text-white text-xs font-bold uppercase transition-colors">预览</button>
+<button class="text-slate-500 hover:text-white text-xs font-bold uppercase transition-colors">详情</button>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Footer Pagination -->
+<footer class="mt-8 flex items-center justify-between">
+<p class="text-xs text-slate-500">显示 1 到 4 共 42 条记录</p>
+<div class="flex items-center gap-1">
+<button class="w-8 h-8 flex items-center justify-center rounded-lg border border-white/10 text-slate-400 hover:bg-white/5 transition-colors">
+<span class="material-symbols-outlined text-sm">chevron_left</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg bg-primary text-white text-sm font-bold shadow-lg shadow-primary/30">1</button>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg border border-white/10 text-slate-400 hover:bg-white/5 transition-colors text-sm">2</button>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg border border-white/10 text-slate-400 hover:bg-white/5 transition-colors text-sm">3</button>
+<span class="text-slate-600 px-1">...</span>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg border border-white/10 text-slate-400 hover:bg-white/5 transition-colors text-sm">12</button>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg border border-white/10 text-slate-400 hover:bg-white/5 transition-colors">
+<span class="material-symbols-outlined text-sm">chevron_right</span>
+</button>
+</div>
+</footer>
+</div>
+</main>
+</div>
+</body></html>

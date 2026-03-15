@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="zh"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#3b82f6",
+                        "accent-purple": "#9d25f4",
+                        "background-light": "#f7f5f8",
+                        "background-dark": "#0a060d",
+                        "panel-dark": "#160d1f",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .glass-panel {
+            background: rgba(22, 13, 31, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(157, 37, 244, 0.2);
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.1);
+        }
+        .glow-border {
+            position: relative;
+        }
+        .glow-border::after {
+            content: '';
+            position: absolute;
+            inset: -1px;
+            background: linear-gradient(45deg, #3b82f6, #9d25f4, #3b82f6);
+            z-index: -1;
+            border-radius: inherit;
+            opacity: 0.3;
+        }
+        .active-tab-glow {
+            box-shadow: 0 4px 12px -2px rgba(59, 130, 246, 0.5);
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100 min-h-screen">
+<div class="flex h-screen overflow-hidden">
+<!-- Sidebar -->
+<aside class="w-64 glass-panel border-r border-accent-purple/20 flex flex-col shrink-0">
+<div class="p-6">
+<div class="flex items-center gap-3 mb-2">
+<div class="p-2 bg-gradient-to-br from-primary to-accent-purple rounded-lg shadow-lg shadow-primary/20">
+<span class="material-symbols-outlined text-white">smart_toy</span>
+</div>
+<h1 class="text-xl font-bold tracking-tight text-slate-100">OpenClaw</h1>
+</div>
+<p class="text-xs text-slate-400 font-medium uppercase tracking-widest ml-12">AI 任务中心</p>
+</div>
+<nav class="flex-1 px-4 space-y-1 overflow-y-auto">
+<a class="flex items-center gap-3 px-3 py-2.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded-lg transition-all group" href="#">
+<span class="material-symbols-outlined text-[22px]">dashboard</span>
+<span class="text-sm font-medium">控制面板</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded-lg transition-all group" href="#">
+<span class="material-symbols-outlined text-[22px]">image</span>
+<span class="text-sm font-medium">图像生成</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded-lg transition-all group" href="#">
+<span class="material-symbols-outlined text-[22px]">movie</span>
+<span class="text-sm font-medium">视频生成</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded-lg transition-all group" href="#">
+<span class="material-symbols-outlined text-[22px]">chat</span>
+<span class="text-sm font-medium">聊天</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded-lg transition-all group" href="#">
+<span class="material-symbols-outlined text-[22px]">settings_input_component</span>
+<span class="text-sm font-medium">OpenClaw 配置</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 bg-primary text-white rounded-lg transition-all shadow-lg shadow-primary/30" href="#">
+<span class="material-symbols-outlined text-[22px] fill-1">assignment</span>
+<span class="text-sm font-bold">OpenClaw 任务</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded-lg transition-all group border-t border-accent-purple/10 mt-4 pt-4" href="#">
+<span class="material-symbols-outlined text-[22px]">account_balance_wallet</span>
+<span class="text-sm font-medium">财务</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded-lg transition-all group" href="#">
+<span class="material-symbols-outlined text-[22px]">add_card</span>
+<span class="text-sm font-medium">充值</span>
+</a>
+</nav>
+<div class="p-4 border-t border-accent-purple/10">
+<div class="flex items-center gap-3 p-2 bg-accent-purple/5 rounded-xl">
+<div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center border border-primary/30 overflow-hidden">
+<img alt="User Avatar" class="w-full h-full object-cover" data-alt="Cyberpunk style male avatar with neon highlights" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDWzYFvVlLMk1i339E1g0K2UEI9X4Cif1wRFh-7f_9ufSQUPT4mSdqz1AbcuMUXLEmNsf6TxS2icqv5QlGcYG8Qb80RjTkf1ZYvgkmzIm9ymMareITtXoCvbSYkHUMmAS6aZ-gqcFcIXTeu2fYKnyjlMN4DgW_CEPDtdUpHAEVPvnDParmRhbbT1yMvbTrpOaVIuMdKWVlxL4oHGpeSgUs4KmFtpUHZsqY1wwgLMWgbOm0g7FXKp_143CsUCapCxe5i9r71rvArFg"/>
+</div>
+<div class="flex-1 min-w-0">
+<p class="text-sm font-bold truncate">Alpha_User</p>
+<p class="text-[10px] text-primary font-bold">PRO 计划</p>
+</div>
+</div>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-background-dark via-[#11081a] to-[#0f172a]">
+<!-- Header Tab Navigation -->
+<header class="p-6 pb-0">
+<div class="flex items-center justify-between mb-6">
+<div>
+<h2 class="text-2xl font-bold text-white tracking-tight">任务中心</h2>
+<p class="text-slate-400 text-sm">监控和管理您的所有 AI 生成流程</p>
+</div>
+<div class="flex items-center gap-3">
+<button class="flex items-center gap-2 px-4 py-2 bg-primary/10 hover:bg-primary/20 border border-primary/30 rounded-lg text-primary text-sm font-bold transition-all">
+<span class="material-symbols-outlined text-lg">refresh</span>
+                            刷新列表
+                        </button>
+</div>
+</div>
+<div class="flex gap-8 border-b border-accent-purple/20">
+<button class="pb-4 text-sm font-medium text-slate-400 hover:text-slate-200 transition-colors relative">
+                        全部
+                    </button>
+<button class="pb-4 text-sm font-medium text-slate-400 hover:text-slate-200 transition-colors relative">
+                        视频任务
+                    </button>
+<button class="pb-4 text-sm font-bold text-primary relative active-tab-glow">
+                        图像任务
+                        <div class="absolute bottom-0 left-0 w-full h-0.5 bg-primary shadow-[0_0_8px_rgba(59,130,246,0.8)]"></div>
+</button>
+<button class="pb-4 text-sm font-medium text-slate-400 hover:text-slate-200 transition-colors relative">
+                        聊天任务
+                    </button>
+</div>
+</header>
+<!-- Table Section -->
+<section class="flex-1 overflow-auto p-6">
+<div class="glass-panel rounded-xl overflow-hidden glow-border">
+<div class="min-w-full inline-block align-middle">
+<div class="overflow-hidden">
+<table class="min-w-full divide-y divide-accent-purple/10">
+<thead class="bg-primary/5">
+<tr>
+<th class="px-6 py-4 text-left text-xs font-bold text-slate-300 uppercase tracking-widest" scope="col">ID</th>
+<th class="px-6 py-4 text-left text-xs font-bold text-slate-300 uppercase tracking-widest" scope="col">模型</th>
+<th class="px-6 py-4 text-left text-xs font-bold text-slate-300 uppercase tracking-widest" scope="col">提示词</th>
+<th class="px-6 py-4 text-left text-xs font-bold text-slate-300 uppercase tracking-widest" scope="col">预览</th>
+<th class="px-6 py-4 text-left text-xs font-bold text-slate-300 uppercase tracking-widest" scope="col">状态</th>
+<th class="px-6 py-4 text-right text-xs font-bold text-slate-300 uppercase tracking-widest" scope="col">操作</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-accent-purple/5">
+<!-- Row 1 -->
+<tr class="hover:bg-white/5 transition-colors">
+<td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-primary">#MJ-99281</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="px-3 py-1 bg-primary/20 text-primary border border-primary/30 rounded-full text-xs font-bold">Midjourney v6</span>
+</td>
+<td class="px-6 py-4 text-sm text-slate-400 max-w-[240px] truncate">
+                                            赛博朋克风格的未来上海街道，霓虹灯光映照在雨后的路面上...
+                                        </td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="w-12 h-12 rounded-lg bg-slate-800 border border-accent-purple/30 overflow-hidden relative group">
+<img alt="Preview 1" class="w-full h-full object-cover" data-alt="Futuristic neon city street in rain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDKy4M0s9WLzjfjNB0lTmzop5tAUCVd1NlsE6JhrXM_6Sjy-m9VzrPtCr-kq7OU348eyzMw1OSF15U6OxJCdmm8QOBUmW-F6lVJyRxlZpx_nYu2PqpsWU-R41Xb8tfwR7p6iXu-jAgVrRW9vxJz8PCrBdM_WkVFoU6Nd606hFQGXYqJER_qd0I_cv3mQh5LyIV3fUnTiJLUV381NnMRV6Ndy7lEk_fj0HmUIRajIorQCk_GDhVT_pgHrG3Y-aAA2hV9w45KzmSQhQ"/>
+<div class="absolute inset-0 bg-primary/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+<span class="material-symbols-outlined text-white text-sm">visibility</span>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]"></span>
+<span class="text-emerald-400 text-xs font-bold uppercase">已完成</span>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm">
+<div class="flex justify-end gap-3">
+<button class="text-primary hover:text-white transition-colors flex items-center gap-1 font-bold">
+<span class="material-symbols-outlined text-lg">download</span> 下载
+                                                </button>
+<button class="text-slate-500 hover:text-slate-300 transition-colors flex items-center gap-1 font-bold">
+<span class="material-symbols-outlined text-lg">info</span> 详情
+                                                </button>
+</div>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="hover:bg-white/5 transition-colors">
+<td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-primary">#SD-99275</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="px-3 py-1 bg-accent-purple/20 text-accent-purple border border-accent-purple/30 rounded-full text-xs font-bold">SDXL 1.0</span>
+</td>
+<td class="px-6 py-4 text-sm text-slate-400 max-w-[240px] truncate">
+                                            科幻机甲战士，高度细节的装甲设计，站在月球基地，背景是地球...
+                                        </td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="w-12 h-12 rounded-lg bg-slate-800 border border-accent-purple/30 flex items-center justify-center">
+<div class="w-6 h-6 border-2 border-primary/30 border-t-primary rounded-full animate-spin"></div>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-primary animate-pulse shadow-[0_0_8px_rgba(59,130,246,0.8)]"></span>
+<span class="text-primary text-xs font-bold uppercase">生成中</span>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm">
+<div class="flex justify-end gap-3">
+<button class="text-slate-500 hover:text-slate-300 transition-colors flex items-center gap-1 font-bold">
+<span class="material-symbols-outlined text-lg">info</span> 详情
+                                                </button>
+</div>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="hover:bg-white/5 transition-colors">
+<td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-primary">#MJ-99270</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="px-3 py-1 bg-primary/20 text-primary border border-primary/30 rounded-full text-xs font-bold">Midjourney v5.2</span>
+</td>
+<td class="px-6 py-4 text-sm text-slate-400 max-w-[240px] truncate">
+                                            唯美古风人像，穿着汉服的少女在桃花林中，丁达尔效应，电影感...
+                                        </td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="w-12 h-12 rounded-lg bg-slate-900 border border-red-500/30 flex items-center justify-center opacity-50 grayscale">
+<span class="material-symbols-outlined text-red-500 text-xl">broken_image</span>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)]"></span>
+<span class="text-red-400 text-xs font-bold uppercase">任务失败</span>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm">
+<div class="flex justify-end gap-3">
+<button class="text-primary hover:text-white transition-colors flex items-center gap-1 font-bold">
+<span class="material-symbols-outlined text-lg">replay</span> 重试
+                                                </button>
+<button class="text-slate-500 hover:text-slate-300 transition-colors flex items-center gap-1 font-bold">
+<span class="material-symbols-outlined text-lg">info</span> 详情
+                                                </button>
+</div>
+</td>
+</tr>
+<!-- Row 4 -->
+<tr class="hover:bg-white/5 transition-colors">
+<td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-primary">#SD-99268</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="px-3 py-1 bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded-full text-xs font-bold">SDXL Turbo</span>
+</td>
+<td class="px-6 py-4 text-sm text-slate-400 max-w-[240px] truncate">
+                                            极简主义 Logo 设计，科技感，深邃蓝和亮紫色调，抽象几何图形...
+                                        </td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="w-12 h-12 rounded-lg bg-slate-800 border border-accent-purple/30 overflow-hidden relative group">
+<img alt="Preview 4" class="w-full h-full object-cover" data-alt="Abstract minimalist techno logo geometric" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDDsBPc1IK5mcbSYG22oIEV9zYmPewfbHNoEg5rFQTHRmihRInbIcK93FQ499kxaXAiIwaNAQueMtAwVXxqNpB9PqgaG9M5FlZa4BO2WkOzhZoqPBHXYk237474ByG2-5t4jER6GaLhH72mgZDheSszXLUyjifg16-F0nLMx9BDmj4F8rgVV2tqYe2d0eJouaB4GPrjRwh88X2z-qha0CIoOjS-BFNF7cDhuC7iiGU6yDXW0cUEbDLatmhaAuMHJllB0x-NvkNhCw"/>
+<div class="absolute inset-0 bg-primary/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+<span class="material-symbols-outlined text-white text-sm">visibility</span>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]"></span>
+<span class="text-emerald-400 text-xs font-bold uppercase">已完成</span>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-right text-sm">
+<div class="flex justify-end gap-3">
+<button class="text-primary hover:text-white transition-colors flex items-center gap-1 font-bold">
+<span class="material-symbols-outlined text-lg">download</span> 下载
+                                                </button>
+<button class="text-slate-500 hover:text-slate-300 transition-colors flex items-center gap-1 font-bold">
+<span class="material-symbols-outlined text-lg">info</span> 详情
+                                                </button>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+</section>
+<!-- Footer Pagination -->
+<footer class="p-6 bg-panel-dark/40 border-t border-accent-purple/10">
+<div class="flex items-center justify-between">
+<p class="text-xs text-slate-400">显示第 1 到 4 条，共 1,248 条结果</p>
+<div class="flex items-center gap-2">
+<button class="w-8 h-8 flex items-center justify-center rounded-lg border border-accent-purple/20 text-slate-400 hover:bg-primary/20 hover:text-primary transition-all">
+<span class="material-symbols-outlined text-lg">chevron_left</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg bg-primary text-white font-bold text-xs shadow-lg shadow-primary/30">1</button>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg border border-accent-purple/10 text-slate-400 hover:text-slate-100 transition-all text-xs">2</button>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg border border-accent-purple/10 text-slate-400 hover:text-slate-100 transition-all text-xs">3</button>
+<span class="text-slate-500 text-xs mx-1">...</span>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg border border-accent-purple/10 text-slate-400 hover:text-slate-100 transition-all text-xs">42</button>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg border border-accent-purple/20 text-slate-400 hover:bg-primary/20 hover:text-primary transition-all">
+<span class="material-symbols-outlined text-lg">chevron_right</span>
+</button>
+</div>
+</div>
+</footer>
+</main>
+</div>
+</body></html>

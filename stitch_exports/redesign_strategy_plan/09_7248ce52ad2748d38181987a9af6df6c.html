@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>OpenClaw 任务中心 - 全部任务</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Noto+Sans+SC:wght@300;400;500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#00f2ff", 
+                        "accent": "#bc13fe", 
+                        "background-light": "#f8f6f6",
+                        "background-dark": "#05020a",
+                        "surface-dark": "#0d0616",
+                    },
+                    fontFamily: {
+                        "display": ["Public Sans", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .glass {
+            background: rgba(22, 22, 30, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .glass-panel {
+            background: rgba(22, 22, 30, 0.5);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(0, 242, 255, 0.1);
+        }
+        .neon-glow-cyan {
+            box-shadow: 0 0 15px rgba(0, 242, 255, 0.3);
+        }
+        body {
+            background: #05020a;
+            min-height: 100vh;
+        }
+    </style>
+</head>
+<body class="font-display text-slate-100 selection:bg-primary/30">
+<div class="flex h-screen overflow-hidden">
+<!-- Left Sidebar -->
+<aside class="w-64 flex flex-col border-r border-primary/20 bg-background-dark/80 backdrop-blur-xl">
+<div class="p-6 flex items-center gap-3"><div class="flex items-center gap-3">
+<div class="size-8 bg-gradient-to-br from-primary to-accent rounded-lg flex items-center justify-center">
+<span class="material-symbols-outlined text-background-dark font-bold">movie_filter</span>
+</div>
+<h2 class="text-white text-xl font-bold tracking-tight">OpenClaw <span class="text-primary">Plus</span></h2>
+</div></div>
+<nav class="flex-1 px-4 space-y-1 mt-4">
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="text-sm font-medium">控制面板</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">image</span>
+<span class="text-sm font-medium">图片制作</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">movie</span>
+<span class="text-sm font-medium">视频制作</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">chat</span>
+<span class="text-sm font-medium">聊天</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="text-sm font-medium">OpenClaw配置</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl bg-primary/10 text-primary border border-primary/20" href="#">
+<span class="material-symbols-outlined">history</span>
+<span class="text-sm font-medium">OpenClaw任务</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">account_balance_wallet</span>
+<span class="text-sm font-medium">财务管理</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">add_card</span>
+<span class="text-sm font-medium">充值中心</span>
+</a></nav>
+<div class="p-4">
+<div class="rounded-xl bg-gradient-to-br from-primary/20 to-transparent p-4 border border-primary/20">
+<p class="text-xs text-slate-400 mb-2">算力余额</p>
+<div class="flex items-end justify-between">
+<span class="text-xl font-bold">12,450 <span class="text-[10px] text-primary">Tops</span></span>
+<button class="text-[10px] px-2 py-1 rounded bg-primary text-white font-bold hover:brightness-110">充值</button>
+</div>
+</div>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="flex-1 flex flex-col min-w-0 overflow-hidden">
+<!-- Top Section -->
+<header class="p-8 pb-4">
+<div class="flex flex-col gap-6">
+<div class="flex items-center justify-between">
+<div>
+<h2 class="text-3xl font-bold tracking-tight text-white">任务中心 <span class="text-slate-500 font-light mx-2">/</span> <span class="text-accent font-bold">全部任务</span></h2>
+<p class="text-slate-400 text-sm mt-1">管理并监控您所有的 AI 创作与数据处理任务</p>
+</div>
+</div>
+<div class="flex flex-wrap items-center justify-between gap-4">
+<!-- Filters -->
+<div class="flex items-center gap-2 p-1 bg-background-dark/50 rounded-xl border border-primary/10 glass-panel">
+<button class="px-5 py-2 rounded-lg bg-primary text-background-dark text-sm font-bold transition-all shadow-lg shadow-primary/20">全部</button>
+<button class="px-5 py-2 rounded-lg text-slate-400 hover:text-slate-200 text-sm font-medium transition-all">视频</button>
+<button class="px-5 py-2 rounded-lg text-slate-400 hover:text-slate-200 text-sm font-medium transition-all">图像</button>
+<button class="px-5 py-2 rounded-lg text-slate-400 hover:text-slate-200 text-sm font-medium transition-all">对话分析</button></div>
+<div class="flex items-center gap-3">
+<div class="relative min-w-[320px]">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xl">search</span>
+<input class="w-full bg-background-dark/50 border-primary/20 rounded-xl pl-10 pr-4 py-2 text-sm text-slate-200 focus:ring-primary focus:border-primary placeholder:text-slate-600 glass-panel" placeholder="搜索任务 ID 或提示词关键字..." type="text"/>
+</div>
+<button class="flex items-center gap-2 px-4 py-2 rounded-xl bg-background-dark/50 border border-primary/20 text-slate-300 hover:text-white transition-colors glass-panel">
+<span class="material-symbols-outlined text-xl">filter_list</span>
+<span class="text-sm font-medium">筛选</span>
+</button>
+</div>
+</div>
+</div>
+</header>
+<!-- Table Content -->
+<div class="flex-1 overflow-auto px-8 py-4">
+<div class="glass-panel rounded-2xl overflow-hidden border-primary/10">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-primary/10 border-b border-primary/20">
+<th class="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-400">任务 ID</th>
+<th class="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-400">使用的模型</th>
+<th class="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-400">任务类型</th>
+<th class="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-400">提示词摘要</th>
+<th class="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-center">当前状态</th>
+<th class="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">操作</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-primary/5">
+<!-- Row 1 -->
+<tr class="hover:bg-primary/5 transition-colors group">
+<td class="px-6 py-4">
+<span class="text-sm font-mono font-bold text-accent">#OC-8842</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<div class="size-6 rounded bg-slate-800 flex items-center justify-center border border-primary/20">
+<span class="material-symbols-outlined text-[14px]">psychology</span>
+</div>
+<span class="text-sm text-slate-200">GPT-4o Omnis</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<span class="text-xs px-2 py-1 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 font-medium">对话分析</span>
+</td>
+<td class="px-6 py-4 max-w-[280px]">
+<p class="text-sm text-slate-400 truncate">深度分析 2024Q3 用户行为趋势，并生成详细的数据洞察报告...</p>
+</td>
+<td class="px-6 py-4 text-center">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-xs font-bold">
+<span class="size-1.5 rounded-full bg-emerald-400"></span>
+                                        已完成
+                                    </span>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-sm font-bold text-primary hover:text-white transition-colors">查看结果</button>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="hover:bg-primary/5 transition-colors group">
+<td class="px-6 py-4">
+<span class="text-sm font-mono font-bold text-accent">#OC-8841</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<div class="size-6 rounded bg-slate-800 flex items-center justify-center border border-primary/20">
+<span class="material-symbols-outlined text-[14px] text-fuchsia-400">palette</span>
+</div>
+<span class="text-sm text-slate-200">Stable Diffusion XL</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<span class="text-xs px-2 py-1 rounded bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20 font-medium">图像生成</span>
+</td>
+<td class="px-6 py-4 max-w-[280px]">
+<p class="text-sm text-slate-400 truncate">赛博朋克风格城市，霓虹雨夜，高度写实细节，8k 分辨率...</p>
+</td>
+<td class="px-6 py-4 text-center">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-accent/10 text-accent text-xs font-bold animate-pulse">
+<span class="size-1.5 rounded-full bg-accent"></span>
+                                        进行中 (45%)
+                                    </span>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-sm font-bold text-red-400 hover:text-red-300 transition-colors">中止任务</button>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="hover:bg-primary/5 transition-colors group">
+<td class="px-6 py-4">
+<span class="text-sm font-mono font-bold text-accent">#OC-8840</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<div class="size-6 rounded bg-slate-800 flex items-center justify-center border border-primary/20">
+<span class="material-symbols-outlined text-[14px] text-amber-400">videocam</span>
+</div>
+<span class="text-sm text-slate-200">Sora V2 (Beta)</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<span class="text-xs px-2 py-1 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium">视频生成</span>
+</td>
+<td class="px-6 py-4 max-w-[280px]">
+<p class="text-sm text-slate-400 truncate">一个孤独的旅人在迷雾森林中奔跑，寻找失落的遗迹，大景深...</p>
+</td>
+<td class="px-6 py-4 text-center">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-500/10 text-slate-400 text-xs font-bold">
+<span class="size-1.5 rounded-full bg-slate-400"></span>
+                                        排队中
+                                    </span>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-sm font-bold text-slate-500 hover:text-white transition-colors">取消预约</button>
+</td>
+</tr>
+<!-- Row 4 -->
+<tr class="hover:bg-primary/5 transition-colors group">
+<td class="px-6 py-4">
+<span class="text-sm font-mono font-bold text-accent">#OC-8839</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<div class="size-6 rounded bg-slate-800 flex items-center justify-center border border-primary/20">
+<span class="material-symbols-outlined text-[14px] text-blue-400">terminal</span>
+</div>
+<span class="text-sm text-slate-200">Claude 3.5 Sonnet</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<span class="text-xs px-2 py-1 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 font-medium">对话分析</span>
+</td>
+<td class="px-6 py-4 max-w-[280px]">
+<p class="text-sm text-slate-400 truncate">重构旧版 React 组件，优化性能瓶颈并实现全新的 Hooks 架构...</p>
+</td>
+<td class="px-6 py-4 text-center">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-xs font-bold">
+<span class="size-1.5 rounded-full bg-emerald-400"></span>
+                                        已完成
+                                    </span>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-sm font-bold text-primary hover:text-white transition-colors">查看结果</button>
+</td>
+</tr>
+<!-- Row 5 -->
+<tr class="hover:bg-primary/5 transition-colors group">
+<td class="px-6 py-4">
+<span class="text-sm font-mono font-bold text-accent">#OC-8838</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<div class="size-6 rounded bg-slate-800 flex items-center justify-center border border-primary/20">
+<span class="material-symbols-outlined text-[14px] text-indigo-400">brush</span>
+</div>
+<span class="text-sm text-slate-200">Midjourney V6.1</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<span class="text-xs px-2 py-1 rounded bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20 font-medium">图像生成</span>
+</td>
+<td class="px-6 py-4 max-w-[280px]">
+<p class="text-sm text-slate-400 truncate">极简主义公司 Logo 设计，包含飞鸟与云朵元素，渐变蓝...</p>
+</td>
+<td class="px-6 py-4 text-center">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-500/10 text-red-400 text-xs font-bold">
+<span class="size-1.5 rounded-full bg-red-400"></span>
+                                        执行异常
+                                    </span>
+</td>
+<td class="px-6 py-4 text-right">
+<div class="flex items-center justify-end gap-3">
+<button class="text-sm font-bold text-slate-400 hover:text-white transition-colors">详情</button>
+<button class="text-sm font-bold text-primary hover:brightness-125 transition-all">重新尝试</button>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<!-- Footer Pagination -->
+<footer class="p-8 pt-2">
+<div class="flex items-center justify-between glass-panel px-6 py-4 rounded-2xl border-primary/10">
+<p class="text-sm text-slate-500">显示第 <span class="text-slate-200 font-medium">1 - 5</span> 项，共 <span class="text-slate-200 font-medium">1,240</span> 个任务</p>
+<div class="flex items-center gap-2">
+<button class="size-9 rounded-lg border border-primary/20 flex items-center justify-center text-slate-400 hover:bg-primary/10 hover:text-white transition-all disabled:opacity-30" disabled="">
+<span class="material-symbols-outlined text-xl">chevron_left</span>
+</button>
+<div class="flex items-center gap-1 px-2">
+<button class="size-9 rounded-lg bg-primary text-background-dark font-bold text-sm shadow-lg shadow-primary/20">1</button>
+<button class="size-9 rounded-lg text-slate-400 hover:bg-primary/10 hover:text-white font-medium text-sm transition-all">2</button>
+<button class="size-9 rounded-lg text-slate-400 hover:bg-primary/10 hover:text-white font-medium text-sm transition-all">3</button>
+<span class="px-2 text-slate-600">...</span>
+<button class="size-9 rounded-lg text-slate-400 hover:bg-primary/10 hover:text-white font-medium text-sm transition-all">248</button>
+</div>
+<button class="size-9 rounded-lg border border-primary/20 flex items-center justify-center text-slate-400 hover:bg-primary/10 hover:text-white transition-all">
+<span class="material-symbols-outlined text-xl">chevron_right</span>
+</button>
+</div>
+<div class="flex items-center gap-2">
+<span class="text-sm text-slate-500">跳转至</span>
+<input class="w-12 h-9 bg-background-dark/50 border-primary/20 rounded-lg text-center text-sm text-slate-200 focus:ring-primary glass-panel" type="number" value="1"/>
+<span class="text-sm text-slate-500">页</span>
+</div>
+</div>
+</footer>
+</main>
+</div>
+</body></html>

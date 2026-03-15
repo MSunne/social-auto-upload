@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>OpenClaw 任务中心 - 聊天任务列表</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#9d25f4",
+                        "accent-blue": "#00d2ff",
+                        "background-light": "#f7f5f8",
+                        "background-dark": "#0a050e",
+                        "glass-bg": "rgba(26, 16, 34, 0.7)",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "Noto Sans SC", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .neon-border {
+            position: relative;
+            background: linear-gradient(to right, #9d25f4, #00d2ff);
+            padding: 1px;
+        }
+        .neon-border-inner {
+            background: #1a1022;
+            width: 100%;
+            height: 100%;
+        }
+        .glass-panel {
+            backdrop-filter: blur(12px);
+            background: rgba(26, 16, 34, 0.6);
+            border: 1px solid rgba(157, 37, 244, 0.2);
+        }
+        .gradient-text {
+            background: linear-gradient(135deg, #9d25f4 0%, #00d2ff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .bg-mesh {
+            background: 
+                radial-gradient(circle at 0% 0%, rgba(157, 37, 244, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 100% 100%, rgba(0, 210, 255, 0.1) 0%, transparent 50%);
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100 min-h-screen overflow-x-hidden bg-mesh">
+<div class="flex h-screen overflow-hidden">
+<!-- Sidebar -->
+<aside class="w-64 flex-shrink-0 border-r border-primary/20 bg-glass-bg glass-panel flex flex-col">
+<div class="p-6 flex items-center gap-3">
+<div class="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-accent-blue flex items-center justify-center">
+<span class="material-symbols-outlined text-white text-xl">smart_toy</span>
+</div>
+<h1 class="text-xl font-bold tracking-tight gradient-text">OpenClaw</h1>
+</div>
+<nav class="flex-1 px-4 space-y-1 overflow-y-auto">
+<div class="text-xs font-semibold text-slate-500 uppercase tracking-wider py-4 px-2">主要功能</div>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-primary/10 transition-all" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="text-sm font-medium">控制面板</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-primary/10 transition-all" href="#">
+<span class="material-symbols-outlined">palette</span>
+<span class="text-sm font-medium">图片制作</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-primary/10 transition-all" href="#">
+<span class="material-symbols-outlined">videocam</span>
+<span class="text-sm font-medium">视频制作</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-primary/10 transition-all" href="#">
+<span class="material-symbols-outlined">chat_bubble</span>
+<span class="text-sm font-medium">聊天</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-primary/10 transition-all" href="#">
+<span class="material-symbols-outlined">settings_input_component</span>
+<span class="text-sm font-medium">OpenClaw 配置</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-primary/20 text-primary border border-primary/20 transition-all" href="#">
+<span class="material-symbols-outlined">assignment</span>
+<span class="text-sm font-medium">OpenClaw 任务</span>
+</a>
+<div class="text-xs font-semibold text-slate-500 uppercase tracking-wider py-4 px-2">账户管理</div>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-primary/10 transition-all" href="#">
+<span class="material-symbols-outlined">account_balance_wallet</span>
+<span class="text-sm font-medium">财务管理</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-primary/10 transition-all" href="#">
+<span class="material-symbols-outlined">add_card</span>
+<span class="text-sm font-medium">充值中心</span>
+</a>
+</nav>
+<div class="p-4 border-t border-primary/10">
+<div class="flex items-center gap-3 p-2 rounded-xl bg-slate-800/50">
+<div class="size-9 rounded-full bg-slate-700" data-alt="User avatar profile picture" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuA9f-UAW1XRsqfFGYdY_Qm6EOhfcBy49-LfdjYBU6uanPtoxIp2UWol1DZnerZoxVt_FoxkBwzbZJl8pyGemRUk_N9_d2Ua2zyXx1qR3q_W4DbPF3gvDxnuMt7FHgPfKhQxkCNF4BFeAurw9P6PU3USLGYnKXadBgfwfOD3rTKg0gP_AEUeZrVONzA5nHoegrMMayqN-LMGxsYo_h09VJef5UCyA2dWtdCq2IJVEoRJJrY8ixZIfM-l7jHncY0UFYyIXpor9HOoeA')"></div>
+<div class="flex-1 min-w-0">
+<p class="text-sm font-semibold truncate">ClawDev_01</p>
+<p class="text-xs text-slate-500">Pro 订阅者</p>
+</div>
+</div>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="flex-1 flex flex-col overflow-hidden relative">
+<!-- Header -->
+<header class="h-16 flex items-center justify-between px-8 glass-panel border-b border-primary/10">
+<div class="flex items-center gap-2 text-sm text-slate-400">
+<span>OpenClaw 任务</span>
+<span class="material-symbols-outlined text-sm">chevron_right</span>
+<span class="text-primary font-medium">聊天任务</span>
+</div>
+<div class="flex items-center gap-6">
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">search</span>
+<input class="bg-slate-800/50 border-none rounded-full pl-10 pr-4 py-1.5 text-sm w-64 focus:ring-1 focus:ring-primary/50 text-slate-200 placeholder:text-slate-500" placeholder="搜索任务 ID 或模型..." type="text"/>
+</div>
+<button class="relative text-slate-400 hover:text-white transition-colors">
+<span class="material-symbols-outlined">notifications</span>
+<span class="absolute top-0 right-0 size-2 bg-red-500 rounded-full border-2 border-background-dark"></span>
+</button>
+<button class="text-slate-400 hover:text-white transition-colors">
+<span class="material-symbols-outlined">help_outline</span>
+</button>
+</div>
+</header>
+<!-- Scrollable Content -->
+<div class="flex-1 overflow-y-auto p-8">
+<!-- Tabs -->
+<div class="flex items-center gap-1 mb-6 bg-slate-800/30 p-1 rounded-xl w-fit">
+<button class="px-6 py-2 rounded-lg text-sm font-medium transition-all text-white bg-primary shadow-lg shadow-primary/20">聊天任务</button>
+<button class="px-6 py-2 rounded-lg text-sm font-medium transition-all text-slate-400 hover:text-slate-200">生成任务</button>
+<button class="px-6 py-2 rounded-lg text-sm font-medium transition-all text-slate-400 hover:text-slate-200">训练任务</button>
+</div>
+<!-- Table Container with Neon Border Effect -->
+<div class="rounded-xl overflow-hidden neon-border">
+<div class="neon-border-inner glass-panel">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-primary/5">
+<th class="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">会话 ID</th>
+<th class="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">模型名称</th>
+<th class="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">最新消息</th>
+<th class="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">状态</th>
+<th class="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">时间</th>
+<th class="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider text-right">操作</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-primary/10">
+<!-- Row 1 -->
+<tr class="hover:bg-primary/5 transition-colors group">
+<td class="px-6 py-5 font-mono text-sm text-accent-blue">C-99281</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-sm">auto_awesome</span>
+<span class="text-sm font-semibold">GPT-4o</span>
+</div>
+</td>
+<td class="px-6 py-5 text-sm text-slate-300 max-w-xs truncate">
+                                        请帮我分析一下这段量子计算的模拟代码...
+                                    </td>
+<td class="px-6 py-5">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-accent-blue/10 text-accent-blue border border-accent-blue/20">
+<span class="size-1.5 rounded-full bg-accent-blue animate-pulse"></span>
+                                            分析中
+                                        </span>
+</td>
+<td class="px-6 py-5 text-sm text-slate-500">2023-11-20 14:25</td>
+<td class="px-6 py-5 text-right">
+<button class="text-primary hover:text-primary/80 text-sm font-bold tracking-wide">查看详情</button>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="hover:bg-primary/5 transition-colors group">
+<td class="px-6 py-5 font-mono text-sm text-accent-blue">C-99280</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-purple-400 text-sm">bolt</span>
+<span class="text-sm font-semibold">Claude 3.5 Sonnet</span>
+</div>
+</td>
+<td class="px-6 py-5 text-sm text-slate-300 max-w-xs truncate">
+                                        如何优化目前的前端渲染管线以提高60FPS...
+                                    </td>
+<td class="px-6 py-5">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+<span class="size-1.5 rounded-full bg-emerald-400"></span>
+                                            已完成
+                                        </span>
+</td>
+<td class="px-6 py-5 text-sm text-slate-500">2023-11-20 13:10</td>
+<td class="px-6 py-5 text-right">
+<button class="text-primary hover:text-primary/80 text-sm font-bold tracking-wide">查看详情</button>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="hover:bg-primary/5 transition-colors group">
+<td class="px-6 py-5 font-mono text-sm text-accent-blue">C-99279</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-orange-400 text-sm">token</span>
+<span class="text-sm font-semibold">Llama 3 70B</span>
+</div>
+</td>
+<td class="px-6 py-5 text-sm text-slate-300 max-w-xs truncate">
+                                        写一篇关于分布式系统架构演进的技术博文...
+                                    </td>
+<td class="px-6 py-5">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+<span class="size-1.5 rounded-full bg-emerald-400"></span>
+                                            已完成
+                                        </span>
+</td>
+<td class="px-6 py-5 text-sm text-slate-500">2023-11-20 11:45</td>
+<td class="px-6 py-5 text-right">
+<button class="text-primary hover:text-primary/80 text-sm font-bold tracking-wide">查看详情</button>
+</td>
+</tr>
+<!-- Row 4 -->
+<tr class="hover:bg-primary/5 transition-colors group">
+<td class="px-6 py-5 font-mono text-sm text-accent-blue">C-99278</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-sm">auto_awesome</span>
+<span class="text-sm font-semibold">GPT-4 Turbo</span>
+</div>
+</td>
+<td class="px-6 py-5 text-sm text-slate-300 max-w-xs truncate">
+                                        解释一下VAE变分自编码器中的重参数化技巧...
+                                    </td>
+<td class="px-6 py-5">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+<span class="size-1.5 rounded-full bg-emerald-400"></span>
+                                            已完成
+                                        </span>
+</td>
+<td class="px-6 py-5 text-sm text-slate-500">2023-11-20 09:20</td>
+<td class="px-6 py-5 text-right">
+<button class="text-primary hover:text-primary/80 text-sm font-bold tracking-wide">查看详情</button>
+</td>
+</tr>
+<!-- Row 5 -->
+<tr class="hover:bg-primary/5 transition-colors group">
+<td class="px-6 py-5 font-mono text-sm text-accent-blue">C-99277</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-blue-400 text-sm">diamond</span>
+<span class="text-sm font-semibold">Gemini Pro 1.5</span>
+</div>
+</td>
+<td class="px-6 py-5 text-sm text-slate-300 max-w-xs truncate">
+                                        分析最近半年多模态大模型的发展趋势...
+                                    </td>
+<td class="px-6 py-5">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-accent-blue/10 text-accent-blue border border-accent-blue/20">
+<span class="size-1.5 rounded-full bg-accent-blue animate-pulse"></span>
+                                            分析中
+                                        </span>
+</td>
+<td class="px-6 py-5 text-sm text-slate-500">2023-11-20 08:05</td>
+<td class="px-6 py-5 text-right">
+<button class="text-primary hover:text-primary/80 text-sm font-bold tracking-wide">查看详情</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<!-- Pagination -->
+<div class="mt-6 flex items-center justify-between">
+<p class="text-sm text-slate-500">显示第 1 至 5 条记录，共 128 条</p>
+<div class="flex items-center gap-2">
+<button class="p-2 rounded-lg bg-slate-800/50 text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed">
+<span class="material-symbols-outlined">chevron_left</span>
+</button>
+<button class="size-9 rounded-lg bg-primary text-white text-sm font-medium">1</button>
+<button class="size-9 rounded-lg bg-slate-800/50 text-slate-400 hover:text-white text-sm font-medium">2</button>
+<button class="size-9 rounded-lg bg-slate-800/50 text-slate-400 hover:text-white text-sm font-medium">3</button>
+<span class="text-slate-600 px-1">...</span>
+<button class="size-9 rounded-lg bg-slate-800/50 text-slate-400 hover:text-white text-sm font-medium">26</button>
+<button class="p-2 rounded-lg bg-slate-800/50 text-slate-400 hover:text-white">
+<span class="material-symbols-outlined">chevron_right</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Decorative background elements -->
+<div class="absolute top-1/4 -right-24 size-96 bg-primary/10 blur-[120px] rounded-full pointer-events-none"></div>
+<div class="absolute bottom-0 -left-24 size-96 bg-accent-blue/5 blur-[120px] rounded-full pointer-events-none"></div>
+</main>
+</div>
+</body></html>

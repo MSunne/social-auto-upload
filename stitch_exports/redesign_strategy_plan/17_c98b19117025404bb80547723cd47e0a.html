@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>OpenClaw 任务中心 - 全部任务</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#00f2ff", 
+                        "accent": "#bc13fe", 
+                        "background-light": "#f8f6f6",
+                        "background-dark": "#05020a",
+                        "surface-dark": "#0d0616",
+                    },
+                    fontFamily: {
+                        "display": ["Public Sans", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            background: #05020a;
+            min-height: 100vh;
+        }
+        .glass {
+            background: rgba(22, 22, 30, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .neon-glow-cyan {
+            box-shadow: 0 0 15px rgba(0, 242, 255, 0.3);
+        }
+        .neon-border-cyan {
+            border: 1px solid rgba(0, 242, 255, 0.5);
+        }
+    
+        .iridescent-border {
+            position: relative;
+            border-radius: inherit;
+            background: linear-gradient(30deg, #00f2ff, #bc13fe, #ff00ea, #00f2ff);
+            background-size: 300% 300%;
+            animation: iridescent-move 5s ease infinite;
+            padding: 2px;
+        }
+        .iridescent-inner {
+            background: #0d0616;
+            border-radius: inherit;
+            height: 100%;
+            width: 100%;
+        }
+        @keyframes iridescent-move {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        .iridescent-glow {
+            box-shadow: 0 0 25px rgba(188, 19, 254, 0.2), 0 0 50px rgba(0, 242, 255, 0.1);
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body class="font-display text-slate-100 antialiased overflow-x-hidden">
+<div class="flex h-full min-h-screen">
+<!-- Sidebar -->
+<aside class="w-64 flex flex-col fixed inset-y-0 border-r border-white/10 bg-surface-dark/50 z-50">
+<div class="p-6"><div class="flex items-center gap-3">
+<div class="size-8 bg-gradient-to-br from-primary to-accent rounded-lg flex items-center justify-center">
+<span class="material-symbols-outlined text-background-dark font-bold">movie_filter</span>
+</div>
+<h2 class="text-white text-xl font-bold tracking-tight">OpenClaw <span class="text-primary">Plus</span></h2>
+</div></div>
+<nav class="flex-1 px-4 space-y-2 mt-4">
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="text-sm font-medium">控制面板</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">image</span>
+<span class="text-sm font-medium">图片制作</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">movie</span>
+<span class="text-sm font-medium">视频制作</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">chat</span>
+<span class="text-sm font-medium">聊天</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="text-sm font-medium">OpenClaw配置</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl bg-primary/10 text-primary border border-primary/20" href="#">
+<span class="material-symbols-outlined">history</span>
+<span class="text-sm font-medium">OpenClaw任务</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">account_balance_wallet</span>
+<span class="text-sm font-medium">财务管理</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">add_card</span>
+<span class="text-sm font-medium">充值中心</span>
+</a></nav>
+<div class="p-4 border-t border-primary/10">
+<div class="flex items-center gap-3 px-2">
+<div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">JD</div>
+<div class="flex-1 min-w-0">
+<p class="text-sm font-medium truncate text-white">CyberDesigner_01</p>
+<p class="text-xs text-slate-500">Pro Plan</p>
+</div>
+</div>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="flex-1 ml-64 min-h-screen flex flex-col bg-gradient-to-br from-[#05020a] via-[#0d0616] to-[#120826]">
+<!-- Top Header -->
+<header class="sticky top-0 z-40 bg-surface-dark/80 backdrop-blur-xl border-b border-white/5 px-8 py-4">
+<div class="flex items-center justify-between mb-6">
+<div class="flex items-center gap-4">
+<h2 class="text-2xl font-bold text-white tracking-tight">OpenClaw 任务中心</h2>
+<div class="px-2 py-1 rounded bg-primary/10 border border-primary/20 text-[10px] font-bold text-primary uppercase tracking-widest">Live</div>
+</div>
+<div class="flex items-center gap-4">
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg">search</span>
+<input class="bg-primary/5 border border-primary/20 rounded-xl pl-10 pr-4 py-2 text-sm w-72 focus:ring-1 focus:ring-primary focus:border-primary outline-none text-slate-200 placeholder:text-slate-500" placeholder="搜索任务ID或模型名称..." type="text"/>
+</div>
+<button class="w-10 h-10 rounded-xl bg-primary/5 border border-primary/20 flex items-center justify-center hover:bg-primary/10 transition-all text-slate-400 hover:text-white">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+</div>
+</div>
+<!-- Tabs -->
+<div class="flex items-center gap-8">
+<a class="relative pb-3 text-sm font-bold text-white group" href="#">
+                        全部任务
+                        <div class="absolute bottom-0 left-0 w-full h-0.5 bg-primary shadow-[0_0_8px_#00f2ff]"></div>
+</a>
+<a class="pb-3 text-sm font-medium text-slate-400 hover:text-slate-200 transition-colors" href="#">视频任务</a>
+<a class="pb-3 text-sm font-medium text-slate-400 hover:text-slate-200 transition-colors" href="#">图片任务</a>
+<a class="pb-3 text-sm font-medium text-slate-400 hover:text-slate-200 transition-colors" href="#">聊天任务</a>
+</div>
+</header>
+<!-- Filters -->
+<div class="px-8 py-6 flex flex-wrap items-center gap-3">
+<button class="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-background-dark text-xs font-bold transition-all hover:opacity-90">
+<span class="material-symbols-outlined text-sm">tune</span>
+                    全部状态
+                </button>
+<button class="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary/10 border border-primary/20 text-slate-300 text-xs font-bold hover:bg-primary/20 transition-all">
+<span class="material-symbols-outlined text-sm text-green-400">check_circle</span>
+                    已完成
+                </button>
+<button class="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary/10 border border-primary/20 text-slate-300 text-xs font-bold hover:bg-primary/20 transition-all">
+<span class="material-symbols-outlined text-sm text-amber-400">pending</span>
+                    进行中
+                </button>
+<button class="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary/10 border border-primary/20 text-slate-300 text-xs font-bold hover:bg-primary/20 transition-all">
+<span class="material-symbols-outlined text-sm text-red-400">error</span>
+                    失败
+                </button>
+<div class="ml-auto flex items-center gap-2 text-xs text-slate-500">
+<span>排序方式:</span>
+<select class="bg-transparent border-none text-slate-300 font-bold focus:ring-0 cursor-pointer">
+<option>最新创建</option>
+<option>最早创建</option>
+</select>
+</div>
+</div>
+<!-- Content Area - Task List -->
+<div class="px-8 pb-12 flex-1">
+<div class="grid grid-cols-1 gap-4">
+<!-- Task Item 1: Completed Video -->
+<div class="rounded-2xl p-4 flex items-center gap-6 group hover:border-primary/40 transition-all glass">
+<div class="relative w-32 h-20 rounded-xl overflow-hidden border border-primary/20">
+<div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent z-10"></div>
+<img alt="Thumbnail" class="w-full h-full object-cover" data-alt="Abstract colorful flowing digital wave render" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBG0YkXv9oVg3raJ4GSianbQRxmyofcMdJSxgcxec53Wfsiub7jk_j0B8zYupun0-32918Z0cOSmB41RDStJs_hzAj_hc0xblGlfiIBQvlR0YTArcN8MyOADmhaSh1lQ6iecl1yF8b-QsiUChoVwQ-nWKJrAzFbRziLXujpIm6FO-s2ubmuBI6UJ2efNJUFqNMZu4KdAPX4YebWVq5wPT0Ght2kbpJNc7W2b61IPFLISBPoSvSC-zpzY8UNsLfHzcPtkMZIRiFqzQ"/>
+<div class="absolute inset-0 flex items-center justify-center z-20">
+<span class="material-symbols-outlined text-white text-2xl group-hover:scale-110 transition-transform">play_circle</span>
+</div>
+</div>
+<div class="flex-1 min-w-0">
+<div class="flex items-center gap-3 mb-1">
+<span class="material-symbols-outlined text-primary text-lg">movie</span>
+<h3 class="text-sm font-bold text-white truncate">OC-TASK-882910</h3>
+<span class="px-2 py-0.5 rounded bg-green-500/10 border border-green-500/30 text-green-400 text-[10px] font-bold uppercase">Finished</span>
+</div>
+<div class="flex items-center gap-4">
+<p class="text-xs text-slate-400 flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">model_training</span>
+                                    Sora-v1.2 High-Res
+                                </p>
+<p class="text-xs text-slate-400 flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">schedule</span>
+                                    2024-05-20 14:32:11
+                                </p>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<button class="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center text-primary hover:bg-primary hover:text-white transition-all">
+<span class="material-symbols-outlined text-sm">download</span>
+</button>
+<button class="w-9 h-9 rounded-lg bg-slate-800/50 flex items-center justify-center text-slate-400 hover:text-white transition-all">
+<span class="material-symbols-outlined text-sm">more_vert</span>
+</button>
+</div>
+</div>
+<!-- Task Item 2: Rendering Image -->
+<div class="rounded-2xl p-4 flex items-center gap-6 group hover:border-accent-cyan/40 transition-all border-accent-cyan/10 glass">
+<div class="relative w-32 h-20 rounded-xl overflow-hidden border border-accent-cyan/20 bg-slate-900 flex items-center justify-center">
+<div class="absolute inset-0 bg-[linear-gradient(45deg,transparent_25%,rgba(0,242,255,0.05)_50%,transparent_75%)] bg-[length:250%_250%] animate-[gradient_3s_linear_infinite]"></div>
+<span class="material-symbols-outlined text-accent-cyan animate-pulse">refresh</span>
+</div>
+<div class="flex-1 min-w-0">
+<div class="flex items-center gap-3 mb-1">
+<span class="material-symbols-outlined text-accent-cyan text-lg">image</span>
+<h3 class="text-sm font-bold text-white truncate">OC-TASK-882915</h3>
+<span class="px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[10px] font-bold uppercase">Rendering 65%</span>
+</div>
+<div class="flex items-center gap-4">
+<p class="text-xs text-slate-400 flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">model_training</span>
+                                    StableDiffusion XL Turbo
+                                </p>
+<p class="text-xs text-slate-400 flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">schedule</span>
+                                    2024-05-20 15:10:05
+                                </p>
+</div>
+<div class="w-full bg-slate-800 h-1 rounded-full mt-3 overflow-hidden">
+<div class="bg-accent-cyan h-full rounded-full shadow-[0_0_8px_#00f2ff]" style="width: 65%"></div>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<button class="w-9 h-9 rounded-lg bg-slate-800/50 flex items-center justify-center text-slate-400 hover:text-white transition-all">
+<span class="material-symbols-outlined text-sm">close</span>
+</button>
+</div>
+</div>
+<!-- Task Item 3: Failed Chat -->
+<div class="rounded-2xl p-4 flex items-center gap-6 group hover:border-red-500/40 transition-all border-red-500/10 glass">
+<div class="relative w-32 h-20 rounded-xl overflow-hidden border border-red-500/20 bg-red-500/5 flex items-center justify-center">
+<span class="material-symbols-outlined text-red-500/40 text-3xl">chat_error</span>
+</div>
+<div class="flex-1 min-w-0">
+<div class="flex items-center gap-3 mb-1">
+<span class="material-symbols-outlined text-slate-400 text-lg">forum</span>
+<h3 class="text-sm font-bold text-white truncate">OC-TASK-882890</h3>
+<span class="px-2 py-0.5 rounded bg-red-500/10 border border-red-500/30 text-red-400 text-[10px] font-bold uppercase">Failed</span>
+</div>
+<div class="flex items-center gap-4">
+<p class="text-xs text-slate-400 flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">model_training</span>
+                                    Claude-3-Opus-API
+                                </p>
+<p class="text-xs text-slate-400 flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">schedule</span>
+                                    2024-05-20 12:00:44
+                                </p>
+</div>
+<p class="text-[10px] text-red-500/60 mt-2">Error Code: 402 - Insufficient Balance</p>
+</div>
+<div class="flex items-center gap-2">
+<button class="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center text-primary hover:bg-primary hover:text-white transition-all">
+<span class="material-symbols-outlined text-sm">replay</span>
+</button>
+<button class="w-9 h-9 rounded-lg bg-slate-800/50 flex items-center justify-center text-slate-400 hover:text-white transition-all">
+<span class="material-symbols-outlined text-sm">delete</span>
+</button>
+</div>
+</div>
+<!-- Task Item 4: Completed Image -->
+<div class="rounded-2xl p-4 flex items-center gap-6 group hover:border-primary/40 transition-all glass">
+<div class="relative w-32 h-20 rounded-xl overflow-hidden border border-primary/20">
+<img alt="Thumbnail" class="w-full h-full object-cover" data-alt="Vibrant neon purple futuristic architecture render" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDgsQ3DLNCGo66leF9ROiAORzalJnMw-EyrhvQwO9SFv7cF746pLxi5u-KLQxrWMRuNgHCiPhN3eSxrFaohaBy4RGYHywsguqZtN67cfm9UCA7a7y8reqinsUwMe30Tiv2kNq2jf0H8zA9GPT4uN9deZqRuSgkyOv3kc2dSerAdmxCKBUY6-l8I3wLN96pfx-MKUPMkvcr1po32RDFgpb6jHgKELuPGYfk31XrsoCJ5UTA8_8oOlZn5Zl0iuoXWkNyklW5OPsZnYA"/>
+</div>
+<div class="flex-1 min-w-0">
+<div class="flex items-center gap-3 mb-1">
+<span class="material-symbols-outlined text-accent-cyan text-lg">image</span>
+<h3 class="text-sm font-bold text-white truncate">OC-TASK-882885</h3>
+<span class="px-2 py-0.5 rounded bg-green-500/10 border border-green-500/30 text-green-400 text-[10px] font-bold uppercase">Finished</span>
+</div>
+<div class="flex items-center gap-4">
+<p class="text-xs text-slate-400 flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">model_training</span>
+                                    Midjourney v6.0
+                                </p>
+<p class="text-xs text-slate-400 flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">schedule</span>
+                                    2024-05-20 11:45:30
+                                </p>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<button class="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center text-primary hover:bg-primary hover:text-white transition-all">
+<span class="material-symbols-outlined text-sm">visibility</span>
+</button>
+<button class="w-9 h-9 rounded-lg bg-slate-800/50 flex items-center justify-center text-slate-400 hover:text-white transition-all">
+<span class="material-symbols-outlined text-sm">more_vert</span>
+</button>
+</div>
+</div>
+<!-- Task Item 5: Completed Chat -->
+<div class="rounded-2xl p-4 flex items-center gap-6 group hover:border-primary/40 transition-all glass">
+<div class="relative w-32 h-20 rounded-xl overflow-hidden border border-primary/20 bg-primary/5 flex items-center justify-center">
+<span class="material-symbols-outlined text-primary/40 text-3xl">chat_bubble</span>
+</div>
+<div class="flex-1 min-w-0">
+<div class="flex items-center gap-3 mb-1">
+<span class="material-symbols-outlined text-slate-400 text-lg">forum</span>
+<h3 class="text-sm font-bold text-white truncate">OC-TASK-882801</h3>
+<span class="px-2 py-0.5 rounded bg-green-500/10 border border-green-500/30 text-green-400 text-[10px] font-bold uppercase">Finished</span>
+</div>
+<div class="flex items-center gap-4">
+<p class="text-xs text-slate-400 flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">model_training</span>
+                                    GPT-4o Omnimodal
+                                </p>
+<p class="text-xs text-slate-400 flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">schedule</span>
+                                    2024-05-20 10:22:18
+                                </p>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<button class="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center text-primary hover:bg-primary hover:text-white transition-all">
+<span class="material-symbols-outlined text-sm">open_in_new</span>
+</button>
+<button class="w-9 h-9 rounded-lg bg-slate-800/50 flex items-center justify-center text-slate-400 hover:text-white transition-all">
+<span class="material-symbols-outlined text-sm">more_vert</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Pagination -->
+<div class="mt-8 flex items-center justify-between">
+<p class="text-xs text-slate-500">显示 1-5 项，共 2,142 项任务</p>
+<div class="flex items-center gap-1">
+<button class="w-8 h-8 rounded bg-slate-800 flex items-center justify-center text-slate-400 hover:bg-slate-700 transition-colors">
+<span class="material-symbols-outlined text-lg">chevron_left</span>
+</button>
+<button class="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-background-dark text-xs font-bold transition-all hover:opacity-90">1</button>
+<button class="w-8 h-8 rounded bg-slate-800 flex items-center justify-center text-slate-400 hover:bg-slate-700 transition-colors text-xs font-bold">2</button>
+<button class="w-8 h-8 rounded bg-slate-800 flex items-center justify-center text-slate-400 hover:bg-slate-700 transition-colors text-xs font-bold">3</button>
+<span class="px-2 text-slate-500">...</span>
+<button class="w-8 h-8 rounded bg-slate-800 flex items-center justify-center text-slate-400 hover:bg-slate-700 transition-colors text-xs font-bold">429</button>
+<button class="w-8 h-8 rounded bg-slate-800 flex items-center justify-center text-slate-400 hover:bg-slate-700 transition-colors">
+<span class="material-symbols-outlined text-lg">chevron_right</span>
+</button>
+</div>
+</div>
+</div>
+</main>
+<!-- Fixed Action Button -->
+<button class="fixed bottom-8 right-8 w-14 h-14 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center shadow-[0_0_25px_rgba(0,242,255,0.4)] hover:scale-110 active:scale-95 transition-all text-background-dark z-50">
+<span class="material-symbols-outlined text-3xl">add</span>
+</button>
+</div>
+</body></html>

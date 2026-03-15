@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>OmniBull 账户管理 - OmniDrive</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#ec5b13",
+                        "electric-purple": "#a855f7",
+                        "neon-green": "#22c55e",
+                        "background-light": "#f8f6f6",
+                        "background-dark": "#0a0a0a",
+                    },
+                    fontFamily: {
+                        "display": ["Public Sans", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .glass-card {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+        .purple-glow {
+            box-shadow: 0 0 15px rgba(168, 85, 247, 0.4);
+        }
+        .green-glow {
+            box-shadow: 0 0 15px rgba(34, 197, 94, 0.4);
+        }
+    </style>
+</head>
+<body class="bg-background-dark font-display text-slate-100 overflow-x-hidden">
+<div class="flex min-h-screen w-full">
+<!-- Sidebar Navigation -->
+<aside class="w-64 border-r border-white/10 bg-black flex flex-col fixed h-full z-50">
+<div class="p-6 flex items-center gap-3">
+<div class="w-10 h-10 bg-gradient-to-br from-electric-purple to-neon-green rounded-xl flex items-center justify-center text-black font-black italic">
+                OB
+            </div>
+<div>
+<h1 class="text-white text-lg font-bold leading-none">OmniBull</h1>
+<p class="text-white/50 text-xs mt-1">OmniDrive Platform</p>
+</div>
+</div>
+<nav class="flex-1 px-4 space-y-2 mt-4">
+<a class="flex items-center gap-3 px-3 py-3 rounded-xl bg-white/5 text-white border border-white/10 group" href="#">
+<span class="material-symbols-outlined text-electric-purple group-hover:scale-110 transition-transform">grid_view</span>
+<span class="text-sm font-medium">控制面板</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-3 rounded-xl text-white/60 hover:bg-white/5 hover:text-white transition-all" href="#">
+<span class="material-symbols-outlined">image</span>
+<span class="text-sm font-medium">图片制作</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-3 rounded-xl text-white/60 hover:bg-white/5 hover:text-white transition-all" href="#">
+<span class="material-symbols-outlined">movie</span>
+<span class="text-sm font-medium">视频制作</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-3 rounded-xl text-white/60 hover:bg-white/5 hover:text-white transition-all" href="#">
+<span class="material-symbols-outlined">chat</span>
+<span class="text-sm font-medium">聊天</span>
+</a>
+<div class="pt-4 pb-2 px-3 text-[10px] uppercase tracking-widest text-white/30 font-bold">系统工具</div>
+<a class="flex items-center gap-3 px-3 py-3 rounded-xl text-white/60 hover:bg-white/5 hover:text-white transition-all" href="#">
+<span class="material-symbols-outlined">settings_input_component</span>
+<span class="text-sm font-medium">OpenClaw配置</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-3 rounded-xl text-white/60 hover:bg-white/5 hover:text-white transition-all" href="#">
+<span class="material-symbols-outlined">assignment</span>
+<span class="text-sm font-medium">OpenClaw任务</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-3 rounded-xl text-white/60 hover:bg-white/5 hover:text-white transition-all" href="#">
+<span class="material-symbols-outlined">account_balance_wallet</span>
+<span class="text-sm font-medium">财务管理</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-3 rounded-xl text-white/60 hover:bg-white/5 hover:text-white transition-all" href="#">
+<span class="material-symbols-outlined">add_circle</span>
+<span class="text-sm font-medium">充值中心</span>
+</a>
+</nav>
+<div class="p-4 mt-auto">
+<div class="glass-card rounded-xl p-4 flex items-center gap-3">
+<div class="w-10 h-10 rounded-full overflow-hidden border border-white/20">
+<img alt="用户头像" data-alt="High tech user avatar portrait" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD6z7H4lOxBp3nLwpXtGWHDa2GN3Ua7i3A3a7m0I3LULTEPYghLdMlAweYLFR_706gjXBA1nNtRu1OzADvJdFOGEBWdiua0g85D307djqobjHH_bDi0ed0a9afVppbHxdxtY_U2dFQM5J2rCKz7G1w8QkE8O3hBMi70aAYxIzbOIQy88TpAcgtHuEst_5VK6Xi5fHCDgtXYVoUThsfiuoc6l1EK-hoEFR6DQEBiju4k0vVLA2F9vbbw1P-bDwxpGbbEnIi3shMfMg"/>
+</div>
+<div class="flex-1 overflow-hidden">
+<p class="text-sm font-bold truncate">管理员用户</p>
+<p class="text-[10px] text-neon-green">在线状态</p>
+</div>
+<span class="material-symbols-outlined text-white/40 text-sm">settings</span>
+</div>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="flex-1 ml-64 p-8">
+<!-- Top Header -->
+<header class="flex items-center justify-between mb-8">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-neon-green">hub</span>
+<h2 class="text-2xl font-black tracking-tighter uppercase">OmniDrive <span class="text-electric-purple">Console</span></h2>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2 px-3 py-1.5 bg-white/5 rounded-lg border border-white/10">
+<span class="w-2 h-2 rounded-full bg-neon-green animate-pulse"></span>
+<span class="text-xs font-medium text-white/80">系统运行良好</span>
+</div>
+<button class="w-10 h-10 glass-card rounded-lg flex items-center justify-center text-white/80 hover:text-white">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+</div>
+</header>
+<!-- Section 1: Equipment Health Dashboard -->
+<section class="mb-8">
+<div class="flex flex-wrap items-center justify-between mb-4">
+<h3 class="text-xl font-bold flex items-center gap-2">
+<span class="material-symbols-outlined text-electric-purple">analytics</span>
+                    设备健康仪表盘
+                </h3>
+<span class="text-white/40 text-sm">最后更新: 2023-11-20 14:30:22</span>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+<!-- Comprehensive Score -->
+<div class="glass-card p-6 rounded-2xl lg:col-span-1 flex flex-col justify-between border-l-4 border-l-neon-green">
+<div>
+<p class="text-white/50 text-xs font-bold uppercase tracking-widest mb-1">综合评分</p>
+<h4 class="text-4xl font-black text-neon-green">98</h4>
+</div>
+<div class="mt-4 flex items-center gap-1 text-[10px] text-white/40">
+<span class="material-symbols-outlined text-xs text-neon-green">trending_up</span>
+                        较昨日提升 2.4%
+                    </div>
+</div>
+<!-- Metrics -->
+<div class="glass-card p-6 rounded-2xl flex flex-col justify-between">
+<div>
+<p class="text-white/50 text-xs font-bold uppercase tracking-widest mb-1">内存占用</p>
+<h4 class="text-2xl font-bold">45%</h4>
+<div class="w-full bg-white/5 h-1.5 rounded-full mt-2 overflow-hidden">
+<div class="bg-electric-purple h-full" style="width: 45%"></div>
+</div>
+</div>
+</div>
+<div class="glass-card p-6 rounded-2xl flex flex-col justify-between">
+<div>
+<p class="text-white/50 text-xs font-bold uppercase tracking-widest mb-1">磁盘空间</p>
+<h4 class="text-2xl font-bold">62%</h4>
+<div class="w-full bg-white/5 h-1.5 rounded-full mt-2 overflow-hidden">
+<div class="bg-blue-500 h-full" style="width: 62%"></div>
+</div>
+</div>
+</div>
+<div class="glass-card p-6 rounded-2xl flex flex-col justify-between">
+<div>
+<p class="text-white/50 text-xs font-bold uppercase tracking-widest mb-1">CPU 负载</p>
+<h4 class="text-2xl font-bold">18%</h4>
+<div class="w-full bg-white/5 h-1.5 rounded-full mt-2 overflow-hidden">
+<div class="bg-neon-green h-full" style="width: 18%"></div>
+</div>
+</div>
+</div>
+<div class="glass-card p-6 rounded-2xl flex flex-col justify-between">
+<div>
+<p class="text-white/50 text-xs font-bold uppercase tracking-widest mb-1">当前任务数</p>
+<h4 class="text-2xl font-bold">12</h4>
+<p class="text-[10px] text-white/40 mt-2">其中 3 个正在队列中</p>
+</div>
+</div>
+</div>
+<!-- Account Summary Bar -->
+<div class="glass-card p-4 rounded-2xl overflow-x-auto">
+<div class="flex items-center gap-8 min-w-max px-4">
+<div class="flex items-center gap-3 border-r border-white/10 pr-8">
+<div class="text-xs font-bold text-white/40 uppercase">平台分布</div>
+</div>
+<!-- Platforms -->
+<div class="flex items-center gap-10">
+<div class="flex flex-col">
+<span class="text-xs text-white/40">抖音</span>
+<span class="text-lg font-bold text-white">45 <span class="text-[10px] font-normal text-white/40">/ 890</span></span>
+</div>
+<div class="flex flex-col">
+<span class="text-xs text-white/40">快手</span>
+<span class="text-lg font-bold text-white">32 <span class="text-[10px] font-normal text-white/40">/ 456</span></span>
+</div>
+<div class="flex flex-col">
+<span class="text-xs text-white/40">视频号</span>
+<span class="text-lg font-bold text-white">28 <span class="text-[10px] font-normal text-white/40">/ 120</span></span>
+</div>
+<div class="flex flex-col">
+<span class="text-xs text-white/40">TK</span>
+<span class="text-lg font-bold text-white">15 <span class="text-[10px] font-normal text-white/40">/ 310</span></span>
+</div>
+<div class="flex flex-col">
+<span class="text-xs text-white/40">YouTube</span>
+<span class="text-lg font-bold text-white">12 <span class="text-[10px] font-normal text-white/40">/ 240</span></span>
+</div>
+<div class="flex flex-col">
+<span class="text-xs text-white/40">Facebook</span>
+<span class="text-lg font-bold text-white">8 <span class="text-[10px] font-normal text-white/40">/ 180</span></span>
+</div>
+<div class="flex flex-col">
+<span class="text-xs text-white/40">Instagram</span>
+<span class="text-lg font-bold text-white">10 <span class="text-[10px] font-normal text-white/40">/ 155</span></span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Section 2: Platform Tabs -->
+<div class="mb-6 flex flex-wrap items-center justify-between gap-4">
+<nav class="flex gap-2 p-1 bg-white/5 rounded-xl border border-white/10 overflow-x-auto">
+<button class="px-6 py-2 rounded-lg bg-electric-purple text-white text-sm font-bold transition-all shadow-lg shadow-electric-purple/20">全部</button>
+<button class="px-6 py-2 rounded-lg text-white/60 hover:text-white text-sm font-medium transition-all">抖音</button>
+<button class="px-6 py-2 rounded-lg text-white/60 hover:text-white text-sm font-medium transition-all">快手</button>
+<button class="px-6 py-2 rounded-lg text-white/60 hover:text-white text-sm font-medium transition-all">视频号</button>
+<button class="px-6 py-2 rounded-lg text-white/60 hover:text-white text-sm font-medium transition-all">TK</button>
+<button class="px-6 py-2 rounded-lg text-white/60 hover:text-white text-sm font-medium transition-all">YouTube</button>
+<button class="px-6 py-2 rounded-lg text-white/60 hover:text-white text-sm font-medium transition-all">Facebook</button>
+<button class="px-6 py-2 rounded-lg text-white/60 hover:text-white text-sm font-medium transition-all">Instagram</button>
+</nav>
+<!-- Section 3: Search & Action -->
+<div class="flex gap-3">
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-white/40">search</span>
+<input class="pl-10 pr-4 py-2 bg-white/5 border border-white/10 rounded-xl focus:ring-2 focus:ring-electric-purple focus:border-transparent text-sm w-64 text-white" placeholder="搜索账户..." type="text"/>
+</div>
+<button class="flex items-center gap-2 px-5 py-2 bg-neon-green hover:bg-neon-green/80 text-black font-bold text-sm rounded-xl transition-all green-glow">
+<span class="material-symbols-outlined text-sm">add</span>
+                    添加账户
+                </button>
+</div>
+</div>
+<!-- Section 4: Account List Table -->
+<div class="glass-card rounded-2xl overflow-hidden mb-6">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-white/5 border-b border-white/10">
+<th class="px-6 py-4 text-xs font-bold text-white/40 uppercase tracking-widest">添加时间</th>
+<th class="px-6 py-4 text-xs font-bold text-white/40 uppercase tracking-widest">平台</th>
+<th class="px-6 py-4 text-xs font-bold text-white/40 uppercase tracking-widest">状态</th>
+<th class="px-6 py-4 text-xs font-bold text-white/40 uppercase tracking-widest">认证时间</th>
+<th class="px-6 py-4 text-xs font-bold text-white/40 uppercase tracking-widest text-center">任务表</th>
+<th class="px-6 py-4 text-xs font-bold text-white/40 uppercase tracking-widest text-center">知识/技能</th>
+<th class="px-6 py-4 text-xs font-bold text-white/40 uppercase tracking-widest text-right">操作</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-white/5">
+<!-- Row 1 -->
+<tr class="hover:bg-white/5 transition-colors">
+<td class="px-6 py-4 text-sm text-white/80 font-medium">2023-11-20 10:45</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<span class="w-6 h-6 rounded flex items-center justify-center bg-black border border-white/20 text-[10px] font-black">DY</span>
+<span class="text-sm font-medium">抖音(douyin_001)</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-neon-green/10 text-neon-green text-xs font-bold border border-neon-green/20">
+<span class="w-1.5 h-1.5 rounded-full bg-neon-green"></span> 正常健康
+                            </span>
+</td>
+<td class="px-6 py-4 text-sm text-white/60">2023-11-20 12:00</td>
+<td class="px-6 py-4 text-center">
+<button class="px-3 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-bold transition-all">详情</button>
+</td>
+<td class="px-6 py-4 text-center">
+<button class="px-3 py-1 bg-electric-purple/10 hover:bg-electric-purple/20 text-electric-purple rounded-lg text-xs font-bold transition-all">查看/编辑</button>
+</td>
+<td class="px-6 py-4 text-right">
+<div class="flex items-center justify-end gap-2">
+<button class="p-2 hover:bg-white/10 rounded-lg text-neon-green transition-all" title="更新认证">
+<span class="material-symbols-outlined text-sm">refresh</span>
+</button>
+<button class="p-2 hover:bg-red-500/10 rounded-lg text-red-500 transition-all" title="删除">
+<span class="material-symbols-outlined text-sm">delete</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="hover:bg-white/5 transition-colors">
+<td class="px-6 py-4 text-sm text-white/80 font-medium">2023-11-19 14:22</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<span class="w-6 h-6 rounded flex items-center justify-center bg-black border border-white/20 text-[10px] font-black">TK</span>
+<span class="text-sm font-medium">TikTok(tk_viral_02)</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-red-500/10 text-red-500 text-xs font-bold border border-red-500/20">
+<span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span> 状态异常
+                            </span>
+</td>
+<td class="px-6 py-4 text-sm text-white/60">2023-11-19 14:30</td>
+<td class="px-6 py-4 text-center">
+<button class="px-3 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-bold transition-all">详情</button>
+</td>
+<td class="px-6 py-4 text-center">
+<button class="px-3 py-1 bg-electric-purple/10 hover:bg-electric-purple/20 text-electric-purple rounded-lg text-xs font-bold transition-all">查看/编辑</button>
+</td>
+<td class="px-6 py-4 text-right">
+<div class="flex items-center justify-end gap-2">
+<button class="p-2 hover:bg-white/10 rounded-lg text-neon-green transition-all" title="更新认证">
+<span class="material-symbols-outlined text-sm">refresh</span>
+</button>
+<button class="p-2 hover:bg-red-500/10 rounded-lg text-red-500 transition-all" title="删除">
+<span class="material-symbols-outlined text-sm">delete</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="hover:bg-white/5 transition-colors">
+<td class="px-6 py-4 text-sm text-white/80 font-medium">2023-11-18 09:15</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<span class="w-6 h-6 rounded flex items-center justify-center bg-black border border-white/20 text-[10px] font-black">KS</span>
+<span class="text-sm font-medium">快手(ks_official_v)</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-neon-green/10 text-neon-green text-xs font-bold border border-neon-green/20">
+<span class="w-1.5 h-1.5 rounded-full bg-neon-green"></span> 正常健康
+                            </span>
+</td>
+<td class="px-6 py-4 text-sm text-white/60">2023-11-18 10:00</td>
+<td class="px-6 py-4 text-center">
+<button class="px-3 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-bold transition-all">详情</button>
+</td>
+<td class="px-6 py-4 text-center">
+<button class="px-3 py-1 bg-electric-purple/10 hover:bg-electric-purple/20 text-electric-purple rounded-lg text-xs font-bold transition-all">查看/编辑</button>
+</td>
+<td class="px-6 py-4 text-right">
+<div class="flex items-center justify-end gap-2">
+<button class="p-2 hover:bg-white/10 rounded-lg text-neon-green transition-all" title="更新认证">
+<span class="material-symbols-outlined text-sm">refresh</span>
+</button>
+<button class="p-2 hover:bg-red-500/10 rounded-lg text-red-500 transition-all" title="删除">
+<span class="material-symbols-outlined text-sm">delete</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 4 -->
+<tr class="hover:bg-white/5 transition-colors">
+<td class="px-6 py-4 text-sm text-white/80 font-medium">2023-11-17 16:30</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<span class="w-6 h-6 rounded flex items-center justify-center bg-black border border-white/20 text-[10px] font-black">YT</span>
+<span class="text-sm font-medium">YouTube(yt_tech_channel)</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-neon-green/10 text-neon-green text-xs font-bold border border-neon-green/20">
+<span class="w-1.5 h-1.5 rounded-full bg-neon-green"></span> 正常健康
+                            </span>
+</td>
+<td class="px-6 py-4 text-sm text-white/60">2023-11-17 17:00</td>
+<td class="px-6 py-4 text-center">
+<button class="px-3 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-bold transition-all">详情</button>
+</td>
+<td class="px-6 py-4 text-center">
+<button class="px-3 py-1 bg-electric-purple/10 hover:bg-electric-purple/20 text-electric-purple rounded-lg text-xs font-bold transition-all">查看/编辑</button>
+</td>
+<td class="px-6 py-4 text-right">
+<div class="flex items-center justify-end gap-2">
+<button class="p-2 hover:bg-white/10 rounded-lg text-neon-green transition-all" title="更新认证">
+<span class="material-symbols-outlined text-sm">refresh</span>
+</button>
+<button class="p-2 hover:bg-red-500/10 rounded-lg text-red-500 transition-all" title="删除">
+<span class="material-symbols-outlined text-sm">delete</span>
+</button>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Section 5: Pagination -->
+<footer class="flex items-center justify-between">
+<p class="text-xs text-white/40">显示第 1 至 10 个账户，共 142 个账户</p>
+<div class="flex gap-2">
+<button class="w-8 h-8 flex items-center justify-center glass-card rounded-lg hover:bg-white/10 transition-all">
+<span class="material-symbols-outlined text-sm">chevron_left</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center bg-electric-purple rounded-lg text-xs font-bold shadow-lg shadow-electric-purple/30">1</button>
+<button class="w-8 h-8 flex items-center justify-center glass-card rounded-lg hover:bg-white/10 text-xs font-medium">2</button>
+<button class="w-8 h-8 flex items-center justify-center glass-card rounded-lg hover:bg-white/10 text-xs font-medium">3</button>
+<span class="px-2 text-white/40">...</span>
+<button class="w-8 h-8 flex items-center justify-center glass-card rounded-lg hover:bg-white/10 text-xs font-medium">15</button>
+<button class="w-8 h-8 flex items-center justify-center glass-card rounded-lg hover:bg-white/10 transition-all">
+<span class="material-symbols-outlined text-sm">chevron_right</span>
+</button>
+</div>
+</footer>
+</main>
+</div>
+<!-- Background Decorative Elements -->
+<div class="fixed top-0 right-0 -z-10 w-[500px] h-[500px] bg-electric-purple/10 blur-[120px] rounded-full translate-x-1/2 -translate-y-1/2"></div>
+<div class="fixed bottom-0 left-0 -z-10 w-[600px] h-[600px] bg-neon-green/5 blur-[120px] rounded-full -translate-x-1/2 translate-y-1/2"></div>
+</body></html>

@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="zh"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#00f2ff", 
+                        "accent": "#9d25f4", 
+                        "background-light": "#f8f6f6",
+                        "background-dark": "#05020a",
+                        "surface-dark": "#0d0616",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.5rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }</script>
+<style>body {
+            font-family: 'Space Grotesk', sans-serif;
+        }
+        .glass-panel {
+            background: rgba(13, 6, 22, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(0, 242, 255, 0.1);
+        }
+        .neon-glow-cyan {
+            box-shadow: 0 0 15px rgba(0, 242, 255, 0.3);
+        }
+        .neon-glow-purple {
+            box-shadow: 0 0 15px rgba(188, 19, 254, 0.3);
+        }
+        .sidebar-item-active {
+            background: linear-gradient(90deg, rgba(0, 242, 255, 0.15) 0%, rgba(0, 242, 255, 0) 100%);
+            border-left: 3px solid #00f2ff;
+        }</style>
+<style>
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 22px;
+        }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: rgba(255, 255, 255, 0.1);
+            transition: .4s;
+            border: 1px solid rgba(0, 242, 255, 0.2);
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 14px;
+            width: 14px;
+            left: 3px;
+            bottom: 3px;
+            background-color: #00f2ff;
+            transition: .4s;
+            box-shadow: 0 0 10px #00f2ff;
+        }
+        input:checked + .slider {
+            background-color: rgba(157, 37, 244, 0.2);
+            border-color: #9d25f4;
+        }
+        input:checked + .slider:before {
+            transform: translateX(22px);
+            background-color: #9d25f4;
+            box-shadow: 0 0 10px #9d25f4;
+        }
+        .slider.round { border-radius: 34px; }
+        .slider.round:before { border-radius: 50%; }
+    </style></head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100 min-h-screen">
+<div class="flex h-screen overflow-hidden">
+<!-- Sidebar Container -->
+<aside class="w-64 flex-shrink-0 border-r border-white/10 bg-surface-dark/50 hidden md:flex flex-col backdrop-blur-xl z-20">
+<div class="p-6 flex flex-col gap-8 h-full">
+<!-- Logo Section -->
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full bg-gradient-to-tr from-primary to-accent p-[2px]">
+<div class="w-full h-full rounded-full bg-background-dark flex items-center justify-center">
+<span class="material-symbols-outlined text-primary text-2xl">cyclone</span>
+</div>
+</div>
+<div class="flex flex-col">
+<h1 class="text-slate-100 text-lg font-bold leading-none">OpenClaw</h1>
+<p class="text-primary text-[10px] uppercase tracking-widest font-bold">炫彩升级版</p>
+</div>
+</div>
+<!-- Navigation -->
+<nav class="flex flex-col gap-1 flex-grow"><!-- Dashboard -->
+<a class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-slate-100 transition-colors" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="text-sm font-medium">控制面板</span>
+</a>
+<!-- Image Production -->
+<a class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-slate-100 transition-colors" href="#">
+<span class="material-symbols-outlined">image</span>
+<span class="font-medium">图片制作</span>
+</a>
+<!-- Video Production -->
+<a class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-slate-100 transition-colors" href="#">
+<span class="material-symbols-outlined">videocam</span>
+<span class="font-medium">视频制作</span>
+</a>
+<!-- Chat -->
+<a class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-slate-100 transition-colors" href="#">
+<span class="material-symbols-outlined">chat</span>
+<span class="font-medium">聊天</span>
+</a>
+<!-- Configuration -->
+<a class="flex items-center gap-3 px-4 py-3 text-slate-100 sidebar-item-active" href="#">
+<span class="material-symbols-outlined text-primary">settings_input_component</span>
+<span class="text-sm font-medium">OpenClaw配置</span>
+</a>
+<!-- Tasks -->
+<a class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-slate-100 transition-colors" href="#">
+<span class="material-symbols-outlined">task</span>
+<span class="font-medium">OpenClaw任务</span>
+</a>
+<!-- Financial Section -->
+<div class="pt-4 pb-2 px-4">
+<p class="text-[10px] uppercase tracking-widest text-slate-500 font-bold">财务</p>
+</div>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-slate-100 transition-colors" href="#">
+<span class="material-symbols-outlined">account_balance_wallet</span>
+<span class="font-medium">财务管理</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-slate-100 transition-colors" href="#">
+<span class="material-symbols-outlined">add_card</span>
+<span class="font-medium">充值中心</span>
+</a></nav>
+<!-- Bottom Action -->
+<div class="mt-auto pt-6 border-t border-primary/10">
+<button class="w-full py-3 px-4 bg-primary hover:bg-primary/90 text-white rounded-lg font-bold text-sm transition-all neon-glow-purple flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-sm">add_circle</span>
+                        新建配置
+                    </button>
+</div>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="flex-grow flex flex-col overflow-hidden relative bg-gradient-to-br from-[#05020a] via-[#0d0616] to-[#120826]">
+<!-- Decorative Glows -->
+<div class="absolute top-[-10%] right-[-10%] w-[40%] h-[40%] bg-primary/10 blur-[120px] rounded-full -z-10"></div>
+<div class="absolute bottom-[-10%] left-[-5%] w-[30%] h-[30%] bg-accent/5 blur-[100px] rounded-full -z-10"></div>
+<!-- Header -->
+<header class="h-16 border-b border-primary/10 flex items-center justify-between px-8 glass-panel z-10">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-primary">analytics</span>
+<h2 class="text-lg font-bold tracking-tight">OpenClaw配置 <span class="text-accent text-xs ml-2 px-2 py-0.5 border border-accent/30 rounded-full font-normal">Real-time</span></h2>
+</div>
+<div class="flex items-center gap-6">
+<div class="relative hidden md:block">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">search</span>
+<input class="bg-primary/5 border border-primary/20 rounded-full py-1.5 pl-10 pr-4 text-sm focus:ring-1 focus:ring-primary outline-none w-64 text-slate-200" placeholder="搜索节点 ID..." type="text"/>
+</div>
+<div class="flex items-center gap-3">
+<button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-primary/10 text-slate-400"><span class="material-symbols-outlined">notifications</span></button>
+<div class="w-px h-6 bg-primary/20 mx-1"></div>
+<div class="flex items-center gap-3">
+<div class="text-right hidden sm:block">
+<p class="text-xs font-bold leading-none">管理员</p>
+<p class="text-[10px] text-slate-500">online</p>
+</div>
+<img class="w-8 h-8 rounded-full border border-primary/40" data-alt="User profile avatar" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBAy4Lbbm6vl47KgNLL5KcyJ8sz5Y6XtY7s0Lwz4uP56z6iviIKAO99-G5aEVixrznl4R_-aeXv1A0phZekMjLcX9slH5sfvzY6tI82JTbgaWcT2T8L_-sw2RIeltqLZ48GnU-41qM4K-RkKFnAcTsYIwR4_MutpQT6K2DnKA1POpdDSt0STjPH4Ta7mWHdn10hBnhj2QqMhwC58g6IDg2PoA7Op9sps23BbuUhCN5XGf-gx77jFN_18RaUkpViGiaBw6buO5JCOQ"/>
+</div>
+</div>
+</div>
+</header>
+<!-- Content Body -->
+<div class="flex-grow p-8 overflow-y-auto">
+<div class="flex flex-col gap-6 max-w-7xl mx-auto">
+<!-- Stats / Filters Row -->
+<div class="flex flex-wrap justify-between items-end gap-4">
+<div class="flex flex-col gap-1">
+<h3 class="text-3xl font-black tracking-tighter">节点配置列表</h3>
+<p class="text-slate-500 text-sm">正在管理分布式 OpenClaw 核心节点的身份验证与审计状态</p>
+</div>
+<div class="flex gap-2">
+<button class="flex items-center gap-2 px-4 py-2 glass-panel border border-primary/30 rounded-lg text-sm font-medium hover:bg-primary/5 transition-colors">
+<span class="material-symbols-outlined text-sm">download</span> 导出数据
+                            </button>
+<button class="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm font-bold shadow-lg shadow-primary/20">
+<span class="material-symbols-outlined text-sm">sync</span> 同步节点
+                            </button>
+</div>
+</div>
+<!-- Filter Tabs -->
+<div class="flex gap-2 p-1 bg-primary/5 rounded-xl w-fit border border-primary/10">
+<button class="px-5 py-1.5 rounded-lg text-sm font-medium bg-primary text-white shadow-md">全部节点</button>
+<button class="px-5 py-1.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-100 transition-colors">在线 (12)</button>
+<button class="px-5 py-1.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-100 transition-colors">异常 (2)</button>
+<button class="px-5 py-1.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-100 transition-colors">待审核 (5)</button>
+<button class="px-5 py-1.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-100 transition-colors">设备组</button></div>
+<!-- Table Container -->
+<div class="glass-panel rounded-xl overflow-hidden shadow-2xl">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-primary/10 border-b border-primary/20"><th class="px-6 py-4 text-xs font-bold uppercase tracking-widest text-primary/80">名称</th><th class="px-6 py-4 text-xs font-bold uppercase tracking-widest text-primary/80">状态</th><th class="px-6 py-4 text-xs font-bold uppercase tracking-widest text-primary/80">推理模型</th><th class="px-6 py-4 text-xs font-bold uppercase tracking-widest text-primary/80">汇报时间</th><th class="px-6 py-4 text-xs font-bold uppercase tracking-widest text-primary/80">产品知识和技能</th><th class="px-6 py-4 text-xs font-bold uppercase tracking-widest text-primary/80">OMNIBULL</th><th class="px-6 py-4 text-xs font-bold uppercase tracking-widest text-primary/80 text-right">操作</th></tr>
+</thead>
+<tbody class="divide-y divide-primary/5">
+<!-- Row 1 -->
+<tr class="hover:bg-primary/5 transition-colors group"><td class="px-6 py-4 text-sm text-slate-400">边缘计算网关 (v2.4)</td><td class="px-6 py-4"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-accent/10 text-accent border border-accent/20">在线运行</span></td><td class="px-6 py-4 text-sm text-slate-500"><span class="text-sm text-slate-400 font-medium">GPT-4o</span></td><td class="px-6 py-4"><span class="text-sm text-slate-400 font-mono">2026-05-20 14:30</span></td><td class="px-6 py-4 text-sm text-slate-400"><button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-accent/10 border border-accent/30 text-accent hover:bg-accent/20 transition-all">详情/编辑技能</button></td><td class="px-6 py-4"><button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 transition-all">详情/编辑</button></td><td class="px-6 py-4 text-right"><div class="flex justify-end items-center gap-4"><label class="toggle-switch"><input checked="" type="checkbox"/><span class="slider round"></span></label></div></td></tr>
+<!-- Row 2 -->
+<tr class="hover:bg-primary/5 transition-colors group"><td class="px-6 py-4 text-sm text-slate-400">核心交换机 (Cisco-Hybrid)</td><td class="px-6 py-4"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-500/10 text-slate-500 border border-slate-500/20">离线</span></td><td class="px-6 py-4 text-sm text-slate-500"><span class="text-sm text-slate-400 font-medium">Claude 3.5 Sonnet</span></td><td class="px-6 py-4"><span class="text-sm text-slate-400 font-mono">2026-05-20 14:28</span></td><td class="px-6 py-4 text-sm text-slate-400"><button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-accent/10 border border-accent/30 text-accent hover:bg-accent/20 transition-all">详情/编辑技能</button></td><td class="px-6 py-4"><button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 transition-all">详情/编辑</button></td><td class="px-6 py-4 text-right"><div class="flex justify-end items-center gap-4"><label class="toggle-switch"><input type="checkbox"/><span class="slider round"></span></label></div></td></tr>
+<!-- Row 3 -->
+<tr class="hover:bg-primary/5 transition-colors group"><td class="px-6 py-4 text-sm text-slate-400">AI 加速卡 (NVIDIA L40S)</td><td class="px-6 py-4"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-500/10 text-yellow-500 border border-yellow-500/20">待审核</span></td><td class="px-6 py-4 text-sm text-slate-500"><span class="text-sm text-slate-400 font-medium">Llama 3.1 405B</span></td><td class="px-6 py-4"><span class="text-sm text-slate-400 font-mono">2026-05-20 14:25</span></td><td class="px-6 py-4 text-sm text-slate-400"><button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-accent/10 border border-accent/30 text-accent hover:bg-accent/20 transition-all">详情/编辑技能</button></td><td class="px-6 py-4"><button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 transition-all">详情/编辑</button></td><td class="px-6 py-4 text-right"><div class="flex justify-end items-center gap-4"><label class="toggle-switch"><input type="checkbox"/><span class="slider round"></span></label></div></td></tr>
+<!-- Row 4 -->
+<tr class="hover:bg-primary/5 transition-colors group"><td class="px-6 py-4 text-sm text-slate-400">存储阵列 (PB-Level)</td><td class="px-6 py-4"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-accent/10 text-accent border border-accent/20">在线运行</span></td><td class="px-6 py-4 text-sm text-slate-500"><span class="text-sm text-slate-400 font-medium">GPT-4o mini</span></td><td class="px-6 py-4"><span class="text-sm text-slate-400 font-mono">2026-05-20 14:20</span></td><td class="px-6 py-4 text-sm text-slate-400"><button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-accent/10 border border-accent/30 text-accent hover:bg-accent/20 transition-all">详情/编辑技能</button></td><td class="px-6 py-4"><button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 transition-all">详情/编辑</button></td><td class="px-6 py-4 text-right"><div class="flex justify-end items-center gap-4"><label class="toggle-switch"><input checked="" type="checkbox"/><span class="slider round"></span></label></div></td></tr>
+<!-- Row 5 -->
+<tr class="hover:bg-primary/5 transition-colors group"><td class="px-6 py-4 text-sm text-slate-400">传感器终端 (LoRaWAN)</td><td class="px-6 py-4"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-500 border border-red-500/20">连接异常</span></td><td class="px-6 py-4 text-sm text-slate-500"><span class="text-sm text-slate-400 font-medium">Mistral Large 2</span></td><td class="px-6 py-4"><span class="text-sm text-slate-400 font-mono">2026-05-20 14:15</span></td><td class="px-6 py-4 text-sm text-slate-400"><button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-accent/10 border border-accent/30 text-accent hover:bg-accent/20 transition-all">详情/编辑技能</button></td><td class="px-6 py-4"><button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 transition-all">详情/编辑</button></td><td class="px-6 py-4 text-right"><div class="flex justify-end items-center gap-4"><label class="toggle-switch"><input type="checkbox"/><span class="slider round"></span></label></div></td></tr>
+</tbody>
+</table>
+<!-- Pagination -->
+<div class="px-6 py-4 bg-primary/10 border-t border-primary/20 flex items-center justify-between">
+<span class="text-xs text-slate-500 font-medium">显示 1 到 5 / 共 32 个节点</span>
+<div class="flex items-center gap-2">
+<button class="w-8 h-8 flex items-center justify-center rounded-lg bg-primary/10 border border-primary/20 text-slate-400 hover:text-slate-100 disabled:opacity-30" disabled="">
+<span class="material-symbols-outlined text-sm">chevron_left</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg bg-primary text-white text-xs font-bold">1</button>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-primary/10 text-slate-400 text-xs font-bold">2</button>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-primary/10 text-slate-400 text-xs font-bold">3</button>
+<span class="text-slate-600 text-xs px-1">...</span>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-primary/10 text-slate-400 text-xs font-bold">7</button>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg bg-primary/10 border border-primary/20 text-slate-400 hover:text-slate-100">
+<span class="material-symbols-outlined text-sm">chevron_right</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Additional Context Card -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+<div class="glass-panel p-4 rounded-xl flex items-center gap-4">
+<div class="w-12 h-12 rounded-lg bg-primary/20 flex items-center justify-center">
+<span class="material-symbols-outlined text-primary">security</span>
+</div>
+<div>
+<p class="text-[10px] text-slate-500 font-bold uppercase tracking-wider">安全审计评分</p>
+<p class="text-2xl font-black text-accent">98.4<span class="text-sm font-normal ml-1">Excellent</span></p>
+</div>
+</div>
+<div class="glass-panel p-4 rounded-xl flex items-center gap-4">
+<div class="w-12 h-12 rounded-lg bg-accent/10 flex items-center justify-center">
+<span class="material-symbols-outlined text-accent">bolt</span>
+</div>
+<div>
+<p class="text-[10px] text-slate-500 font-bold uppercase tracking-wider">实时吞吐量</p>
+<p class="text-2xl font-black text-slate-100">1.2<span class="text-sm font-normal ml-1">GB/s</span></p>
+</div>
+</div>
+<div class="glass-panel p-4 rounded-xl flex items-center gap-4">
+<div class="w-12 h-12 rounded-lg bg-primary/20 flex items-center justify-center">
+<span class="material-symbols-outlined text-primary">lan</span>
+</div>
+<div>
+<p class="text-[10px] text-slate-500 font-bold uppercase tracking-wider">总节点链路</p>
+<p class="text-2xl font-black text-slate-100">1,248<span class="text-sm font-normal ml-1">活跃</span></p>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>

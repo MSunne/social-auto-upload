@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>OpenClaw 任务中心 - 视频任务</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#00f2ff", 
+                        "accent": "#bc13fe", 
+                        "background-light": "#f8f6f6",
+                        "background-dark": "#05020a",
+                        "surface-dark": "#0d0616",
+                    },
+                    fontFamily: {
+                        "display": ["Public Sans", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }</script>
+<style>        .glass {
+            background: rgba(22, 22, 30, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .neon-glow-cyan {
+            box-shadow: 0 0 15px rgba(0, 242, 255, 0.3);
+        }
+        .neon-border-cyan {
+            border: 1px solid rgba(0, 242, 255, 0.5);
+        }
+    
+        .iridescent-border {
+            position: relative;
+            border-radius: inherit;
+            background: linear-gradient(30deg, #00f2ff, #bc13fe, #ff00ea, #00f2ff);
+            background-size: 300% 300%;
+            animation: iridescent-move 5s ease infinite;
+            padding: 2px;
+        }
+        .iridescent-inner {
+            background: #0d0616;
+            border-radius: inherit;
+            height: 100%;
+            width: 100%;
+        }
+        @keyframes iridescent-move {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        .iridescent-glow {
+            box-shadow: 0 0 25px rgba(188, 19, 254, 0.2), 0 0 50px rgba(0, 242, 255, 0.1);
+        }</style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 min-h-screen">
+<div class="flex h-screen overflow-hidden">
+<!-- Sidebar Navigation -->
+<aside class="w-64 flex flex-col border-r border-white/10 bg-surface-dark/50">
+<div class="p-6"><div class="flex items-center gap-3">
+<div class="size-8 bg-gradient-to-br from-primary to-accent rounded-lg flex items-center justify-center">
+<span class="material-symbols-outlined text-background-dark font-bold">movie_filter</span>
+</div>
+<h2 class="text-white text-xl font-bold tracking-tight">OpenClaw <span class="text-primary">Plus</span></h2>
+</div></div>
+<nav class="flex-1 px-4 space-y-2 mt-4"><a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="text-sm font-medium">控制面板</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">image</span>
+<span class="text-sm font-medium">图片制作</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl bg-primary/10 text-primary border border-primary/20" href="#">
+<span class="material-symbols-outlined">movie</span>
+<span class="text-sm font-medium">视频制作</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">chat</span>
+<span class="text-sm font-medium">聊天</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="text-sm font-medium">OpenClaw配置</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">history</span>
+<span class="text-sm font-medium">OpenClaw任务</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">account_balance_wallet</span>
+<span class="text-sm font-medium">财务管理</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">add_card</span>
+<span class="text-sm font-medium">充值中心</span>
+</a></nav>
+<div class="p-4 border-t border-primary/10">
+<div class="flex items-center gap-3 px-2">
+<div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">JD</div>
+<div class="flex-1 min-w-0">
+<p class="text-sm font-medium truncate">CyberDesigner_01</p>
+<p class="text-xs text-slate-500">Pro Plan</p>
+</div>
+</div>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="flex-1 flex flex-col overflow-hidden relative">
+<!-- Background Accent -->
+<div class="absolute top-[-10%] right-[-5%] w-[500px] h-[500px] bg-primary/10 blur-[120px] rounded-full -z-10"></div>
+<!-- Top Navigation Tabs -->
+<header class="h-20 flex-shrink-0 flex items-center justify-between px-8 bg-surface-dark/30 backdrop-blur-md border-b border-white/5">
+<div class="flex gap-8">
+<a class="relative py-7 text-sm font-medium text-slate-400 hover:text-white transition-colors" href="#">全部任务</a>
+<a class="relative py-7 text-sm font-medium text-primary transition-colors border-b-2 border-primary" href="#">视频任务</a>
+<a class="relative py-7 text-sm font-medium text-slate-400 hover:text-white transition-colors" href="#">图片任务</a>
+<a class="relative py-7 text-sm font-medium text-slate-400 hover:text-white transition-colors" href="#">聊天分析</a>
+</div>
+<div class="flex items-center gap-4">
+<button class="w-10 h-10 rounded-full glass flex items-center justify-center hover:bg-primary/20 transition-all border border-white/10">
+<span class="material-symbols-outlined text-sm text-slate-300">notifications</span>
+</button>
+<div class="flex items-center gap-3 px-3 py-1.5 rounded-full glass border border-white/10">
+<div class="w-7 h-7 rounded-full bg-slate-700 overflow-hidden" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuDL3lB1g15ynuJq-vjvwfmDb8grs31ehbC4EnLPpDhJAXnMhIQse4qWrx953fXIUPoJfoFp-dwxDhLg2t8sOCxlKdtiglDsLUM82GgTLLYU8WaV6jl7g3fgPIfG_GdN9J-bg20eaaHmXRNbQdEQjE0l2uPx5hme2LYiXguJ2UqauqNtZ21GPBZEHATWHhZAXrsMGqaiqLfPPCngoARVNOctS5fJMZ2uDap5u3be3EfE1M_PVuXQocSnRBNBb_HzrrVh2fWbLcDHQA')"></div>
+<span class="text-sm font-medium text-white">管理员</span>
+</div>
+</div>
+</header>
+<!-- Scrollable Content -->
+<div class="flex-1 overflow-y-auto p-8">
+<!-- Dashboard Stats -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8"><div class="glass p-6 rounded-2xl border border-white/10 relative overflow-hidden">
+<div class="absolute top-0 right-0 p-4 opacity-10">
+<span class="material-symbols-outlined text-6xl text-primary">play_circle</span>
+</div>
+<p class="text-slate-400 text-xs mb-1">活跃视频任务</p>
+<h3 class="text-3xl font-display font-bold text-white">12 <span class="text-[10px] text-primary font-bold ml-2 uppercase">正在处理</span></h3>
+</div>
+<div class="glass p-6 rounded-2xl border border-white/10 relative overflow-hidden">
+<div class="absolute top-0 right-0 p-4 opacity-10">
+<span class="material-symbols-outlined text-6xl text-accent">schedule</span>
+</div>
+<p class="text-slate-400 text-xs mb-1">平均等待时长</p>
+<h3 class="text-3xl font-display font-bold text-white">45 <span class="text-[10px] text-accent font-bold ml-2 uppercase">min</span></h3>
+</div>
+<div class="glass p-6 rounded-2xl border border-white/10 relative overflow-hidden">
+<div class="absolute top-0 right-0 p-4 opacity-10">
+<span class="material-symbols-outlined text-6xl text-primary">memory</span>
+</div>
+<p class="text-slate-400 text-xs mb-1">算力节点负荷</p>
+<h3 class="text-3xl font-display font-bold text-white">80% <span class="text-[10px] text-emerald-400 font-bold ml-2 uppercase">高性能模式</span></h3>
+</div></div>
+<!-- Task List Section -->
+<div class="rounded-2xl border overflow-hidden glass border-white/10">
+<div class="p-6 border-b border-white/5 flex justify-between items-center"><h2 class="text-lg font-bold flex items-center gap-2 text-white">
+<span class="material-symbols-outlined text-primary">database</span>
+                            视频任务列表
+                        </h2>
+<div class="flex gap-3">
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">search</span>
+<input class="bg-surface-dark border border-white/10 rounded-lg pl-9 pr-4 py-1.5 text-xs text-white focus:ring-primary focus:border-primary" placeholder="搜索任务 ID..." type="text"/>
+</div>
+<button class="bg-gradient-to-r from-primary to-accent hover:scale-[1.02] text-background-dark px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 neon-glow-cyan">
+<span class="material-symbols-outlined text-sm font-bold">add</span>
+                                新建任务
+                            </button>
+</div></div>
+<div class="overflow-x-auto">
+<table class="w-full text-left">
+<thead>
+<tr class="bg-white/5 text-slate-400 uppercase"><th class="px-6 py-4 font-bold text-[10px] tracking-widest">任务ID</th>
+<th class="px-6 py-4 font-bold text-[10px] tracking-widest">生成模型</th>
+<th class="px-6 py-4 font-bold text-[10px] tracking-widest">渲染进度</th>
+<th class="px-6 py-4 font-bold text-[10px] tracking-widest">预计剩余</th>
+<th class="px-6 py-4 font-bold text-[10px] tracking-widest">算力节点</th>
+<th class="px-6 py-4 font-bold text-[10px] tracking-widest text-right">操作</th></tr>
+</thead>
+<tbody class="divide-y divide-primary/10">
+<!-- Row 1 -->
+<tr class="hover:bg-primary/5 transition-colors group">
+<td class="px-6 py-5 font-mono text-sm text-primary">#OC-9821</td>
+<td class="px-6 py-5">
+<span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-primary/20 text-primary border border-primary/30">
+                                            Sora-v1
+                                        </span>
+</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-3">
+<div class="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden min-w-[120px]">
+<div class="bg-gradient-to-r from-primary to-accent h-full rounded-full w-[75%] shadow-[0_0_10px_rgba(0,242,255,0.4)]"></div>
+</div>
+<span class="text-sm font-bold text-white">75%</span>
+</div>
+</td>
+<td class="px-6 py-5 text-sm text-slate-300">12m 45s</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div>
+<span class="text-xs text-slate-300">Node-Alpha</span>
+</div>
+</td>
+<td class="px-6 py-5 text-right space-x-3">
+<button class="text-slate-400 hover:text-white text-xs font-bold uppercase transition-colors">详情</button>
+<button class="text-rose-400 hover:text-rose-300 text-xs font-bold uppercase transition-colors">取消</button>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="hover:bg-primary/5 transition-colors group">
+<td class="px-6 py-5 font-mono text-sm text-primary">#OC-9820</td>
+<td class="px-6 py-5">
+<span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700">
+                                            Runway Gen-2
+                                        </span>
+</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-3">
+<div class="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden min-w-[120px]">
+<div class="bg-green-500 h-full w-[100%] rounded-full shadow-[0_0_8px_rgba(34,197,94,0.4)]"></div>
+</div>
+<span class="text-sm font-bold text-green-400">完成</span>
+</div>
+</td>
+<td class="px-6 py-5 text-sm text-slate-500">-</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-slate-600"></div>
+<span class="text-xs text-slate-300">Node-Beta</span>
+</div>
+</td>
+<td class="px-6 py-5 text-right space-x-3">
+<button class="text-primary hover:text-white text-xs font-bold uppercase transition-colors">预览</button>
+<button class="text-white bg-primary/20 hover:bg-primary/40 px-3 py-1 rounded-md text-xs font-bold uppercase transition-colors">下载</button>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="hover:bg-primary/5 transition-colors group">
+<td class="px-6 py-5 font-mono text-sm text-primary">#OC-9819</td>
+<td class="px-6 py-5">
+<span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-primary/20 text-primary border border-primary/30">
+                                            Sora-v1
+                                        </span>
+</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-3">
+<div class="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden min-w-[120px]">
+<div class="bg-gradient-to-r from-primary to-accent h-full rounded-full w-[30%] shadow-[0_0_10px_rgba(0,242,255,0.4)]"></div>
+</div>
+<span class="text-sm font-bold text-white">30%</span>
+</div>
+</td>
+<td class="px-6 py-5 text-sm text-slate-300">28m 10s</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-yellow-500 shadow-[0_0_8px_rgba(234,179,8,0.6)]"></div>
+<span class="text-xs text-slate-300">Node-Gamma</span>
+</div>
+</td>
+<td class="px-6 py-5 text-right space-x-3">
+<button class="text-slate-400 hover:text-white text-xs font-bold uppercase transition-colors">详情</button>
+<button class="text-rose-400 hover:text-rose-300 text-xs font-bold uppercase transition-colors">取消</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="p-4 border-t border-primary/10 flex justify-between items-center text-xs text-slate-500">
+<span>显示 1-3 共 12 个任务</span>
+<div class="flex gap-2">
+<button class="p-2 rounded-lg hover:bg-primary/10 disabled:opacity-30" disabled="">
+<span class="material-symbols-outlined text-sm">chevron_left</span>
+</button>
+<button class="w-8 h-8 rounded-lg bg-primary text-white font-bold neon-glow-cyan">1</button>
+<button class="w-8 h-8 rounded-lg hover:bg-primary/10 transition-colors">2</button>
+<button class="w-8 h-8 rounded-lg hover:bg-primary/10 transition-colors">3</button>
+<button class="p-2 rounded-lg hover:bg-primary/10 transition-colors">
+<span class="material-symbols-outlined text-sm">chevron_right</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>

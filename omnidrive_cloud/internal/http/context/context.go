@@ -1,0 +1,18 @@
+package context
+
+import (
+	"context"
+
+	"omnidrive_cloud/internal/domain"
+)
+
+type userContextKey struct{}
+
+func WithUser(ctx context.Context, user *domain.User) context.Context {
+	return context.WithValue(ctx, userContextKey{}, user)
+}
+
+func CurrentUser(ctx context.Context) *domain.User {
+	user, _ := ctx.Value(userContextKey{}).(*domain.User)
+	return user
+}

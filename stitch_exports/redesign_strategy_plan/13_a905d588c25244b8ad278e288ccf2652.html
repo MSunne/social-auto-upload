@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="zh"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#9d25f4",
+                        "secondary": "#00f2ff",
+                        "background-light": "#f7f5f8",
+                        "background-dark": "#0a050e",
+                        "surface-dark": "#1a1022",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+<style>
+        .glass-panel {
+            background: rgba(26, 16, 34, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(157, 37, 244, 0.3);
+            box-shadow: 0 0 20px rgba(157, 37, 244, 0.15);
+        }
+        .neon-border {
+            border: 1px solid rgba(157, 37, 244, 0.5);
+            box-shadow: 0 0 10px rgba(157, 37, 244, 0.3), inset 0 0 5px rgba(157, 37, 244, 0.2);
+        }
+        .neon-text-cyan {
+            text-shadow: 0 0 8px rgba(0, 242, 255, 0.5);
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100 min-h-screen relative overflow-hidden">
+<!-- Mock Background: OmniBull Account Management Screen (Dimmed) -->
+<div class="fixed inset-0 z-0 opacity-40 grayscale-[0.5]">
+<div class="layout-container flex h-full grow flex-col">
+<header class="flex items-center justify-between border-b border-primary/20 px-10 py-3 bg-surface-dark">
+<div class="flex items-center gap-4 text-white">
+<span class="material-symbols-outlined text-primary text-3xl">token</span>
+<h2 class="text-white text-lg font-bold">OmniBull</h2>
+</div>
+<div class="flex gap-4">
+<div class="w-10 h-10 rounded-full bg-primary/20 border border-primary/40"></div>
+</div>
+</header>
+<main class="p-10">
+<div class="grid grid-cols-3 gap-6">
+<div class="h-40 rounded-xl bg-surface-dark border border-primary/10"></div>
+<div class="h-40 rounded-xl bg-surface-dark border border-primary/10"></div>
+<div class="h-40 rounded-xl bg-surface-dark border border-primary/10"></div>
+<div class="col-span-3 h-96 rounded-xl bg-surface-dark border border-primary/10"></div>
+</div>
+</main>
+</div>
+</div>
+<!-- Modal Overlay -->
+<div class="fixed inset-0 z-50 flex items-center justify-center bg-background-dark/80 backdrop-blur-sm p-4">
+<!-- Add Task Modal -->
+<div class="glass-panel w-full max-w-2xl rounded-xl flex flex-col max-h-[90vh] overflow-hidden neon-border">
+<!-- Modal Header -->
+<div class="px-8 py-6 border-b border-primary/20 flex justify-between items-center">
+<div>
+<h2 class="text-2xl font-bold text-white tracking-tight">增加任务 <span class="text-primary/80 font-medium text-lg ml-2">(Add Task)</span></h2>
+<p class="text-slate-400 text-sm mt-1">Configure new AI skills for your OmniDrive workspace</p>
+</div>
+<button class="text-slate-400 hover:text-white transition-colors">
+<span class="material-symbols-outlined">close</span>
+</button>
+</div>
+<!-- Scrollable Content -->
+<div class="flex-1 overflow-y-auto p-8 space-y-8">
+<!-- Search and Skill Selection -->
+<section class="space-y-4">
+<div class="flex flex-col gap-2">
+<label class="text-sm font-semibold text-secondary uppercase tracking-wider neon-text-cyan">选择技能 (Select Skills)</label>
+<div class="relative group">
+<span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-primary/60 group-focus-within:text-primary transition-colors">search</span>
+<input class="w-full bg-primary/10 border border-primary/20 rounded-lg py-3 pl-12 pr-4 text-white focus:ring-1 focus:ring-primary focus:border-primary outline-none transition-all placeholder:text-slate-500" placeholder="搜索现有技能 (Search existing skills...)" type="text"/>
+</div>
+</div>
+<!-- Skills List -->
+<div class="grid gap-3"><!-- Skill Item 1: Neon Tech Rendering -->
+<label class="flex items-start gap-4 p-4 rounded-xl bg-primary/5 border border-primary/10 hover:border-primary/40 cursor-pointer transition-all group">
+<input checked="" class="mt-1 w-5 h-5 text-primary bg-background-dark border-primary/30 focus:ring-primary focus:ring-offset-background-dark" name="skill" type="radio"/>
+<div class="flex-1 flex gap-4">
+<div class="flex flex-col gap-2">
+<div class="flex items-center gap-2">
+<h4 class="text-white font-bold">霓虹科技风格渲染 <span class="text-slate-500 font-normal text-xs">- SK-8842</span></h4>
+<div class="flex gap-1">
+<span class="px-1.5 py-0.5 rounded bg-secondary/10 text-secondary text-[10px] font-bold border border-secondary/20">图片</span>
+<span class="px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[10px] font-bold border border-primary/20">文本</span>
+</div>
+</div>
+<p class="text-slate-400 text-xs line-clamp-1">专为电子产品设计的赛博朋克霓虹光影效果，增强金属质感与发光细节。</p>
+<div class="flex -space-x-2 mt-1">
+<div class="w-8 h-8 rounded border border-primary/30 bg-slate-800 bg-cover bg-center shadow-lg" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuAeS_vZ8Y89n4EavrAlBkrOjWaxiq-y0NQypEd-PyZ8MfgkqoQFt0nYCXluYqL3jDHufvU4Q03xqezIoO8gCh_LfR8thKVCbpfgh3ZWCSUMUDHG_S7eChE1Zfggi9vdCs1jnvxCgKrIjKIHk_4XfU-LkVafdxVOhbdCygS_SDNnp1bKhUaB0GLReUWIVNWCFENla4fy03Ql-hwi_P__oVTYKYiaW-D_HrFT5ZpVIpgTIoZr3imEVHrAZrgbzpjUrqcDFf3LUjq6vQ')"></div>
+<div class="w-8 h-8 rounded border border-primary/30 bg-slate-800 bg-cover bg-center shadow-lg" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuCrSkiMD44xRjXV2wEbWu9d5RwKjUK8q6BBmAgce4Dp_RqnVvpAAfz88Mj6jN65BG4d_o16raZqv0kv1JMeK7kk3RLTPpps0VV528ttJLU4_HmXueayesfAWqzgkvglTQfjzyRGepUmFgTI5iQCjp-UUs0zb-Deh5U4P8bmsptXcOymxKbP5JOn2SWLyFwY0JzraPLobry_-nwXfmOE2mqk4jWLqPGtGX6VjyC3kyKqaSoU2LmdCbx4f5lUyUKqRDWu0qF-PCA6VA')"></div>
+</div>
+</div>
+</div>
+<div class="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-primary">bolt</span>
+</div>
+</label>
+<!-- Skill Item 2: Minimalist White -->
+<label class="flex items-start gap-4 p-4 rounded-xl bg-primary/5 border border-primary/10 hover:border-primary/40 cursor-pointer transition-all group">
+<input class="mt-1 w-5 h-5 text-primary bg-background-dark border-primary/30 focus:ring-primary focus:ring-offset-background-dark" name="skill" type="radio"/>
+<div class="flex-1 flex gap-4">
+<div class="flex flex-col gap-2">
+<div class="flex items-center gap-2">
+<h4 class="text-white font-bold">极简白色产品展示 <span class="text-slate-500 font-normal text-xs">- SK-8843</span></h4>
+<div class="flex gap-1">
+<span class="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 text-[10px] font-bold border border-blue-500/20">视频</span>
+<span class="px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[10px] font-bold border border-primary/20">文本</span>
+</div>
+</div>
+<p class="text-slate-400 text-xs line-clamp-1">纯净背景下的产品高精细展示，适用于高端奢侈品或美妆产品。</p>
+<div class="mt-1">
+<div class="w-8 h-8 rounded border border-primary/30 bg-slate-800 bg-cover bg-center shadow-lg" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuDh20ttnASHy7In2qPdKIeYfkan-0JHYsm_wn-TRyNjO8aTCt5qtd3Ps9zUFcQX2PE2k9faVlzPgYjo2eG_ObQwT74SGRozLNbfjYZTSLOlnpif7yooxamoStK06bBKXh68i6ypOckluQiBQeSOt4y-XizOfkFSVzDYVcV8fhwBtah5lhW08LxsefNWwCesEJz58NJcg-EUGMpXnTQwGJ4ojkE2FcEAGDhKIKB8gOqrcc5UeA8gET1pY8_PL79ckmipqdltAEt9WQ')"></div>
+</div>
+</div>
+</div>
+<div class="w-10 h-10 rounded-lg bg-secondary/20 flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-secondary">light_mode</span>
+</div>
+</label>
+<!-- Skill Item 3: Particle Transitions -->
+<label class="flex items-start gap-4 p-4 rounded-xl bg-primary/5 border border-primary/10 hover:border-primary/40 cursor-pointer transition-all group">
+<input class="mt-1 w-5 h-5 text-primary bg-background-dark border-primary/30 focus:ring-primary focus:ring-offset-background-dark" name="skill" type="radio"/>
+<div class="flex-1 flex gap-4">
+<div class="flex flex-col gap-2">
+<div class="flex items-center gap-2">
+<h4 class="text-white font-bold">动态粒子转场效果 <span class="text-slate-500 font-normal text-xs">- SK-8844</span></h4>
+<div class="flex gap-1">
+<span class="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 text-[10px] font-bold border border-blue-500/20">视频</span>
+</div>
+</div>
+<p class="text-slate-400 text-xs line-clamp-1">利用粒子系统实现的炫酷转场，适用于科技广告开头。</p>
+<div class="flex -space-x-2 mt-1">
+<div class="w-8 h-8 rounded border border-primary/30 bg-slate-800 bg-cover bg-center shadow-lg" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuDFk42cVdVbrxzDHEfvyBGC5qLPM2ctqPo155z02Z8gPDaNmNfIvKbjNRmNbzO7GzdoEMDfcJiCObdxRDVk0L4dk1yv3E1V0gI5aYMBzsybl5BvUHLCP0AG-Iy-o5O6jT3DRTVFpnCExZR3lXr2lW6nntG80a_cPP0mYUdpe5WtUQpa6LT9Y_jUhqaN-foVUvYy6-TX5VVN8eY5sNQEMf8SgCwfEgOu4Sk1jgMzMxmIuGb-qUKFlibIYbhpA6nj39ifiXsc4rM8nA')"></div>
+<div class="w-8 h-8 rounded border border-primary/30 bg-slate-800 bg-cover bg-center shadow-lg" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuDsnYFd1Kn9oVXuJA-lk7r32dQs-XmEyjL-vSTXB620eCLS4ava798oXYzu3Epcu2Un3iZ65kk1Whx43RoPKLvbhy-ctnxxo0-3a5bVnNkkfFqEldSJOiOE3JtC4iwK36lqK_SBwsroCR7oGn30mlc8p2_euBgK1kJL0Z6BGzWtlpCpAuKQxPGEUxArPd-ueHtW6loxFgriY3Z6HPu-dq7sYp-7TfA9KowqNDt0cMMEDho8RuLsqqJFVB6RKtnOzfKVE_JVHyARnw')"></div>
+</div>
+</div>
+</div>
+<div class="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-primary">auto_awesome</span>
+</div>
+</label></div>
+</section>
+<!-- Execution Settings -->
+<section class="space-y-6">
+<div class="flex items-center justify-between">
+<label class="text-sm font-semibold text-secondary uppercase tracking-wider neon-text-cyan">执行时间 (Execution Time)</label>
+<button class="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors font-bold">
+<span class="material-symbols-outlined text-sm">add_circle</span>
+                            添加时间点 (Add Slot)
+                        </button>
+</div>
+<div class="flex flex-wrap gap-3">
+<div class="flex items-center gap-2 bg-primary/10 border border-primary/30 px-3 py-2 rounded-lg">
+<span class="material-symbols-outlined text-sm text-primary">schedule</span>
+<input class="bg-transparent border-none p-0 text-white focus:ring-0 text-sm" type="time" value="09:00"/>
+<button class="text-slate-500 hover:text-red-400 transition-colors">
+<span class="material-symbols-outlined text-sm">close</span>
+</button>
+</div>
+<div class="flex items-center gap-2 bg-primary/10 border border-primary/30 px-3 py-2 rounded-lg">
+<span class="material-symbols-outlined text-sm text-primary">schedule</span>
+<input class="bg-transparent border-none p-0 text-white focus:ring-0 text-sm" type="time" value="18:30"/>
+<button class="text-slate-500 hover:text-red-400 transition-colors">
+<span class="material-symbols-outlined text-sm">close</span>
+</button>
+</div>
+</div>
+<!-- Repeat Option -->
+<div class="flex items-center justify-between p-4 rounded-xl bg-surface-dark border border-primary/10">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary">event_repeat</span>
+<div>
+<h4 class="text-white font-medium">每天重复 (Repeat Daily)</h4>
+<p class="text-slate-500 text-xs">Execute this task automatically every day</p>
+</div>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox" value=""/>
+<div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+</section>
+</div>
+<!-- Modal Footer -->
+<div class="px-8 py-6 border-t border-primary/20 bg-primary/5 flex gap-4 justify-end">
+<button class="px-6 py-2.5 rounded-lg text-slate-300 font-bold hover:bg-white/5 transition-all text-sm">
+                    取消操作 (Cancel)
+                </button>
+<button class="px-8 py-2.5 rounded-lg bg-primary text-white font-bold hover:bg-primary/90 transition-all shadow-[0_0_15px_rgba(157,37,244,0.4)] text-sm">
+                    确认并创建 (Confirm &amp; Create)
+                </button>
+</div>
+</div>
+</div>
+</body></html>

@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#00f2ff", // Electric Cyan
+                        "accent": "#bc13fe", // Purple Neon
+                        "background-light": "#f8f6f6",
+                        "background-dark": "#0a0a0c",
+                        "surface-dark": "#16161e",
+                    },
+                    fontFamily: {
+                        "display": ["Public Sans", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .glass {
+            background: rgba(22, 22, 30, 0.45);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .neon-glow-cyan {
+            box-shadow: 0 0 20px rgba(0, 242, 255, 0.4);
+        }
+        .neon-glow-accent {
+            box-shadow: 0 0 20px rgba(188, 19, 254, 0.4);
+        }
+        .neon-border-cyan {
+            border: 1px solid rgba(0, 242, 255, 0.5);
+        }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+        @keyframes pulse-glow {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 0.8; }
+        }
+        .animate-pulse-glow {
+            animation: pulse-glow 3s ease-in-out infinite;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100 min-h-screen">
+<div class="flex h-screen overflow-hidden">
+<!-- Sidebar Navigation -->
+<aside class="w-64 flex flex-col border-r border-white/5 bg-[#0d0d12]">
+<div class="p-6"><div class="flex items-center gap-3">
+<div class="size-8 bg-gradient-to-br from-primary to-accent rounded-lg flex items-center justify-center">
+<span class="material-symbols-outlined text-background-dark font-bold">movie_filter</span>
+</div>
+<h2 class="text-white text-xl font-bold tracking-tight">OpenClaw <span class="text-primary">Plus</span></h2>
+</div></div>
+<nav class="flex-1 px-4 space-y-2 mt-4"><a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="text-sm font-medium">控制面板</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-primary/20 to-accent/20 text-primary border border-primary/30 shadow-[0_0_15px_rgba(0,242,255,0.1)]" href="#">
+<span class="material-symbols-outlined">image</span>
+<span class="text-sm font-medium">图片制作</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">movie</span>
+<span class="text-sm font-medium">视频制作</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">chat</span>
+<span class="text-sm font-medium">聊天</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="text-sm font-medium">OpenClaw配置</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">history</span>
+<span class="text-sm font-medium">OpenClaw任务</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">account_balance_wallet</span>
+<span class="text-sm font-medium">财务管理</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors" href="#">
+<span class="material-symbols-outlined">add_card</span>
+<span class="text-sm font-medium">充值中心</span>
+</a></nav>
+<div class="p-4 border-t border-primary/10">
+<div class="flex items-center gap-3 px-2">
+<div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">JD</div>
+<div class="flex-1 min-w-0">
+<p class="text-sm font-medium truncate">CyberDesigner_01</p>
+<p class="text-xs text-slate-500">Pro Plan</p>
+</div>
+</div>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="flex-1 flex overflow-hidden">
+<!-- Left Column: Parameter Settings -->
+<section class="w-[450px] flex flex-col border-r border-white/5 overflow-y-auto custom-scrollbar bg-[#111118] p-6">
+<div class="flex flex-col gap-6">
+<div>
+<h3 class="text-sm font-semibold text-slate-400 mb-4 flex items-center gap-2">
+<span class="material-symbols-outlined text-xs">edit_note</span> 参数设置
+                    </h3>
+<div class="space-y-3">
+<label class="text-xs text-slate-500">提示词 (Prompt)</label>
+<div class="glass p-1 rounded-xl relative border-white/10">
+<textarea class="w-full bg-transparent border-none focus:ring-0 text-sm min-h-[120px] placeholder:text-slate-600 resize-none" placeholder="输入你想生成的画面描述..."></textarea>
+<div class="flex justify-end p-2 border-t border-white/5">
+<button class="flex items-center gap-1 px-3 py-1 bg-gradient-to-r from-primary to-accent text-background-dark rounded-lg transition-all hover:brightness-110 shadow-lg">
+<span class="material-symbols-outlined text-sm">magic_button</span>
+<span class="text-[10px] font-bold">AI 优化</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+<div class="space-y-2">
+<label class="text-xs text-slate-500">生成模型</label>
+<div class="grid grid-cols-2 gap-2">
+<button class="py-1.5 text-[10px] rounded-lg glass border-primary/50 text-primary bg-primary/10 flex items-center justify-center gap-1"><span class="size-1.5 rounded-full bg-primary"></span>Midjourney V6</button>
+<button class="py-1.5 text-[10px] rounded-lg glass hover:border-white/20 transition-all flex items-center justify-center gap-1">SDXL Turbo</button>
+</div>
+<p class="text-[10px] text-slate-500 mt-2 leading-relaxed bg-primary/5 p-2 rounded border-l-2 border-primary">
+                            Midjourney V6: 擅长处理复杂的艺术风格与极高细节的写实表现。
+                        </p>
+</div>
+<div>
+<h3 class="text-sm font-semibold text-slate-400 mb-3 flex items-center justify-between gap-2">
+<span><span class="material-symbols-outlined text-xs mr-2">attachment</span>多图参考</span>
+<span class="text-[10px] font-normal text-slate-500">最多支持4张</span>
+</h3>
+<div class="grid grid-cols-4 gap-2 mb-2">
+<div class="aspect-square border-2 border-dashed border-white/10 rounded-lg flex flex-col items-center justify-center gap-1 hover:border-primary/50 transition-colors group cursor-pointer">
+<span class="material-symbols-outlined text-slate-500 group-hover:text-primary transition-colors text-lg">add</span>
+</div>
+<div class="aspect-square rounded-lg bg-cover bg-center border border-white/10 relative" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuBiyC_-8yTqQb4QrHSr-61STBMNFBbSUvrvWd0_H7WSG8BJ-qjJYBhs_NbMqwe5YX-NygB5kwHcGgQ0DMQvBI9WyQIxa-n004EY078Ymw1-601xhW--sfJ0F21kk3m6TGphqGHVKCZpDqX45MRzSy-r6dmAc_BYcOIqsq7RGzTrRltY0K7TKtbmNTnUDhecDMRbjaeDoeNEc7f6Y5CqP-lgOcbnxUxQETbKdqIHndxEv9Uf3ADwpZ8TTbEtYjrH5dL8bANp-4gCGA')"></div>
+<div class="aspect-square rounded-lg bg-cover bg-center border border-white/10 relative" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuCNh41JFba4DJCatChgXCjtdwhun6tjwqBnFWJ6T2ygaskSlD6erIWOAVxhDJKAZSCUtFWwhu6AFf4OTORW5hVCGE8UgGNmSw71p6VcqtZ471jFz_60V80k76PuaPHxJ1CgtO248xWyMHFFstqKSjFh6Ae4-2nvLpvn6kFYNRdxD4dKEdVrxH-ZM2ciMVOKf-TtKMs3_m-Xlt-qyHYj11Y-mh9vePgt9tB00zLUWSAWjZ2Bdyzc-RIJY1U3HUGO__Lv2fGS-ufZgw')"></div>
+</div>
+</div>
+<div class="space-y-2">
+<label class="text-xs text-slate-500">画幅比例</label>
+<div class="grid grid-cols-2 gap-2">
+<button class="py-1.5 text-xs rounded-lg glass border-primary/50 text-primary bg-primary/10 flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-sm">crop_square</span> 1:1
+                            </button>
+<button class="py-1.5 text-xs rounded-lg glass hover:border-white/20 transition-all flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-sm">crop_16_9</span> 16:9
+                            </button>
+</div>
+</div>
+<div class="space-y-2">
+<label class="text-xs text-slate-500">生成数量</label>
+<div class="flex gap-2">
+<div class="grid grid-cols-3 gap-1 flex-1">
+<button class="py-1.5 text-xs rounded-lg glass border-primary/50 text-primary bg-primary/10">1</button>
+<button class="py-1.5 text-xs rounded-lg glass hover:border-white/20">2</button>
+<button class="py-1.5 text-xs rounded-lg glass hover:border-white/20">4</button>
+</div>
+<input class="w-14 bg-surface-dark border-white/10 rounded-lg text-xs py-1.5 px-2 focus:ring-primary focus:border-primary" placeholder="自" type="text"/>
+</div>
+</div>
+<div class="mt-auto pt-4">
+<button class="w-full py-4 bg-gradient-to-r from-primary via-accent to-primary bg-[length:200%_auto] hover:bg-right transition-all duration-500 text-background-dark font-black text-sm uppercase tracking-wider rounded-xl neon-glow-cyan hover:scale-[1.02] flex items-center justify-center gap-2">
+<span class="material-symbols-outlined">auto_fix_high</span>
+                            立即生成 (消耗 2.0 算力)
+                        </button>
+</div>
+</div>
+</section>
+<!-- Right Column: Unified Task Hub -->
+<section class="flex-1 flex flex-col bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-[#1a1a2e] via-[#0a0a0c] to-[#0a0a0c] overflow-y-auto custom-scrollbar"><!-- Large Preview Window -->
+<div class="p-6 pb-2">
+<div class="glass rounded-3xl overflow-hidden border-primary/20 shadow-2xl relative bg-black/40 max-w-4xl mx-auto">
+<div class="w-full flex flex-col items-center justify-center p-12 relative bg-gradient-to-b from-transparent to-black/60 h-[300px] p-6">
+<!-- Dynamic Background Glow -->
+<div class="absolute inset-0 bg-primary/5 animate-pulse"></div>
+<!-- Large Status Indicator (for Rendering state) -->
+<div class="relative flex flex-col items-center gap-8">
+<div class="relative">
+<svg class="size-32 transform -rotate-90"><circle class="text-white/5" cx="64" cy="64" fill="transparent" r="60" stroke="currentColor" stroke-width="6"></circle><circle class="text-primary filter drop-shadow-[0_0_8px_#00f2ff]" cx="64" cy="64" fill="transparent" r="60" stroke="currentColor" stroke-dasharray="376.99" stroke-dashoffset="207.3" stroke-width="6"></circle></svg>
+<div class="absolute inset-0 flex flex-col items-center justify-center">
+<span class="text-2xl font-bold text-white">45%</span>
+<span class="text-xs text-primary font-bold tracking-widest uppercase mt-1">Rendering</span>
+</div>
+</div>
+<div class="text-center space-y-2">
+<h3 class="text-xl font-bold text-white tracking-tight">正在为您绘制精美画面...</h3>
+<div class="flex items-center justify-center gap-4 text-slate-400">
+<div class="flex items-center gap-2 bg-white/5 px-3 py-1 rounded-full">
+<span class="material-symbols-outlined text-sm">timer</span>
+<span class="text-sm">预计剩余 12s</span>
+</div>
+<div class="flex items-center gap-2 bg-white/5 px-3 py-1 rounded-full">
+<span class="material-symbols-outlined text-sm">model_training</span>
+<span class="text-sm">Midjourney V6</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Quick Controls for Preview -->
+<div class="absolute top-6 right-6 flex gap-2">
+<button class="p-2 glass rounded-xl hover:bg-white/10 transition-colors text-slate-400 hover:text-white">
+<span class="material-symbols-outlined">fullscreen</span>
+</button>
+<button class="p-2 glass rounded-xl hover:bg-white/10 transition-colors text-slate-400 hover:text-white">
+<span class="material-symbols-outlined">share</span>
+</button>
+</div>
+</div>
+<!-- Preview Info Bar -->
+<div class="glass border-t border-white/5 px-6 py-3 flex justify-between items-center">
+<div class="flex items-center gap-4">
+<div class="size-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+<span class="material-symbols-outlined">image</span>
+</div>
+<div>
+<p class="text-sm font-semibold">当前任务: 赛博朋克城市景观</p>
+<p class="text-xs text-slate-500">ID: task_92834710 • 1:1 • High Quality</p>
+</div>
+</div>
+<button class="px-6 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-sm font-medium transition-all">
+                查看详情
+            </button>
+</div>
+</div>
+</div>
+<div class="p-8 pt-4">
+<div class="flex justify-between items-center mb-8"><div><h2 class="text-2xl font-bold flex items-center gap-3"><span class="material-symbols-outlined text-primary drop-shadow-[0_0_5px_#00f2ff]">database</span>创作记录</h2><p class="text-xs text-slate-500 mt-1">查看、管理并下载您所有的视频生成任务 <span class="ml-2 text-slate-400 bg-white/5 px-2 py-0.5 rounded-full">24 个项目</span></p></div><div class="flex items-center gap-3"><button class="p-2 glass rounded-lg hover:text-primary transition-colors"><span class="material-symbols-outlined text-sm">grid_view</span></button><button class="p-2 glass rounded-lg hover:text-primary transition-colors"><span class="material-symbols-outlined text-sm">filter_list</span></button></div></div>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+<!-- Generating Card -->
+<div class="group relative flex flex-col glass rounded-xl border-l-4 border-primary overflow-hidden hover:scale-[1.02] transition-all cursor-pointer shadow-[0_0_20px_rgba(0,242,255,0.15)] p-4 animate-pulse-glow">
+<div class="flex justify-between items-center mb-2">
+<span class="text-xs font-bold text-primary">正在绘图 Rendering - 45%</span>
+<span class="text-[10px] text-slate-500">预计 12s</span>
+</div>
+<div class="w-full bg-white/10 rounded-full h-1 overflow-hidden mb-2">
+<div class="bg-primary h-full rounded-full w-[45%] shadow-[0_0_10px_#00f2ff]"></div>
+</div>
+<h4 class="text-sm font-medium text-slate-300 truncate">赛博朋克城市景观...</h4>
+</div>
+<!-- Queueing Card -->
+<div class="group relative flex flex-col glass rounded-xl border-l-4 border-accent overflow-hidden hover:scale-[1.02] transition-all cursor-pointer shadow-[0_0_20px_rgba(188,19,254,0.15)] p-4">
+<div class="flex justify-between items-center mb-2">
+<span class="text-xs font-bold text-accent">排队中 Initializing</span>
+<span class="text-[10px] text-slate-500">等待中</span>
+</div>
+<div class="w-full bg-white/10 rounded-full h-1 overflow-hidden mb-2">
+<div class="bg-accent h-full rounded-full w-[12%] shadow-[0_0_10px_#bc13fe]"></div>
+</div>
+<h4 class="text-sm font-medium text-slate-300 truncate">神秘森林景观...</h4>
+</div>
+<!-- Completed Card 1 -->
+<div class="group relative flex flex-col glass rounded-xl overflow-hidden hover:scale-[1.01] transition-all cursor-pointer border border-white/5 shadow-lg hover:border-primary/30 p-3">
+<div class="flex justify-between items-center">
+<h4 class="text-sm font-medium text-slate-200 truncate pr-4">赛博朋克宇航员，深红霓虹</h4>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-sm text-slate-500 hover:text-primary">download</span>
+<span class="material-symbols-outlined text-sm text-slate-500">more_vert</span>
+</div>
+</div>
+</div>
+<!-- Completed Card 2 -->
+<div class="group relative flex flex-col glass rounded-xl overflow-hidden hover:scale-[1.01] transition-all cursor-pointer border border-white/5 shadow-lg hover:border-primary/30 p-3">
+<div class="flex justify-between items-center">
+<h4 class="text-sm font-medium text-slate-200 truncate pr-4">抽象流光效果，梦幻紫</h4>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-sm text-slate-500 hover:text-primary">download</span>
+<span class="material-symbols-outlined text-sm text-slate-500">more_vert</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+</main>
+</div>
+</body></html>

@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#9d25f4",
+                        "neon-green": "#39ff14",
+                        "background-light": "#f7f5f8",
+                        "background-dark": "#0a060e",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .glass {
+            background: rgba(26, 16, 34, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(157, 37, 244, 0.2);
+        }
+        .neon-border {
+            box-shadow: 0 0 15px rgba(157, 37, 244, 0.4);
+        }
+        .neon-border-green {
+            box-shadow: 0 0 15px rgba(57, 255, 20, 0.4);
+        }
+        .bg-mesh {
+            background-image: radial-gradient(at 0% 0%, rgba(157, 37, 244, 0.15) 0px, transparent 50%),
+                              radial-gradient(at 100% 100%, rgba(57, 255, 20, 0.1) 0px, transparent 50%);
+        }
+    </style>
+</head>
+<body class="bg-background-dark text-slate-100 font-display min-h-screen selection:bg-primary selection:text-white">
+<div class="flex h-screen overflow-hidden bg-mesh">
+<!-- Sidebar -->
+<aside class="w-72 flex flex-col border-r border-primary/20 bg-background-dark/80 backdrop-blur-xl">
+<div class="p-6 flex items-center gap-3">
+<div class="h-10 w-10 rounded-xl bg-gradient-to-br from-primary to-neon-green flex items-center justify-center neon-border">
+<span class="material-symbols-outlined text-background-dark font-bold">bolt</span>
+</div>
+<div>
+<h1 class="text-xl font-bold tracking-tight text-white">AI Plus</h1>
+<p class="text-xs text-primary font-medium tracking-widest uppercase">Intelligent Platform</p>
+</div>
+</div>
+<nav class="flex-1 px-4 py-6 space-y-1">
+<a class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-xl transition-all group" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="text-sm font-medium">控制面板</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-xl transition-all" href="#">
+<span class="material-symbols-outlined">image</span>
+<span class="text-sm font-medium">图片制作</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-xl transition-all" href="#">
+<span class="material-symbols-outlined">movie</span>
+<span class="text-sm font-medium">视频制作</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-xl transition-all" href="#">
+<span class="material-symbols-outlined">chat</span>
+<span class="text-sm font-medium">聊天</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-xl transition-all" href="#">
+<span class="material-symbols-outlined">settings_input_component</span>
+<span class="text-sm font-medium">OpenClaw配置</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-xl transition-all" href="#">
+<span class="material-symbols-outlined">assignment</span>
+<span class="text-sm font-medium">OpenClaw任务</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-xl transition-all" href="#">
+<span class="material-symbols-outlined">account_balance_wallet</span>
+<span class="text-sm font-medium">财务管理</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-white bg-primary/20 rounded-xl transition-all border border-primary/30 shadow-[0_0_15px_rgba(157,37,244,0.2)]" href="#">
+<span class="material-symbols-outlined text-primary">payments</span>
+<span class="text-sm font-medium">充值中心</span>
+</a>
+</nav>
+<div class="p-6 border-t border-primary/10">
+<div class="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
+<div class="h-8 w-8 rounded-full overflow-hidden border border-primary/40">
+<img class="w-full h-full object-cover" data-alt="User profile avatar with neon glowing border" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBLAvx6A7bkY2_P8zxksvpa_LjmKwxkR8gXaWpCdmiin2OTkjYGSHT2xSL65Vny2ZR9x7dpQXLCDRznrgdOMlz5Y6Jea2BnOc-0X7_Zgdju4RMD43V90Ky8U_mhwT9RwhSobaDyFnpP_dtQu6D67Wce9pPdG_jBJXDbIz5wKMULWTtblE21mgwhcnWz2W-NdAubLV7m5rd0TWEjMEfbV6eGxmKYx0BKnDoO1xXSlH_o19fK-LDFoLdVntWMj6QZemTTwK58OPPkag"/>
+</div>
+<div class="flex-1">
+<p class="text-xs font-bold text-white truncate">Premium User</p>
+<p class="text-[10px] text-slate-500">ID: 8829-102</p>
+</div>
+<span class="material-symbols-outlined text-slate-500 text-sm">logout</span>
+</div>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="flex-1 overflow-y-auto custom-scrollbar">
+<header class="h-20 flex items-center justify-between px-8 border-b border-primary/10 bg-background-dark/40 backdrop-blur-md sticky top-0 z-10">
+<div>
+<h2 class="text-2xl font-bold text-white">充值中心</h2>
+<p class="text-xs text-slate-400">选择适合您的计算资源包，开启高效AI创作体验</p>
+</div>
+<div class="flex items-center gap-6">
+<div class="flex flex-col items-end">
+<p class="text-[10px] text-primary uppercase font-bold tracking-widest">当前余额</p>
+<p class="text-xl font-bold text-neon-green">¥ 1,240.50</p>
+</div>
+<div class="h-10 w-[1px] bg-primary/20"></div>
+<button class="material-symbols-outlined p-2 text-slate-400 hover:text-primary transition-colors">notifications</button>
+</div>
+</header>
+<div class="p-8 space-y-10 max-w-7xl mx-auto">
+<!-- Pricing Tiers -->
+<section class="grid grid-cols-1 md:grid-cols-3 gap-6">
+<!-- Basic -->
+<div class="glass p-8 rounded-2xl flex flex-col group hover:border-primary/50 transition-all">
+<div class="mb-6">
+<h3 class="text-lg font-bold text-white">基础版 (Basic)</h3>
+<p class="text-sm text-slate-400 mt-1">适用于个人初学者</p>
+</div>
+<div class="mb-8">
+<span class="text-4xl font-black text-white">¥ 99</span>
+<span class="text-slate-500 ml-1">/月</span>
+</div>
+<ul class="space-y-4 mb-8 flex-1">
+<li class="flex items-center gap-3 text-sm text-slate-300">
+<span class="material-symbols-outlined text-primary text-lg">check_circle</span>
+                                有限月度计算额度 (1000点)
+                            </li>
+<li class="flex items-center gap-3 text-sm text-slate-300">
+<span class="material-symbols-outlined text-primary text-lg">check_circle</span>
+                                标准生成速度
+                            </li>
+<li class="flex items-center gap-3 text-sm text-slate-300">
+<span class="material-symbols-outlined text-primary text-lg">check_circle</span>
+                                基础模型访问权限
+                            </li>
+</ul>
+<button class="w-full py-3 rounded-xl border border-primary/50 text-primary font-bold hover:bg-primary/10 transition-all">立即订阅</button>
+</div>
+<!-- Professional -->
+<div class="glass p-8 rounded-2xl flex flex-col relative border-primary shadow-[0_0_30px_rgba(157,37,244,0.15)] ring-1 ring-primary overflow-hidden">
+<div class="absolute top-0 right-0 bg-primary px-4 py-1 rounded-bl-xl">
+<span class="text-[10px] font-black text-white uppercase tracking-tighter">RECOMMENDED</span>
+</div>
+<div class="mb-6">
+<h3 class="text-lg font-bold text-white">专业版 (Professional)</h3>
+<p class="text-sm text-slate-400 mt-1">专为深度创作者设计</p>
+</div>
+<div class="mb-8">
+<span class="text-4xl font-black text-white text-transparent bg-clip-text bg-gradient-to-r from-primary via-white to-neon-green">¥ 299</span>
+<span class="text-slate-500 ml-1">/月</span>
+</div>
+<ul class="space-y-4 mb-8 flex-1">
+<li class="flex items-center gap-3 text-sm text-slate-100">
+<span class="material-symbols-outlined text-neon-green text-lg">verified</span>
+                                高额计算额度 (5000点)
+                            </li>
+<li class="flex items-center gap-3 text-sm text-slate-100">
+<span class="material-symbols-outlined text-neon-green text-lg">verified</span>
+                                优先生成权重 (无需等待)
+                            </li>
+<li class="flex items-center gap-3 text-sm text-slate-100">
+<span class="material-symbols-outlined text-neon-green text-lg">verified</span>
+                                全部高级模型访问权限
+                            </li>
+<li class="flex items-center gap-3 text-sm text-slate-100">
+<span class="material-symbols-outlined text-neon-green text-lg">verified</span>
+                                新功能抢先体验权
+                            </li>
+</ul>
+<button class="w-full py-4 rounded-xl bg-primary text-white font-bold hover:bg-primary/80 transition-all neon-border">立即订阅</button>
+</div>
+<!-- Enterprise -->
+<div class="glass p-8 rounded-2xl flex flex-col group hover:border-primary/50 transition-all">
+<div class="mb-6">
+<h3 class="text-lg font-bold text-white">企业版 (Enterprise)</h3>
+<p class="text-sm text-slate-400 mt-1">商业化大规模生产</p>
+</div>
+<div class="mb-8">
+<span class="text-4xl font-black text-white">¥ 999</span>
+<span class="text-slate-500 ml-1">/月</span>
+</div>
+<ul class="space-y-4 mb-8 flex-1">
+<li class="flex items-center gap-3 text-sm text-slate-300">
+<span class="material-symbols-outlined text-primary text-lg">check_circle</span>
+                                不限额度或极高定额
+                            </li>
+<li class="flex items-center gap-3 text-sm text-slate-300">
+<span class="material-symbols-outlined text-primary text-lg">check_circle</span>
+                                24/7 专属技术支持
+                            </li>
+<li class="flex items-center gap-3 text-sm text-slate-300">
+<span class="material-symbols-outlined text-primary text-lg">check_circle</span>
+                                自定义模型微调与部署
+                            </li>
+<li class="flex items-center gap-3 text-sm text-slate-300">
+<span class="material-symbols-outlined text-primary text-lg">check_circle</span>
+                                独立算力集群通道
+                            </li>
+</ul>
+<button class="w-full py-3 rounded-xl border border-slate-700 text-slate-300 font-bold hover:border-primary transition-all">联系我们</button>
+</div>
+</section>
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+<!-- Custom Amount -->
+<div class="lg:col-span-2 glass p-8 rounded-2xl relative">
+<div class="absolute -top-4 -left-4 w-24 h-24 bg-primary/20 blur-3xl rounded-full"></div>
+<h3 class="text-xl font-bold text-white mb-6 flex items-center gap-2">
+<span class="material-symbols-outlined text-neon-green">account_balance_wallet</span>
+                            自定义金额充值
+                        </h3>
+<div class="space-y-6">
+<div class="relative">
+<div class="absolute inset-y-0 left-0 pl-6 flex items-center pointer-events-none">
+<span class="text-2xl font-bold text-primary">¥</span>
+</div>
+<input class="w-full bg-background-dark/50 border border-primary/20 rounded-2xl py-6 pl-12 pr-6 text-2xl font-bold text-white focus:ring-2 focus:ring-primary focus:border-transparent transition-all placeholder:text-slate-600" placeholder="输入充值金额 (最低 ¥10)" type="number"/>
+</div>
+<div class="grid grid-cols-4 gap-4">
+<button class="py-3 rounded-xl border border-primary/20 bg-white/5 text-slate-300 hover:border-primary hover:text-white transition-all">¥ 50</button>
+<button class="py-3 rounded-xl border border-primary/20 bg-white/5 text-slate-300 hover:border-primary hover:text-white transition-all">¥ 100</button>
+<button class="py-3 rounded-xl border border-primary/20 bg-white/5 text-slate-300 hover:border-primary hover:text-white transition-all">¥ 500</button>
+<button class="py-3 rounded-xl border border-primary/20 bg-white/5 text-slate-300 hover:border-primary hover:text-white transition-all font-bold text-primary">¥ 1000</button>
+</div>
+<div class="pt-6 border-t border-primary/10">
+<p class="text-sm text-slate-400 mb-4">选择支付方式</p>
+<div class="flex flex-wrap gap-4">
+<label class="flex-1 min-w-[140px] cursor-pointer group">
+<input checked="" class="hidden peer" name="payment" type="radio"/>
+<div class="flex items-center justify-center gap-3 p-4 rounded-xl border border-primary/10 bg-white/5 peer-checked:border-primary peer-checked:bg-primary/10 transition-all">
+<span class="material-symbols-outlined text-[#00A0E9]">account_balance</span>
+<span class="font-medium text-sm">支付宝</span>
+</div>
+</label>
+<label class="flex-1 min-w-[140px] cursor-pointer group">
+<input class="hidden peer" name="payment" type="radio"/>
+<div class="flex items-center justify-center gap-3 p-4 rounded-xl border border-primary/10 bg-white/5 peer-checked:border-primary peer-checked:bg-primary/10 transition-all">
+<span class="material-symbols-outlined text-[#07C160]">chat_bubble</span>
+<span class="font-medium text-sm">微信支付</span>
+</div>
+</label>
+<label class="flex-1 min-w-[140px] cursor-pointer group">
+<input class="hidden peer" name="payment" type="radio"/>
+<div class="flex items-center justify-center gap-3 p-4 rounded-xl border border-primary/10 bg-white/5 peer-checked:border-primary peer-checked:bg-primary/10 transition-all">
+<span class="material-symbols-outlined text-primary">credit_card</span>
+<span class="font-medium text-sm">信用卡</span>
+</div>
+</label>
+</div>
+</div>
+<button class="w-full py-5 rounded-2xl bg-gradient-to-r from-primary to-primary/80 text-white font-bold text-lg hover:scale-[1.01] transition-all shadow-[0_10px_30px_rgba(157,37,244,0.3)]">立即支付</button>
+</div>
+</div>
+<!-- Account Info/History -->
+<div class="flex flex-col gap-6">
+<div class="glass p-6 rounded-2xl border-neon-green/30">
+<h4 class="text-xs font-bold text-neon-green uppercase tracking-widest mb-4">实时资源状态</h4>
+<div class="space-y-4">
+<div>
+<div class="flex justify-between text-xs mb-1">
+<span class="text-slate-400">计算点数剩余</span>
+<span class="text-white">8,420 / 10,000</span>
+</div>
+<div class="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+<div class="h-full bg-neon-green w-[84%] neon-border-green"></div>
+</div>
+</div>
+<div>
+<div class="flex justify-between text-xs mb-1">
+<span class="text-slate-400">存储空间</span>
+<span class="text-white">45.2 GB / 100 GB</span>
+</div>
+<div class="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+<div class="h-full bg-primary w-[45%] neon-border"></div>
+</div>
+</div>
+</div>
+</div>
+<div class="glass p-6 rounded-2xl flex-1">
+<h4 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">最近充值记录</h4>
+<div class="space-y-4">
+<div class="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5">
+<div class="flex items-center gap-3">
+<div class="h-8 w-8 rounded-lg bg-neon-green/10 flex items-center justify-center">
+<span class="material-symbols-outlined text-neon-green text-sm">add</span>
+</div>
+<div>
+<p class="text-xs font-bold text-white">¥ 299.00</p>
+<p class="text-[10px] text-slate-500">2023-11-24 14:20</p>
+</div>
+</div>
+<span class="text-[10px] text-primary font-bold">成功</span>
+</div>
+<div class="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5">
+<div class="flex items-center gap-3">
+<div class="h-8 w-8 rounded-lg bg-neon-green/10 flex items-center justify-center">
+<span class="material-symbols-outlined text-neon-green text-sm">add</span>
+</div>
+<div>
+<p class="text-xs font-bold text-white">¥ 500.00</p>
+<p class="text-[10px] text-slate-500">2023-10-12 09:15</p>
+</div>
+</div>
+<span class="text-[10px] text-primary font-bold">成功</span>
+</div>
+<div class="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5 opacity-50">
+<div class="flex items-center gap-3">
+<div class="h-8 w-8 rounded-lg bg-slate-500/10 flex items-center justify-center">
+<span class="material-symbols-outlined text-slate-500 text-sm">history</span>
+</div>
+<div>
+<p class="text-xs font-bold text-slate-400">查看更多记录</p>
+</div>
+</div>
+<span class="material-symbols-outlined text-slate-500 text-xs">chevron_right</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<footer class="p-8 border-t border-primary/10 mt-12 text-center">
+<p class="text-xs text-slate-500">
+                    支付即代表您同意 <a class="text-primary hover:underline" href="#">服务条款</a> 和 <a class="text-primary hover:underline" href="#">计算资源使用协议</a>
+</p>
+<p class="text-[10px] text-slate-600 mt-2 italic">加密支付通道已由 SecureAI 保护</p>
+</footer>
+</main>
+</div>
+</body></html>

@@ -1,5 +1,5 @@
 {
-  "name": "@omnibull/openclaw-plugin",
+  "name": "omnibull",
   "version": "0.1.0",
   "description": "OpenClaw plugin for local OmniBull account, material, and publish workflows",
   "type": "module",

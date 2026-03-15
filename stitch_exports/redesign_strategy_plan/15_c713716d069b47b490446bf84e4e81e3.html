@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#9d25f4",
+                        "background-light": "#f7f5f8",
+                        "background-dark": "#0a0510",
+                        "neutral-dark": "#1a1022",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .glass-card {
+            background: rgba(26, 16, 34, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(157, 37, 244, 0.2);
+        }
+        .neon-glow {
+            box-shadow: 0 0 15px rgba(157, 37, 244, 0.4);
+        }
+        .sidebar-item-active {
+            background: linear-gradient(90deg, rgba(157, 37, 244, 0.3) 0%, rgba(157, 37, 244, 0) 100%);
+            border-left: 3px solid #9d25f4;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100 antialiased">
+<div class="flex h-screen overflow-hidden">
+<!-- Sidebar Navigation -->
+<aside class="w-64 flex-shrink-0 bg-neutral-dark/80 backdrop-blur-xl border-r border-primary/20 flex flex-col">
+<div class="p-6 flex items-center gap-3">
+<div class="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-fuchsia-500 flex items-center justify-center neon-glow">
+<span class="material-symbols-outlined text-white">auto_awesome</span>
+</div>
+<div>
+<h1 class="text-lg font-bold tracking-tight text-white">OpenClaw</h1>
+<p class="text-xs text-primary/80 font-medium">任务中心</p>
+</div>
+</div>
+<nav class="flex-1 px-4 space-y-2 mt-4">
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-primary/70 hover:text-primary hover:bg-primary/10 transition-all sidebar-item-active text-white" href="#">
+<span class="material-symbols-outlined">image</span>
+<span class="text-sm font-medium">图片制作</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:text-white hover:bg-primary/10 transition-all" href="#">
+<span class="material-symbols-outlined">movie</span>
+<span class="text-sm font-medium">视频制作</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:text-white hover:bg-primary/10 transition-all" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="text-sm font-medium">OpenClaw 配置</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:text-white hover:bg-primary/10 transition-all" href="#">
+<span class="material-symbols-outlined">history</span>
+<span class="text-sm font-medium">历史任务</span>
+</a>
+<div class="my-4 border-t border-primary/10 mx-2"></div>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:text-white hover:bg-primary/10 transition-all" href="#">
+<span class="material-symbols-outlined">account_balance_wallet</span>
+<span class="text-sm font-medium">财务管理</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:text-white hover:bg-primary/10 transition-all" href="#">
+<span class="material-symbols-outlined">add_card</span>
+<span class="text-sm font-medium">充值中心</span>
+</a>
+</nav>
+<div class="p-4 mt-auto">
+<div class="glass-card rounded-xl p-4 border border-primary/30">
+<div class="flex items-center gap-3 mb-3">
+<div class="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
+<span class="material-symbols-outlined text-primary text-sm">bolt</span>
+</div>
+<span class="text-xs font-bold text-white uppercase tracking-wider">剩余点数</span>
+</div>
+<div class="text-2xl font-bold text-white mb-1">12,840</div>
+<div class="w-full bg-slate-800 rounded-full h-1.5">
+<div class="bg-primary h-1.5 rounded-full" style="width: 65%"></div>
+</div>
+</div>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="flex-1 flex flex-col overflow-hidden relative">
+<!-- Background Gradients -->
+<div class="absolute top-[-10%] right-[-10%] w-[500px] h-[500px] bg-primary/20 blur-[120px] rounded-full pointer-events-none"></div>
+<div class="absolute bottom-[-5%] left-[-5%] w-[400px] h-[400px] bg-fuchsia-900/10 blur-[100px] rounded-full pointer-events-none"></div>
+<!-- Header Tabs -->
+<header class="z-10 px-8 pt-8 pb-4">
+<div class="flex items-center justify-between mb-8">
+<h2 class="text-2xl font-bold text-white flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">grid_view</span>
+                        任务管理
+                    </h2>
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-xs text-primary font-medium">
+<span class="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+                            系统运行中
+                        </div>
+<button class="w-10 h-10 rounded-full glass-card flex items-center justify-center text-slate-300 hover:text-white">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+</div>
+</div>
+<div class="flex border-b border-primary/10 gap-8">
+<a class="pb-4 text-sm font-medium text-slate-400 hover:text-white transition-colors" href="#">全部任务</a>
+<a class="pb-4 text-sm font-medium text-slate-400 hover:text-white transition-colors" href="#">视频任务</a>
+<a class="pb-4 text-sm font-medium text-primary border-b-2 border-primary" href="#">图片任务</a>
+<a class="pb-4 text-sm font-medium text-slate-400 hover:text-white transition-colors" href="#">聊天任务</a>
+</div>
+</header>
+<!-- Content Area -->
+<section class="flex-1 overflow-y-auto px-8 pb-8 custom-scrollbar">
+<div class="glass-card rounded-xl overflow-hidden">
+<div class="min-w-full inline-block align-middle">
+<div class="overflow-hidden">
+<table class="min-w-full divide-y divide-primary/10">
+<thead>
+<tr class="bg-primary/5">
+<th class="px-6 py-4 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider" scope="col">任务ID</th>
+<th class="px-6 py-4 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider" scope="col">模型</th>
+<th class="px-6 py-4 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider" scope="col">Prompt 描述</th>
+<th class="px-6 py-4 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider" scope="col">预览</th>
+<th class="px-6 py-4 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider" scope="col">状态</th>
+<th class="px-6 py-4 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider" scope="col">操作</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-primary/10">
+<!-- Row 1 -->
+<tr class="hover:bg-primary/5 transition-colors">
+<td class="px-6 py-5 whitespace-nowrap text-sm font-medium text-white">#OC-88291</td>
+<td class="px-6 py-5 whitespace-nowrap">
+<div class="flex items-center gap-2">
+<div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-[10px] font-bold text-white shadow-lg" title="Midjourney">MJ</div>
+<span class="text-xs text-slate-300">Midjourney v6</span>
+</div>
+</td>
+<td class="px-6 py-5">
+<p class="text-sm text-slate-300 line-clamp-1 max-w-xs">A futuristic cyberpunk city at night with neon signs and flying vehicles, cinematic lighting, 8k...</p>
+</td>
+<td class="px-6 py-5 whitespace-nowrap">
+<div class="w-12 h-12 rounded-lg bg-slate-800 border border-primary/20 overflow-hidden">
+<img class="w-full h-full object-cover" data-alt="Cyberpunk city with neon lights at night" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDq3waF0VezvN27-OV1xe3RWgKjFGojkKfbYov5hUjseialIlFlss7fteYaA4AMH7b-bWEj6tQZ9j3b0bXrfORmOFr9GMSDd5LE1Psch43xhxC7pgRqmNJD-EguU9yExL7Ngr-wCg_qDfS50Bsu8w346uzw8DeZKeji-7J7EK9KjE71HhFp-w2BwICZ9DHvXcu1GIFZo0UJuCtad26lia1JyJPc8ZCaUMywB0SB1ogqW7IfGUprKX7Kuc7m3vYh9d31jMcimW8tFQ"/>
+</div>
+</td>
+<td class="px-6 py-5 whitespace-nowrap">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-500/10 text-green-400 border border-green-500/20">
+                                                已完成
+                                            </span>
+</td>
+<td class="px-6 py-5 whitespace-nowrap text-right text-sm font-medium">
+<div class="flex justify-end gap-3">
+<button class="text-primary hover:text-primary/80 flex items-center gap-1">
+<span class="material-symbols-outlined text-lg">download</span>
+                                                    下载
+                                                </button>
+<button class="text-slate-400 hover:text-white">详情</button>
+</div>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="hover:bg-primary/5 transition-colors">
+<td class="px-6 py-5 whitespace-nowrap text-sm font-medium text-white">#OC-88292</td>
+<td class="px-6 py-5 whitespace-nowrap">
+<div class="flex items-center gap-2">
+<div class="w-8 h-8 rounded-lg bg-purple-600 flex items-center justify-center text-[10px] font-bold text-white shadow-lg" title="Stable Diffusion">SD</div>
+<span class="text-xs text-slate-300">SDXL Turbo</span>
+</div>
+</td>
+<td class="px-6 py-5">
+<p class="text-sm text-slate-300 line-clamp-1 max-w-xs">Ethereal landscape with floating islands, iridescent waterfalls, and giant crystal formations...</p>
+</td>
+<td class="px-6 py-5 whitespace-nowrap">
+<div class="w-12 h-12 rounded-lg bg-slate-800 border border-primary/20 overflow-hidden relative">
+<div class="absolute inset-0 bg-primary/20 flex items-center justify-center">
+<span class="material-symbols-outlined text-primary animate-spin text-sm">cycle</span>
+</div>
+<img class="w-full h-full object-cover opacity-50" data-alt="Ethereal floating islands landscape" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB1fSqIgg4W3sc1XTtEks_fY377e34LzfbGx-8Zd4DOXVc-Z1ynvZVhJCQgxY3Q8Bh3Pxl4H4qTH3aYWK1ag-C9HbBjMz2SKoDAw1uFVBN7GlBNUmmm5YJQk9FO4FVqUMFF_qFR9XsR3L2ZJuNj7i6FxAjsXYHE8Y9GaCU9lrNBvgr4bYnbZuIGUt4JdoBvYSjZaCIaLF-Rr271A0TeNtYBF6cRcGp1uh5s9PT8IP-dR1DizWnGYOWgbdvRsO311wzMHzT3xL3WDg"/>
+</div>
+</td>
+<td class="px-6 py-5 whitespace-nowrap">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary border border-primary/20">
+                                                进行中 (45%)
+                                            </span>
+</td>
+<td class="px-6 py-5 whitespace-nowrap text-right text-sm font-medium">
+<div class="flex justify-end gap-3">
+<button class="text-slate-600 cursor-not-allowed flex items-center gap-1" disabled="">
+<span class="material-symbols-outlined text-lg">download</span>
+                                                    下载
+                                                </button>
+<button class="text-slate-400 hover:text-white">详情</button>
+</div>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="hover:bg-primary/5 transition-colors">
+<td class="px-6 py-5 whitespace-nowrap text-sm font-medium text-white">#OC-88293</td>
+<td class="px-6 py-5 whitespace-nowrap">
+<div class="flex items-center gap-2">
+<div class="w-8 h-8 rounded-lg bg-orange-500 flex items-center justify-center text-[10px] font-bold text-white shadow-lg" title="DALL-E 3">D3</div>
+<span class="text-xs text-slate-300">DALL-E 3</span>
+</div>
+</td>
+<td class="px-6 py-5">
+<p class="text-sm text-slate-300 line-clamp-1 max-w-xs">Minimalist 3D character design, cute robot exploring a digital garden, soft pastel colors...</p>
+</td>
+<td class="px-6 py-5 whitespace-nowrap">
+<div class="w-12 h-12 rounded-lg bg-slate-800 border border-primary/20 overflow-hidden">
+<img class="w-full h-full object-cover" data-alt="Abstract gradient in soft pastel colors" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDfhZ2eM-a4h7NHdAJdNY037uET3FnfcUJm1MAO4LPYtZr0km04MQltCTWGtFcBQ7m1lE2F4Q4RHMXKReu82cdeg3WzC31aaGQZ3HS1fxF3W4HYZfU1yJUrXWY884M8-Skb2bq9PNs-u2L6jA-njx-GAY3en_clUqqqxNJ44Ifk3soIxAIVrz7sPRS7KPF4w0-smXQWXK7CRzie3GQiPsOf81e8Pr5B9MZmkOgqmv9ghyzJEvE2CdZ3q875IsZ3gAqOEDBkwLCB5Q"/>
+</div>
+</td>
+<td class="px-6 py-5 whitespace-nowrap">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-500/10 text-green-400 border border-green-500/20">
+                                                已完成
+                                            </span>
+</td>
+<td class="px-6 py-5 whitespace-nowrap text-right text-sm font-medium">
+<div class="flex justify-end gap-3">
+<button class="text-primary hover:text-primary/80 flex items-center gap-1">
+<span class="material-symbols-outlined text-lg">download</span>
+                                                    下载
+                                                </button>
+<button class="text-slate-400 hover:text-white">详情</button>
+</div>
+</td>
+</tr>
+<!-- Row 4 -->
+<tr class="hover:bg-primary/5 transition-colors">
+<td class="px-6 py-5 whitespace-nowrap text-sm font-medium text-white">#OC-88294</td>
+<td class="px-6 py-5 whitespace-nowrap">
+<div class="flex items-center gap-2">
+<div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-[10px] font-bold text-white shadow-lg">MJ</div>
+<span class="text-xs text-slate-300">Midjourney v6</span>
+</div>
+</td>
+<td class="px-6 py-5">
+<p class="text-sm text-slate-300 line-clamp-1 max-w-xs">Hyper-realistic portrait of an astronaut in a dark nebula, reflection on helmet visor...</p>
+</td>
+<td class="px-6 py-5 whitespace-nowrap">
+<div class="w-12 h-12 rounded-lg bg-slate-800 border border-primary/20 overflow-hidden">
+<img class="w-full h-full object-cover" data-alt="Space nebula background with stars" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA7QxZZPAnyoIAsiHdW3Xcm7DmwUwfpfPkV-2HYmz3ewtKUk-HouRqjRutRH6jErrOLEBAAh1Ny76SzOT-LiP3UyxJlNsqNVs_AqnGVq8nqp39nd8Cx8PY9o7FlkmM7Hdxg678B71vJX-mkvPft6RYJKnBqKnoDtvg5hNFVjruGIE0ueb9TdwR9JWtUiT-PVg33gQYOGVkw6QzYOXGfZDxgvITOI51sd7gk_AWkqXEmisoa0YCDaa1UPc6H4BaKFABqV84Qfl2n1A"/>
+</div>
+</td>
+<td class="px-6 py-5 whitespace-nowrap">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20">
+                                                已失败
+                                            </span>
+</td>
+<td class="px-6 py-5 whitespace-nowrap text-right text-sm font-medium">
+<div class="flex justify-end gap-3">
+<button class="text-slate-400 hover:text-primary flex items-center gap-1">
+<span class="material-symbols-outlined text-lg">refresh</span>
+                                                    重试
+                                                </button>
+<button class="text-slate-400 hover:text-white">详情</button>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<!-- Pagination -->
+<div class="mt-8 flex items-center justify-between">
+<p class="text-sm text-slate-400">显示 1 到 4 共 24 个任务</p>
+<div class="flex items-center gap-2">
+<button class="w-10 h-10 glass-card rounded-lg flex items-center justify-center text-slate-400 hover:text-white transition-all disabled:opacity-50" disabled="">
+<span class="material-symbols-outlined">chevron_left</span>
+</button>
+<button class="w-10 h-10 bg-primary text-white rounded-lg font-bold text-sm neon-glow">1</button>
+<button class="w-10 h-10 glass-card rounded-lg flex items-center justify-center text-slate-400 hover:text-white font-medium text-sm">2</button>
+<button class="w-10 h-10 glass-card rounded-lg flex items-center justify-center text-slate-400 hover:text-white font-medium text-sm">3</button>
+<span class="text-slate-500 px-1">...</span>
+<button class="w-10 h-10 glass-card rounded-lg flex items-center justify-center text-slate-400 hover:text-white font-medium text-sm">6</button>
+<button class="w-10 h-10 glass-card rounded-lg flex items-center justify-center text-slate-400 hover:text-white transition-all">
+<span class="material-symbols-outlined">chevron_right</span>
+</button>
+</div>
+</div>
+</section>
+</main>
+</div>
+</body></html>
