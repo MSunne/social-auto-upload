@@ -1,0 +1,21 @@
+{
+  "name": "omnidrive",
+  "version": "0.1.0",
+  "description": "OpenClaw plugin for OmniDrive cloud auth and AI workflows",
+  "type": "module",
+  "files": [
+    "index.js",
+    "openclaw.plugin.json",
+    "skills",
+    "README.md"
+  ],
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ],
+    "install": {
+      "localPath": "openclaw_extensions/omnidrive",
+      "defaultChoice": "link"
+    }
+  }
+}

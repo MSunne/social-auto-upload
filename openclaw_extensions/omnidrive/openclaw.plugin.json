@@ -1,0 +1,38 @@
+{
+  "id": "omnidrive",
+  "skills": [
+    "./skills"
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "baseUrl": {
+        "type": "string"
+      },
+      "accessToken": {
+        "type": "string"
+      },
+      "email": {
+        "type": "string"
+      },
+      "password": {
+        "type": "string"
+      },
+      "timeoutMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 180000
+      },
+      "defaultChatModel": {
+        "type": "string"
+      },
+      "defaultImageModel": {
+        "type": "string"
+      },
+      "defaultVideoModel": {
+        "type": "string"
+      }
+    }
+  }
+}
