@@ -9,6 +9,7 @@ import requests
 
 BASE_URL = os.environ.get("OMNIDRIVE_BASE_URL", "http://127.0.0.1:8410").rstrip("/")
 API_BASE = f"{BASE_URL}/api/v1"
+ADMIN_API_BASE = f"{BASE_URL}/api/admin/v1"
 
 DEBUG_USER = {
     "email": os.environ.get("OMNIDRIVE_DEBUG_EMAIL", "debug-omnidrive@example.com"),
@@ -16,9 +17,15 @@ DEBUG_USER = {
     "password": os.environ.get("OMNIDRIVE_DEBUG_PASSWORD", "Debug123456!"),
 }
 
+ADMIN_USER = {
+    "email": os.environ.get("OMNIDRIVE_ADMIN_EMAIL", "admin@omnidrive.local"),
+    "password": os.environ.get("OMNIDRIVE_ADMIN_PASSWORD", "change-me-admin"),
+}
+
 DEVICE_CODE = os.environ.get("OMNIDRIVE_DEBUG_DEVICE_CODE", "OMNIBULL-DEBUG-001")
 DEVICE_NAME = os.environ.get("OMNIDRIVE_DEBUG_DEVICE_NAME", "OmniBull Debug Node")
 AGENT_KEY = os.environ.get("OMNIDRIVE_DEBUG_AGENT_KEY", "debug-omnidrive-agent-key")
+MOCK_PREFIX = "[mock-seed]"
 
 ROOT_DIR = Path(__file__).resolve().parents[1] / "omnidrive_cloud" / "data" / "mock-seed"
 MATERIAL_ROOT = ROOT_DIR / "device-materials"
@@ -28,13 +35,13 @@ ONE_BY_ONE_PNG = base64.b64decode(
 )
 
 
-def api(method, path, *, token=None, json_payload=None, data=None, files=None, headers=None, params=None):
+def request_api(api_base, method, path, *, token=None, json_payload=None, data=None, files=None, headers=None, params=None):
     request_headers = headers.copy() if headers else {}
     if token:
         request_headers["Authorization"] = f"Bearer {token}"
     response = requests.request(
         method=method,
-        url=f"{API_BASE}{path}",
+        url=f"{api_base}{path}",
         headers=request_headers,
         json=json_payload,
         data=data,
@@ -47,6 +54,34 @@ def api(method, path, *, token=None, json_payload=None, data=None, files=None, h
     if not response.content:
         return None
     return response.json()
+
+
+def api(method, path, *, token=None, json_payload=None, data=None, files=None, headers=None, params=None):
+    return request_api(
+        API_BASE,
+        method,
+        path,
+        token=token,
+        json_payload=json_payload,
+        data=data,
+        files=files,
+        headers=headers,
+        params=params,
+    )
+
+
+def admin_api(method, path, *, token=None, json_payload=None, data=None, files=None, headers=None, params=None):
+    return request_api(
+        ADMIN_API_BASE,
+        method,
+        path,
+        token=token,
+        json_payload=json_payload,
+        data=data,
+        files=files,
+        headers=headers,
+        params=params,
+    )
 
 
 def agent_api(method, path, *, json_payload=None, params=None):
@@ -70,6 +105,14 @@ def ensure_debug_user():
         "password": DEBUG_USER["password"],
     })
     return login["accessToken"], login["user"]
+
+
+def ensure_admin_user():
+    login = admin_api("POST", "/auth/login", json_payload={
+        "email": ADMIN_USER["email"],
+        "password": ADMIN_USER["password"],
+    })
+    return login["accessToken"], login["admin"]
 
 
 def ensure_files():
@@ -322,8 +365,211 @@ def create_local_origin_ai_job(token, device, skill, campaign_dir):
     return job
 
 
+def list_billing_packages(token):
+    return api("GET", "/billing/packages", token=token)
+
+
+def list_orders(token):
+    return api("GET", "/billing/orders", token=token)
+
+
+def get_order(token, order_id):
+    return api("GET", f"/billing/orders/{order_id}", token=token)
+
+
+def list_wallet_ledgers(token):
+    return api("GET", "/billing/ledger", token=token)
+
+
+def find_order_by_subject(token, subject):
+    for item in list_orders(token):
+        if item.get("subject") == subject:
+            return item
+    return None
+
+
+def find_wallet_ledger_by_description(token, description):
+    for item in list_wallet_ledgers(token):
+        if (item.get("description") or "").strip() == description:
+            return item
+    return None
+
+
+def pick_package_id(packages, *preferred_ids):
+    package_map = {item["id"]: item for item in packages}
+    for package_id in preferred_ids:
+        if package_id in package_map:
+            return package_id
+    if not packages:
+        raise RuntimeError("billing packages are empty; please bootstrap schema first")
+    return packages[0]["id"]
+
+
+def ensure_recharge_order(token, package_id, channel, subject):
+    existing = find_order_by_subject(token, subject)
+    if existing is not None:
+        return get_order(token, existing["id"])
+    return api("POST", "/billing/orders", token=token, json_payload={
+        "packageId": package_id,
+        "channel": channel,
+        "subject": subject,
+    })
+
+
+def ensure_manual_submission(token, order, label):
+    current = get_order(token, order["id"])
+    if current["status"] in {"processing", "credited", "paid", "completed", "success", "rejected"}:
+        return current
+
+    submitted = api("POST", f"/billing/orders/{order['id']}/manual-submit", token=token, json_payload={
+        "contactChannel": "wechat",
+        "contactHandle": "mock-seed-cs",
+        "paymentReference": f"MOCK-{label.upper()}",
+        "transferAmountCents": current["amountCents"],
+        "proofUrls": [f"https://mock.omnidrive.local/proofs/{label}.png"],
+        "customerNote": f"{MOCK_PREFIX} {label} 财务联调样例",
+    })
+    return submitted
+
+
+def ensure_support_recharge_credit(admin_token, order_id, note, payment_reference):
+    detail = admin_api("GET", f"/support-recharges/{order_id}", token=admin_token)
+    if detail["record"]["status"] == "credited":
+        return detail
+    return admin_api("POST", f"/support-recharges/{order_id}/credit", token=admin_token, json_payload={
+        "note": note,
+        "paymentReference": payment_reference,
+    })
+
+
+def ensure_support_recharge_reject(admin_token, order_id, note):
+    detail = admin_api("GET", f"/support-recharges/{order_id}", token=admin_token)
+    if detail["record"]["status"] == "rejected":
+        return detail
+    return admin_api("POST", f"/support-recharges/{order_id}/reject", token=admin_token, json_payload={
+        "note": note,
+    })
+
+
+def ensure_wallet_adjustment(admin_token, user_id, user_token, *, amount_delta, reason, note, reference_id):
+    existing = find_wallet_ledger_by_description(user_token, note)
+    if existing is not None:
+        return existing
+    result = admin_api("POST", "/wallet-adjustments", token=admin_token, json_payload={
+        "userId": user_id,
+        "amountDelta": amount_delta,
+        "reason": reason,
+        "note": note,
+        "referenceType": "mock_seed",
+        "referenceId": reference_id,
+        "payload": {
+            "source": "seed_omnidrive_mock_data.py",
+            "mock": True,
+            "kind": "finance",
+        },
+    })
+    return result["ledger"]
+
+
+def seed_finance_data(user_token, user, admin_token):
+    packages = list_billing_packages(user_token)
+    starter_id = pick_package_id(packages, "starter")
+    growth_id = pick_package_id(packages, "growth", starter_id)
+    studio_id = pick_package_id(packages, "studio", growth_id, starter_id)
+    enterprise_id = pick_package_id(packages, "enterprise", studio_id, growth_id, starter_id)
+
+    alipay_pending = ensure_recharge_order(
+        user_token,
+        starter_id,
+        "alipay",
+        f"{MOCK_PREFIX} 支付宝待支付订单",
+    )
+    wechat_pending = ensure_recharge_order(
+        user_token,
+        growth_id,
+        "wechatpay",
+        f"{MOCK_PREFIX} 微信待支付订单",
+    )
+    manual_awaiting = ensure_recharge_order(
+        user_token,
+        studio_id,
+        "manual_cs",
+        f"{MOCK_PREFIX} 客服充值待提交",
+    )
+    manual_review = ensure_recharge_order(
+        user_token,
+        studio_id,
+        "manual_cs",
+        f"{MOCK_PREFIX} 客服充值待审核",
+    )
+    manual_review = ensure_manual_submission(user_token, manual_review, "pending-review")
+
+    manual_credited = ensure_recharge_order(
+        user_token,
+        enterprise_id,
+        "manual_cs",
+        f"{MOCK_PREFIX} 客服充值已入账",
+    )
+    manual_credited = ensure_manual_submission(user_token, manual_credited, "credited")
+    credited_detail = ensure_support_recharge_credit(
+        admin_token,
+        manual_credited["id"],
+        f"{MOCK_PREFIX} 管理员确认入账",
+        "MOCK-CREDITED-0001",
+    )
+
+    manual_rejected = ensure_recharge_order(
+        user_token,
+        starter_id,
+        "manual_cs",
+        f"{MOCK_PREFIX} 客服充值已驳回",
+    )
+    manual_rejected = ensure_manual_submission(user_token, manual_rejected, "rejected")
+    rejected_detail = ensure_support_recharge_reject(
+        admin_token,
+        manual_rejected["id"],
+        f"{MOCK_PREFIX} 管理员驳回样例",
+    )
+
+    wallet_compensation = ensure_wallet_adjustment(
+        admin_token,
+        user["id"],
+        user_token,
+        amount_delta=180,
+        reason="前端联调补偿样例",
+        note=f"{MOCK_PREFIX} 钱包补偿 +180",
+        reference_id="wallet-adjustment-credit",
+    )
+    wallet_deduction = ensure_wallet_adjustment(
+        admin_token,
+        user["id"],
+        user_token,
+        amount_delta=-60,
+        reason="前端联调扣减样例",
+        note=f"{MOCK_PREFIX} 钱包扣减 -60",
+        reference_id="wallet-adjustment-debit",
+    )
+
+    return {
+        "orders": {
+            "alipayPending": alipay_pending["id"],
+            "wechatPending": wechat_pending["id"],
+            "manualAwaitingSubmission": manual_awaiting["id"],
+            "manualPendingReview": manual_review["id"],
+            "manualCredited": credited_detail["order"]["id"],
+            "manualRejected": rejected_detail["order"]["id"],
+        },
+        "walletLedgers": {
+            "compensation": wallet_compensation["id"],
+            "deduction": wallet_deduction["id"],
+        },
+        "summary": api("GET", "/billing/summary", token=user_token),
+    }
+
+
 def main():
     token, user = ensure_debug_user()
+    admin_token, admin = ensure_admin_user()
     campaign_dir = ensure_files()
     device = heartbeat_and_claim(token)
     sync_accounts()
@@ -332,10 +578,15 @@ def main():
     publish_task = create_publish_task(token, device, skill)
     cloud_ai_job = create_cloud_ai_job(token, device, skill, campaign_dir)
     local_ai_job = create_local_origin_ai_job(token, device, skill, campaign_dir)
+    finance = seed_finance_data(token, user, admin_token)
 
     print(json.dumps({
         "baseUrl": BASE_URL,
         "debugUser": DEBUG_USER,
+        "adminUser": {
+            "email": ADMIN_USER["email"],
+            "name": admin["name"],
+        },
         "deviceCode": DEVICE_CODE,
         "agentKey": AGENT_KEY,
         "seeded": {
@@ -344,6 +595,7 @@ def main():
             "publishTaskId": publish_task["id"],
             "cloudAIJobId": cloud_ai_job["id"],
             "localOriginAIJobId": local_ai_job["id"],
+            "finance": finance,
         },
     }, ensure_ascii=False, indent=2))
 

@@ -14,7 +14,7 @@ func (s *Store) GetAdminOrderByID(ctx context.Context, orderID string) (*domain.
 	row := s.pool.QueryRow(ctx, `
 		SELECT
 			ro.id, ro.order_no, ro.user_id, ro.package_id, ro.package_snapshot, ro.channel, ro.status, ro.subject, ro.body,
-			ro.currency, ro.amount_cents, ro.credit_amount, ro.payment_payload, ro.customer_service_payload,
+			ro.currency, ro.amount_cents, ro.credit_amount, ro.manual_bonus_credit_amount, ro.payment_payload, ro.customer_service_payload,
 			ro.provider_transaction_id, ro.provider_status, ro.expires_at, ro.paid_at, ro.closed_at, ro.created_at, ro.updated_at,
 			u.id, u.email, u.name
 		FROM recharge_orders ro
@@ -47,6 +47,7 @@ func (s *Store) GetAdminOrderByID(ctx context.Context, orderID string) (*domain.
 		&item.Order.Currency,
 		&item.Order.AmountCents,
 		&item.Order.CreditAmount,
+		&item.Order.ManualBonusCreditAmount,
 		&paymentPayload,
 		&customerServicePayload,
 		&providerTransactionID,

@@ -14,6 +14,92 @@ CREATE TABLE IF NOT EXISTS users (
     name TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS admin_users (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    auth_mode TEXT NOT NULL DEFAULT 'password',
+    last_login_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS admin_roles (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    is_system BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS admin_permissions (
+    code TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT 'general',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS admin_role_permissions (
+    role_id TEXT NOT NULL REFERENCES admin_roles(id) ON DELETE CASCADE,
+    permission_code TEXT NOT NULL REFERENCES admin_permissions(code) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (role_id, permission_code)
+);
+
+CREATE TABLE IF NOT EXISTS admin_user_roles (
+    admin_user_id TEXT NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    role_id TEXT NOT NULL REFERENCES admin_roles(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (admin_user_id, role_id)
+);
+
+CREATE TABLE IF NOT EXISTS admin_sessions (
+    id TEXT PRIMARY KEY,
+    admin_user_id TEXT NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'active',
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    ip_address TEXT,
+    user_agent TEXT,
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS admin_audit_logs (
+    id TEXT PRIMARY KEY,
+    admin_user_id TEXT REFERENCES admin_users(id) ON DELETE SET NULL,
+    admin_email TEXT,
+    admin_name TEXT,
+    resource_type TEXT NOT NULL,
+    resource_id TEXT,
+    action TEXT NOT NULL,
+    title TEXT NOT NULL,
+    source TEXT NOT NULL,
+    status TEXT NOT NULL,
+    message TEXT,
+    payload JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS admin_system_configs (
+    id TEXT PRIMARY KEY,
+    ai_worker_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    payment_channels JSONB NOT NULL DEFAULT '["alipay","wechatpay","manual_cs"]'::jsonb,
+    billing_manual_support_name TEXT NOT NULL DEFAULT '客服充值',
+    billing_manual_support_contact TEXT NOT NULL DEFAULT '',
+    billing_manual_support_qr_code_url TEXT NOT NULL DEFAULT '',
+    billing_manual_support_note TEXT NOT NULL DEFAULT '请联系客服完成转账，并在订单内补充转账说明或凭证。',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -43,6 +129,7 @@ CREATE TABLE IF NOT EXISTS platform_accounts (
     status TEXT NOT NULL,
     last_message TEXT,
     last_authenticated_at TIMESTAMPTZ,
+    notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(device_id, platform, account_name)
@@ -252,6 +339,8 @@ ALTER TABLE publish_tasks ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ;
 ALTER TABLE publish_tasks ADD COLUMN IF NOT EXISTS attempt_count INT NOT NULL DEFAULT 0;
 ALTER TABLE publish_tasks ADD COLUMN IF NOT EXISTS cancel_requested_at TIMESTAMPTZ;
 ALTER TABLE publish_tasks ADD COLUMN IF NOT EXISTS skill_revision TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE platform_accounts ADD COLUMN IF NOT EXISTS notes TEXT;
 
 CREATE TABLE IF NOT EXISTS ai_models (
     id TEXT PRIMARY KEY,
@@ -344,6 +433,7 @@ CREATE TABLE IF NOT EXISTS billing_packages (
     currency TEXT NOT NULL DEFAULT 'CNY',
     price_cents BIGINT NOT NULL,
     credit_amount BIGINT NOT NULL,
+    manual_bonus_credit_amount BIGINT NOT NULL DEFAULT 0,
     badge TEXT,
     description TEXT,
     pricing_payload JSONB,
@@ -357,6 +447,7 @@ CREATE TABLE IF NOT EXISTS billing_packages (
 ALTER TABLE billing_packages ADD COLUMN IF NOT EXISTS package_type TEXT NOT NULL DEFAULT 'credit_topup';
 ALTER TABLE billing_packages ADD COLUMN IF NOT EXISTS payment_channels JSONB NOT NULL DEFAULT '["manual_cs","alipay","wechatpay"]'::jsonb;
 ALTER TABLE billing_packages ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'CNY';
+ALTER TABLE billing_packages ADD COLUMN IF NOT EXISTS manual_bonus_credit_amount BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE billing_packages ADD COLUMN IF NOT EXISTS pricing_payload JSONB;
 ALTER TABLE billing_packages ADD COLUMN IF NOT EXISTS expires_in_days INT;
 
@@ -448,6 +539,7 @@ CREATE TABLE IF NOT EXISTS recharge_orders (
     currency TEXT NOT NULL DEFAULT 'CNY',
     amount_cents BIGINT NOT NULL,
     credit_amount BIGINT NOT NULL DEFAULT 0,
+    manual_bonus_credit_amount BIGINT NOT NULL DEFAULT 0,
     payment_payload JSONB,
     customer_service_payload JSONB,
     provider_transaction_id TEXT,
@@ -458,6 +550,8 @@ CREATE TABLE IF NOT EXISTS recharge_orders (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE recharge_orders ADD COLUMN IF NOT EXISTS manual_bonus_credit_amount BIGINT NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS payment_transactions (
     id TEXT PRIMARY KEY,
@@ -480,6 +574,27 @@ CREATE TABLE IF NOT EXISTS payment_transactions (
 
 ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS recharge_order_id TEXT REFERENCES recharge_orders(id) ON DELETE SET NULL;
 ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS payment_transaction_id TEXT REFERENCES payment_transactions(id) ON DELETE SET NULL;
+
+CREATE TABLE IF NOT EXISTS wallet_adjustment_requests (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    wallet_ledger_id TEXT REFERENCES wallet_ledgers(id) ON DELETE SET NULL,
+    entry_type TEXT NOT NULL DEFAULT 'manual_adjustment',
+    amount_delta BIGINT NOT NULL,
+    reason TEXT NOT NULL,
+    note TEXT,
+    status TEXT NOT NULL DEFAULT 'applied',
+    reference_type TEXT,
+    reference_id TEXT,
+    admin_user_id TEXT,
+    admin_email TEXT,
+    admin_name TEXT,
+    payload JSONB,
+    reviewed_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
 CREATE TABLE IF NOT EXISTS recharge_order_events (
     id TEXT PRIMARY KEY,
@@ -542,6 +657,189 @@ CREATE TABLE IF NOT EXISTS billing_usage_events (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS distribution_referrals (
+    id TEXT PRIMARY KEY,
+    promoter_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    invitee_user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'active',
+    notes TEXT,
+    metadata JSONB,
+    created_by_admin_user_id TEXT REFERENCES admin_users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (promoter_user_id <> invitee_user_id)
+);
+
+CREATE TABLE IF NOT EXISTS distribution_rules (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'default',
+    promoter_user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'active',
+    commission_rate_basis_points INT NOT NULL,
+    settlement_threshold_cents BIGINT NOT NULL DEFAULT 0,
+    notes TEXT,
+    created_by_admin_user_id TEXT REFERENCES admin_users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (commission_rate_basis_points > 0 AND commission_rate_basis_points <= 10000)
+);
+
+CREATE TABLE IF NOT EXISTS distribution_settlement_batches (
+    id TEXT PRIMARY KEY,
+    batch_no TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'completed',
+    notes TEXT,
+    reviewer_admin_user_id TEXT REFERENCES admin_users(id) ON DELETE SET NULL,
+    reviewer_admin_email TEXT,
+    reviewer_admin_name TEXT,
+    operator_admin_user_id TEXT REFERENCES admin_users(id) ON DELETE SET NULL,
+    operator_admin_email TEXT,
+    operator_admin_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    reviewed_at TIMESTAMPTZ,
+    paid_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS distribution_commission_items (
+    id TEXT PRIMARY KEY,
+    referral_id TEXT REFERENCES distribution_referrals(id) ON DELETE SET NULL,
+    rule_id TEXT REFERENCES distribution_rules(id) ON DELETE SET NULL,
+    promoter_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    invitee_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    recharge_order_id TEXT NOT NULL UNIQUE REFERENCES recharge_orders(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending_consume',
+    commission_rate_basis_points INT NOT NULL,
+    settlement_threshold_cents BIGINT NOT NULL DEFAULT 0,
+    commission_base_amount_cents BIGINT NOT NULL,
+    amount_cents BIGINT NOT NULL,
+    total_granted_credits BIGINT NOT NULL DEFAULT 0,
+    consumed_credits BIGINT NOT NULL DEFAULT 0,
+    released_amount_cents BIGINT NOT NULL DEFAULT 0,
+    settled_amount_cents BIGINT NOT NULL DEFAULT 0,
+    released_at TIMESTAMPTZ,
+    settled_at TIMESTAMPTZ,
+    settlement_batch_id TEXT REFERENCES distribution_settlement_batches(id) ON DELETE SET NULL,
+    last_release_source_type TEXT,
+    last_release_source_id TEXT,
+    metadata JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (commission_rate_basis_points > 0 AND commission_rate_basis_points <= 10000),
+    CHECK (amount_cents >= 0),
+    CHECK (total_granted_credits >= 0),
+    CHECK (consumed_credits >= 0),
+    CHECK (released_amount_cents >= 0),
+    CHECK (settled_amount_cents >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS distribution_settlement_items (
+    id TEXT PRIMARY KEY,
+    batch_id TEXT NOT NULL REFERENCES distribution_settlement_batches(id) ON DELETE CASCADE,
+    commission_item_id TEXT NOT NULL UNIQUE REFERENCES distribution_commission_items(id) ON DELETE CASCADE,
+    promoter_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    amount_cents BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS withdrawal_requests (
+    id TEXT PRIMARY KEY,
+    promoter_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'requested',
+    amount_cents BIGINT NOT NULL,
+    payout_channel TEXT,
+    account_masked TEXT,
+    account_payload JSONB,
+    note TEXT,
+    proof_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
+    payment_reference TEXT,
+    reviewer_admin_user_id TEXT REFERENCES admin_users(id) ON DELETE SET NULL,
+    reviewer_admin_email TEXT,
+    reviewer_admin_name TEXT,
+    operator_admin_user_id TEXT REFERENCES admin_users(id) ON DELETE SET NULL,
+    operator_admin_email TEXT,
+    operator_admin_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    reviewed_at TIMESTAMPTZ,
+    paid_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS admin_users (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    auth_mode TEXT NOT NULL DEFAULT 'password',
+    last_login_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS admin_roles (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    is_system BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS admin_permissions (
+    code TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT 'general',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS admin_role_permissions (
+    role_id TEXT NOT NULL REFERENCES admin_roles(id) ON DELETE CASCADE,
+    permission_code TEXT NOT NULL REFERENCES admin_permissions(code) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (role_id, permission_code)
+);
+
+CREATE TABLE IF NOT EXISTS admin_user_roles (
+    admin_user_id TEXT NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    role_id TEXT NOT NULL REFERENCES admin_roles(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (admin_user_id, role_id)
+);
+
+CREATE TABLE IF NOT EXISTS admin_sessions (
+    id TEXT PRIMARY KEY,
+    admin_user_id TEXT NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'active',
+    ip_address TEXT,
+    user_agent TEXT,
+    issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    last_seen_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS admin_audit_logs (
+    id TEXT PRIMARY KEY,
+    admin_user_id TEXT REFERENCES admin_users(id) ON DELETE SET NULL,
+    admin_email TEXT,
+    admin_name TEXT,
+    resource_type TEXT NOT NULL,
+    resource_id TEXT,
+    action TEXT NOT NULL,
+    title TEXT NOT NULL,
+    source TEXT NOT NULL,
+    status TEXT NOT NULL,
+    message TEXT,
+    payload JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS audit_events (
     id TEXT PRIMARY KEY,
     owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -557,6 +855,14 @@ CREATE TABLE IF NOT EXISTS audit_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_devices_owner_user_id ON devices(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_admin_user_roles_admin_user_id ON admin_user_roles(admin_user_id);
+CREATE INDEX IF NOT EXISTS idx_admin_user_roles_role_id ON admin_user_roles(role_id);
+CREATE INDEX IF NOT EXISTS idx_admin_role_permissions_permission_code ON admin_role_permissions(permission_code);
+CREATE INDEX IF NOT EXISTS idx_admin_sessions_admin_user_id ON admin_sessions(admin_user_id);
+CREATE INDEX IF NOT EXISTS idx_admin_sessions_status ON admin_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires_at ON admin_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_admin_user_id ON admin_audit_logs(admin_user_id);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_resource_type ON admin_audit_logs(resource_type);
 CREATE INDEX IF NOT EXISTS idx_platform_accounts_device_id ON platform_accounts(device_id);
 CREATE INDEX IF NOT EXISTS idx_login_sessions_device_id ON login_sessions(device_id);
 CREATE INDEX IF NOT EXISTS idx_login_sessions_user_id ON login_sessions(user_id);
@@ -594,12 +900,37 @@ CREATE INDEX IF NOT EXISTS idx_recharge_orders_user_id ON recharge_orders(user_i
 CREATE INDEX IF NOT EXISTS idx_recharge_orders_status ON recharge_orders(status);
 CREATE INDEX IF NOT EXISTS idx_payment_transactions_recharge_order_id ON payment_transactions(recharge_order_id);
 CREATE INDEX IF NOT EXISTS idx_payment_transactions_user_id ON payment_transactions(user_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_adjustment_requests_user_id ON wallet_adjustment_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_adjustment_requests_wallet_ledger_id ON wallet_adjustment_requests(wallet_ledger_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_adjustment_requests_status ON wallet_adjustment_requests(status);
 CREATE INDEX IF NOT EXISTS idx_recharge_order_events_order_id ON recharge_order_events(recharge_order_id);
 CREATE INDEX IF NOT EXISTS idx_billing_quota_accounts_user_id ON billing_quota_accounts(user_id);
 CREATE INDEX IF NOT EXISTS idx_billing_quota_accounts_meter_code ON billing_quota_accounts(meter_code);
 CREATE INDEX IF NOT EXISTS idx_billing_quota_ledgers_user_id ON billing_quota_ledgers(user_id);
 CREATE INDEX IF NOT EXISTS idx_billing_usage_events_user_id ON billing_usage_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_billing_usage_events_source ON billing_usage_events(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_distribution_referrals_promoter_user_id ON distribution_referrals(promoter_user_id);
+CREATE INDEX IF NOT EXISTS idx_distribution_referrals_invitee_user_id ON distribution_referrals(invitee_user_id);
+CREATE INDEX IF NOT EXISTS idx_distribution_referrals_status ON distribution_referrals(status);
+CREATE INDEX IF NOT EXISTS idx_distribution_rules_scope_status ON distribution_rules(scope, status);
+CREATE INDEX IF NOT EXISTS idx_distribution_rules_promoter_user_id ON distribution_rules(promoter_user_id);
+CREATE INDEX IF NOT EXISTS idx_distribution_commission_items_promoter_user_id ON distribution_commission_items(promoter_user_id);
+CREATE INDEX IF NOT EXISTS idx_distribution_commission_items_invitee_user_id ON distribution_commission_items(invitee_user_id);
+CREATE INDEX IF NOT EXISTS idx_distribution_commission_items_status ON distribution_commission_items(status);
+CREATE INDEX IF NOT EXISTS idx_distribution_commission_items_settlement_batch_id ON distribution_commission_items(settlement_batch_id);
+CREATE INDEX IF NOT EXISTS idx_distribution_settlement_batches_status ON distribution_settlement_batches(status);
+CREATE INDEX IF NOT EXISTS idx_distribution_settlement_items_batch_id ON distribution_settlement_items(batch_id);
+CREATE INDEX IF NOT EXISTS idx_distribution_settlement_items_promoter_user_id ON distribution_settlement_items(promoter_user_id);
+CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_promoter_user_id ON withdrawal_requests(promoter_user_id);
+CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_status ON withdrawal_requests(status);
+CREATE INDEX IF NOT EXISTS idx_admin_users_email ON admin_users(email);
+CREATE INDEX IF NOT EXISTS idx_admin_user_roles_admin_user_id ON admin_user_roles(admin_user_id);
+CREATE INDEX IF NOT EXISTS idx_admin_user_roles_role_id ON admin_user_roles(role_id);
+CREATE INDEX IF NOT EXISTS idx_admin_role_permissions_permission_code ON admin_role_permissions(permission_code);
+CREATE INDEX IF NOT EXISTS idx_admin_sessions_admin_user_id ON admin_sessions(admin_user_id);
+CREATE INDEX IF NOT EXISTS idx_admin_sessions_status_expires_at ON admin_sessions(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_admin_user_id ON admin_audit_logs(admin_user_id);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_resource_type ON admin_audit_logs(resource_type);
 CREATE INDEX IF NOT EXISTS idx_audit_events_owner_user_id ON audit_events(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_resource_type ON audit_events(resource_type);
 
@@ -610,12 +941,12 @@ VALUES
     ('veo-3.1-fast-fl', 'apiyi', 'veo-3.1-fast-fl', 'video', '默认视频生成模型', '{"unit":"credits","price":"dynamic"}', TRUE)
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO billing_packages (id, name, channel, price_cents, credit_amount, badge, description, is_enabled, sort_order)
+INSERT INTO billing_packages (id, name, channel, price_cents, credit_amount, manual_bonus_credit_amount, badge, description, is_enabled, sort_order)
 VALUES
-    ('starter', '入门包', 'alipay,wechat,manual', 9900, 1000, 'Starter', '适合轻量创作和初次体验', TRUE, 10),
-    ('growth', '增长包', 'alipay,wechat,manual', 29900, 3500, 'Popular', '适合稳定做图做视频和日常运营', TRUE, 20),
-    ('studio', '工作室包', 'alipay,wechat,manual', 69900, 9000, 'Studio', '适合内容工作室和多技能协同', TRUE, 30),
-    ('enterprise', '企业包', 'alipay,wechat,manual', 149900, 22000, 'Enterprise', '适合设备多、任务多的运营场景', TRUE, 40)
+    ('starter', '入门包', 'alipay,wechat,manual', 9900, 1000, 0, 'Starter', '适合轻量创作和初次体验', TRUE, 10),
+    ('growth', '增长包', 'alipay,wechat,manual', 29900, 3500, 0, 'Popular', '适合稳定做图做视频和日常运营', TRUE, 20),
+    ('studio', '工作室包', 'alipay,wechat,manual', 69900, 9000, 0, 'Studio', '适合内容工作室和多技能协同', TRUE, 30),
+    ('enterprise', '企业包', 'alipay,wechat,manual', 149900, 22000, 0, 'Enterprise', '适合设备多、任务多的运营场景', TRUE, 40)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO billing_meters (code, name, category, unit, description, is_enabled)

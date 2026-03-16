@@ -64,6 +64,7 @@ func scanBillingPackage(scan scanFn) (*domain.BillingPackage, error) {
 		&item.Currency,
 		&item.PriceCents,
 		&item.CreditAmount,
+		&item.ManualBonusCreditAmount,
 		&badge,
 		&description,
 		&pricingPayload,
@@ -111,6 +112,7 @@ func scanRechargeOrder(scan scanFn) (*domain.RechargeOrder, error) {
 		&item.Currency,
 		&item.AmountCents,
 		&item.CreditAmount,
+		&item.ManualBonusCreditAmount,
 		&paymentPayload,
 		&customerServicePayload,
 		&providerTransactionID,
@@ -218,7 +220,7 @@ func (s *Store) loadPackageEntitlements(ctx context.Context, packageIDs []string
 func (s *Store) ListBillingPackages(ctx context.Context) ([]domain.BillingPackage, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, name, package_type, channel, payment_channels, currency, price_cents, credit_amount,
-		       badge, description, pricing_payload, expires_in_days, is_enabled, sort_order, created_at, updated_at
+		       manual_bonus_credit_amount, badge, description, pricing_payload, expires_in_days, is_enabled, sort_order, created_at, updated_at
 		FROM billing_packages
 		WHERE is_enabled = TRUE
 		ORDER BY sort_order ASC, price_cents ASC
@@ -255,7 +257,7 @@ func (s *Store) ListBillingPackages(ctx context.Context) ([]domain.BillingPackag
 func (s *Store) GetBillingPackageByID(ctx context.Context, packageID string) (*domain.BillingPackage, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, name, package_type, channel, payment_channels, currency, price_cents, credit_amount,
-		       badge, description, pricing_payload, expires_in_days, is_enabled, sort_order, created_at, updated_at
+		       manual_bonus_credit_amount, badge, description, pricing_payload, expires_in_days, is_enabled, sort_order, created_at, updated_at
 		FROM billing_packages
 		WHERE id = $1
 	`, packageID)
@@ -469,7 +471,7 @@ func (s *Store) ListRechargeOrdersByUser(ctx context.Context, userID string, lim
 
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, order_no, user_id, package_id, package_snapshot, channel, status, subject, body, currency,
-		       amount_cents, credit_amount, payment_payload, customer_service_payload, provider_transaction_id,
+		       amount_cents, credit_amount, manual_bonus_credit_amount, payment_payload, customer_service_payload, provider_transaction_id,
 		       provider_status, expires_at, paid_at, closed_at, created_at, updated_at
 		FROM recharge_orders
 		WHERE user_id = $1
@@ -495,7 +497,7 @@ func (s *Store) ListRechargeOrdersByUser(ctx context.Context, userID string, lim
 func (s *Store) getRechargeOrderByID(ctx context.Context, userID string, orderID string) (*domain.RechargeOrder, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, order_no, user_id, package_id, package_snapshot, channel, status, subject, body, currency,
-		       amount_cents, credit_amount, payment_payload, customer_service_payload, provider_transaction_id,
+		       amount_cents, credit_amount, manual_bonus_credit_amount, payment_payload, customer_service_payload, provider_transaction_id,
 		       provider_status, expires_at, paid_at, closed_at, created_at, updated_at
 		FROM recharge_orders
 		WHERE user_id = $1
@@ -551,12 +553,12 @@ func (s *Store) CreateRechargeOrder(ctx context.Context, input CreateRechargeOrd
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO recharge_orders (
 			id, order_no, user_id, package_id, package_snapshot, channel, status, subject, body, currency,
-			amount_cents, credit_amount, payment_payload, customer_service_payload, provider_status, expires_at
+			amount_cents, credit_amount, manual_bonus_credit_amount, payment_payload, customer_service_payload, provider_status, expires_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 	`, input.ID, input.OrderNo, input.UserID, input.PackageID, input.PackageSnapshot, input.Channel, input.Status,
-		input.Subject, input.Body, input.Currency, input.AmountCents, input.CreditAmount, input.PaymentPayload,
-		input.CustomerServicePayload, input.ProviderStatus, input.ExpiresAt); err != nil {
+		input.Subject, input.Body, input.Currency, input.AmountCents, input.CreditAmount, input.ManualBonusCreditAmount,
+		input.PaymentPayload, input.CustomerServicePayload, input.ProviderStatus, input.ExpiresAt); err != nil {
 		return nil, err
 	}
 
@@ -607,7 +609,7 @@ func (s *Store) SubmitManualRecharge(ctx context.Context, userID string, orderID
 
 	row := tx.QueryRow(ctx, `
 		SELECT id, order_no, user_id, package_id, package_snapshot, channel, status, subject, body, currency,
-		       amount_cents, credit_amount, payment_payload, customer_service_payload, provider_transaction_id,
+		       amount_cents, credit_amount, manual_bonus_credit_amount, payment_payload, customer_service_payload, provider_transaction_id,
 		       provider_status, expires_at, paid_at, closed_at, created_at, updated_at
 		FROM recharge_orders
 		WHERE user_id = $1

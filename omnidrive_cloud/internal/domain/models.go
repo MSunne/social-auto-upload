@@ -49,6 +49,8 @@ type DeviceLoad struct {
 	FailedTaskCount               int64 `json:"failedTaskCount"`
 	ActiveLoginSessionCount       int64 `json:"activeLoginSessionCount"`
 	VerificationLoginSessionCount int64 `json:"verificationLoginSessionCount"`
+	LeasedTaskCount               int64 `json:"leasedTaskCount"`
+	LeasedAIJobCount              int64 `json:"leasedAiJobCount"`
 }
 
 type DeviceWorkspace struct {
@@ -610,13 +612,14 @@ type AIJobBridgeState struct {
 }
 
 type AIJobWorkspace struct {
-	Job          AIJob            `json:"job"`
-	Model        *AIModel         `json:"model,omitempty"`
-	Skill        *ProductSkill    `json:"skill,omitempty"`
-	Artifacts    []AIJobArtifact  `json:"artifacts"`
-	PublishTasks []PublishTask    `json:"publishTasks"`
-	Bridge       AIJobBridgeState `json:"bridge"`
-	Actions      AIJobActionState `json:"actions"`
+	Job                AIJob               `json:"job"`
+	Model              *AIModel            `json:"model,omitempty"`
+	Skill              *ProductSkill       `json:"skill,omitempty"`
+	Artifacts          []AIJobArtifact     `json:"artifacts"`
+	PublishTasks       []PublishTask       `json:"publishTasks"`
+	BillingUsageEvents []BillingUsageEvent `json:"billingUsageEvents"`
+	Bridge             AIJobBridgeState    `json:"bridge"`
+	Actions            AIJobActionState    `json:"actions"`
 }
 
 type AgentAIJobPackage struct {
@@ -634,23 +637,24 @@ type AgentAIJobDeliveryItem struct {
 }
 
 type BillingPackage struct {
-	ID              string                      `json:"id"`
-	Name            string                      `json:"name"`
-	PackageType     string                      `json:"packageType"`
-	Channel         string                      `json:"channel"`
-	PaymentChannels []string                    `json:"paymentChannels"`
-	Currency        string                      `json:"currency"`
-	PriceCents      int64                       `json:"priceCents"`
-	CreditAmount    int64                       `json:"creditAmount"`
-	Badge           *string                     `json:"badge"`
-	Description     *string                     `json:"description"`
-	PricingPayload  json.RawMessage             `json:"pricingPayload,omitempty"`
-	ExpiresInDays   *int32                      `json:"expiresInDays,omitempty"`
-	IsEnabled       bool                        `json:"isEnabled"`
-	SortOrder       int                         `json:"sortOrder"`
-	Entitlements    []BillingPackageEntitlement `json:"entitlements"`
-	CreatedAt       time.Time                   `json:"createdAt"`
-	UpdatedAt       time.Time                   `json:"updatedAt"`
+	ID                      string                      `json:"id"`
+	Name                    string                      `json:"name"`
+	PackageType             string                      `json:"packageType"`
+	Channel                 string                      `json:"channel"`
+	PaymentChannels         []string                    `json:"paymentChannels"`
+	Currency                string                      `json:"currency"`
+	PriceCents              int64                       `json:"priceCents"`
+	CreditAmount            int64                       `json:"creditAmount"`
+	ManualBonusCreditAmount int64                       `json:"manualBonusCreditAmount"`
+	Badge                   *string                     `json:"badge"`
+	Description             *string                     `json:"description"`
+	PricingPayload          json.RawMessage             `json:"pricingPayload,omitempty"`
+	ExpiresInDays           *int32                      `json:"expiresInDays,omitempty"`
+	IsEnabled               bool                        `json:"isEnabled"`
+	SortOrder               int                         `json:"sortOrder"`
+	Entitlements            []BillingPackageEntitlement `json:"entitlements"`
+	CreatedAt               time.Time                   `json:"createdAt"`
+	UpdatedAt               time.Time                   `json:"updatedAt"`
 }
 
 type BillingPackageEntitlement struct {
@@ -702,6 +706,28 @@ type BillingSummary struct {
 	QuotaBalances        []BillingQuotaBalance `json:"quotaBalances"`
 }
 
+type BillingUsageEvent struct {
+	ID              string          `json:"id"`
+	UserID          string          `json:"userId"`
+	SourceType      string          `json:"sourceType"`
+	SourceID        *string         `json:"sourceId,omitempty"`
+	MeterCode       string          `json:"meterCode"`
+	MeterName       *string         `json:"meterName,omitempty"`
+	ModelName       *string         `json:"modelName,omitempty"`
+	JobType         *string         `json:"jobType,omitempty"`
+	UsageQuantity   int64           `json:"usageQuantity"`
+	PricingRuleID   *string         `json:"pricingRuleId,omitempty"`
+	PricingRuleName *string         `json:"pricingRuleName,omitempty"`
+	QuotaAccountID  *string         `json:"quotaAccountId,omitempty"`
+	WalletLedgerID  *string         `json:"walletLedgerId,omitempty"`
+	QuotaLedgerID   *string         `json:"quotaLedgerId,omitempty"`
+	BillStatus      string          `json:"billStatus"`
+	BillMessage     *string         `json:"billMessage,omitempty"`
+	Payload         json.RawMessage `json:"payload,omitempty"`
+	CreatedAt       time.Time       `json:"createdAt"`
+	UpdatedAt       time.Time       `json:"updatedAt"`
+}
+
 type WalletLedger struct {
 	ID                   string          `json:"id"`
 	UserID               string          `json:"userId"`
@@ -722,28 +748,47 @@ type WalletLedger struct {
 	CreatedAt            time.Time       `json:"createdAt"`
 }
 
+type PaymentTransaction struct {
+	ID                    string          `json:"id"`
+	RechargeOrderID       string          `json:"rechargeOrderId"`
+	UserID                string          `json:"userId"`
+	Channel               string          `json:"channel"`
+	TransactionKind       string          `json:"transactionKind"`
+	OutTradeNo            string          `json:"outTradeNo"`
+	ProviderTransactionID *string         `json:"providerTransactionId,omitempty"`
+	Status                string          `json:"status"`
+	RequestPayload        json.RawMessage `json:"requestPayload,omitempty"`
+	ResponsePayload       json.RawMessage `json:"responsePayload,omitempty"`
+	NotifyPayload         json.RawMessage `json:"notifyPayload,omitempty"`
+	ErrorMessage          *string         `json:"errorMessage,omitempty"`
+	PaidAt                *time.Time      `json:"paidAt,omitempty"`
+	CreatedAt             time.Time       `json:"createdAt"`
+	UpdatedAt             time.Time       `json:"updatedAt"`
+}
+
 type RechargeOrder struct {
-	ID                     string          `json:"id"`
-	OrderNo                string          `json:"orderNo"`
-	UserID                 string          `json:"userId"`
-	PackageID              *string         `json:"packageId,omitempty"`
-	PackageSnapshot        json.RawMessage `json:"packageSnapshot,omitempty"`
-	Channel                string          `json:"channel"`
-	Status                 string          `json:"status"`
-	Subject                string          `json:"subject"`
-	Body                   *string         `json:"body,omitempty"`
-	Currency               string          `json:"currency"`
-	AmountCents            int64           `json:"amountCents"`
-	CreditAmount           int64           `json:"creditAmount"`
-	PaymentPayload         json.RawMessage `json:"paymentPayload,omitempty"`
-	CustomerServicePayload json.RawMessage `json:"customerServicePayload,omitempty"`
-	ProviderTransactionID  *string         `json:"providerTransactionId,omitempty"`
-	ProviderStatus         *string         `json:"providerStatus,omitempty"`
-	ExpiresAt              *time.Time      `json:"expiresAt,omitempty"`
-	PaidAt                 *time.Time      `json:"paidAt,omitempty"`
-	ClosedAt               *time.Time      `json:"closedAt,omitempty"`
-	CreatedAt              time.Time       `json:"createdAt"`
-	UpdatedAt              time.Time       `json:"updatedAt"`
+	ID                      string          `json:"id"`
+	OrderNo                 string          `json:"orderNo"`
+	UserID                  string          `json:"userId"`
+	PackageID               *string         `json:"packageId,omitempty"`
+	PackageSnapshot         json.RawMessage `json:"packageSnapshot,omitempty"`
+	Channel                 string          `json:"channel"`
+	Status                  string          `json:"status"`
+	Subject                 string          `json:"subject"`
+	Body                    *string         `json:"body,omitempty"`
+	Currency                string          `json:"currency"`
+	AmountCents             int64           `json:"amountCents"`
+	CreditAmount            int64           `json:"creditAmount"`
+	ManualBonusCreditAmount int64           `json:"manualBonusCreditAmount"`
+	PaymentPayload          json.RawMessage `json:"paymentPayload,omitempty"`
+	CustomerServicePayload  json.RawMessage `json:"customerServicePayload,omitempty"`
+	ProviderTransactionID   *string         `json:"providerTransactionId,omitempty"`
+	ProviderStatus          *string         `json:"providerStatus,omitempty"`
+	ExpiresAt               *time.Time      `json:"expiresAt,omitempty"`
+	PaidAt                  *time.Time      `json:"paidAt,omitempty"`
+	ClosedAt                *time.Time      `json:"closedAt,omitempty"`
+	CreatedAt               time.Time       `json:"createdAt"`
+	UpdatedAt               time.Time       `json:"updatedAt"`
 }
 
 type RechargeOrderEvent struct {
@@ -755,6 +800,30 @@ type RechargeOrderEvent struct {
 	Message         *string         `json:"message,omitempty"`
 	Payload         json.RawMessage `json:"payload,omitempty"`
 	CreatedAt       time.Time       `json:"createdAt"`
+}
+
+type WalletAdjustmentRequest struct {
+	ID                    string          `json:"id"`
+	UserID                string          `json:"userId"`
+	EntryType             string          `json:"entryType"`
+	AmountDelta           int64           `json:"amountDelta"`
+	Reason                string          `json:"reason"`
+	Note                  *string         `json:"note,omitempty"`
+	Status                string          `json:"status"`
+	ReferenceType         *string         `json:"referenceType,omitempty"`
+	ReferenceID           *string         `json:"referenceId,omitempty"`
+	WalletLedgerID        *string         `json:"walletLedgerId,omitempty"`
+	RequestedByAdminID    string          `json:"requestedByAdminId"`
+	RequestedByAdminEmail string          `json:"requestedByAdminEmail"`
+	RequestedByAdminName  string          `json:"requestedByAdminName"`
+	ReviewedByAdminID     *string         `json:"reviewedByAdminId,omitempty"`
+	ReviewedByAdminEmail  *string         `json:"reviewedByAdminEmail,omitempty"`
+	ReviewedByAdminName   *string         `json:"reviewedByAdminName,omitempty"`
+	Payload               json.RawMessage `json:"payload,omitempty"`
+	CreatedAt             time.Time       `json:"createdAt"`
+	UpdatedAt             time.Time       `json:"updatedAt"`
+	ReviewedAt            *time.Time      `json:"reviewedAt,omitempty"`
+	CompletedAt           *time.Time      `json:"completedAt,omitempty"`
 }
 
 type HistoryItem struct {

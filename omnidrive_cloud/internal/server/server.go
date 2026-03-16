@@ -30,6 +30,10 @@ func New(cfg config.Config) (*http.Server, func(), error) {
 	}
 
 	app := appstate.New(cfg, db, storageService)
+	if err := app.EnsureAdminBootstrap(ctx); err != nil {
+		db.Close()
+		return nil, nil, fmt.Errorf("ensure admin bootstrap: %w", err)
+	}
 	server := &http.Server{
 		Addr:    cfg.BindAddr,
 		Handler: apphttp.NewRouter(app),

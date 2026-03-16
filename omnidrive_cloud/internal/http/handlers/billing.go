@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	appstate "omnidrive_cloud/internal/app"
-	"omnidrive_cloud/internal/config"
+	"omnidrive_cloud/internal/domain"
 	httpcontext "omnidrive_cloud/internal/http/context"
 	"omnidrive_cloud/internal/http/render"
 	"omnidrive_cloud/internal/store"
@@ -140,18 +140,23 @@ func buildRechargeBlueprint(channel string, orderNo string, pkgID string, amount
 	return status, providerStatus, paymentPayload, customerServicePayload, expiresAt, transactionKind
 }
 
-func buildManualSupportPayload(cfg config.Config, orderNo string, pkgID string, amountCents int64) []byte {
+func buildManualSupportPayload(settings effectiveAdminSystemSettings, orderNo string, pkgID string, amountCents int64, creditAmount int64, manualBonusCreditAmount int64) []byte {
 	payload, _ := json.Marshal(map[string]any{
 		"provider":    "manual_cs",
 		"nextAction":  "contact_support",
 		"orderNo":     orderNo,
 		"packageId":   pkgID,
 		"amountCents": amountCents,
+		"credits": map[string]any{
+			"baseCreditAmount":        creditAmount,
+			"manualBonusCreditAmount": manualBonusCreditAmount,
+			"totalCreditAmount":       creditAmount + manualBonusCreditAmount,
+		},
 		"support": map[string]any{
-			"name":      cfg.BillingManualSupportName,
-			"contact":   cfg.BillingManualSupportContact,
-			"qrCodeUrl": cfg.BillingManualSupportQRCodeURL,
-			"note":      cfg.BillingManualSupportNote,
+			"name":      settings.BillingManualSupport.Name,
+			"contact":   settings.BillingManualSupport.Contact,
+			"qrCodeUrl": settings.BillingManualSupport.QRCodeURL,
+			"note":      settings.BillingManualSupport.Note,
 		},
 		"submission": map[string]any{
 			"status":      "pending",
@@ -178,7 +183,22 @@ func (h *BillingHandler) ListPackages(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to load billing packages")
 		return
 	}
-	render.JSON(w, http.StatusOK, items)
+
+	settings, err := loadEffectiveAdminSystemSettings(r.Context(), h.app)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load billing packages")
+		return
+	}
+
+	filtered := make([]domain.BillingPackage, 0, len(items))
+	for _, item := range items {
+		item.PaymentChannels = filterEnabledPaymentChannels(item.PaymentChannels, settings.PaymentChannels)
+		if len(item.PaymentChannels) == 0 {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	render.JSON(w, http.StatusOK, filtered)
 }
 
 func (h *BillingHandler) ListPricingRules(w http.ResponseWriter, r *http.Request) {
@@ -195,6 +215,31 @@ func (h *BillingHandler) Ledger(w http.ResponseWriter, r *http.Request) {
 	items, err := h.app.Store.ListWalletLedgerByUser(r.Context(), user.ID)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load wallet ledger")
+		return
+	}
+	render.JSON(w, http.StatusOK, items)
+}
+
+func (h *BillingHandler) ListUsageEvents(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	limit := 50
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			limit = parsed
+		}
+	}
+
+	items, err := h.app.Store.ListBillingUsageEventsByUser(r.Context(), user.ID, store.BillingUsageEventListFilter{
+		SourceType: strings.TrimSpace(r.URL.Query().Get("sourceType")),
+		SourceID:   strings.TrimSpace(r.URL.Query().Get("sourceId")),
+		MeterCode:  strings.TrimSpace(r.URL.Query().Get("meterCode")),
+		BillStatus: strings.TrimSpace(r.URL.Query().Get("billStatus")),
+		JobType:    strings.TrimSpace(r.URL.Query().Get("jobType")),
+		ModelName:  strings.TrimSpace(r.URL.Query().Get("modelName")),
+		Limit:      limit,
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load billing usage events")
 		return
 	}
 	render.JSON(w, http.StatusOK, items)
@@ -269,6 +314,16 @@ func (h *BillingHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	settings, err := loadEffectiveAdminSystemSettings(r.Context(), h.app)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load billing configuration")
+		return
+	}
+	if !settings.paymentChannelEnabled(channel) {
+		render.Error(w, http.StatusConflict, "Selected channel is temporarily unavailable")
+		return
+	}
+
 	pkg, err := h.app.Store.GetBillingPackageByID(r.Context(), payload.PackageID)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load billing package")
@@ -291,7 +346,7 @@ func (h *BillingHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		pkg.PriceCents,
 	)
 	if channel == "manual_cs" {
-		customerServicePayload = buildManualSupportPayload(h.app.Config, orderNo, pkg.ID, pkg.PriceCents)
+		customerServicePayload = buildManualSupportPayload(settings, orderNo, pkg.ID, pkg.PriceCents, pkg.CreditAmount, pkg.ManualBonusCreditAmount)
 		paymentPayload = customerServicePayload
 	}
 
@@ -315,18 +370,24 @@ func (h *BillingHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	})
 
 	order, err := h.app.Store.CreateRechargeOrder(r.Context(), store.CreateRechargeOrderInput{
-		ID:                     uuid.NewString(),
-		OrderNo:                orderNo,
-		UserID:                 user.ID,
-		PackageID:              &pkg.ID,
-		PackageSnapshot:        packageSnapshot,
-		Channel:                channel,
-		Status:                 status,
-		Subject:                subject,
-		Body:                   body,
-		Currency:               pkg.Currency,
-		AmountCents:            pkg.PriceCents,
-		CreditAmount:           pkg.CreditAmount,
+		ID:              uuid.NewString(),
+		OrderNo:         orderNo,
+		UserID:          user.ID,
+		PackageID:       &pkg.ID,
+		PackageSnapshot: packageSnapshot,
+		Channel:         channel,
+		Status:          status,
+		Subject:         subject,
+		Body:            body,
+		Currency:        pkg.Currency,
+		AmountCents:     pkg.PriceCents,
+		CreditAmount:    pkg.CreditAmount,
+		ManualBonusCreditAmount: func() int64 {
+			if channel == "manual_cs" {
+				return pkg.ManualBonusCreditAmount
+			}
+			return 0
+		}(),
 		PaymentPayload:         paymentPayload,
 		CustomerServicePayload: customerServicePayload,
 		ProviderStatus:         providerStatus,
@@ -383,7 +444,12 @@ func (h *BillingHandler) SubmitManualRecharge(w http.ResponseWriter, r *http.Req
 		_ = json.Unmarshal(order.CustomerServicePayload, &servicePayload)
 	}
 	if _, ok := servicePayload["support"]; !ok {
-		_ = json.Unmarshal(buildManualSupportPayload(h.app.Config, order.OrderNo, valueOrEmpty(order.PackageID), order.AmountCents), &servicePayload)
+		settings, settingsErr := loadEffectiveAdminSystemSettings(r.Context(), h.app)
+		if settingsErr != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to load billing configuration")
+			return
+		}
+		_ = json.Unmarshal(buildManualSupportPayload(settings, order.OrderNo, valueOrEmpty(order.PackageID), order.AmountCents, order.CreditAmount, order.ManualBonusCreditAmount), &servicePayload)
 	}
 
 	proofURLs := payload.ProofURLs

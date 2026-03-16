@@ -93,6 +93,8 @@ func scanDeviceWithLoad(row pgx.Row) (*domain.Device, error) {
 		&device.Load.FailedTaskCount,
 		&device.Load.ActiveLoginSessionCount,
 		&device.Load.VerificationLoginSessionCount,
+		&device.Load.LeasedTaskCount,
+		&device.Load.LeasedAIJobCount,
 	); err != nil {
 		return nil, err
 	}
@@ -129,7 +131,9 @@ const deviceLoadColumns = `
 	COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.device_id = devices.id AND pt.status = 'cancel_requested'), 0)::BIGINT AS cancel_requested_task_count,
 	COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.device_id = devices.id AND pt.status = 'failed'), 0)::BIGINT AS failed_task_count,
 	COALESCE((SELECT COUNT(*) FROM login_sessions ls WHERE ls.device_id = devices.id AND ls.status IN ('pending', 'running', 'verification_required')), 0)::BIGINT AS active_login_session_count,
-	COALESCE((SELECT COUNT(*) FROM login_sessions ls WHERE ls.device_id = devices.id AND ls.status = 'verification_required'), 0)::BIGINT AS verification_login_session_count
+	COALESCE((SELECT COUNT(*) FROM login_sessions ls WHERE ls.device_id = devices.id AND ls.status = 'verification_required'), 0)::BIGINT AS verification_login_session_count,
+	COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.lease_owner_device_id = devices.id AND pt.status IN ('running', 'cancel_requested') AND pt.lease_token IS NOT NULL), 0)::BIGINT AS leased_task_count,
+	COALESCE((SELECT COUNT(*) FROM ai_jobs aj WHERE aj.lease_owner_device_id = devices.id AND aj.status = 'running' AND aj.lease_token IS NOT NULL), 0)::BIGINT AS leased_ai_job_count
 `
 
 func deviceQueryWithLoad(whereClause string) string {

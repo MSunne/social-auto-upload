@@ -20,6 +20,16 @@ func recordAuditEvent(app *appstate.App, ctx context.Context, input store.Create
 	_ = app.Store.CreateAuditEvent(ctx, input)
 }
 
+func recordAdminAuditLog(app *appstate.App, ctx context.Context, input store.CreateAdminAuditLogInput) {
+	if app == nil || app.Store == nil {
+		return
+	}
+	if input.ID == "" {
+		input.ID = uuid.NewString()
+	}
+	_ = app.Store.CreateAdminAuditLog(ctx, input)
+}
+
 func mustJSONBytes(payload any) []byte {
 	if payload == nil {
 		return nil
@@ -36,4 +46,8 @@ func auditStringPtr(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+func stringPtr(value string) *string {
+	return auditStringPtr(value)
 }

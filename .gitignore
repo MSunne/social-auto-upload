@@ -43,6 +43,7 @@ htmlcov/
 .coverage
 .coverage.*
 .cache
+omnidrive_cloud/.gocache/
 nosetests.xml
 coverage.xml
 *.cover
@@ -189,3 +190,6 @@ uploadFile
 videoFile
 .codex_tmp
 
+# OmniDrive runtime data
+omnidrive_cloud/data/
+omnidrive_cloud/data-smoke/

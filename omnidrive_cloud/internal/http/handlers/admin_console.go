@@ -41,6 +41,9 @@ func (h *AdminConsoleHandler) ListUsers(w http.ResponseWriter, r *http.Request) 
 		render.Error(w, http.StatusInternalServerError, "Failed to load admin users")
 		return
 	}
+	for index := range items {
+		h.decorateAdminUserRow(&items[index])
+	}
 
 	renderAdminList(w, page, total, items, nil, map[string]any{
 		"query":         strings.TrimSpace(r.URL.Query().Get("query")),
@@ -63,6 +66,9 @@ func (h *AdminConsoleHandler) ListDevices(w http.ResponseWriter, r *http.Request
 		render.Error(w, http.StatusInternalServerError, "Failed to load admin devices")
 		return
 	}
+	for index := range items {
+		h.decorateAdminDeviceRow(&items[index])
+	}
 
 	renderAdminList(w, page, total, items, nil, map[string]any{
 		"query":         strings.TrimSpace(r.URL.Query().Get("query")),
@@ -72,14 +78,21 @@ func (h *AdminConsoleHandler) ListDevices(w http.ResponseWriter, r *http.Request
 }
 
 func (h *AdminConsoleHandler) ListPricingPackages(w http.ResponseWriter, r *http.Request) {
-	items, err := h.app.Store.ListBillingPackages(r.Context())
+	items, err := h.app.Store.ListAdminBillingPackages(r.Context())
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load pricing packages")
 		return
 	}
+	enabledCount := 0
+	for _, item := range items {
+		if item.IsEnabled {
+			enabledCount++
+		}
+	}
 	page := adminPageQuery{Page: 1, PageSize: max(1, len(items))}
 	renderAdminList(w, page, int64(len(items)), items, map[string]any{
-		"enabledCount": len(items),
+		"enabledCount":  enabledCount,
+		"disabledCount": len(items) - enabledCount,
 	}, nil)
 }
 
@@ -140,6 +153,35 @@ func (h *AdminConsoleHandler) ListWalletLedgers(w http.ResponseWriter, r *http.R
 	})
 }
 
+func (h *AdminConsoleHandler) ListUsageEvents(w http.ResponseWriter, r *http.Request) {
+	page := parseAdminPageQuery(r)
+	items, total, summary, err := h.app.Store.ListAdminBillingUsageEvents(r.Context(), store.AdminBillingUsageEventListFilter{
+		Query:      strings.TrimSpace(r.URL.Query().Get("query")),
+		SourceType: strings.TrimSpace(r.URL.Query().Get("sourceType")),
+		MeterCode:  strings.TrimSpace(r.URL.Query().Get("meterCode")),
+		BillStatus: strings.TrimSpace(r.URL.Query().Get("billStatus")),
+		JobType:    strings.TrimSpace(r.URL.Query().Get("jobType")),
+		ModelName:  strings.TrimSpace(r.URL.Query().Get("modelName")),
+		AdminPageFilter: store.AdminPageFilter{
+			Page:     page.Page,
+			PageSize: page.PageSize,
+		},
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load billing usage events")
+		return
+	}
+
+	renderAdminList(w, page, total, items, summary, map[string]any{
+		"query":      strings.TrimSpace(r.URL.Query().Get("query")),
+		"sourceType": strings.TrimSpace(r.URL.Query().Get("sourceType")),
+		"meterCode":  strings.TrimSpace(r.URL.Query().Get("meterCode")),
+		"billStatus": strings.TrimSpace(r.URL.Query().Get("billStatus")),
+		"jobType":    strings.TrimSpace(r.URL.Query().Get("jobType")),
+		"modelName":  strings.TrimSpace(r.URL.Query().Get("modelName")),
+	})
+}
+
 func (h *AdminConsoleHandler) ListSupportRecharges(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	requestedStatus := strings.TrimSpace(r.URL.Query().Get("status"))
@@ -181,7 +223,7 @@ func (h *AdminConsoleHandler) ListSupportRecharges(w http.ResponseWriter, r *htt
 		CreditedCount:             orderSummary.PaidOrderCount,
 		TotalRequestedAmountCents: orderSummary.TotalAmountCents,
 		TotalBaseCredits:          orderSummary.TotalCreditAmount,
-		TotalBonusCredits:         0,
+		TotalBonusCredits:         orderSummary.TotalBonusCreditAmount,
 	}
 
 	renderAdminList(w, page, total, items, summary, map[string]any{
@@ -189,41 +231,6 @@ func (h *AdminConsoleHandler) ListSupportRecharges(w http.ResponseWriter, r *htt
 		"status":        requestedStatus,
 		"statusOptions": []string{"awaiting_submission", "pending_review", "credited", "rejected"},
 	})
-}
-
-func (h *AdminConsoleHandler) ListDistributionRelations(w http.ResponseWriter, r *http.Request) {
-	page := parseAdminPageQuery(r)
-	renderAdminList(w, page, 0, []domain.AdminDistributionRelationRow{}, map[string]any{
-		"enabled": false,
-		"phase":   "schema_pending",
-	}, nil)
-}
-
-func (h *AdminConsoleHandler) ListDistributionCommissions(w http.ResponseWriter, r *http.Request) {
-	page := parseAdminPageQuery(r)
-	renderAdminList(w, page, 0, []domain.AdminCommissionRow{}, map[string]any{
-		"pendingConsumeAmountCents":    0,
-		"pendingSettlementAmountCents": 0,
-		"settledAmountCents":           0,
-		"enabled":                      false,
-		"phase":                        "schema_pending",
-	}, nil)
-}
-
-func (h *AdminConsoleHandler) ListDistributionSettlements(w http.ResponseWriter, r *http.Request) {
-	page := parseAdminPageQuery(r)
-	renderAdminList(w, page, 0, []domain.AdminSettlementRow{}, map[string]any{
-		"enabled": false,
-		"phase":   "schema_pending",
-	}, nil)
-}
-
-func (h *AdminConsoleHandler) ListWithdrawals(w http.ResponseWriter, r *http.Request) {
-	page := parseAdminPageQuery(r)
-	renderAdminList(w, page, 0, []domain.AdminWithdrawalRow{}, map[string]any{
-		"enabled": false,
-		"phase":   "schema_pending",
-	}, nil)
 }
 
 func (h *AdminConsoleHandler) ListAudits(w http.ResponseWriter, r *http.Request) {

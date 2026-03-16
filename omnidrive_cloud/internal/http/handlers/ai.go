@@ -115,6 +115,16 @@ func (h *AIHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 func (h *AIHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 
+	settings, err := loadEffectiveAdminSystemSettings(r.Context(), h.app)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load AI configuration")
+		return
+	}
+	if !settings.AIWorkerEnabled {
+		render.Error(w, http.StatusServiceUnavailable, "AI worker is currently disabled by admin configuration")
+		return
+	}
+
 	var payload createAIJobRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
 		render.Error(w, http.StatusBadRequest, err.Error())
@@ -281,15 +291,25 @@ func (h *AIHandler) WorkspaceJob(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to load linked publish tasks")
 		return
 	}
+	billingUsageEvents, err := h.app.Store.ListBillingUsageEventsByUser(r.Context(), user.ID, store.BillingUsageEventListFilter{
+		SourceType: "ai_job",
+		SourceID:   job.ID,
+		Limit:      50,
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load billing usage events")
+		return
+	}
 
 	render.JSON(w, http.StatusOK, domain.AIJobWorkspace{
-		Job:          *job,
-		Model:        model,
-		Skill:        skill,
-		Artifacts:    artifacts,
-		PublishTasks: publishTasks,
-		Bridge:       buildAIJobBridgeState(job, artifacts, publishTasks),
-		Actions:      computeAIJobActions(job, len(artifacts)),
+		Job:                *job,
+		Model:              model,
+		Skill:              skill,
+		Artifacts:          artifacts,
+		PublishTasks:       publishTasks,
+		BillingUsageEvents: billingUsageEvents,
+		Bridge:             buildAIJobBridgeState(job, artifacts, publishTasks),
+		Actions:            computeAIJobActions(job, len(artifacts)),
 	})
 }
 

@@ -25,7 +25,11 @@ func RequireAdmin(app *appstate.App) func(http.Handler) http.Handler {
 				return
 			}
 
-			admin := app.ResolveAdminIdentity(subject)
+			admin, err := app.ResolveAdminIdentity(r.Context(), subject)
+			if err != nil {
+				render.Error(w, http.StatusInternalServerError, "Failed to resolve admin identity")
+				return
+			}
 			if admin == nil {
 				render.Error(w, http.StatusUnauthorized, "Admin not found")
 				return

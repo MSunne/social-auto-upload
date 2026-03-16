@@ -2,552 +2,397 @@
 
 ## Goal
 
-Build `OmniDriveAdmin` as the internal operations and finance console for the OmniDrive ecosystem.
+Build an internal admin system for `OmniDrive` that supports:
 
-It is not the same product as:
+- user operations and risk control
+- OmniBull device operations
+- media account and publish-task support workflows
+- AI job inspection and manual intervention
+- package, order, wallet, and manual top-up operations
+- distribution commission lifecycle management
+- admin auth, RBAC, audit logs, and system configuration
 
-- `omnidrive_frontend`: customer-facing cloud console
-- `sau_frontend`: local OmniBull / SAU console
+This admin system is for internal operators, finance staff, customer support, and administrators.
 
-`OmniDriveAdmin` is for internal roles:
+## Product Boundary
 
-- super admin
-- operations
-- customer support
-- finance
-- audit / compliance
-- engineering support
+`OmniDrive`
 
-The admin backend should live in the existing Go service `omnidrive_cloud`, exposed under a separate route group:
+- end-user cloud console
+- users manage their own devices, skills, AI jobs, accounts, and publish tasks
 
-- `/api/admin/v1/*`
+`OmniDriveAdmin`
 
-This keeps all domain data in one service, but separates:
+- internal management console
+- admins manage users, money, orders, commissions, audits, and exception handling
 
-- customer APIs
-- agent APIs
-- admin APIs
+## Recommended Architecture
 
-## Core Principles
+### Backend
 
-1. All financial mutations must be ledger-based.
-2. All review flows must be ticket-based.
-3. All admin actions must be auditable.
-4. All settlement flows must be idempotent.
-5. Admin permissions must be role-based, not hardcoded.
-6. Customer-facing data and admin-only data must be clearly separated.
+- reuse `omnidrive_cloud` as the admin backend foundation
+- extend current API with `/api/admin/v1/*`
+- reuse PostgreSQL as the system of record
+- reuse the same JWT system, but add admin identity and RBAC
+- reuse S3 object storage for evidence, vouchers, and settlement exports
 
-## Admin Scope
+### Frontend
 
-### 1. Admin Auth And RBAC
+- new project directory: `omnidrive_admin_frontend`
+- Next.js App Router
+- React 19
+- TypeScript
+- Tailwind CSS v4
+- TanStack Query
+- axios
+- zustand
 
-Required capabilities:
+## Roles
 
-- admin login
-- admin user management
-- role management
-- permission matrix
-- token/session invalidation
-- operation audit log
+- `super_admin`
+  - full access
+- `ops_admin`
+  - user, device, task, and skill operations
+- `finance_admin`
+  - orders, wallet, manual top-up, commission settlement, withdrawals
+- `support_admin`
+  - customer support, device troubleshooting, account login issues
+- `review_admin`
+  - manual top-up review, withdrawal review, exception review
+- `audit_admin`
+  - read-only access to audit logs and finance evidence
 
-Recommended backend entities:
+## Phase Plan
 
-- `admin_users`
-- `admin_roles`
-- `admin_permissions`
-- `admin_role_permissions`
-- `admin_user_roles`
-- `admin_sessions`
-- `admin_audit_logs`
+### Phase 0: Foundation
 
-###+ Suggested Permissions
+Goal:
 
-- `user.read`
-- `user.update`
-- `user.freeze`
-- `device.read`
-- `device.update`
-- `task.read`
-- `task.operate`
-- `finance.read`
-- `finance.adjust`
-- `support_recharge.review`
-- `distribution.read`
-- `distribution.settle`
-- `withdrawal.review`
-- `system.config`
-- `admin.manage`
+- establish admin frontend project
+- define admin backend scope and route map
+- define admin roles and permission matrix
+- define new database tables and status enums
 
-### 2. User Management
+Backend tasks:
 
-Required capabilities:
+- add admin auth model on top of current `users`
+- define RBAC middleware for `/api/admin/v1/*`
+- define audit-event extension strategy
+- define finance/distribution/manual-top-up schema
+- normalize environment variable strategy for database, S3, AI provider, and payment config
 
-- list/search/filter users
-- view user profile and current status
-- inspect wallet, recharge, consume, refund totals
-- inspect related devices, accounts, tasks, AI jobs
-- freeze user
-- disable recharge
-- disable withdrawal
-- add internal notes and risk tags
+Frontend tasks:
 
-Recommended additions:
+- create `omnidrive_admin_frontend`
+- establish route groups and layout shell
+- create Claude handoff doc with page map and UI expectations
 
-- `user_internal_notes`
-- `user_risk_flags`
+Exit criteria:
 
-### 3. Device Management
+- admin route namespace decided
+- table list decided
+- permission matrix decided
+- frontend skeleton created
 
-Required capabilities:
+### Phase 1: Core Admin Backbone
 
-- list all OmniBull devices
-- inspect heartbeat and online status
-- inspect runtime payload
-- inspect related tasks and accounts
-- claim / unbind support actions
-- enable / disable device
-- force release stuck task lease
-- inspect skill sync drift
+Goal:
 
-This mostly reuses current domain data and admin endpoints will aggregate it.
+- deliver the minimum internal admin workflows required to operate the platform safely
 
-### 4. Media Account And Publish Task Management
+Modules:
 
-Required capabilities:
+1. Admin auth and RBAC
+2. Dashboard overview
+3. User management
+4. Device management
+5. Account management
+6. Publish-task management
+7. Audit log
 
-- list platform accounts across all users
-- inspect login sessions and verification history
-- inspect publish tasks globally
-- view task evidence, screenshot, logs, materials, runtime
-- cancel / retry / force release / manual resolve
-- filter by platform, status, user, device, account
+Backend tasks:
 
-This can reuse the current task/account domain but needs admin-level list and detail endpoints.
+- add admin login/session APIs
+- add admin list/detail APIs for users, devices, accounts, publish tasks
+- add user freeze/disable operations
+- add device enable/disable and force-release operations
+- add task retry/cancel/manual-resolve admin operations
+- add admin-only search and filters
+- write audit logs for every admin mutation
 
-### 5. AI Job Management
+Exit criteria:
 
-Required capabilities:
+- internal team can inspect and intervene in user/device/task issues
+- all admin mutations leave audit records
 
-- list all AI jobs
-- inspect model, source, owner, cost, output artifacts
-- cancel / retry failed jobs
-- inspect provider errors
-- inspect S3 artifact storage state
+### Phase 2: Finance and Manual Top-Up
 
-This also depends on the separate AI executor work becoming real.
+Goal:
 
-### 6. Skill And Model Management
+- make recharge and wallet operations controllable by finance and support
 
-Required capabilities:
+Modules:
 
-- inspect all user skills
-- inspect asset files and storage keys
-- disable bad or risky skills
-- inspect model registry
-- enable / disable model
-- adjust default model selection
-- manage provider configuration visibility and health state
+1. package management
+2. order management
+3. wallet ledger
+4. support recharge review
 
-Recommended additions:
+Backend tasks:
 
-- `provider_configs`
-- `provider_health_checks`
-- `model_cost_rules`
+- add package CRUD APIs
+- add payment-order query and detail APIs
+- add support recharge application table and APIs
+- add support recharge approval/reject/revoke workflow
+- add gifted-credit fields and separate ledger reasons
+- enforce idempotent balance mutations
+- keep review evidence and operator notes
 
-### 7. Recharge, Orders, Wallet, Finance
-
-Required capabilities:
-
-- package management
-- payment order management
-- wallet ledger inspection
-- compensation / manual adjustment flow
-- refund support
-- reconciliation views
-
-Recommended backend entities:
-
-- `payment_orders`
-- `payment_callbacks`
-- `wallet_adjustment_requests`
-- `finance_reconciliation_runs`
-
-### 8. Support Recharge Review
-
-This is a first-class admin module.
-
-Business rules:
-
-- supported channels: Alipay, WeChat, Support
-- support recharge can include bonus credits
-- support recharge must be reviewed before crediting user wallet
-- every review must be auditable
-- duplicate crediting must be prevented
-
-Recommended backend entities:
-
-- `support_recharge_requests`
-- `support_recharge_reviews`
-- `support_recharge_attachments`
-
-Suggested status flow:
+Recommended support recharge statuses:
 
 - `pending_review`
 - `approved`
 - `rejected`
 - `credited`
-- `cancelled`
+- `revoked`
 
-Required fields:
+Exit criteria:
 
-- target user
-- amount
-- base credits
-- bonus credits
-- payment proof
-- submitter
-- reviewer
-- review note
-- credited ledger id
+- manual customer-service recharge is reviewable, traceable, and idempotent
+- wallet changes are fully traceable to order or review records
 
-### 9. Distribution / Referral / Commission
+### Phase 3: Distribution and Commission
 
-This is another first-class admin module.
+Goal:
 
-Business rules from current requirements:
+- support affiliate/distribution revenue sharing with deferred settlement
 
-- promoter receives a percentage of invited user recharge amount
-- commission is not instantly available
-- invited user recharge creates a commission record in `pending_consume`
-- only user consumption releases commission into `pending_settlement`
-- settlement moves commission into `settled`
-- settled amount may later be withdrawn or already paid manually
+Modules:
 
-Recommended backend entities:
+1. distributor management
+2. referral relationship management
+3. commission detail
+4. settlement management
+5. withdrawal management
 
-- `distributor_profiles`
-- `referral_relations`
-- `commission_rules`
-- `commission_ledger`
-- `commission_settlement_batches`
-- `commission_settlement_items`
-- `withdrawal_requests`
-- `withdrawal_reviews`
+Backend tasks:
 
-Commission ledger statuses:
+- add distributor profile and referral binding model
+- add commission rule model
+- add recharge-to-commission projection logic
+- add consumption-to-commission release logic
+- add settlement batch model
+- add withdrawal request model
+- add commission summary endpoints
+
+Required commission lifecycle:
 
 - `pending_consume`
+  - user paid, but did not consume yet
 - `pending_settlement`
+  - user consumed, commission confirmed, not settled yet
 - `settled`
-- `voided`
+  - settled to distributor
 
-Required admin capabilities:
+Exit criteria:
 
-- manage referral relation validity
-- inspect downstream invited users
-- inspect recharge-triggered commission rows
-- inspect consumption-triggered released commission
-- inspect settlement batches
-- inspect withdrawal status
+- finance can track pending-consume, pending-settlement, and settled amounts
+- each commission item can be traced back to recharge and consumption records
 
-### 10. Withdrawal And Settlement
-
-If promoters can withdraw cash, admin must support:
-
-- list withdrawal requests
-- review approve / reject
-- mark paid
-- attach payment proof
-- handle manual offline settlement
-
-If the product starts with manual settlement only, keep the same module but limit payout modes to:
-
-- offline bank transfer
-- manual Alipay
-- manual WeChat
-
-### 11. Audit And Operations
-
-Required capabilities:
-
-- inspect admin audit logs
-- inspect support recharge reviews
-- inspect commission settlement actions
-- inspect wallet adjustments
-- inspect risky mutations
-
-All admin write endpoints must log:
-
-- operator
-- resource type
-- resource id
-- before snapshot
-- after snapshot
-- action
-- reason
-- request id
-
-## Delivery Phases
-
-### Phase 0. Foundation
+### Phase 4: AI / Skill / Provider Operations
 
 Goal:
 
-- create admin route group
-- create admin auth and RBAC
-- create admin audit log framework
-- align storage to real S3 usage
-- align environment variable strategy
+- enable internal operation of AI production pipelines
 
-Deliverables:
+Modules:
 
-- `/api/admin/v1/auth/login`
-- `/api/admin/v1/me`
-- `/api/admin/v1/admin-users`
-- `/api/admin/v1/roles`
-- admin JWT middleware
-- permission middleware
-- audit logging helper
-- S3 storage implementation replacing local-only object storage
+1. AI model management
+2. AI provider configuration
+3. AI job review and retry
+4. skill template and platform policy operations
 
-Blockers removed:
+Backend tasks:
 
-- finance and settlement flows can now be safely implemented
+- add provider config model or config registry abstraction
+- add model enable/disable and pricing config
+- add AI job retry/cancel/manual-fix APIs
+- add cloud skill templates and internal visibility controls
+- add provider health and quota monitoring views
 
-### Phase 1. Finance Core
+Exit criteria:
 
-Goal:
+- ops team can manage model availability and recover failed AI jobs
 
-- build ledger-safe finance base
-
-Deliverables:
-
-- payment orders
-- wallet ledger admin views
-- recharge package management
-- support recharge request + review flow
-- manual adjustment flow
-
-Admin route groups:
-
-- `/api/admin/v1/packages`
-- `/api/admin/v1/orders`
-- `/api/admin/v1/wallet-ledgers`
-- `/api/admin/v1/support-recharges`
-
-### Phase 2. Distribution And Settlement
+### Phase 5: Reports and Production Hardening
 
 Goal:
 
-- implement distributor, commission, settlement, withdrawal
+- make the admin system ready for long-term operation
 
-Deliverables:
+Modules:
 
-- referral relation management
-- commission rule management
-- commission ledger generation hooks
-- settlement batch flow
-- withdrawal review flow
+1. reporting and export
+2. reconciliation
+3. alert center
+4. security hardening
 
-Admin route groups:
+Backend tasks:
 
-- `/api/admin/v1/distribution/relations`
-- `/api/admin/v1/distribution/rules`
-- `/api/admin/v1/distribution/commissions`
-- `/api/admin/v1/distribution/settlements`
-- `/api/admin/v1/withdrawals`
+- add daily finance reports and settlement exports
+- add payment reconciliation job
+- add anomaly alerts for devices, tasks, AI jobs, and payments
+- add stricter audit queries and retention policy
+- replace schema auto-create with migrations
+- add integration tests for money-moving workflows
 
-### Phase 3. Operations Domain
+Exit criteria:
 
-Goal:
+- admin system is safe for production finance and support workflows
 
-- build user, device, account, task, AI admin views and controls
+## Backend Functional Map
 
-Deliverables:
+### 1. Dashboard
 
-- admin user list/detail
-- admin device list/detail
-- admin account list/detail
-- admin publish task center
-- admin AI job center
+- summary cards
+- exception counters
+- finance and commission snapshots
+- pending review queues
 
-Admin route groups:
+### 2. User Management
 
-- `/api/admin/v1/users`
-- `/api/admin/v1/devices`
-- `/api/admin/v1/accounts`
-- `/api/admin/v1/publish-tasks`
-- `/api/admin/v1/ai-jobs`
+- list/detail/search
+- status control
+- wallet snapshot
+- device/task/account linkage
+- operator notes
 
-### Phase 4. Model, Skill, And Provider Ops
+### 3. Device Management
 
-Goal:
+- list/detail/search
+- online/offline status
+- sync-state inspection
+- force disable
+- stuck-task lease release
 
-- give internal team model and skill governance
+### 4. Media Account and Publish Task Support
 
-Deliverables:
+- account list/detail
+- login session inspection
+- publish task detail, artifact, evidence, readiness
+- manual resolve/retry/cancel
 
-- skill moderation endpoints
-- model registry management
-- provider health views
-- system config center
-
-Admin route groups:
-
-- `/api/admin/v1/skills`
-- `/api/admin/v1/models`
-- `/api/admin/v1/providers`
-- `/api/admin/v1/system-config`
-
-### Phase 5. Reporting And Reconciliation
-
-Goal:
-
-- support finance and management reporting
-
-Deliverables:
-
-- daily revenue dashboard
-- commission dashboard
-- support recharge dashboard
-- reconciliation jobs and reports
-- export APIs
-
-## Backend Work Breakdown
-
-### A. New Route Group
-
-- add admin router group in `omnidrive_cloud/internal/http/router.go`
-- add admin auth middleware
-- add role/permission middleware
-
-### B. New Domain Models
-
-- admin identity models
-- finance order models
-- support recharge models
-- distribution and settlement models
-- withdrawal models
-
-### C. New Store Layer
-
-- `internal/store/admin_users.go`
-- `internal/store/admin_roles.go`
-- `internal/store/payment_orders.go`
-- `internal/store/support_recharges.go`
-- `internal/store/distribution.go`
-- `internal/store/withdrawals.go`
-
-### D. New Handlers
-
-- `internal/http/handlers/admin_auth.go`
-- `internal/http/handlers/admin_users.go`
-- `internal/http/handlers/admin_finance.go`
-- `internal/http/handlers/admin_support_recharges.go`
-- `internal/http/handlers/admin_distribution.go`
-- `internal/http/handlers/admin_withdrawals.go`
-
-### E. Database Schema Expansion
-
-Add tables in the bootstrap schema first, then migrate to explicit migration files.
-
-Priority additions:
-
-- admin identity tables
-- support recharge tables
-- payment order tables
-- commission tables
-- settlement tables
-- withdrawal tables
-
-### F. Event And Ledger Hooks
-
-Need hook points for:
-
-- payment success -> wallet credit
-- wallet consume -> commission release
-- support recharge approve -> wallet credit
-- settlement complete -> commission status update
-- withdrawal pay -> withdrawal status update
-
-These must be idempotent.
-
-## Milestone Plan
-
-### Milestone 1
-
-- admin auth
-- RBAC
-- audit log
-- S3 storage
-
-### Milestone 2
+### 5. Finance
 
 - packages
 - orders
 - wallet ledgers
-- support recharge review
+- payment anomalies
 
-### Milestone 3
+### 6. Support Recharge Review
 
-- distribution relations
-- commission ledger
-- settlements
-- withdrawals
+- application queue
+- voucher review
+- gifted credits
+- approval and rejection
+- immutable ledger trace
 
-### Milestone 4
+### 7. Distribution
 
-- users
-- devices
-- accounts
-- publish tasks
-- AI jobs
+- distributors
+- invited users
+- commission items
+- commission summaries
+- settlement batches
+- withdrawal requests
 
-### Milestone 5
+### 8. AI / Skills / Providers
 
-- models
-- skills
-- provider config
-- system config
-- reports
+- model list and status
+- provider config and health
+- AI job operations
+- skill template operations
 
-## Frontend Coordination
+### 9. Audit and Security
 
-The admin frontend scaffold is created in:
+- audit event search
+- admin action details
+- permission management
+- sensitive operation review
 
-- `/Volumes/mud/project/github/social-auto-upload/OmniDriveAdmin`
+### 10. System Configuration
 
-This frontend is intentionally separate from:
+- defaults
+- business rules
+- payment channel switches
+- settlement thresholds
+- risk-control toggles
 
-- `/Volumes/mud/project/github/social-auto-upload/omnidrive_frontend`
+## Suggested Database Additions
 
-Claude can build UI independently without blocking backend implementation.
+### Admin and RBAC
 
-Suggested frontend route map:
+- `admin_users`
+- `admin_roles`
+- `admin_role_bindings`
+- `admin_permission_bindings`
 
-- `/dashboard`
-- `/users`
-- `/devices`
-- `/media-accounts`
-- `/publish-tasks`
-- `/ai-jobs`
-- `/skills`
-- `/pricing`
-- `/orders`
-- `/wallet-ledgers`
-- `/support-recharges`
-- `/distribution/relations`
-- `/distribution/commissions`
-- `/distribution/settlements`
-- `/withdrawals`
-- `/audits`
-- `/settings`
-- `/admins`
+### Finance
 
-## Immediate Next Steps
+- `payment_orders`
+- `support_recharge_requests`
+- `support_recharge_vouchers`
 
-1. Finish real S3 storage integration.
-2. Add admin auth and RBAC schema.
-3. Add support recharge schema and review APIs.
-4. Add distribution and commission schema.
-5. Add admin frontend API contract for Claude.
+### Distribution
+
+- `distributors`
+- `distribution_referrals`
+- `distribution_rules`
+- `distribution_commission_items`
+- `distribution_settlement_batches`
+- `distribution_settlement_items`
+- `withdrawal_requests`
+
+### Audit
+
+- extend `audit_events` usage
+- optionally add `admin_operation_logs` if finance-grade separation is needed
+
+## API Namespace Suggestion
+
+- `/api/admin/v1/auth/*`
+- `/api/admin/v1/dashboard/*`
+- `/api/admin/v1/users/*`
+- `/api/admin/v1/devices/*`
+- `/api/admin/v1/accounts/*`
+- `/api/admin/v1/publish-tasks/*`
+- `/api/admin/v1/ai/*`
+- `/api/admin/v1/skills/*`
+- `/api/admin/v1/packages/*`
+- `/api/admin/v1/orders/*`
+- `/api/admin/v1/wallet/*`
+- `/api/admin/v1/support-recharges/*`
+- `/api/admin/v1/distribution/*`
+- `/api/admin/v1/withdrawals/*`
+- `/api/admin/v1/audits/*`
+- `/api/admin/v1/settings/*`
+- `/api/admin/v1/admins/*`
+
+## Recommended Build Order
+
+1. S3 and storage unification in `omnidrive_cloud`
+2. admin auth + RBAC + audit foundation
+3. support recharge workflow
+4. distribution commission lifecycle
+5. package/order/wallet admin APIs
+6. user/device/task admin APIs
+7. AI/provider admin APIs
+8. reporting and reconciliation
+
+## Coordination Notes
+
+- backend should expose stable enums before Claude starts deep UI work
+- finance and commission modules should be modeled as documents, not only computed totals
+- every balance mutation must be idempotent
+- every review and settlement action must be auditable
+- admin frontend should remain independent from the end-user frontend to keep permissions, layout, and deployment clean

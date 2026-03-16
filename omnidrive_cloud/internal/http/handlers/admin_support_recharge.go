@@ -78,6 +78,16 @@ func lookupSupportRechargeInt64(payload map[string]any, parents ...string) *int6
 	}
 }
 
+func resolveSupportRechargeBonusCredits(order domain.RechargeOrder, payload map[string]any) int64 {
+	if order.ManualBonusCreditAmount > 0 {
+		return order.ManualBonusCreditAmount
+	}
+	if value := lookupSupportRechargeInt64(payload, "credits", "manualBonusCreditAmount"); value != nil {
+		return *value
+	}
+	return 0
+}
+
 func lookupSupportRechargeTime(payload map[string]any, parents ...string) *time.Time {
 	value, _ := lookupSupportRechargeValue(payload, parents...).(string)
 	trimmed := strings.TrimSpace(value)
@@ -162,6 +172,8 @@ func buildAdminSupportRechargeRow(item domain.AdminOrderRow) domain.AdminSupport
 		note = item.Order.Body
 	}
 
+	bonusCredits := resolveSupportRechargeBonusCredits(item.Order, payload)
+
 	return domain.AdminSupportRechargeRow{
 		ID:             item.Order.ID,
 		OrderNo:        item.Order.OrderNo,
@@ -170,8 +182,8 @@ func buildAdminSupportRechargeRow(item domain.AdminOrderRow) domain.AdminSupport
 		Status:         status,
 		AmountCents:    item.Order.AmountCents,
 		BaseCredits:    item.Order.CreditAmount,
-		BonusCredits:   0,
-		TotalCredits:   item.Order.CreditAmount,
+		BonusCredits:   bonusCredits,
+		TotalCredits:   item.Order.CreditAmount + bonusCredits,
 		SubmittedAt:    *submittedAt,
 		ReviewedAt:     reviewedAt,
 		CreditedAt:     creditedAt,

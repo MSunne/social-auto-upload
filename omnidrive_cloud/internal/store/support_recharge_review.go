@@ -38,7 +38,7 @@ type RejectSupportRechargeInput struct {
 func (s *Store) getRechargeOrderByIDAnyUser(ctx context.Context, orderID string) (*domain.RechargeOrder, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, order_no, user_id, package_id, package_snapshot, channel, status, subject, body, currency,
-		       amount_cents, credit_amount, payment_payload, customer_service_payload, provider_transaction_id,
+		       amount_cents, credit_amount, manual_bonus_credit_amount, payment_payload, customer_service_payload, provider_transaction_id,
 		       provider_status, expires_at, paid_at, closed_at, created_at, updated_at
 		FROM recharge_orders
 		WHERE id = $1
@@ -57,7 +57,7 @@ func (s *Store) getRechargeOrderByIDAnyUser(ctx context.Context, orderID string)
 func (s *Store) getRechargeOrderByIDAnyUserTx(ctx context.Context, tx pgx.Tx, orderID string) (*domain.RechargeOrder, error) {
 	row := tx.QueryRow(ctx, `
 		SELECT id, order_no, user_id, package_id, package_snapshot, channel, status, subject, body, currency,
-		       amount_cents, credit_amount, payment_payload, customer_service_payload, provider_transaction_id,
+		       amount_cents, credit_amount, manual_bonus_credit_amount, payment_payload, customer_service_payload, provider_transaction_id,
 		       provider_status, expires_at, paid_at, closed_at, created_at, updated_at
 		FROM recharge_orders
 		WHERE id = $1
@@ -168,6 +168,15 @@ func buildSupportRechargeGrantPlan(order *domain.RechargeOrder, now time.Time) (
 			MeterCode:   "wallet_credit",
 			GrantAmount: order.CreditAmount,
 			GrantMode:   "one_time",
+		})
+	}
+
+	if order.Channel == "manual_cs" && order.ManualBonusCreditAmount > 0 {
+		entitlements = append(entitlements, domain.BillingPackageEntitlement{
+			MeterCode:   "wallet_credit",
+			GrantAmount: order.ManualBonusCreditAmount,
+			GrantMode:   "manual_bonus",
+			Description: stringPtr("客服充值自动赠送积分"),
 		})
 	}
 
@@ -398,6 +407,10 @@ func (s *Store) CreditSupportRecharge(ctx context.Context, orderID string, input
 		&message,
 		eventPayload,
 	); err != nil {
+		return nil, err
+	}
+
+	if err := s.ensureDistributionCommissionForRechargeOrderTx(ctx, tx, order); err != nil {
 		return nil, err
 	}
 

@@ -1,14 +1,17 @@
 package handlers
 
 import (
-	"crypto/subtle"
 	"net/http"
+	"net/mail"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
 
 	appstate "omnidrive_cloud/internal/app"
-	"omnidrive_cloud/internal/domain"
 	httpcontext "omnidrive_cloud/internal/http/context"
 	"omnidrive_cloud/internal/http/render"
+	"omnidrive_cloud/internal/store"
 )
 
 type AdminAuthHandler struct {
@@ -32,26 +35,106 @@ func (h *AdminAuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	email := strings.TrimSpace(strings.ToLower(payload.Email))
-	password := payload.Password
-	configuredEmail := strings.TrimSpace(strings.ToLower(h.app.Config.AdminEmail))
-	configuredPassword := h.app.Config.AdminPassword
+	if _, err := mail.ParseAddress(email); err != nil {
+		render.Error(w, http.StatusBadRequest, "Invalid admin email")
+		return
+	}
 
-	if subtle.ConstantTimeCompare([]byte(email), []byte(configuredEmail)) != 1 ||
-		subtle.ConstantTimeCompare([]byte(password), []byte(configuredPassword)) != 1 {
+	adminWithPassword, err := h.app.Store.GetAdminUserByEmail(r.Context(), email)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to query admin user")
+		return
+	}
+	if adminWithPassword == nil || !adminWithPassword.Admin.IsActive {
+		render.Error(w, http.StatusUnauthorized, "Invalid admin credentials")
+		return
+	}
+	if err := h.app.AdminTokens.VerifyPassword(payload.Password, adminWithPassword.PasswordHash); err != nil {
 		render.Error(w, http.StatusUnauthorized, "Invalid admin credentials")
 		return
 	}
 
-	token, err := h.app.AdminTokens.IssueToken(appstate.BootstrapAdminID)
+	sessionID := uuid.NewString()
+	expiresAt := time.Now().UTC().Add(time.Duration(h.app.Config.AdminAccessTokenExpireMinutes) * time.Minute)
+	if err := h.app.Store.CreateAdminSession(r.Context(), store.CreateAdminSessionInput{
+		ID:          sessionID,
+		AdminUserID: adminWithPassword.Admin.ID,
+		IPAddress:   headerStringPtr(r.Header.Get("X-Forwarded-For")),
+		UserAgent:   headerStringPtr(r.UserAgent()),
+		ExpiresAt:   expiresAt,
+	}); err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to create admin session")
+		return
+	}
+
+	token, err := h.app.AdminTokens.IssueToken(appstate.BuildAdminSessionSubject(sessionID))
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to issue admin token")
 		return
 	}
 
+	admin, err := h.app.Store.GetAdminIdentityBySessionID(r.Context(), sessionID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load admin identity")
+		return
+	}
+	if admin == nil {
+		render.Error(w, http.StatusUnauthorized, "Admin not found")
+		return
+	}
+
+	recordAdminAuditLog(h.app, r.Context(), store.CreateAdminAuditLogInput{
+		AdminUserID:  stringPtr(admin.ID),
+		AdminEmail:   stringPtr(admin.Email),
+		AdminName:    stringPtr(admin.Name),
+		ResourceType: "admin_session",
+		ResourceID:   stringPtr(sessionID),
+		Action:       "login",
+		Title:        "管理员登录",
+		Source:       "admin_console",
+		Status:       "success",
+		Message:      auditStringPtr("管理员登录成功"),
+		Payload: mustJSONBytes(map[string]any{
+			"authMode":  admin.AuthMode,
+			"roleIds":   admin.RoleIDs,
+			"sessionId": sessionID,
+		}),
+	})
+
 	render.JSON(w, http.StatusOK, map[string]any{
 		"accessToken": token,
 		"tokenType":   "bearer",
-		"admin":       h.app.BootstrapAdminIdentity(),
+		"admin":       admin,
+	})
+}
+
+func (h *AdminAuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	admin := httpcontext.CurrentAdmin(r.Context())
+	if admin == nil || strings.TrimSpace(admin.SessionID) == "" {
+		render.Error(w, http.StatusUnauthorized, "Admin session not found")
+		return
+	}
+
+	if err := h.app.Store.RevokeAdminSession(r.Context(), admin.SessionID); err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to revoke admin session")
+		return
+	}
+
+	recordAdminAuditLog(h.app, r.Context(), store.CreateAdminAuditLogInput{
+		AdminUserID:  stringPtr(admin.ID),
+		AdminEmail:   stringPtr(admin.Email),
+		AdminName:    stringPtr(admin.Name),
+		ResourceType: "admin_session",
+		ResourceID:   stringPtr(admin.SessionID),
+		Action:       "logout",
+		Title:        "管理员登出",
+		Source:       "admin_console",
+		Status:       "success",
+		Message:      auditStringPtr("管理员已登出"),
+	})
+
+	render.JSON(w, http.StatusOK, map[string]any{
+		"success": true,
 	})
 }
 
@@ -64,30 +147,19 @@ func (h *AdminAuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, admin)
 }
 
-func (h *AdminAuthHandler) ListAdmins(w http.ResponseWriter, r *http.Request) {
-	page := parseAdminPageQuery(r)
-	admin := h.app.BootstrapAdminIdentity()
-	renderAdminList(w, page, 1, []domain.AdminIdentity{*admin}, map[string]any{
-		"authMode":  "bootstrap_env",
-		"roleCount": 1,
-	}, map[string]any{
-		"authMode": "bootstrap_env",
-	})
-}
-
 func (h *AdminAuthHandler) SystemConfig(w http.ResponseWriter, r *http.Request) {
-	configPayload := domain.AdminSystemConfig{
-		AuthMode:        "bootstrap_env",
-		AdminEmail:      h.app.Config.AdminEmail,
-		S3Configured:    h.app.Config.S3Bucket != "" && h.app.Config.S3Endpoint != "" && h.app.Config.S3AccessKey != "" && h.app.Config.S3SecretKey != "",
-		S3Endpoint:      h.app.Config.S3Endpoint,
-		S3Bucket:        h.app.Config.S3Bucket,
-		AIWorkerEnabled: h.app.Config.AIWorkerEnabled,
-		PaymentChannels: []string{"alipay", "wechatpay", "manual_cs"},
-		Notes: []string{
-			"当前管理端鉴权为 bootstrap env 模式，后续会升级为真正的 admin_users / roles / permissions 模型。",
-			"当前客服充值审核主链已经可联调，分销和提现模块仍处于 schema_pending 阶段。",
-		},
+	configPayload, err := h.buildAdminSystemConfig(r.Context())
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load system config")
+		return
 	}
 	render.JSON(w, http.StatusOK, configPayload)
+}
+
+func headerStringPtr(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
 }

@@ -82,6 +82,12 @@ type quotaLedgerPlan struct {
 	payload       []byte
 }
 
+type usageLedgerRefs struct {
+	walletLedgerIDs map[string][]string
+	quotaLedgerIDs  map[string][]string
+	quotaAccountIDs map[string][]string
+}
+
 func (s *Store) ApplyUsageBilling(ctx context.Context, input ApplyUsageBillingInput) (*ApplyUsageBillingResult, error) {
 	if strings.TrimSpace(input.UserID) == "" {
 		return nil, fmt.Errorf("user id is required")
@@ -195,14 +201,19 @@ func (s *Store) ApplyUsageBilling(ctx context.Context, input ApplyUsageBillingIn
 		return result, nil
 	}
 
-	quotaLedgerIDs := make([]string, 0, len(quotaPlans))
+	refs := usageLedgerRefs{
+		walletLedgerIDs: make(map[string][]string),
+		quotaLedgerIDs:  make(map[string][]string),
+		quotaAccountIDs: make(map[string][]string),
+	}
 	for _, plan := range quotaPlans {
 		ledgerID, err := applyQuotaLedgerPlanTx(ctx, tx, input.UserID, plan)
 		if err != nil {
 			return nil, err
 		}
+		appendMeterReference(refs.quotaAccountIDs, plan.meterCode, plan.accountID)
 		if ledgerID != "" {
-			quotaLedgerIDs = append(quotaLedgerIDs, ledgerID)
+			appendMeterReference(refs.quotaLedgerIDs, plan.meterCode, ledgerID)
 		}
 	}
 
@@ -210,7 +221,6 @@ func (s *Store) ApplyUsageBilling(ctx context.Context, input ApplyUsageBillingIn
 	if err != nil {
 		return nil, err
 	}
-	walletLedgerIDs := make([]string, 0, len(walletPlans))
 	for _, plan := range walletPlans {
 		ledgerID, nextBalance, err := applyWalletLedgerPlanTx(ctx, tx, input.UserID, currentBalance, plan, referenceType, referenceID)
 		if err != nil {
@@ -218,11 +228,15 @@ func (s *Store) ApplyUsageBilling(ctx context.Context, input ApplyUsageBillingIn
 		}
 		currentBalance = nextBalance
 		if ledgerID != "" {
-			walletLedgerIDs = append(walletLedgerIDs, ledgerID)
+			appendMeterReference(refs.walletLedgerIDs, plan.meterCode, ledgerID)
 		}
 	}
 
-	if err := insertBilledUsageEventsTx(ctx, tx, input, result.Details, walletLedgerIDs, quotaLedgerIDs); err != nil {
+	if err := s.releaseDistributionCommissionForUsageTx(ctx, tx, input.UserID, input.SourceType, input.SourceID, result.TotalCredits); err != nil {
+		return nil, err
+	}
+
+	if err := insertBilledUsageEventsTx(ctx, tx, input, result.Details, refs); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -513,33 +527,39 @@ func applyWalletLedgerPlanTx(ctx context.Context, tx pgx.Tx, userID string, curr
 	return ledgerID, nextBalance, nil
 }
 
-func insertBilledUsageEventsTx(ctx context.Context, tx pgx.Tx, input ApplyUsageBillingInput, details []UsageBillingDetail, walletLedgerIDs []string, quotaLedgerIDs []string) error {
-	var walletLedgerID *string
-	if len(walletLedgerIDs) > 0 {
-		walletLedgerID = &walletLedgerIDs[0]
-	}
-	var quotaLedgerID *string
-	if len(quotaLedgerIDs) > 0 {
-		quotaLedgerID = &quotaLedgerIDs[0]
-	}
-
+func insertBilledUsageEventsTx(ctx context.Context, tx pgx.Tx, input ApplyUsageBillingInput, details []UsageBillingDetail, refs usageLedgerRefs) error {
 	for _, detail := range details {
-		payload := mustJSONMap(map[string]any{
+		payload := map[string]any{
 			"debitedCredits": detail.DebitCredits,
 			"quantity":       detail.Quantity,
 			"units":          detail.Units,
 			"quotaUsed":      detail.QuotaUsed,
 			"chargeMode":     detail.ChargeMode,
 			"pricingRuleId":  detail.PricingRuleID,
-		})
+		}
+		if metricMetadata := metricMetadataByMeter(input.Metrics, detail.MeterCode); metricMetadata != nil {
+			payload["metricMetadata"] = metricMetadata
+		}
+		if ids := refs.walletLedgerIDs[detail.MeterCode]; len(ids) > 0 {
+			payload["walletLedgerIds"] = ids
+		}
+		if ids := refs.quotaLedgerIDs[detail.MeterCode]; len(ids) > 0 {
+			payload["quotaLedgerIds"] = ids
+		}
+		if ids := refs.quotaAccountIDs[detail.MeterCode]; len(ids) > 0 {
+			payload["quotaAccountIds"] = ids
+		}
+		walletLedgerID := firstStringPtr(refs.walletLedgerIDs[detail.MeterCode])
+		quotaLedgerID := firstStringPtr(refs.quotaLedgerIDs[detail.MeterCode])
+		quotaAccountID := firstStringPtr(refs.quotaAccountIDs[detail.MeterCode])
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO billing_usage_events (
 				id, user_id, source_type, source_id, meter_code, model_name, job_type, usage_quantity,
-				pricing_rule_id, wallet_ledger_id, quota_ledger_id, bill_status, bill_message, payload
+				pricing_rule_id, quota_account_id, wallet_ledger_id, quota_ledger_id, bill_status, bill_message, payload
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'billed', $12, $13)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'billed', $13, $14)
 		`, uuid.NewString(), input.UserID, input.SourceType, input.SourceID, detail.MeterCode, input.ModelName, input.JobType,
-			detail.Quantity, nullableString(detail.PricingRuleID), walletLedgerID, quotaLedgerID, nullableString(detail.BillMessage), payload); err != nil {
+			detail.Quantity, nullableString(detail.PricingRuleID), quotaAccountID, walletLedgerID, quotaLedgerID, nullableString(detail.BillMessage), mustJSONMap(payload)); err != nil {
 			return err
 		}
 	}
@@ -548,14 +568,17 @@ func insertBilledUsageEventsTx(ctx context.Context, tx pgx.Tx, input ApplyUsageB
 
 func insertFailedUsageEventsTx(ctx context.Context, tx pgx.Tx, input ApplyUsageBillingInput, details []UsageBillingDetail) error {
 	for _, detail := range details {
-		payload := mustJSONMap(map[string]any{
+		payload := map[string]any{
 			"debitedCredits": detail.DebitCredits,
 			"quantity":       detail.Quantity,
 			"units":          detail.Units,
 			"quotaUsed":      detail.QuotaUsed,
 			"chargeMode":     detail.ChargeMode,
 			"pricingRuleId":  detail.PricingRuleID,
-		})
+		}
+		if metricMetadata := metricMetadataByMeter(input.Metrics, detail.MeterCode); metricMetadata != nil {
+			payload["metricMetadata"] = metricMetadata
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO billing_usage_events (
 				id, user_id, source_type, source_id, meter_code, model_name, job_type, usage_quantity,
@@ -563,7 +586,7 @@ func insertFailedUsageEventsTx(ctx context.Context, tx pgx.Tx, input ApplyUsageB
 			)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'failed', $10, $11)
 		`, uuid.NewString(), input.UserID, input.SourceType, input.SourceID, detail.MeterCode, input.ModelName, input.JobType,
-			detail.Quantity, nullableString(detail.PricingRuleID), nullableString(detail.BillMessage), payload); err != nil {
+			detail.Quantity, nullableString(detail.PricingRuleID), nullableString(detail.BillMessage), mustJSONMap(payload)); err != nil {
 			return err
 		}
 	}
@@ -608,4 +631,38 @@ func nullableString(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+func appendMeterReference(target map[string][]string, meterCode string, value string) {
+	meterCode = strings.TrimSpace(meterCode)
+	value = strings.TrimSpace(value)
+	if meterCode == "" || value == "" {
+		return
+	}
+	target[meterCode] = append(target[meterCode], value)
+}
+
+func firstStringPtr(values []string) *string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return &trimmed
+		}
+	}
+	return nil
+}
+
+func metricMetadataByMeter(metrics []ApplyUsageMetricInput, meterCode string) any {
+	meterCode = strings.TrimSpace(meterCode)
+	for _, metric := range metrics {
+		if strings.TrimSpace(metric.MeterCode) != meterCode || len(metric.Metadata) == 0 {
+			continue
+		}
+		var payload any
+		if err := json.Unmarshal(metric.Metadata, &payload); err == nil {
+			return payload
+		}
+		break
+	}
+	return nil
 }

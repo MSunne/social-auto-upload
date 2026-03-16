@@ -79,28 +79,29 @@ type UpdateDeviceInput struct {
 }
 
 type CreateRechargeOrderInput struct {
-	ID                     string
-	OrderNo                string
-	UserID                 string
-	PackageID              *string
-	PackageSnapshot        []byte
-	Channel                string
-	Status                 string
-	Subject                string
-	Body                   *string
-	Currency               string
-	AmountCents            int64
-	CreditAmount           int64
-	PaymentPayload         []byte
-	CustomerServicePayload []byte
-	ProviderStatus         *string
-	ExpiresAt              *time.Time
-	TransactionID          string
-	TransactionKind        string
-	TransactionStatus      string
-	TransactionOutTradeNo  string
-	TransactionRequest     []byte
-	TransactionResponse    []byte
+	ID                      string
+	OrderNo                 string
+	UserID                  string
+	PackageID               *string
+	PackageSnapshot         []byte
+	Channel                 string
+	Status                  string
+	Subject                 string
+	Body                    *string
+	Currency                string
+	AmountCents             int64
+	CreditAmount            int64
+	ManualBonusCreditAmount int64
+	PaymentPayload          []byte
+	CustomerServicePayload  []byte
+	ProviderStatus          *string
+	ExpiresAt               *time.Time
+	TransactionID           string
+	TransactionKind         string
+	TransactionStatus       string
+	TransactionOutTradeNo   string
+	TransactionRequest      []byte
+	TransactionResponse     []byte
 }
 
 type GrantWalletCreditsInput struct {
@@ -138,6 +139,68 @@ type SubmitManualRechargeInput struct {
 	EventStatus            string
 	EventMessage           *string
 	EventPayload           []byte
+}
+
+type BillingPackageEntitlementInput struct {
+	MeterCode   string
+	GrantAmount int64
+	GrantMode   string
+	SortOrder   int
+	Description *string
+}
+
+type CreateBillingPackageInput struct {
+	ID                      string
+	Name                    string
+	PackageType             string
+	PaymentChannels         []string
+	Currency                string
+	PriceCents              int64
+	CreditAmount            int64
+	ManualBonusCreditAmount int64
+	Badge                   *string
+	Description             *string
+	PricingPayload          []byte
+	ExpiresInDays           *int32
+	IsEnabled               bool
+	SortOrder               int
+	Entitlements            []BillingPackageEntitlementInput
+}
+
+type UpdateBillingPackageInput struct {
+	Name                    *string
+	PackageType             *string
+	PaymentChannels         []string
+	PaymentChannelsTouched  bool
+	Currency                *string
+	PriceCents              *int64
+	CreditAmount            *int64
+	ManualBonusCreditAmount *int64
+	Badge                   *string
+	BadgeTouched            bool
+	Description             *string
+	DescriptionTouched      bool
+	PricingPayload          []byte
+	PricingPayloadTouched   bool
+	ExpiresInDays           *int32
+	ExpiresInDaysTouched    bool
+	IsEnabled               *bool
+	SortOrder               *int
+	Entitlements            *[]BillingPackageEntitlementInput
+}
+
+type CreateWalletAdjustmentInput struct {
+	UserID        string
+	AmountDelta   int64
+	Reason        string
+	Note          *string
+	EntryType     *string
+	ReferenceType *string
+	ReferenceID   *string
+	AdminID       string
+	AdminEmail    string
+	AdminName     string
+	Payload       []byte
 }
 
 type HeartbeatInput struct {

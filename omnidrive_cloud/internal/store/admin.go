@@ -70,6 +70,186 @@ func paidRechargeStatuses() []string {
 	return []string{"paid", "credited", "success", "completed"}
 }
 
+const adminAuditEntriesBaseQuery = `
+	WITH entries AS (
+		SELECT
+			ae.id,
+			'user'::TEXT AS actor_type,
+			ae.owner_user_id,
+			u.email AS owner_email,
+			u.name AS owner_name,
+			NULL::TEXT AS admin_id,
+			NULL::TEXT AS admin_email,
+			NULL::TEXT AS admin_name,
+			ae.resource_type,
+			ae.resource_id,
+			ae.action,
+			ae.title,
+			ae.source,
+			ae.status,
+			ae.message,
+			ae.payload,
+			ae.created_at
+		FROM audit_events ae
+		LEFT JOIN users u ON u.id = ae.owner_user_id
+		UNION ALL
+		SELECT
+			aal.id,
+			'admin'::TEXT AS actor_type,
+			NULL::TEXT AS owner_user_id,
+			NULL::TEXT AS owner_email,
+			NULL::TEXT AS owner_name,
+			COALESCE(au.id, aal.admin_user_id) AS admin_id,
+			COALESCE(au.email, aal.admin_email) AS admin_email,
+			COALESCE(au.name, aal.admin_name) AS admin_name,
+			aal.resource_type,
+			aal.resource_id,
+			aal.action,
+			aal.title,
+			aal.source,
+			aal.status,
+			aal.message,
+			aal.payload,
+			aal.created_at
+		FROM admin_audit_logs aal
+		LEFT JOIN admin_users au ON au.id = aal.admin_user_id
+	)
+`
+
+func scanAdminAuditRows(rows pgx.Rows) ([]domain.AdminAuditRow, error) {
+	defer rows.Close()
+
+	items := make([]domain.AdminAuditRow, 0)
+	for rows.Next() {
+		var item domain.AdminAuditRow
+		var actorType string
+		var payload []byte
+		var ownerID *string
+		var ownerEmail *string
+		var ownerName *string
+		var adminID *string
+		var adminEmail *string
+		var adminName *string
+		if scanErr := rows.Scan(
+			&item.ID,
+			&actorType,
+			&ownerID,
+			&ownerEmail,
+			&ownerName,
+			&adminID,
+			&adminEmail,
+			&adminName,
+			&item.ResourceType,
+			&item.ResourceID,
+			&item.Action,
+			&item.Title,
+			&item.Source,
+			&item.Status,
+			&item.Message,
+			&payload,
+			&item.CreatedAt,
+		); scanErr != nil {
+			return nil, scanErr
+		}
+		item.ActorType = actorType
+		if ownerID != nil {
+			item.OwnerUserID = *ownerID
+		}
+		item.Payload = bytesOrNil(payload)
+		if ownerID != nil && ownerEmail != nil && ownerName != nil {
+			item.OwnerUser = &domain.AdminUserSummary{
+				ID:    *ownerID,
+				Email: *ownerEmail,
+				Name:  *ownerName,
+			}
+		}
+		if adminID != nil && adminEmail != nil && adminName != nil {
+			item.Admin = &domain.AdminSummary{
+				ID:    *adminID,
+				Email: *adminEmail,
+				Name:  *adminName,
+			}
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) ListRecentAdminAuditsByUserID(ctx context.Context, userID string, limit int) ([]domain.AdminAuditRow, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.pool.Query(ctx, adminAuditEntriesBaseQuery+`
+		SELECT
+			entries.id,
+			entries.actor_type,
+			entries.owner_user_id,
+			entries.owner_email,
+			entries.owner_name,
+			entries.admin_id,
+			entries.admin_email,
+			entries.admin_name,
+			entries.resource_type,
+			entries.resource_id,
+			entries.action,
+			entries.title,
+			entries.source,
+			entries.status,
+			entries.message,
+			entries.payload,
+			entries.created_at
+		FROM entries
+		WHERE entries.owner_user_id = $1
+		   OR (entries.resource_type = 'user' AND entries.resource_id = $1)
+		ORDER BY entries.created_at DESC
+		LIMIT $2
+	`, strings.TrimSpace(userID), limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanAdminAuditRows(rows)
+}
+
+func (s *Store) ListRecentAdminAuditsByMediaAccountID(ctx context.Context, accountID string, limit int) ([]domain.AdminAuditRow, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.pool.Query(ctx, adminAuditEntriesBaseQuery+`
+		SELECT
+			entries.id,
+			entries.actor_type,
+			entries.owner_user_id,
+			entries.owner_email,
+			entries.owner_name,
+			entries.admin_id,
+			entries.admin_email,
+			entries.admin_name,
+			entries.resource_type,
+			entries.resource_id,
+			entries.action,
+			entries.title,
+			entries.source,
+			entries.status,
+			entries.message,
+			entries.payload,
+			entries.created_at
+		FROM entries
+		WHERE (
+			entries.resource_type IN ('account', 'media_account')
+			AND entries.resource_id = $1
+		) OR (
+			entries.resource_type = 'login_session'
+			AND COALESCE(entries.payload->>'accountId', '') = $1
+		)
+		ORDER BY entries.created_at DESC
+		LIMIT $2
+	`, strings.TrimSpace(accountID), limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanAdminAuditRows(rows)
+}
+
 func (s *Store) GetAdminDashboardSummary(ctx context.Context) (*domain.AdminDashboardSummary, error) {
 	summary := &domain.AdminDashboardSummary{
 		ServerTime: time.Now().UTC(),
@@ -93,7 +273,11 @@ func (s *Store) GetAdminDashboardSummary(ctx context.Context) (*domain.AdminDash
 			COALESCE((SELECT SUM(amount_cents) FROM recharge_orders WHERE paid_at IS NOT NULL OR status = ANY($1)), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM wallet_ledgers), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM recharge_orders WHERE channel = 'manual_cs' AND status = 'processing'), 0)::BIGINT,
-			COALESCE((SELECT COUNT(*) FROM recharge_orders WHERE channel = 'manual_cs'), 0)::BIGINT
+			COALESCE((SELECT COUNT(*) FROM recharge_orders WHERE channel = 'manual_cs'), 0)::BIGINT,
+			COALESCE((SELECT SUM(GREATEST(amount_cents - released_amount_cents, 0)) FROM distribution_commission_items), 0)::BIGINT,
+			COALESCE((SELECT SUM(GREATEST(released_amount_cents - settled_amount_cents, 0)) FROM distribution_commission_items), 0)::BIGINT,
+			COALESCE((SELECT SUM(settled_amount_cents) FROM distribution_commission_items), 0)::BIGINT,
+			COALESCE((SELECT SUM(amount_cents) FROM withdrawal_requests WHERE status IN ('requested', 'approved')), 0)::BIGINT
 	`, paidRechargeStatuses()).Scan(
 		&summary.Metrics.UserCount,
 		&summary.Metrics.ActiveUserCount,
@@ -112,6 +296,10 @@ func (s *Store) GetAdminDashboardSummary(ctx context.Context) (*domain.AdminDash
 		&summary.Finance.WalletLedgerCount,
 		&summary.Finance.PendingSupportRechargeCount,
 		&summary.Finance.ManualSupportRechargeCount,
+		&summary.Distribution.PendingConsumeAmountCents,
+		&summary.Distribution.PendingSettlementAmountCents,
+		&summary.Distribution.SettledAmountCents,
+		&summary.Distribution.PendingWithdrawalAmountCents,
 	)
 	if err != nil {
 		return nil, err
@@ -129,7 +317,7 @@ func (s *Store) ListAdminUsers(ctx context.Context, filter AdminUserListFilter) 
 	argIndex := 1
 
 	if query := strings.TrimSpace(filter.Query); query != "" {
-		whereParts = append(whereParts, fmt.Sprintf("(u.email ILIKE $%d OR u.name ILIKE $%d OR u.id ILIKE $%d)", argIndex, argIndex, argIndex))
+		whereParts = append(whereParts, fmt.Sprintf("(u.email ILIKE $%d OR u.name ILIKE $%d OR u.id ILIKE $%d OR COALESCE(u.notes, '') ILIKE $%d)", argIndex, argIndex, argIndex, argIndex))
 		args = append(args, ilikePattern(query))
 		argIndex++
 	}
@@ -157,13 +345,14 @@ func (s *Store) ListAdminUsers(ctx context.Context, filter AdminUserListFilter) 
 	}
 
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
-		SELECT
-			u.id,
-			u.email,
-			u.name,
-			u.is_active,
-			u.created_at,
-			u.updated_at,
+			SELECT
+				u.id,
+				u.email,
+				u.name,
+				u.is_active,
+				u.notes,
+				u.created_at,
+				u.updated_at,
 			COALESCE(bw.credit_balance, 0)::BIGINT,
 			COALESCE(bw.frozen_credit_balance, 0)::BIGINT,
 			COALESCE(ro.total_recharge_amount_cents, 0)::BIGINT,
@@ -223,11 +412,13 @@ func (s *Store) ListAdminUsers(ctx context.Context, filter AdminUserListFilter) 
 	items := make([]domain.AdminUserRow, 0)
 	for rows.Next() {
 		var item domain.AdminUserRow
+		var notes *string
 		if scanErr := rows.Scan(
 			&item.User.ID,
 			&item.User.Email,
 			&item.User.Name,
 			&item.User.IsActive,
+			&notes,
 			&item.User.CreatedAt,
 			&item.User.UpdatedAt,
 			&item.Billing.CreditBalance,
@@ -242,6 +433,7 @@ func (s *Store) ListAdminUsers(ctx context.Context, filter AdminUserListFilter) 
 		); scanErr != nil {
 			return nil, 0, scanErr
 		}
+		item.Notes = notes
 		items = append(items, item)
 	}
 	return items, total, rows.Err()
@@ -402,6 +594,7 @@ func (s *Store) ListAdminOrders(ctx context.Context, filter AdminOrderListFilter
 			COUNT(*)::BIGINT,
 			COALESCE(SUM(ro.amount_cents), 0)::BIGINT,
 			COALESCE(SUM(ro.credit_amount), 0)::BIGINT,
+			COALESCE(SUM(ro.manual_bonus_credit_amount), 0)::BIGINT,
 			COUNT(*) FILTER (WHERE ro.paid_at IS NOT NULL OR ro.status = ANY($1))::BIGINT,
 			COUNT(*) FILTER (WHERE ro.status = 'awaiting_manual_review')::BIGINT,
 			COUNT(*) FILTER (WHERE ro.status = 'pending_payment')::BIGINT,
@@ -415,6 +608,7 @@ func (s *Store) ListAdminOrders(ctx context.Context, filter AdminOrderListFilter
 		&summary.TotalOrderCount,
 		&summary.TotalAmountCents,
 		&summary.TotalCreditAmount,
+		&summary.TotalBonusCreditAmount,
 		&summary.PaidOrderCount,
 		&summary.AwaitingManualReviewCount,
 		&summary.PendingPaymentCount,
@@ -428,7 +622,7 @@ func (s *Store) ListAdminOrders(ctx context.Context, filter AdminOrderListFilter
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT
 			ro.id, ro.order_no, ro.user_id, ro.package_id, ro.package_snapshot, ro.channel, ro.status, ro.subject, ro.body,
-			ro.currency, ro.amount_cents, ro.credit_amount, ro.payment_payload, ro.customer_service_payload,
+			ro.currency, ro.amount_cents, ro.credit_amount, ro.manual_bonus_credit_amount, ro.payment_payload, ro.customer_service_payload,
 			ro.provider_transaction_id, ro.provider_status, ro.expires_at, ro.paid_at, ro.closed_at, ro.created_at, ro.updated_at,
 			u.id, u.email, u.name
 		FROM recharge_orders ro
@@ -468,6 +662,7 @@ func (s *Store) ListAdminOrders(ctx context.Context, filter AdminOrderListFilter
 			&item.Order.Currency,
 			&item.Order.AmountCents,
 			&item.Order.CreditAmount,
+			&item.Order.ManualBonusCreditAmount,
 			&paymentPayload,
 			&customerServicePayload,
 			&providerTransactionID,
@@ -616,91 +811,79 @@ func (s *Store) ListAdminAudits(ctx context.Context, filter AdminAuditListFilter
 	argIndex := 1
 
 	if query := strings.TrimSpace(filter.Query); query != "" {
-		whereParts = append(whereParts, fmt.Sprintf("(ae.title ILIKE $%d OR ae.action ILIKE $%d OR ae.source ILIKE $%d OR COALESCE(ae.message, '') ILIKE $%d OR u.email ILIKE $%d OR u.name ILIKE $%d)", argIndex, argIndex, argIndex, argIndex, argIndex, argIndex))
+		whereParts = append(whereParts, fmt.Sprintf(`(
+			entries.title ILIKE $%d OR
+			entries.action ILIKE $%d OR
+			entries.source ILIKE $%d OR
+			COALESCE(entries.message, '') ILIKE $%d OR
+			COALESCE(entries.owner_email, '') ILIKE $%d OR
+			COALESCE(entries.owner_name, '') ILIKE $%d OR
+			COALESCE(entries.admin_email, '') ILIKE $%d OR
+			COALESCE(entries.admin_name, '') ILIKE $%d
+		)`, argIndex, argIndex, argIndex, argIndex, argIndex, argIndex, argIndex, argIndex))
 		args = append(args, ilikePattern(query))
 		argIndex++
 	}
 	if resourceType := strings.TrimSpace(filter.ResourceType); resourceType != "" {
-		whereParts = append(whereParts, fmt.Sprintf("ae.resource_type = $%d", argIndex))
+		whereParts = append(whereParts, fmt.Sprintf("entries.resource_type = $%d", argIndex))
 		args = append(args, resourceType)
 		argIndex++
 	}
 	if status := strings.TrimSpace(filter.Status); status != "" {
-		whereParts = append(whereParts, fmt.Sprintf("ae.status = $%d", argIndex))
+		whereParts = append(whereParts, fmt.Sprintf("entries.status = $%d", argIndex))
 		args = append(args, status)
 		argIndex++
 	}
 
 	whereClause := "WHERE " + strings.Join(whereParts, " AND ")
+	baseQuery := adminAuditEntriesBaseQuery
 
 	var total int64
-	if err := s.pool.QueryRow(ctx, fmt.Sprintf(`
-		SELECT COUNT(*)
-		FROM audit_events ae
-		LEFT JOIN users u ON u.id = ae.owner_user_id
-		%s
-	`, whereClause), args...).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, baseQuery+`
+		SELECT COUNT(*)::BIGINT
+		FROM entries
+		`+whereClause, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
-	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
+	rows, err := s.pool.Query(ctx, baseQuery+fmt.Sprintf(`
 		SELECT
-			ae.id, ae.owner_user_id, ae.resource_type, ae.resource_id, ae.action, ae.title, ae.source, ae.status,
-			ae.message, ae.payload, ae.created_at,
-			u.id, u.email, u.name
-		FROM audit_events ae
-		LEFT JOIN users u ON u.id = ae.owner_user_id
+			entries.id,
+			entries.actor_type,
+			entries.owner_user_id,
+			entries.owner_email,
+			entries.owner_name,
+			entries.admin_id,
+			entries.admin_email,
+			entries.admin_name,
+			entries.resource_type,
+			entries.resource_id,
+			entries.action,
+			entries.title,
+			entries.source,
+			entries.status,
+			entries.message,
+			entries.payload,
+			entries.created_at
+		FROM entries
 		%s
-		ORDER BY ae.created_at DESC
+		ORDER BY entries.created_at DESC
 		LIMIT $%d OFFSET $%d
 	`, whereClause, argIndex, argIndex+1), append(args, pageSize, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
-
-	items := make([]domain.AdminAuditRow, 0)
-	for rows.Next() {
-		var item domain.AdminAuditRow
-		var payload []byte
-		var ownerID *string
-		var ownerEmail *string
-		var ownerName *string
-		if scanErr := rows.Scan(
-			&item.ID,
-			&item.OwnerUserID,
-			&item.ResourceType,
-			&item.ResourceID,
-			&item.Action,
-			&item.Title,
-			&item.Source,
-			&item.Status,
-			&item.Message,
-			&payload,
-			&item.CreatedAt,
-			&ownerID,
-			&ownerEmail,
-			&ownerName,
-		); scanErr != nil {
-			return nil, 0, scanErr
-		}
-		item.Payload = bytesOrNil(payload)
-		if ownerID != nil && ownerEmail != nil && ownerName != nil {
-			item.OwnerUser = &domain.AdminUserSummary{
-				ID:    *ownerID,
-				Email: *ownerEmail,
-				Name:  *ownerName,
-			}
-		}
-		items = append(items, item)
+	items, err := scanAdminAuditRows(rows)
+	if err != nil {
+		return nil, 0, err
 	}
-	return items, total, rows.Err()
+	return items, total, nil
 }
 
 func (s *Store) GetBillingPackageByCode(ctx context.Context, packageID string) (*domain.BillingPackage, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, name, package_type, channel, payment_channels, currency, price_cents, credit_amount,
-		       badge, description, pricing_payload, expires_in_days, is_enabled, sort_order, created_at, updated_at
+		       manual_bonus_credit_amount, badge, description, pricing_payload, expires_in_days, is_enabled, sort_order, created_at, updated_at
 		FROM billing_packages
 		WHERE id = $1
 	`, packageID)
