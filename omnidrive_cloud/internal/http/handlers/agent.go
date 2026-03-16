@@ -44,17 +44,21 @@ type syncPublishTaskRequest struct {
 	DeviceCode          string                           `json:"deviceCode"`
 	AccountID           *string                          `json:"accountId"`
 	SkillID             *string                          `json:"skillId"`
+	SkillRevision       *string                          `json:"skillRevision"`
 	Platform            string                           `json:"platform"`
 	AccountName         string                           `json:"accountName"`
 	Title               string                           `json:"title"`
 	ContentText         *string                          `json:"contentText"`
 	MediaPayload        interface{}                      `json:"mediaPayload"`
+	MaterialRefs        []taskMaterialRefRequest         `json:"materialRefs"`
 	Status              string                           `json:"status"`
 	Message             *string                          `json:"message"`
 	ExecutionPayload    interface{}                      `json:"executionPayload"`
 	VerificationPayload interface{}                      `json:"verificationPayload"`
 	Artifacts           []syncPublishTaskArtifactRequest `json:"artifacts"`
 	LeaseToken          *string                          `json:"leaseToken"`
+	RunAt               *string                          `json:"runAt"`
+	FinishedAt          *string                          `json:"finishedAt"`
 }
 
 type syncPublishTaskArtifactRequest struct {
@@ -103,6 +107,16 @@ type syncSkillStateRequest struct {
 		AssetCount     *int64  `json:"assetCount"`
 		Message        *string `json:"message"`
 		LastSyncedAt   *string `json:"lastSyncedAt"`
+	} `json:"items"`
+}
+
+type retiredSkillAckRequest struct {
+	DeviceCode string `json:"deviceCode"`
+	Items      []struct {
+		SkillID        string  `json:"skillId"`
+		Reason         string  `json:"reason"`
+		Message        *string `json:"message"`
+		AcknowledgedAt *string `json:"acknowledgedAt"`
 	} `json:"items"`
 }
 
@@ -398,7 +412,53 @@ func (h *AgentHandler) ListPublishTasks(w http.ResponseWriter, r *http.Request) 
 		render.Error(w, http.StatusInternalServerError, "Failed to load publish tasks")
 		return
 	}
-	render.JSON(w, http.StatusOK, items)
+	includeBlocked := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("includeBlocked")), "true") ||
+		strings.TrimSpace(r.URL.Query().Get("includeBlocked")) == "1"
+	readyItems := make([]domain.PublishTask, 0, len(items))
+	blockedItems := make([]domain.AgentPublishTaskQueueItem, 0)
+	summary := domain.AgentPublishTaskQueueSummary{
+		ByStatus:    map[string]int64{},
+		ByDimension: map[string]int64{},
+		ByIssueCode: map[string]int64{},
+	}
+	for _, task := range items {
+		readiness, readinessErr := h.inspectPublishTaskReadiness(r.Context(), device, &task)
+		if readinessErr != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to inspect publish task readiness")
+			return
+		}
+		summary.ByStatus[task.Status]++
+		if publishTaskReadinessAllowsExecution(readiness) {
+			readyItems = append(readyItems, task)
+			summary.ReadyCount++
+			continue
+		}
+		dimensions := publishTaskReadinessBlockingDimensions(readiness)
+		summary.BlockedCount++
+		for _, dimension := range dimensions {
+			summary.ByDimension[dimension]++
+		}
+		for _, issueCode := range readiness.IssueCodes {
+			summary.ByIssueCode[issueCode]++
+		}
+		if includeBlocked {
+			blockedItems = append(blockedItems, domain.AgentPublishTaskQueueItem{
+				Task:               task,
+				Readiness:          readiness,
+				BlockingDimensions: dimensions,
+			})
+		}
+	}
+	if includeBlocked {
+		render.JSON(w, http.StatusOK, map[string]any{
+			"readyItems":   readyItems,
+			"blockedItems": blockedItems,
+			"summary":      summary,
+			"serverTime":   time.Now().UTC(),
+		})
+		return
+	}
+	render.JSON(w, http.StatusOK, readyItems)
 }
 
 func (h *AgentHandler) ListSkills(w http.ResponseWriter, r *http.Request) {
@@ -453,35 +513,168 @@ func (h *AgentHandler) ListSkills(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 
-	skills, err := h.app.Store.ListEnabledSkillsByOwner(r.Context(), *device.OwnerUserID, since, limit)
+	skills, err := h.app.Store.ListSkillsForAgentSyncByOwner(r.Context(), *device.OwnerUserID, since, limit)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load skills")
 		return
 	}
+	retiredAcks, err := h.app.Store.ListDeviceRetiredSkillAcks(r.Context(), device.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load retired skill acknowledgements")
+		return
+	}
+	retiredAckMap := make(map[string]domain.DeviceRetiredSkillAck, len(retiredAcks))
+	for _, ack := range retiredAcks {
+		retiredAckMap[ack.SkillID+"::"+ack.Reason] = ack
+	}
 
 	items := make([]domain.AgentSkillPackage, 0, len(skills))
+	retiredItems := make([]domain.AgentRetiredSkillItem, 0)
+	summary := domain.AgentSkillManifestSummary{}
 	for _, skill := range skills {
-		assets, err := h.app.Store.ListSkillAssets(r.Context(), skill.ID, *device.OwnerUserID)
-		if err != nil {
-			render.Error(w, http.StatusInternalServerError, "Failed to load skill assets")
-			return
-		}
 		syncState, err := h.app.Store.GetDeviceSkillSyncState(r.Context(), device.ID, skill.ID)
 		if err != nil {
 			render.Error(w, http.StatusInternalServerError, "Failed to load skill sync state")
 			return
 		}
+		if !skill.IsEnabled {
+			var syncedRevision *string
+			var lastSyncedAt *time.Time
+			if syncState != nil {
+				syncedRevision = syncState.SyncedRevision
+				lastSyncedAt = syncState.LastSyncedAt
+			}
+			name := skill.Name
+			outputType := skill.OutputType
+			retiredItem := domain.AgentRetiredSkillItem{
+				SkillID:        skill.ID,
+				Reason:         "disabled",
+				Name:           &name,
+				OutputType:     &outputType,
+				Message:        auditStringPtr("技能已禁用，请清理本地技能包"),
+				SyncedRevision: syncedRevision,
+				LastSyncedAt:   lastSyncedAt,
+				LastChangedAt:  skill.UpdatedAt.UTC(),
+			}
+			if ack, ok := retiredAckMap[retiredItem.SkillID+"::"+retiredItem.Reason]; ok && !ack.LastAcknowledgedAt.Before(retiredItem.LastChangedAt) {
+				continue
+			}
+			summary.RetiredCount++
+			summary.DisabledCount++
+			retiredItems = append(retiredItems, retiredItem)
+			continue
+		}
+		assets, err := h.app.Store.ListSkillAssets(r.Context(), skill.ID, *device.OwnerUserID)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to load skill assets")
+			return
+		}
+		revision, err := h.app.Store.GetSkillRevision(r.Context(), skill.ID, *device.OwnerUserID)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to build skill revision")
+			return
+		}
 		items = append(items, domain.AgentSkillPackage{
-			Revision: buildSkillRevision(&skill),
+			Revision: revision,
 			Skill:    skill,
 			Assets:   assets,
 			Sync:     syncState,
 		})
+		summary.ActiveCount++
+	}
+
+	deletedItems, err := h.app.Store.ListDeletedSkillEventsByOwner(r.Context(), *device.OwnerUserID, since, limit)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load deleted skill events")
+		return
+	}
+	if len(deletedItems) > 0 {
+		for _, item := range deletedItems {
+			if ack, ok := retiredAckMap[item.SkillID+"::"+item.Reason]; ok && !ack.LastAcknowledgedAt.Before(item.LastChangedAt) {
+				continue
+			}
+			retiredItems = append(retiredItems, item)
+			summary.RetiredCount++
+			summary.DeletedCount++
+		}
 	}
 
 	render.JSON(w, http.StatusOK, map[string]any{
-		"items":      items,
-		"serverTime": time.Now().UTC(),
+		"items":        items,
+		"retiredItems": retiredItems,
+		"summary":      summary,
+		"serverTime":   time.Now().UTC(),
+	})
+}
+
+func (h *AgentHandler) AckRetiredSkills(w http.ResponseWriter, r *http.Request) {
+	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
+	if agentKey == "" {
+		render.Error(w, http.StatusBadRequest, "X-Agent-Key is required")
+		return
+	}
+
+	var payload retiredSkillAckRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	payload.DeviceCode = strings.TrimSpace(payload.DeviceCode)
+	if payload.DeviceCode == "" {
+		render.Error(w, http.StatusBadRequest, "deviceCode is required")
+		return
+	}
+
+	device, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device")
+		return
+	}
+	if device == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+	if !agentKeyMatches(device, agentKey) {
+		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+		return
+	}
+
+	acked := int64(0)
+	for _, item := range payload.Items {
+		skillID := strings.TrimSpace(item.SkillID)
+		reason := strings.TrimSpace(item.Reason)
+		if skillID == "" || reason == "" {
+			continue
+		}
+		if reason != "disabled" && reason != "deleted" {
+			render.Error(w, http.StatusBadRequest, "reason must be disabled or deleted")
+			return
+		}
+		var acknowledgedAt *time.Time
+		if item.AcknowledgedAt != nil && strings.TrimSpace(*item.AcknowledgedAt) != "" {
+			parsed, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(*item.AcknowledgedAt))
+			if parseErr != nil {
+				render.Error(w, http.StatusBadRequest, "acknowledgedAt must be RFC3339")
+				return
+			}
+			acknowledgedAt = &parsed
+		}
+		if _, err := h.app.Store.UpsertDeviceRetiredSkillAck(r.Context(), store.UpsertDeviceRetiredSkillAckInput{
+			DeviceID:           device.ID,
+			SkillID:            skillID,
+			Reason:             reason,
+			Message:            item.Message,
+			LastAcknowledgedAt: acknowledgedAt,
+		}); err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to acknowledge retired skill")
+			return
+		}
+		acked++
+	}
+
+	render.JSON(w, http.StatusOK, map[string]any{
+		"acked":      acked,
+		"deviceCode": payload.DeviceCode,
 	})
 }
 
@@ -702,6 +895,33 @@ func (h *AgentHandler) ClaimPublishTask(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	taskSnapshot, err := h.app.Store.GetPublishTaskByID(r.Context(), taskID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to inspect publish task")
+		return
+	}
+	if taskSnapshot == nil {
+		render.Error(w, http.StatusNotFound, "Publish task not found")
+		return
+	}
+	if taskSnapshot.DeviceID != device.ID {
+		render.Error(w, http.StatusConflict, "Publish task belongs to a different device")
+		return
+	}
+
+	readiness, err := h.inspectPublishTaskReadiness(r.Context(), device, taskSnapshot)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to inspect publish task readiness")
+		return
+	}
+	if !publishTaskReadinessAllowsExecution(readiness) {
+		render.JSON(w, http.StatusConflict, map[string]any{
+			"error":     "Publish task is not ready to claim",
+			"readiness": readiness,
+		})
+		return
+	}
+
 	h.recordRecoveredPublishTasks(r.Context(), device)
 
 	leaseToken := uuid.NewString()
@@ -912,6 +1132,7 @@ func (h *AgentHandler) SyncPublishTask(w http.ResponseWriter, r *http.Request) {
 	payload.AccountName = strings.TrimSpace(payload.AccountName)
 	payload.Title = strings.TrimSpace(payload.Title)
 	payload.Status = strings.TrimSpace(payload.Status)
+	payload.SkillRevision = normalizeTrimmedString(payload.SkillRevision)
 	if payload.LeaseToken != nil {
 		trimmed := strings.TrimSpace(*payload.LeaseToken)
 		payload.LeaseToken = &trimmed
@@ -985,12 +1206,31 @@ func (h *AgentHandler) SyncPublishTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var runAt *time.Time
+	if payload.RunAt != nil && strings.TrimSpace(*payload.RunAt) != "" {
+		parsed, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(*payload.RunAt))
+		if parseErr != nil {
+			render.Error(w, http.StatusBadRequest, "runAt must be RFC3339")
+			return
+		}
+		runAt = &parsed
+	}
+	var finishedAt *time.Time
+	if payload.FinishedAt != nil && strings.TrimSpace(*payload.FinishedAt) != "" {
+		parsed, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(*payload.FinishedAt))
+		if parseErr != nil {
+			render.Error(w, http.StatusBadRequest, "finishedAt must be RFC3339")
+			return
+		}
+		finishedAt = &parsed
+	}
 
 	task, err := h.app.Store.SyncPublishTask(r.Context(), store.SyncPublishTaskInput{
 		ID:                  payload.ID,
 		DeviceID:            device.ID,
 		AccountID:           payload.AccountID,
 		SkillID:             payload.SkillID,
+		SkillRevision:       payload.SkillRevision,
 		Platform:            payload.Platform,
 		AccountName:         payload.AccountName,
 		Title:               payload.Title,
@@ -1000,10 +1240,23 @@ func (h *AgentHandler) SyncPublishTask(w http.ResponseWriter, r *http.Request) {
 		Message:             payload.Message,
 		VerificationPayload: verificationPayload,
 		LeaseToken:          payload.LeaseToken,
+		RunAt:               runAt,
+		FinishedAt:          finishedAt,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to sync publish task")
 		return
+	}
+	if device.OwnerUserID != nil {
+		materialRefs, materialErr := h.prepareAgentTaskMaterialRefs(r.Context(), device, task.ID, payload.MaterialRefs)
+		if materialErr != nil {
+			render.Error(w, http.StatusBadRequest, materialErr.Error())
+			return
+		}
+		if _, replaceErr := h.app.Store.ReplacePublishTaskMaterialRefs(r.Context(), task.ID, *device.OwnerUserID, materialRefs); replaceErr != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to sync publish task material refs")
+			return
+		}
 	}
 
 	existingArtifacts, err := h.app.Store.ListPublishTaskArtifactsByTaskID(r.Context(), task.ID)
@@ -1077,6 +1330,41 @@ func (h *AgentHandler) SyncPublishTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	render.JSON(w, http.StatusOK, task)
+}
+
+func (h *AgentHandler) prepareAgentTaskMaterialRefs(ctx context.Context, device *domain.Device, taskID string, refs []taskMaterialRefRequest) ([]store.ReplacePublishTaskMaterialRefInput, error) {
+	if device == nil || device.OwnerUserID == nil || strings.TrimSpace(*device.OwnerUserID) == "" {
+		return []store.ReplacePublishTaskMaterialRefInput{}, nil
+	}
+	items := make([]store.ReplacePublishTaskMaterialRefInput, 0, len(refs))
+	seen := make(map[string]struct{}, len(refs))
+
+	for _, ref := range refs {
+		rootName := strings.TrimSpace(ref.Root)
+		relativePath := strings.TrimSpace(ref.Path)
+		if rootName == "" || relativePath == "" {
+			return nil, fmt.Errorf("materialRefs root and path are required")
+		}
+		entry, err := h.app.Store.GetMaterialEntryByOwner(ctx, *device.OwnerUserID, device.ID, rootName, relativePath)
+		if err != nil {
+			return nil, err
+		}
+		if entry == nil || !entry.IsAvailable {
+			return nil, fmt.Errorf("materialRefs contains a file that is not mirrored on the selected device")
+		}
+		role := "media"
+		if ref.Role != nil && strings.TrimSpace(*ref.Role) != "" {
+			role = strings.TrimSpace(*ref.Role)
+		}
+		dedupeKey := role + "::" + rootName + "::" + entry.RelativePath
+		if _, exists := seen[dedupeKey]; exists {
+			continue
+		}
+		seen[dedupeKey] = struct{}{}
+		items = append(items, buildPublishTaskMaterialRefInput(taskID, device.ID, role, entry))
+	}
+
+	return items, nil
 }
 
 func (h *AgentHandler) preparePublishTaskArtifacts(ctx context.Context, taskID string, verificationPayload []byte, items []syncPublishTaskArtifactRequest) ([]store.UpsertPublishTaskArtifactInput, error) {
@@ -1317,11 +1605,31 @@ func normalizeTrimmedStringPtr(value string) *string {
 	return &trimmed
 }
 
-func buildSkillRevision(skill *domain.ProductSkill) string {
-	if skill == nil {
-		return ""
+func (h *AgentHandler) inspectPublishTaskReadiness(ctx context.Context, device *domain.Device, task *domain.PublishTask) (domain.PublishTaskReadiness, error) {
+	var account *domain.PlatformAccount
+	var err error
+	if task.AccountID != nil && device.OwnerUserID != nil && strings.TrimSpace(*task.AccountID) != "" {
+		account, err = h.app.Store.GetOwnedAccountByID(ctx, strings.TrimSpace(*task.AccountID), *device.OwnerUserID)
+		if err != nil {
+			return domain.PublishTaskReadiness{}, err
+		}
 	}
-	return skill.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	if account == nil {
+		account, err = h.app.Store.GetAccountByDeviceTarget(ctx, task.DeviceID, task.Platform, task.AccountName)
+		if err != nil {
+			return domain.PublishTaskReadiness{}, err
+		}
+	}
+
+	var skill *domain.ProductSkill
+	if task.SkillID != nil && device.OwnerUserID != nil && strings.TrimSpace(*task.SkillID) != "" {
+		skill, err = h.app.Store.GetOwnedSkillByID(ctx, strings.TrimSpace(*task.SkillID), *device.OwnerUserID)
+		if err != nil {
+			return domain.PublishTaskReadiness{}, err
+		}
+	}
+
+	return buildPublishTaskReadiness(ctx, h.app, task, device, account, skill), nil
 }
 
 func firstNonEmptyString(values ...*string) *string {

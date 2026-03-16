@@ -47,6 +47,10 @@ This document is the contract target for the cloud backend and the frontend impl
   - `recentAccounts`
   - `materialRoots`
   - `skillSyncStates`
+- each `skillSyncStates` item also includes:
+  - `desiredRevision`
+  - `isCurrent`
+  - `needsSync`
 
 ### `POST /devices/claim`
 
@@ -143,6 +147,31 @@ This document is the contract target for the cloud backend and the frontend impl
 - fetch one mirrored file preview and metadata
 - text previews may be truncated
 
+### `GET /materials/workspace?deviceId=...&root=...&path=...&scope=...&limit=...`
+
+- fetch one material workspace payload
+- `path` can point to either a mirrored file or a mirrored directory
+- `scope` can be:
+  - `exact`
+  - `subtree`
+  - `auto`
+- `auto` uses `subtree` for directories and `exact` for files
+- response includes:
+  - `deviceId`
+  - `root`
+  - `entry`
+  - `scope`
+  - `referencingTasks`
+  - `summary`
+- each `referencingTasks` row is a `PublishTaskDiagnosticItem`
+- `summary` includes:
+  - `taskCount`
+  - `readyCount`
+  - `blockedCount`
+  - `byStatus`
+  - `byDimension`
+  - `byIssueCode`
+
 ## Skills
 
 ### `GET /skills`
@@ -173,6 +202,26 @@ This document is the contract target for the cloud backend and the frontend impl
   - `recentTasks`
   - `recentAiJobs`
   - `deviceSyncs`
+- each `deviceSyncs` item also includes:
+  - `desiredRevision`
+  - `isCurrent`
+  - `needsSync`
+
+### `GET /skills/{skillId}/impact?readiness=...&issueCode=...&status=...&limit=...`
+
+- fetch one skill impact payload focused on publish tasks that currently reference this skill
+- supports optional filters:
+  - `readiness=ready|blocked`
+  - `issueCode=<stable readiness code>`
+  - `status=<task status>`
+  - `limit`
+- response includes:
+  - `skill`
+  - `items`
+  - `summary`
+  - `serverTime`
+- each `items` row is a `PublishTaskDiagnosticItem`
+- `summary` uses the same structure as `/tasks/diagnostics`
 
 ### `DELETE /skills/{skillId}`
 
@@ -209,10 +258,76 @@ This document is the contract target for the cloud backend and the frontend impl
   - `accountName`
   - `limit`
 
+### `GET /tasks/diagnostics`
+
+- list publish-task diagnostics with backend-computed readiness
+- supports the same filters as `GET /tasks`
+- extra filters:
+  - `dimension=device|account|skill|materials`
+  - `issueCode=<stable readiness code>`
+- optional `readiness=ready|blocked`
+- returns:
+  - `items`
+  - `summary`
+  - `serverTime`
+- each item includes:
+  - `task`
+  - `readiness`
+  - `blockingDimensions`
+- `summary` includes:
+  - `totalCount`
+  - `readyCount`
+  - `blockedCount`
+  - `byStatus`
+  - `byDimension`
+  - `byIssueCode`
+
+### `POST /tasks/bulk-repair`
+
+- batch remediation endpoint for publish tasks
+- request supports:
+  - `taskIds`
+  - `operations`
+  - `deviceId`
+  - `status`
+  - `platform`
+  - `accountName`
+  - `skillId`
+  - `readiness=ready|blocked`
+  - `dimension=device|account|skill|materials`
+  - `issueCode`
+  - `limit`
+- valid `operations`:
+  - `refresh_materials`
+  - `refresh_skill`
+- returns:
+  - `items`
+  - `summary`
+  - `serverTime`
+- each item includes:
+  - `task`
+  - `status=success|skipped|failed`
+  - `message`
+  - `appliedOperations`
+  - `readinessBefore`
+  - `readinessAfter`
+  - optional `materialRefresh`
+  - optional `skillRefresh`
+- `summary` includes:
+  - `selectedCount`
+  - `processedCount`
+  - `successCount`
+  - `skippedCount`
+  - `failedCount`
+  - `byStatus`
+  - `byOperation`
+
 ### `POST /tasks`
 
 - create a cloud publish task for a specific device and account
 - current status starts as `pending`
+- when `skillId` is provided, the backend stores `task.skillRevision` as a cloud-side skill snapshot
+- `skillRevision` now reflects both the skill record and its attached assets
 - supports optional `materialRefs`
 - each material ref uses `root`, `path`, optional `role`
 
@@ -236,7 +351,21 @@ This document is the contract target for the cloud backend and the frontend impl
   - optional `runtime`
 - `actions` exposes backend-computed booleans such as `canEdit`, `canCancel`, `canRetry`, `canDelete`
 - `actions` also includes `canResume` and `canResolveManual` for `needs_verify` handling
+- `actions` also includes:
+  - `canRefreshMaterials`
+  - `canRefreshSkill`
 - `readiness` exposes backend-computed execution checks for device/account/skill/material availability
+- `readiness.skillRevisionMatched` becomes `false` when the linked skill changed after task creation
+- `readiness.skillSyncedToDevice` becomes `false` when the target device has not synced the linked skill revision successfully
+- `readiness.driftedMaterialCount` counts mirrored materials whose current metadata no longer matches the task snapshot
+- `readiness.issueCodes` exposes stable machine-friendly reasons such as:
+  - `device_disabled`
+  - `account_inactive`
+  - `device_skill_missing`
+  - `device_skill_outdated`
+  - `skill_revision_changed`
+  - `material_missing`
+  - `material_drifted`
 - `runtime` exposes the latest agent-side execution snapshot and `lastAgentSyncAt`
 
 ### `GET /tasks/{taskId}/events`
@@ -253,6 +382,36 @@ This document is the contract target for the cloud backend and the frontend impl
 
 - fetch mirrored material references attached to one task
 - returns a snapshot of the local file metadata at selection time
+
+### `POST /tasks/{taskId}/refresh-materials`
+
+- rebuild the task's mirrored material snapshot from the latest mirrored file metadata on the target device
+- rejects `running` and `cancel_requested` tasks
+- intended to clear `material_drifted` after the operator confirms the local files changed as expected
+- response includes:
+  - `task`
+  - `materials`
+  - `readiness`
+  - `refreshedCount`
+  - `changedCount`
+  - `missingCount`
+  - `issues`
+- if one or more mirrored files are now missing, the backend returns `409` with the same response shape and does not partially update the task snapshot
+
+### `POST /tasks/{taskId}/refresh-skill`
+
+- update `task.skillRevision` to the latest effective cloud revision of the linked skill
+- rejects `running` and `cancel_requested` tasks
+- rejects tasks that do not use a linked cloud skill
+- intended to clear `skill_revision_changed` after the operator accepts the updated skill strategy
+- response includes:
+  - `task`
+  - `skill`
+  - `readiness`
+  - `previousRevision`
+  - `currentRevision`
+  - `revisionChanged`
+- note: after this call, `readiness.skillSyncedToDevice` may still be `false` until the target OmniBull syncs the new skill revision
 
 ### `POST /tasks/{taskId}/cancel`
 
@@ -399,12 +558,46 @@ This document is the contract target for the cloud backend and the frontend impl
 ### `GET /agent/skills/{deviceCode}?since=...&limit=...`
 
 - local agent pulls enabled product skills for one claimed device
-- each item includes:
+- response includes:
+  - `items`
+  - `retiredItems`
+  - `summary`
+  - `serverTime`
+- each active item includes:
   - `revision`
   - `skill`
   - `assets`
   - optional current `sync` state for that device
+- each `retiredItems` row includes:
+  - `skillId`
+  - `reason` in `disabled | deleted`
+  - optional `name`
+  - optional `outputType`
+  - optional `message`
+  - optional `syncedRevision`
+  - optional `lastSyncedAt`
+  - `lastChangedAt`
+- `summary` includes:
+  - `activeCount`
+  - `retiredCount`
+  - `disabledCount`
+  - `deletedCount`
+- `revision` reflects the effective cloud skill version, including attached asset changes
+- the related workspace sync-state objects expose `desiredRevision`, `isCurrent`, and `needsSync`
 - optional `since` must be RFC3339
+
+### `POST /agent/skills/retired-ack`
+
+- local agent acknowledges that one or more retired skills were removed from the local cache
+- request:
+  - `deviceCode`
+  - `items`
+- each item supports:
+  - `skillId`
+  - `reason` in `disabled | deleted`
+  - optional `message`
+  - optional `acknowledgedAt` in RFC3339
+- after a successful ack, already-acknowledged retired skills are no longer returned by `/agent/skills/{deviceCode}` unless the cloud-side change happens again later
 
 ### `POST /agent/skills/sync`
 
@@ -434,7 +627,22 @@ This document is the contract target for the cloud backend and the frontend impl
 ### `GET /agent/publish-tasks/{deviceCode}`
 
 - local agent polls actionable publish tasks for the device
-- current phase returns `pending` and `running`
+- default response only includes tasks whose backend `readiness` currently allows execution
+- optional `includeBlocked=true` returns:
+  - `readyItems`
+  - `blockedItems`
+  - `summary`
+  - `serverTime`
+- each blocked item includes:
+  - `task`
+  - `readiness`
+  - `blockingDimensions`
+- `summary` includes:
+  - `readyCount`
+  - `blockedCount`
+  - `byStatus`
+  - `byDimension`
+  - `byIssueCode`
 - tasks with future `runAt` stay hidden until their scheduled time arrives
 - disabled devices receive `409`
 - `needs_verify` stays in task detail and timeline, but is no longer re-queued for automatic execution
@@ -451,6 +659,8 @@ This document is the contract target for the cloud backend and the frontend impl
   - `skillAssets`
   - `materials`
 - also includes `readiness` so SAU can detect missing materials or disabled dependencies before it touches third-party platforms
+- `task.skillRevision` is the cloud-side skill snapshot captured when the task was created
+- `readiness` uses the same skill-revision and material-drift checks as `/tasks/{taskId}/workspace`
 - may include `runtime` so SAU or OpenClaw can inspect the latest local execution snapshot
 - intended to give SAU one complete execution payload before talking to third-party platforms
 
@@ -460,6 +670,7 @@ This document is the contract target for the cloud backend and the frontend impl
 - atomically moves a `pending` task into `running`
 - tasks with future `runAt` cannot be claimed yet
 - disabled devices cannot claim tasks
+- if backend readiness is not satisfied, claim is rejected with `409` and the response includes the same `readiness` payload returned by task workspace / package
 - returns `leaseToken` and `leaseExpiresAt`
 
 ### `POST /agent/publish-tasks/{taskId}/renew`
@@ -481,8 +692,15 @@ This document is the contract target for the cloud backend and the frontend impl
 - local agent mirrors task execution state back to cloud
 - supports task creation from local side or updating an existing cloud task
 - intended for `pending`, `running`, `success`, `failed`, `needs_verify` and similar states
+- request body also supports:
+  - `skillRevision`
+  - `runAt`
+  - `finishedAt`
+  - `materialRefs`
 - supports optional `artifacts` for screenshots, logs, previews, and other structured evidence
 - supports optional `executionPayload` for current local progress, step, or executor context
+- when `materialRefs` is provided, the backend replaces the mirrored task material snapshot using the device's current mirrored file entries
+- local OpenClaw / OmniBull tasks can therefore be mirrored into OmniDrive with enough material context to participate in readiness diagnostics
 - if `verificationPayload.screenshotData` is provided as base64 or data URL, the backend stores it and rewrites the payload to `screenshotUrl` and storage metadata
 - if the task already exists under another device, the backend returns `409`
 - if the task currently has an active lease, `leaseToken` must match or the backend returns `409`

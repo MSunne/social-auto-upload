@@ -21,6 +21,7 @@ func scanPublishTask(row pgx.Row) (*domain.PublishTask, error) {
 	var verificationPayload []byte
 	var accountID *string
 	var skillID *string
+	var skillRevision *string
 	var leaseOwnerDeviceID *string
 	var leaseToken *string
 	var leaseExpiresAt *time.Time
@@ -33,6 +34,7 @@ func scanPublishTask(row pgx.Row) (*domain.PublishTask, error) {
 		&task.DeviceID,
 		&accountID,
 		&skillID,
+		&skillRevision,
 		&task.Platform,
 		&task.AccountName,
 		&task.Title,
@@ -56,6 +58,7 @@ func scanPublishTask(row pgx.Row) (*domain.PublishTask, error) {
 
 	task.AccountID = accountID
 	task.SkillID = skillID
+	task.SkillRevision = skillRevision
 	task.ContentText = contentText
 	task.MediaPayload = bytesOrNil(mediaPayload)
 	task.Message = message
@@ -71,7 +74,7 @@ func scanPublishTask(row pgx.Row) (*domain.PublishTask, error) {
 
 func (s *Store) ListPublishTasksByOwner(ctx context.Context, ownerUserID string, filter ListPublishTasksFilter) ([]domain.PublishTask, error) {
 	query := `
-		SELECT pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.platform, pt.account_name,
+		SELECT pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
 		       pt.title, pt.content_text, pt.media_payload, pt.status, pt.message,
 		       pt.verification_payload, pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at,
 		       pt.attempt_count, pt.cancel_requested_at, pt.run_at, pt.finished_at, pt.created_at, pt.updated_at
@@ -129,7 +132,7 @@ func (s *Store) ListPublishTasksByOwner(ctx context.Context, ownerUserID string,
 
 func (s *Store) GetPublishTaskByOwner(ctx context.Context, taskID string, ownerUserID string) (*domain.PublishTask, error) {
 	row := s.pool.QueryRow(ctx, `
-		SELECT pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.platform, pt.account_name,
+		SELECT pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
 		       pt.title, pt.content_text, pt.media_payload, pt.status, pt.message,
 		       pt.verification_payload, pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at,
 		       pt.attempt_count, pt.cancel_requested_at, pt.run_at, pt.finished_at, pt.created_at, pt.updated_at
@@ -150,7 +153,7 @@ func (s *Store) GetPublishTaskByOwner(ctx context.Context, taskID string, ownerU
 
 func (s *Store) GetPublishTaskByID(ctx context.Context, taskID string) (*domain.PublishTask, error) {
 	row := s.pool.QueryRow(ctx, `
-		SELECT id, device_id, account_id, skill_id, platform, account_name,
+		SELECT id, device_id, account_id, skill_id, skill_revision, platform, account_name,
 		       title, content_text, media_payload, status, message,
 		       verification_payload, lease_owner_device_id, lease_token, lease_expires_at,
 		       attempt_count, cancel_requested_at, run_at, finished_at, created_at, updated_at
@@ -171,15 +174,15 @@ func (s *Store) GetPublishTaskByID(ctx context.Context, taskID string) (*domain.
 func (s *Store) CreatePublishTask(ctx context.Context, input CreatePublishTaskInput) (*domain.PublishTask, error) {
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO publish_tasks (
-			id, device_id, account_id, skill_id, platform, account_name, title,
+			id, device_id, account_id, skill_id, skill_revision, platform, account_name, title,
 			content_text, media_payload, status, message, run_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		RETURNING id, device_id, account_id, skill_id, platform, account_name,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		RETURNING id, device_id, account_id, skill_id, skill_revision, platform, account_name,
 		          title, content_text, media_payload, status, message, verification_payload,
 		          lease_owner_device_id, lease_token, lease_expires_at, attempt_count, cancel_requested_at,
 		          run_at, finished_at, created_at, updated_at
-	`, input.ID, input.DeviceID, input.AccountID, input.SkillID, input.Platform, input.AccountName,
+	`, input.ID, input.DeviceID, input.AccountID, input.SkillID, input.SkillRevision, input.Platform, input.AccountName,
 		input.Title, input.ContentText, input.MediaPayload, input.Status, input.Message, input.RunAt)
 
 	return scanPublishTask(row)
@@ -187,7 +190,7 @@ func (s *Store) CreatePublishTask(ctx context.Context, input CreatePublishTaskIn
 
 func (s *Store) ListPendingPublishTasksByDevice(ctx context.Context, deviceID string) ([]domain.PublishTask, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, device_id, account_id, skill_id, platform, account_name,
+		SELECT id, device_id, account_id, skill_id, skill_revision, platform, account_name,
 		       title, content_text, media_payload, status, message, verification_payload,
 		       lease_owner_device_id, lease_token, lease_expires_at, attempt_count, cancel_requested_at,
 		       run_at, finished_at, created_at, updated_at
@@ -218,15 +221,16 @@ func (s *Store) ListPendingPublishTasksByDevice(ctx context.Context, deviceID st
 func (s *Store) SyncPublishTask(ctx context.Context, input SyncPublishTaskInput) (*domain.PublishTask, error) {
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO publish_tasks (
-			id, device_id, account_id, skill_id, platform, account_name, title,
+			id, device_id, account_id, skill_id, skill_revision, platform, account_name, title,
 			content_text, media_payload, status, message, verification_payload,
 			run_at, finished_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		ON CONFLICT (id) DO UPDATE
 		SET device_id = EXCLUDED.device_id,
 		    account_id = EXCLUDED.account_id,
 		    skill_id = EXCLUDED.skill_id,
+		    skill_revision = COALESCE(EXCLUDED.skill_revision, publish_tasks.skill_revision),
 		    platform = EXCLUDED.platform,
 		    account_name = EXCLUDED.account_name,
 		    title = EXCLUDED.title,
@@ -254,11 +258,11 @@ func (s *Store) SyncPublishTask(ctx context.Context, input SyncPublishTaskInput)
 		    run_at = EXCLUDED.run_at,
 		    finished_at = EXCLUDED.finished_at,
 		    updated_at = NOW()
-		RETURNING id, device_id, account_id, skill_id, platform, account_name,
+		RETURNING id, device_id, account_id, skill_id, skill_revision, platform, account_name,
 		          title, content_text, media_payload, status, message, verification_payload,
 		          lease_owner_device_id, lease_token, lease_expires_at, attempt_count, cancel_requested_at,
 		          run_at, finished_at, created_at, updated_at
-	`, input.ID, input.DeviceID, input.AccountID, input.SkillID, input.Platform, input.AccountName,
+	`, input.ID, input.DeviceID, input.AccountID, input.SkillID, input.SkillRevision, input.Platform, input.AccountName,
 		input.Title, input.ContentText, input.MediaPayload, input.Status, input.Message,
 		input.VerificationPayload, input.RunAt, input.FinishedAt)
 
@@ -284,11 +288,37 @@ func (s *Store) UpdatePublishTask(ctx context.Context, taskID string, ownerUserI
 		WHERE pt.device_id = d.id
 		  AND pt.id = $1
 		  AND d.owner_user_id = $2
-		RETURNING pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.platform, pt.account_name,
+		RETURNING pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
 		          pt.title, pt.content_text, pt.media_payload, pt.status, pt.message, pt.verification_payload,
 		          pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at, pt.attempt_count, pt.cancel_requested_at,
 		          pt.run_at, pt.finished_at, pt.created_at, pt.updated_at
 	`, taskID, ownerUserID, input.Title, input.ContentText, mediaPayload, input.Status, input.Message, input.RunAt)
+
+	task, err := scanPublishTask(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return task, nil
+}
+
+func (s *Store) RefreshPublishTaskSkillRevision(ctx context.Context, taskID string, ownerUserID string, skillRevision *string, message *string) (*domain.PublishTask, error) {
+	row := s.pool.QueryRow(ctx, `
+		UPDATE publish_tasks pt
+		SET skill_revision = $3,
+		    message = COALESCE($4, pt.message),
+		    updated_at = NOW()
+		FROM devices d
+		WHERE pt.device_id = d.id
+		  AND pt.id = $1
+		  AND d.owner_user_id = $2
+		RETURNING pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
+		          pt.title, pt.content_text, pt.media_payload, pt.status, pt.message, pt.verification_payload,
+		          pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at, pt.attempt_count, pt.cancel_requested_at,
+		          pt.run_at, pt.finished_at, pt.created_at, pt.updated_at
+	`, taskID, ownerUserID, skillRevision, message)
 
 	task, err := scanPublishTask(row)
 	if err != nil {
@@ -315,7 +345,7 @@ func (s *Store) ClaimPublishTaskLease(ctx context.Context, taskID string, device
 	  AND status = 'pending'
 	  AND (run_at IS NULL OR run_at <= NOW())
 	  AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
-		RETURNING id, device_id, account_id, skill_id, platform, account_name,
+		RETURNING id, device_id, account_id, skill_id, skill_revision, platform, account_name,
 		          title, content_text, media_payload, status, message, verification_payload,
 		          lease_owner_device_id, lease_token, lease_expires_at, attempt_count, cancel_requested_at,
 		          run_at, finished_at, created_at, updated_at
@@ -341,7 +371,7 @@ func (s *Store) RenewPublishTaskLease(ctx context.Context, taskID string, device
 		  AND lease_owner_device_id = $2
 		  AND lease_token = $3
 		  AND status IN ('running', 'cancel_requested')
-		RETURNING id, device_id, account_id, skill_id, platform, account_name,
+		RETURNING id, device_id, account_id, skill_id, skill_revision, platform, account_name,
 		          title, content_text, media_payload, status, message, verification_payload,
 		          lease_owner_device_id, lease_token, lease_expires_at, attempt_count, cancel_requested_at,
 		          run_at, finished_at, created_at, updated_at
@@ -385,7 +415,7 @@ func (s *Store) ReleasePublishTaskLeaseByAgent(ctx context.Context, taskID strin
 		  AND lease_owner_device_id = $2
 		  AND lease_token = $3
 		  AND status IN ('running', 'cancel_requested')
-		RETURNING id, device_id, account_id, skill_id, platform, account_name,
+		RETURNING id, device_id, account_id, skill_id, skill_revision, platform, account_name,
 		          title, content_text, media_payload, status, message, verification_payload,
 		          lease_owner_device_id, lease_token, lease_expires_at, attempt_count, cancel_requested_at,
 		          run_at, finished_at, created_at, updated_at
@@ -439,7 +469,7 @@ func (s *Store) RequestCancelPublishTask(ctx context.Context, taskID string, own
 		WHERE pt.device_id = d.id
 		  AND pt.id = $1
 		  AND d.owner_user_id = $2
-		RETURNING pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.platform, pt.account_name,
+		RETURNING pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
 		          pt.title, pt.content_text, pt.media_payload, pt.status, pt.message, pt.verification_payload,
 		          pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at, pt.attempt_count, pt.cancel_requested_at,
 		          pt.run_at, pt.finished_at, pt.created_at, pt.updated_at
@@ -471,7 +501,7 @@ func (s *Store) RetryPublishTask(ctx context.Context, taskID string, ownerUserID
 		WHERE pt.device_id = d.id
 		  AND pt.id = $1
 		  AND d.owner_user_id = $2
-		RETURNING pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.platform, pt.account_name,
+		RETURNING pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
 		          pt.title, pt.content_text, pt.media_payload, pt.status, pt.message, pt.verification_payload,
 		          pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at, pt.attempt_count, pt.cancel_requested_at,
 		          pt.run_at, pt.finished_at, pt.created_at, pt.updated_at
@@ -517,7 +547,7 @@ func (s *Store) ForceReleasePublishTaskLease(ctx context.Context, taskID string,
 		  AND pt.status IN ('running', 'cancel_requested')
 		  AND pt.lease_owner_device_id IS NOT NULL
 		  AND pt.lease_token IS NOT NULL
-		RETURNING pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.platform, pt.account_name,
+		RETURNING pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
 		          pt.title, pt.content_text, pt.media_payload, pt.status, pt.message, pt.verification_payload,
 		          pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at, pt.attempt_count, pt.cancel_requested_at,
 		          pt.run_at, pt.finished_at, pt.created_at, pt.updated_at
@@ -550,7 +580,7 @@ func (s *Store) ResumePublishTaskFromVerification(ctx context.Context, taskID st
 		  AND pt.id = $1
 		  AND d.owner_user_id = $2
 		  AND pt.status = 'needs_verify'
-		RETURNING pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.platform, pt.account_name,
+		RETURNING pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
 		          pt.title, pt.content_text, pt.media_payload, pt.status, pt.message, pt.verification_payload,
 		          pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at, pt.attempt_count, pt.cancel_requested_at,
 		          pt.run_at, pt.finished_at, pt.created_at, pt.updated_at
@@ -591,7 +621,7 @@ func (s *Store) ResolvePublishTaskManually(ctx context.Context, taskID string, o
 		  AND pt.id = $1
 		  AND d.owner_user_id = $2
 		  AND pt.status = 'needs_verify'
-		RETURNING pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.platform, pt.account_name,
+		RETURNING pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
 		          pt.title, pt.content_text, pt.media_payload, pt.status, pt.message, pt.verification_payload,
 		          pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at, pt.attempt_count, pt.cancel_requested_at,
 		          pt.run_at, pt.finished_at, pt.created_at, pt.updated_at
@@ -634,7 +664,7 @@ func (s *Store) RecoverExpiredPublishTaskLeases(ctx context.Context, deviceID st
 		  AND status IN ('running', 'cancel_requested')
 		  AND lease_expires_at IS NOT NULL
 		  AND lease_expires_at < NOW()
-		RETURNING id, device_id, account_id, skill_id, platform, account_name,
+		RETURNING id, device_id, account_id, skill_id, skill_revision, platform, account_name,
 		          title, content_text, media_payload, status, message, verification_payload,
 		          lease_owner_device_id, lease_token, lease_expires_at, attempt_count, cancel_requested_at,
 		          run_at, finished_at, created_at, updated_at
@@ -1016,7 +1046,61 @@ func (s *Store) ListPublishTaskMaterialRefsByTaskID(ctx context.Context, taskID 
 	return items, rows.Err()
 }
 
-func (s *Store) CountPublishTaskAvailableMaterials(ctx context.Context, taskID string) (int64, int64, error) {
+func (s *Store) ListPublishTasksByMaterialRef(ctx context.Context, ownerUserID string, deviceID string, rootName string, relativePath string, subtree bool, limit int) ([]domain.PublishTask, error) {
+	normalizedPath := normalizeMaterialPath(relativePath)
+	query := `
+		SELECT * FROM (
+			SELECT DISTINCT ON (pt.id)
+			       pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
+			       pt.title, pt.content_text, pt.media_payload, pt.status, pt.message,
+			       pt.verification_payload, pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at,
+			       pt.attempt_count, pt.cancel_requested_at, pt.run_at, pt.finished_at, pt.created_at, pt.updated_at
+			FROM publish_tasks pt
+			INNER JOIN devices d ON d.id = pt.device_id
+			INNER JOIN publish_task_material_refs refs ON refs.task_id = pt.id
+			WHERE d.owner_user_id = $1
+			  AND refs.device_id = $2
+			  AND refs.root_name = $3
+	`
+	args := []any{ownerUserID, deviceID, rootName}
+	argIndex := 4
+	if subtree {
+		query += fmt.Sprintf(" AND (refs.relative_path = $%d OR refs.relative_path LIKE $%d)", argIndex, argIndex+1)
+		args = append(args, normalizedPath, normalizedPath+"/%")
+		argIndex += 2
+	} else {
+		query += fmt.Sprintf(" AND refs.relative_path = $%d", argIndex)
+		args = append(args, normalizedPath)
+		argIndex++
+	}
+	query += `
+			ORDER BY pt.id, pt.updated_at DESC
+		) task_refs
+		ORDER BY updated_at DESC
+	`
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argIndex)
+		args = append(args, limit)
+	}
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.PublishTask, 0)
+	for rows.Next() {
+		task, scanErr := scanPublishTask(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *task)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) CountPublishTaskMaterialHealth(ctx context.Context, taskID string) (int64, int64, int64, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
 			COUNT(*)::BIGINT AS total_count,
@@ -1025,7 +1109,22 @@ func (s *Store) CountPublishTaskAvailableMaterials(ctx context.Context, taskID s
 					WHEN entries.relative_path IS NOT NULL AND entries.is_available = TRUE THEN 1
 					ELSE 0
 				END
-			), 0)::BIGINT AS available_count
+			), 0)::BIGINT AS available_count,
+			COALESCE(SUM(
+				CASE
+					WHEN entries.relative_path IS NOT NULL
+					 AND entries.is_available = TRUE
+					 AND (
+					 	refs.name IS DISTINCT FROM entries.name
+					 	OR refs.kind IS DISTINCT FROM entries.kind
+					 	OR refs.size_bytes IS DISTINCT FROM entries.size_bytes
+					 	OR refs.modified_at IS DISTINCT FROM entries.modified_at
+					 	OR refs.extension IS DISTINCT FROM entries.extension
+					 	OR refs.mime_type IS DISTINCT FROM entries.mime_type
+					 ) THEN 1
+					ELSE 0
+				END
+			), 0)::BIGINT AS drifted_count
 		FROM publish_task_material_refs refs
 		LEFT JOIN device_material_entries entries
 		  ON entries.device_id = refs.device_id
@@ -1036,7 +1135,16 @@ func (s *Store) CountPublishTaskAvailableMaterials(ctx context.Context, taskID s
 
 	var totalCount int64
 	var availableCount int64
-	if err := row.Scan(&totalCount, &availableCount); err != nil {
+	var driftedCount int64
+	if err := row.Scan(&totalCount, &availableCount, &driftedCount); err != nil {
+		return 0, 0, 0, err
+	}
+	return totalCount, availableCount, driftedCount, nil
+}
+
+func (s *Store) CountPublishTaskAvailableMaterials(ctx context.Context, taskID string) (int64, int64, error) {
+	totalCount, availableCount, _, err := s.CountPublishTaskMaterialHealth(ctx, taskID)
+	if err != nil {
 		return 0, 0, err
 	}
 	return totalCount, availableCount, nil

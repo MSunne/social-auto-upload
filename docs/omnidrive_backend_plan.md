@@ -116,6 +116,7 @@ Phase 1 targets the operational backbone required by the current UI and the alre
 - expose per-skill workload counters and a skill workspace view so the cloud can show attached assets and recent dependent tasks without extra joins in the frontend
 - include AI-job dependency tracking in skill workload and delete guards so one skill can safely back image/video/chat generation flows
 - allow local OmniBull agents to pull enabled skills with asset bundles and report per-device sync revisions
+- effective skill revision must include attached asset changes so stale local skill bundles can be detected
 
 ### Tasks
 
@@ -126,6 +127,14 @@ Phase 1 targets the operational backbone required by the current UI and the alre
 - keep a per-task event timeline for cloud edits and agent execution evidence
 - store structured task artifacts such as verification screenshots, logs, and local output references
 - store task-to-material snapshot references so local input files remain traceable even after directory changes
+- store a cloud-side skill revision snapshot on each task so skill drift can be detected before execution
+- allow operators to refresh a task's skill-revision snapshot after the linked cloud skill changes
+- check whether the target device has successfully synced the linked skill revision before marking a task executable
+- compare task material snapshots with current mirrored material metadata and flag drift in shared readiness checks
+- allow operators to refresh a task's material snapshot after mirrored local files change in expected ways
+- support batch remediation from task-center diagnostics so blocked tasks can be repaired in groups rather than one by one
+- keep agent task polling focused on truly executable work; blocked tasks should remain inspectable with explicit readiness reasons
+- allow material detail views to trace which publish tasks currently depend on one mirrored file or directory subtree
 - support task claim / lease / renew so one device execution worker owns the task for a bounded time
 - allow cloud operators to manually force-release a stuck active task lease without waiting for TTL expiry
 - expose an agent task-package endpoint that resolves account, skill, skill assets, and material refs into one execution payload

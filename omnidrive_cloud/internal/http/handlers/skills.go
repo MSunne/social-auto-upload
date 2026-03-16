@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -126,6 +128,11 @@ func (h *SkillHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to load skill sync states")
 		return
 	}
+	deviceSyncs, err = decorateSkillSyncStatesWithCurrentRevision(r.Context(), h.app, user.ID, deviceSyncs)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to decorate skill sync states")
+		return
+	}
 
 	render.JSON(w, http.StatusOK, domain.ProductSkillWorkspace{
 		Skill:        *skill,
@@ -133,6 +140,90 @@ func (h *SkillHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 		RecentTasks:  recentTasks,
 		RecentAIJobs: recentAIJobs,
 		DeviceSyncs:  deviceSyncs,
+	})
+}
+
+func (h *SkillHandler) Impact(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	skillID := strings.TrimSpace(chi.URLParam(r, "skillId"))
+	if skillID == "" {
+		render.Error(w, http.StatusBadRequest, "skillId is required")
+		return
+	}
+
+	skill, err := h.app.Store.GetOwnedSkillByID(r.Context(), skillID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load skill")
+		return
+	}
+	if skill == nil {
+		render.Error(w, http.StatusNotFound, "Skill not found")
+		return
+	}
+
+	limit := 0
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		parsed, parseErr := strconv.Atoi(rawLimit)
+		if parseErr != nil || parsed < 0 {
+			render.Error(w, http.StatusBadRequest, "limit must be a positive integer")
+			return
+		}
+		limit = parsed
+	}
+	readinessFilter := strings.TrimSpace(r.URL.Query().Get("readiness"))
+	if readinessFilter != "" && readinessFilter != "ready" && readinessFilter != "blocked" {
+		render.Error(w, http.StatusBadRequest, "readiness must be ready or blocked")
+		return
+	}
+	issueCodeFilter := strings.TrimSpace(r.URL.Query().Get("issueCode"))
+	statusFilter := strings.TrimSpace(r.URL.Query().Get("status"))
+
+	tasks, err := h.app.Store.ListPublishTasksBySkill(r.Context(), user.ID, skillID, 0)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load impacted tasks")
+		return
+	}
+
+	items := make([]domain.PublishTaskDiagnosticItem, 0, len(tasks))
+	for _, task := range tasks {
+		if statusFilter != "" && task.Status != statusFilter {
+			continue
+		}
+		item, diagErr := buildPublishTaskDiagnosticItem(r.Context(), h.app, user.ID, &task)
+		if diagErr != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to build skill impact diagnostics")
+			return
+		}
+		isReady := publishTaskReadinessAllowsExecution(item.Readiness)
+		if readinessFilter == "ready" && !isReady {
+			continue
+		}
+		if readinessFilter == "blocked" && isReady {
+			continue
+		}
+		if issueCodeFilter != "" {
+			matched := false
+			for _, issueCode := range item.Readiness.IssueCodes {
+				if issueCode == issueCodeFilter {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		items = append(items, item)
+		if limit > 0 && len(items) >= limit {
+			break
+		}
+	}
+
+	render.JSON(w, http.StatusOK, domain.ProductSkillImpactWorkspace{
+		Skill:      *skill,
+		Items:      items,
+		Summary:    summarizePublishTaskDiagnosticItems(items),
+		ServerTime: time.Now().UTC(),
 	})
 }
 
@@ -334,6 +425,10 @@ func (h *SkillHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		Source:       skill.OutputType,
 		Status:       "success",
 		Message:      auditStringPtr("产品技能已删除"),
+		Payload: mustJSONBytes(map[string]any{
+			"name":       skill.Name,
+			"outputType": skill.OutputType,
+		}),
 	})
 
 	render.JSON(w, http.StatusOK, map[string]any{"deleted": true})

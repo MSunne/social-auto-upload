@@ -158,13 +158,23 @@ class PublishTaskManager:
 
         return inserted
 
-    def list_tasks(self, limit=100, status=None):
+    def list_tasks(self, limit=100, status=None, source=None, sources=None):
         limit = max(1, min(int(limit), 500))
         query = "SELECT * FROM publish_tasks"
         params = []
+        conditions = []
         if status:
-            query += " WHERE status = ?"
+            conditions.append("status = ?")
             params.append(status)
+        source_values = [str(item).strip() for item in (sources or []) if str(item).strip()]
+        if source:
+            source_values.append(str(source).strip())
+        if source_values:
+            placeholders = ",".join("?" for _ in source_values)
+            conditions.append(f"source IN ({placeholders})")
+            params.extend(source_values)
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY created_at DESC, id DESC LIMIT ?"
         params.append(limit)
 
@@ -188,6 +198,27 @@ class PublishTaskManager:
             )
             row = cursor.fetchone()
         return self._serialize_row(row) if row else None
+
+    def cancel_task_if_queued(self, task_uuid, message="本地任务已取消"):
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                UPDATE publish_tasks
+                SET status = 'cancelled',
+                    message = ?,
+                    finished_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE task_uuid = ?
+                  AND status IN ('pending', 'scheduled')
+                ''',
+                (message, task_uuid),
+            )
+            changed = cursor.rowcount == 1
+            conn.commit()
+        if changed:
+            self._sync_task(task_uuid)
+        return changed
 
     def _build_task_specs(self, data, source="local_api"):
         platform_type = int(data.get("type"))

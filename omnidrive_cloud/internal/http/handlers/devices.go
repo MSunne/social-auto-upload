@@ -115,6 +115,11 @@ func (h *DeviceHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to load device skill sync states")
 		return
 	}
+	skillSyncStates, err = decorateSkillSyncStatesWithCurrentRevision(r.Context(), h.app, user.ID, skillSyncStates)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to decorate device skill sync states")
+		return
+	}
 
 	render.JSON(w, http.StatusOK, domain.DeviceWorkspace{
 		Device:              *device,

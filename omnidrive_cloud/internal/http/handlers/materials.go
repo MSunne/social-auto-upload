@@ -3,9 +3,11 @@ package handlers
 import (
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 
 	appstate "omnidrive_cloud/internal/app"
+	"omnidrive_cloud/internal/domain"
 	httpcontext "omnidrive_cloud/internal/http/context"
 	"omnidrive_cloud/internal/http/render"
 	"omnidrive_cloud/internal/store"
@@ -86,6 +88,98 @@ func (h *MaterialHandler) File(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	render.JSON(w, http.StatusOK, item)
+}
+
+func (h *MaterialHandler) Workspace(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	deviceID := strings.TrimSpace(r.URL.Query().Get("deviceId"))
+	rootName := strings.TrimSpace(r.URL.Query().Get("root"))
+	relativePath := normalizeMaterialPath(r.URL.Query().Get("path"))
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	limit := 0
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed < 0 {
+			render.Error(w, http.StatusBadRequest, "limit must be a positive integer")
+			return
+		}
+		limit = parsed
+	}
+	if deviceID == "" || rootName == "" || relativePath == "" {
+		render.Error(w, http.StatusBadRequest, "deviceId, root, and path are required")
+		return
+	}
+
+	root, err := h.app.Store.GetMaterialRootByOwner(r.Context(), user.ID, deviceID, rootName)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load material root")
+		return
+	}
+	if root == nil {
+		render.Error(w, http.StatusNotFound, "Material root not found")
+		return
+	}
+
+	entry, err := h.app.Store.GetMaterialEntryByOwner(r.Context(), user.ID, deviceID, rootName, relativePath)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load material entry")
+		return
+	}
+	if entry == nil {
+		render.Error(w, http.StatusNotFound, "Material entry not found")
+		return
+	}
+
+	subtree := false
+	switch scope {
+	case "", "auto":
+		subtree = entry.Kind == "directory"
+		if subtree {
+			scope = "subtree"
+		} else {
+			scope = "exact"
+		}
+	case "exact":
+		subtree = false
+	case "subtree":
+		subtree = true
+	default:
+		render.Error(w, http.StatusBadRequest, "scope must be exact, subtree, or auto")
+		return
+	}
+
+	tasks, err := h.app.Store.ListPublishTasksByMaterialRef(r.Context(), user.ID, deviceID, rootName, relativePath, subtree, limit)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load referencing tasks")
+		return
+	}
+
+	diagnostics := make([]domain.PublishTaskDiagnosticItem, 0, len(tasks))
+	for _, task := range tasks {
+		diagnostic, diagErr := buildPublishTaskDiagnosticItem(r.Context(), h.app, user.ID, &task)
+		if diagErr != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to build referencing task diagnostics")
+			return
+		}
+		diagnostics = append(diagnostics, diagnostic)
+	}
+
+	taskSummary := summarizePublishTaskDiagnosticItems(diagnostics)
+	render.JSON(w, http.StatusOK, domain.MaterialEntryWorkspace{
+		DeviceID:         deviceID,
+		Root:             *root,
+		Entry:            *entry,
+		Scope:            scope,
+		ReferencingTasks: diagnostics,
+		Summary: domain.MaterialImpactSummary{
+			TaskCount:    taskSummary.TotalCount,
+			ReadyCount:   taskSummary.ReadyCount,
+			BlockedCount: taskSummary.BlockedCount,
+			ByStatus:     taskSummary.ByStatus,
+			ByDimension:  taskSummary.ByDimension,
+			ByIssueCode:  taskSummary.ByIssueCode,
+		},
+	})
 }
 
 type syncMaterialRootsRequest struct {

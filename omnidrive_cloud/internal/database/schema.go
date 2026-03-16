@@ -114,6 +114,18 @@ CREATE TABLE IF NOT EXISTS device_skill_sync_states (
     UNIQUE(device_id, skill_id)
 );
 
+CREATE TABLE IF NOT EXISTS device_retired_skill_acks (
+    id TEXT PRIMARY KEY,
+    device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    skill_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    message TEXT,
+    last_acknowledged_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(device_id, skill_id, reason)
+);
+
 CREATE TABLE IF NOT EXISTS device_material_roots (
     id TEXT PRIMARY KEY,
     device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
@@ -155,6 +167,7 @@ CREATE TABLE IF NOT EXISTS publish_tasks (
     device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
     account_id TEXT REFERENCES platform_accounts(id) ON DELETE SET NULL,
     skill_id TEXT REFERENCES product_skills(id) ON DELETE SET NULL,
+    skill_revision TEXT,
     platform TEXT NOT NULL,
     account_name TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -238,6 +251,7 @@ ALTER TABLE publish_tasks ADD COLUMN IF NOT EXISTS lease_token TEXT;
 ALTER TABLE publish_tasks ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ;
 ALTER TABLE publish_tasks ADD COLUMN IF NOT EXISTS attempt_count INT NOT NULL DEFAULT 0;
 ALTER TABLE publish_tasks ADD COLUMN IF NOT EXISTS cancel_requested_at TIMESTAMPTZ;
+ALTER TABLE publish_tasks ADD COLUMN IF NOT EXISTS skill_revision TEXT;
 
 CREATE TABLE IF NOT EXISTS ai_models (
     id TEXT PRIMARY KEY,
@@ -319,6 +333,7 @@ CREATE INDEX IF NOT EXISTS idx_product_skills_owner_user_id ON product_skills(ow
 CREATE INDEX IF NOT EXISTS idx_product_skill_assets_skill_id ON product_skill_assets(skill_id);
 CREATE INDEX IF NOT EXISTS idx_device_skill_sync_states_device_id ON device_skill_sync_states(device_id);
 CREATE INDEX IF NOT EXISTS idx_device_skill_sync_states_skill_id ON device_skill_sync_states(skill_id);
+CREATE INDEX IF NOT EXISTS idx_device_retired_skill_acks_device_id ON device_retired_skill_acks(device_id);
 CREATE INDEX IF NOT EXISTS idx_device_material_roots_device_id ON device_material_roots(device_id);
 CREATE INDEX IF NOT EXISTS idx_device_material_entries_device_id ON device_material_entries(device_id);
 CREATE INDEX IF NOT EXISTS idx_device_material_entries_parent_path ON device_material_entries(device_id, root_name, parent_path);

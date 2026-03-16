@@ -1,0 +1,1217 @@
+import base64
+import json
+import mimetypes
+import shutil
+import socket
+import sqlite3
+import threading
+import time
+from datetime import datetime
+from pathlib import Path
+
+import requests
+
+from conf import BASE_DIR
+from utils.device_meta import get_local_ip
+from utils.materials import list_material_directory, list_material_roots, read_material_file
+
+
+PLATFORM_TYPE_BY_NAME = {
+    "小红书": 1,
+    "视频号": 2,
+    "抖音": 3,
+    "快手": 4,
+}
+
+PLATFORM_NAME_BY_TYPE = {value: key for key, value in PLATFORM_TYPE_BY_NAME.items()}
+SYNCABLE_LOCAL_SOURCES = ("local_api", "openclaw_skill", "omnidrive_agent")
+FINAL_LOCAL_STATUSES = {"success", "failed", "needs_verify", "cancelled"}
+
+
+class OmniDriveBridge:
+    def __init__(
+        self,
+        db_path,
+        cloud_base_url,
+        agent_key,
+        publish_task_manager,
+        material_roots,
+        device_name,
+        device_code,
+        poll_interval=5,
+        heartbeat_interval=30,
+        account_sync_interval=60,
+        material_sync_interval=300,
+        skill_sync_interval=120,
+        publish_sync_interval=5,
+        max_material_files=1000,
+        material_preview_bytes=65536,
+        http_timeout=15,
+    ):
+        self.db_path = Path(db_path)
+        self.cloud_base_url = str(cloud_base_url or "").rstrip("/")
+        self.agent_key = str(agent_key or "").strip()
+        self.publish_task_manager = publish_task_manager
+        self.material_roots = material_roots or {}
+        self.device_name = str(device_name or socket.gethostname()).strip() or socket.gethostname()
+        self.device_code = str(device_code or "").strip()
+        self.poll_interval = max(2, int(poll_interval))
+        self.heartbeat_interval = max(10, int(heartbeat_interval))
+        self.account_sync_interval = max(10, int(account_sync_interval))
+        self.material_sync_interval = max(60, int(material_sync_interval))
+        self.skill_sync_interval = max(30, int(skill_sync_interval))
+        self.publish_sync_interval = max(2, int(publish_sync_interval))
+        self.max_material_files = max(50, int(max_material_files))
+        self.material_preview_bytes = max(1024, int(material_preview_bytes))
+        self.http_timeout = max(5, int(http_timeout))
+
+        self._thread = None
+        self._thread_lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._session = requests.Session()
+        self._state_lock = threading.Lock()
+        self._state = {
+            "running": False,
+            "deviceName": self.device_name,
+            "deviceCode": self.device_code,
+            "cloudUrl": self.cloud_base_url,
+            "lastHeartbeatAt": None,
+            "lastAccountSyncAt": None,
+            "lastMaterialSyncAt": None,
+            "lastSkillSyncAt": None,
+            "lastPublishPollAt": None,
+            "lastPublishSyncAt": None,
+            "lastLeaseRenewAt": None,
+            "lastError": None,
+            "localIp": get_local_ip(),
+            "syncedRoots": 0,
+            "syncedFiles": 0,
+            "syncedSkills": 0,
+            "retiredSkillAcks": 0,
+            "mirroredAccounts": 0,
+            "mirroredTasks": 0,
+            "importedCloudTasks": 0,
+        }
+
+        self._workspace_dir = Path(BASE_DIR / "omnidriveSync")
+        self._skill_cache_dir = self._workspace_dir / "skills"
+        self._skill_cache_dir.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+
+    @property
+    def enabled(self):
+        return bool(self.cloud_base_url and self.agent_key and self.device_code)
+
+    def start(self):
+        if not self.enabled:
+            return
+        with self._thread_lock:
+            if self._thread and self._thread.is_alive():
+                return
+            self._stop_event.clear()
+            self._init_db()
+            self._thread = threading.Thread(target=self._loop, daemon=True)
+            self._thread.start()
+
+    def status(self):
+        with self._state_lock:
+            return dict(self._state)
+
+    def _update_state(self, **kwargs):
+        with self._state_lock:
+            self._state.update(kwargs)
+
+    def _loop(self):
+        self._update_state(running=True, lastError=None)
+        last_heartbeat = 0.0
+        last_accounts = 0.0
+        last_materials = 0.0
+        last_skills = 0.0
+        last_publish_sync = 0.0
+        last_publish_poll = 0.0
+        last_lease_renew = 0.0
+
+        while not self._stop_event.is_set():
+            try:
+                now = time.monotonic()
+                if now - last_heartbeat >= self.heartbeat_interval:
+                    self._heartbeat()
+                    last_heartbeat = now
+                if now - last_accounts >= self.account_sync_interval:
+                    self._sync_accounts()
+                    last_accounts = now
+                if now - last_materials >= self.material_sync_interval:
+                    self._sync_materials()
+                    last_materials = now
+                if now - last_skills >= self.skill_sync_interval:
+                    self._sync_skills()
+                    last_skills = now
+                if now - last_publish_sync >= self.publish_sync_interval:
+                    self._sync_local_publish_tasks()
+                    last_publish_sync = now
+                if now - last_lease_renew >= self.publish_sync_interval:
+                    self._renew_active_leases()
+                    last_lease_renew = now
+                if now - last_publish_poll >= self.poll_interval:
+                    self._import_remote_publish_tasks()
+                    last_publish_poll = now
+            except Exception as exc:
+                self._update_state(lastError=str(exc))
+
+            self._stop_event.wait(1)
+
+        self._update_state(running=False)
+
+    def _headers(self):
+        return {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-Agent-Key": self.agent_key,
+        }
+
+    def _request(self, method, path, *, params=None, payload=None):
+        response = self._session.request(
+            method=method,
+            url=f"{self.cloud_base_url}{path}",
+            headers=self._headers(),
+            params=params,
+            json=payload,
+            timeout=self.http_timeout,
+        )
+        response.raise_for_status()
+        if not response.content:
+            return None
+        return response.json()
+
+    def _heartbeat(self):
+        data = self._request(
+            "POST",
+            "/api/v1/agent/heartbeat",
+            payload={
+                "deviceCode": self.device_code,
+                "deviceName": self.device_name,
+                "agentKey": self.agent_key,
+                "localIp": get_local_ip(),
+                "runtimePayload": self._build_runtime_payload(),
+            },
+        )
+        self._update_state(
+            lastHeartbeatAt=self._now_string(),
+            lastError=None,
+            localIp=get_local_ip(),
+        )
+        return data
+
+    def _sync_accounts(self):
+        rows = self._load_local_accounts()
+        mirrored = 0
+        for row in rows:
+            platform_name = PLATFORM_NAME_BY_TYPE.get(int(row["type"]))
+            if not platform_name:
+                continue
+            status = "active" if int(row["status"] or 0) == 1 else "inactive"
+            payload = {
+                "deviceCode": self.device_code,
+                "platform": platform_name,
+                "accountName": row["userName"],
+                "status": status,
+                "lastMessage": None if status == "active" else "本地 cookie 当前不可用",
+            }
+            self._request("POST", "/api/v1/agent/accounts/sync", payload=payload)
+            mirrored += 1
+
+        self._update_state(
+            mirroredAccounts=mirrored,
+            lastAccountSyncAt=self._now_string(),
+        )
+
+    def _sync_materials(self):
+        roots = list_material_roots(self.material_roots)
+        self._request(
+            "POST",
+            "/api/v1/agent/materials/roots/sync",
+            payload={
+                "deviceCode": self.device_code,
+                "roots": roots,
+            },
+        )
+
+        synced_files = 0
+        for root_item in roots:
+            if synced_files >= self.max_material_files:
+                break
+            if not root_item.get("exists") or not root_item.get("isDirectory"):
+                continue
+            synced_files += self._sync_material_directory_tree(root_item["name"], "", synced_files)
+
+        self._update_state(
+            syncedRoots=len(roots),
+            syncedFiles=synced_files,
+            lastMaterialSyncAt=self._now_string(),
+        )
+
+    def _sync_material_directory_tree(self, root_name, relative_path, synced_files):
+        if synced_files >= self.max_material_files:
+            return 0
+
+        listing = list_material_directory(
+            self.material_roots,
+            root_name=root_name,
+            relative_path=relative_path,
+            limit=self.max_material_files,
+        )
+        self._request(
+            "POST",
+            "/api/v1/agent/materials/directory/sync",
+            payload={
+                "deviceCode": self.device_code,
+                "root": listing["root"],
+                "rootPath": listing["rootPath"],
+                "path": listing["path"],
+                "absolutePath": listing["absolutePath"],
+                "entries": listing["entries"],
+            },
+        )
+
+        processed_files = 0
+        for entry in listing["entries"]:
+            if synced_files + processed_files >= self.max_material_files:
+                break
+            if entry["kind"] == "directory":
+                processed_files += self._sync_material_directory_tree(root_name, entry["relativePath"], synced_files + processed_files)
+                continue
+
+            file_preview = read_material_file(
+                self.material_roots,
+                root_name=root_name,
+                relative_path=entry["relativePath"],
+                max_bytes=self.material_preview_bytes,
+            )
+            self._request(
+                "POST",
+                "/api/v1/agent/materials/file/sync",
+                payload={
+                    "deviceCode": self.device_code,
+                    "root": file_preview["root"],
+                    "rootPath": file_preview["rootPath"],
+                    "path": file_preview["path"],
+                    "absolutePath": file_preview["absolutePath"],
+                    "name": file_preview["name"],
+                    "size": file_preview["size"],
+                    "modifiedAt": file_preview["modifiedAt"],
+                    "mimeType": file_preview["mimeType"],
+                    "isText": file_preview["isText"],
+                    "truncated": file_preview["truncated"],
+                    "previewText": file_preview["previewText"],
+                    "extension": file_preview["extension"],
+                },
+            )
+            processed_files += 1
+
+        return processed_files
+
+    def _sync_skills(self):
+        payload = self._request("GET", f"/api/v1/agent/skills/{self.device_code}") or {}
+        items = payload.get("items") or []
+        retired_items = payload.get("retiredItems") or []
+        sync_items = []
+        ack_items = []
+        synced_count = 0
+
+        for item in items:
+            try:
+                revision = str(item.get("revision") or "").strip()
+                skill = item.get("skill") or {}
+                skill_id = str(skill.get("id") or "").strip()
+                if not skill_id or not revision:
+                    continue
+
+                manifest_dir = self._skill_cache_dir / skill_id
+                assets_dir = manifest_dir / "assets"
+                assets_dir.mkdir(parents=True, exist_ok=True)
+
+                with open(manifest_dir / "manifest.json", "w", encoding="utf-8") as manifest_file:
+                    json.dump(item, manifest_file, ensure_ascii=False, indent=2)
+
+                download_errors = []
+                for asset in item.get("assets") or []:
+                    public_url = str(asset.get("publicUrl") or "").strip()
+                    file_name = str(asset.get("fileName") or asset.get("id") or "asset.bin").strip()
+                    target_path = assets_dir / file_name
+                    metadata_path = assets_dir / f"{file_name}.json"
+                    with open(metadata_path, "w", encoding="utf-8") as metadata_file:
+                        json.dump(asset, metadata_file, ensure_ascii=False, indent=2)
+                    if public_url:
+                        try:
+                            response = self._session.get(public_url, timeout=self.http_timeout)
+                            response.raise_for_status()
+                            with open(target_path, "wb") as asset_file:
+                                asset_file.write(response.content)
+                        except Exception as exc:
+                            download_errors.append(f"{file_name}: {exc}")
+
+                sync_items.append(
+                    {
+                        "skillId": skill_id,
+                        "syncStatus": "success" if not download_errors else "failed",
+                        "syncedRevision": revision if not download_errors else None,
+                        "assetCount": len(item.get("assets") or []),
+                        "message": None if not download_errors else "；".join(download_errors)[:500],
+                        "lastSyncedAt": self._iso_now(),
+                    }
+                )
+                if not download_errors:
+                    synced_count += 1
+            except Exception as exc:
+                skill_id = str((item.get("skill") or {}).get("id") or "").strip()
+                if skill_id:
+                    sync_items.append(
+                        {
+                            "skillId": skill_id,
+                            "syncStatus": "failed",
+                            "syncedRevision": None,
+                            "assetCount": len(item.get("assets") or []),
+                            "message": str(exc)[:500],
+                            "lastSyncedAt": self._iso_now(),
+                        }
+                    )
+
+        if sync_items:
+            self._request(
+                "POST",
+                "/api/v1/agent/skills/sync",
+                payload={
+                    "deviceCode": self.device_code,
+                    "items": sync_items,
+                },
+            )
+
+        for item in retired_items:
+            skill_id = str(item.get("skillId") or "").strip()
+            reason = str(item.get("reason") or "").strip()
+            if not skill_id or not reason:
+                continue
+            skill_dir = self._skill_cache_dir / skill_id
+            if skill_dir.exists():
+                shutil.rmtree(skill_dir, ignore_errors=True)
+            ack_items.append(
+                {
+                    "skillId": skill_id,
+                    "reason": reason,
+                    "message": "本地技能缓存已清理",
+                    "acknowledgedAt": self._iso_now(),
+                }
+            )
+
+        if ack_items:
+            self._request(
+                "POST",
+                "/api/v1/agent/skills/retired-ack",
+                payload={
+                    "deviceCode": self.device_code,
+                    "items": ack_items,
+                },
+            )
+
+        self._update_state(
+            syncedSkills=synced_count,
+            retiredSkillAcks=len(ack_items),
+            lastSkillSyncAt=self._now_string(),
+        )
+
+    def _import_remote_publish_tasks(self):
+        queue = self._request("GET", f"/api/v1/agent/publish-tasks/{self.device_code}") or []
+        imported = 0
+
+        inflight = self._count_inflight_omnidrive_tasks()
+        available_slots = max(0, self.publish_task_manager.worker_count - inflight)
+        if available_slots <= 0:
+            self._update_state(lastPublishPollAt=self._now_string())
+            return
+
+        for task in queue:
+            if imported >= available_slots:
+                break
+
+            task_id = str(task.get("id") or "").strip()
+            if not task_id:
+                continue
+            if self.publish_task_manager.get_task(task_id):
+                continue
+
+            package = self._request(
+                "GET",
+                f"/api/v1/agent/publish-tasks/{task_id}/package",
+                params={"deviceCode": self.device_code},
+            )
+            if not package:
+                continue
+
+            claim_data = self._request(
+                "POST",
+                f"/api/v1/agent/publish-tasks/{task_id}/claim",
+                payload={"deviceCode": self.device_code},
+            )
+            lease_token = str((claim_data or {}).get("leaseToken") or "").strip()
+            lease_expires_at = (claim_data or {}).get("leaseExpiresAt")
+            if not lease_token:
+                continue
+
+            try:
+                local_spec = self._build_local_task_spec(package)
+                self.publish_task_manager.enqueue_specs([local_spec])
+                self._upsert_lease(task_id, lease_token, lease_expires_at)
+                self._sync_imported_task_runtime(local_spec)
+                imported += 1
+            except Exception as exc:
+                self._sync_remote_import_failure(package, lease_token, str(exc))
+                self._delete_lease(task_id)
+
+        self._update_state(
+            importedCloudTasks=imported,
+            lastPublishPollAt=self._now_string(),
+        )
+
+    def _sync_imported_task_runtime(self, local_spec):
+        task_uuid = local_spec["taskUuid"]
+        binding = self._get_lease(task_uuid)
+        if not binding:
+            return
+        payload = {
+            "id": task_uuid,
+            "deviceCode": self.device_code,
+            "accountId": local_spec["payload"].get("omnidriveAccountId"),
+            "skillId": local_spec["payload"].get("omnidriveSkillId"),
+            "skillRevision": local_spec["payload"].get("omnidriveSkillRevision"),
+            "platform": local_spec["platformName"],
+            "accountName": local_spec["accountName"],
+            "title": local_spec["title"],
+            "contentText": local_spec["payload"].get("contentText"),
+            "mediaPayload": local_spec["payload"].get("omnidriveMediaPayload"),
+            "status": "running",
+            "message": "任务已进入本地执行队列",
+            "executionPayload": {
+                "stage": "queued_local",
+                "source": local_spec["source"],
+                "queuedAt": self._iso_now(),
+            },
+            "materialRefs": local_spec["payload"].get("omnidriveMaterialRefs") or [],
+            "leaseToken": binding["lease_token"],
+        }
+        self._request("POST", "/api/v1/agent/publish-tasks/sync", payload=payload)
+
+    def _sync_local_publish_tasks(self):
+        tasks = self.publish_task_manager.list_tasks(limit=500, sources=SYNCABLE_LOCAL_SOURCES)
+        mirrored = 0
+        for task in tasks:
+            if not self._should_sync_local_task(task):
+                continue
+            payload = self._build_sync_task_payload(task)
+            if not payload:
+                continue
+            self._request("POST", "/api/v1/agent/publish-tasks/sync", payload=payload)
+            if task["status"] in FINAL_LOCAL_STATUSES:
+                self._finalize_lease_record(task["taskUuid"], task.get("status"), task.get("updatedAt"))
+            else:
+                self._mark_task_synced(task)
+            if task["status"] in FINAL_LOCAL_STATUSES:
+                self._clear_lease_token(task["taskUuid"])
+            mirrored += 1
+
+        self._update_state(
+            mirroredTasks=mirrored,
+            lastPublishSyncAt=self._now_string(),
+        )
+
+    def _renew_active_leases(self):
+        renewed = 0
+        for binding in self._list_leases():
+            if not binding.get("lease_token"):
+                continue
+            task = self.publish_task_manager.get_task(binding["task_uuid"])
+            if not task:
+                self._delete_lease(binding["task_uuid"])
+                continue
+            if task["status"] in FINAL_LOCAL_STATUSES:
+                continue
+            if not self._lease_needs_renew(binding["lease_expires_at"]):
+                continue
+            data = self._request(
+                "POST",
+                f"/api/v1/agent/publish-tasks/{binding['task_uuid']}/renew",
+                payload={
+                    "deviceCode": self.device_code,
+                    "leaseToken": binding["lease_token"],
+                },
+            )
+            self._upsert_lease(
+                binding["task_uuid"],
+                binding["lease_token"],
+                (data or {}).get("leaseExpiresAt"),
+                last_synced_status=binding.get("last_synced_status"),
+                last_synced_updated_at=binding.get("last_synced_updated_at"),
+            )
+            remote_task = (data or {}).get("task") or {}
+            if remote_task.get("status") == "cancel_requested" and task.get("status") in {"pending", "scheduled"}:
+                cancel_message = "OmniDrive 请求取消，本地任务尚未开始，已终止排队"
+                if self.publish_task_manager.cancel_task_if_queued(binding["task_uuid"], cancel_message):
+                    self._request(
+                        "POST",
+                        f"/api/v1/agent/publish-tasks/{binding['task_uuid']}/release",
+                        payload={
+                            "deviceCode": self.device_code,
+                            "leaseToken": binding["lease_token"],
+                            "message": cancel_message,
+                        },
+                    )
+                    cancelled_task = self.publish_task_manager.get_task(binding["task_uuid"])
+                    if cancelled_task:
+                        self._finalize_lease_record(
+                            binding["task_uuid"],
+                            cancelled_task.get("status"),
+                            cancelled_task.get("updatedAt"),
+                        )
+                        self._clear_lease_token(binding["task_uuid"])
+            renewed += 1
+
+        self._update_state(
+            lastLeaseRenewAt=self._now_string(),
+            lastError=None,
+        )
+        return renewed
+
+    def _build_local_task_spec(self, package):
+        task = package.get("task") or {}
+        task_id = str(task.get("id") or "").strip()
+        platform_name = str(task.get("platform") or "").strip()
+        platform_type = PLATFORM_TYPE_BY_NAME.get(platform_name)
+        if not task_id or not platform_type:
+            raise ValueError("云端任务缺少有效的平台信息")
+
+        account_file_path = self._resolve_local_account_file_path(platform_name, str(task.get("accountName") or "").strip())
+        media_payload = package.get("task", {}).get("mediaPayload") or {}
+        material_refs = self._extract_material_refs_from_package(package)
+        primary_file = self._choose_primary_file(material_refs)
+        if not primary_file:
+            raise ValueError("云端任务没有可执行的视频素材")
+
+        publish_date = self._extract_publish_date(task, media_payload)
+        thumbnail_ref = self._choose_thumbnail(material_refs, media_payload)
+        tags = self._normalize_tags(media_payload.get("tags"))
+        title = str(task.get("title") or "").strip()
+        if not title:
+            raise ValueError("云端任务标题不能为空")
+
+        payload = {
+            "platformType": platform_type,
+            "platformName": platform_name,
+            "title": title,
+            "tags": tags,
+            "filePath": primary_file["displayPath"],
+            "accountFilePath": account_file_path,
+            "accountName": str(task.get("accountName") or "").strip(),
+            "publishDate": publish_date or 0,
+            "category": media_payload.get("category"),
+            "fileSourceMode": "material",
+            "materialRoot": primary_file["root"],
+            "materialPath": primary_file["path"],
+            "sourceAbsolutePath": primary_file["absolutePath"],
+            "productLink": media_payload.get("productLink") or "",
+            "productTitle": media_payload.get("productTitle") or "",
+            "isDraft": bool(media_payload.get("isDraft", False)),
+            "source": "omnidrive_agent",
+            "contentText": task.get("contentText"),
+            "omnidriveAccountId": task.get("accountId"),
+            "omnidriveSkillId": task.get("skillId"),
+            "omnidriveSkillRevision": task.get("skillRevision"),
+            "omnidriveMediaPayload": media_payload,
+            "omnidriveMaterialRefs": material_refs,
+        }
+        if thumbnail_ref:
+            payload.update(
+                {
+                    "thumbnailSourceMode": "material",
+                    "thumbnailRoot": thumbnail_ref["root"],
+                    "thumbnailPath": thumbnail_ref["path"],
+                    "thumbnailAbsolutePath": thumbnail_ref["absolutePath"],
+                }
+            )
+
+        run_at = self._normalize_datetime(task.get("runAt"))
+        status = "scheduled" if self._is_future_datetime(run_at) else "pending"
+        message = "等待定时执行" if status == "scheduled" else "等待 OmniBull worker 执行"
+        return {
+            "taskUuid": task_id,
+            "source": "omnidrive_agent",
+            "platformType": platform_type,
+            "platformName": platform_name,
+            "accountName": str(task.get("accountName") or "").strip(),
+            "accountFilePath": account_file_path,
+            "fileName": primary_file["name"],
+            "filePath": primary_file["displayPath"],
+            "title": title,
+            "runAt": run_at,
+            "platformPublishAt": publish_date,
+            "status": status,
+            "message": message,
+            "payload": payload,
+        }
+
+    def _sync_remote_import_failure(self, package, lease_token, error_message):
+        task = package.get("task") or {}
+        payload = {
+            "id": str(task.get("id") or "").strip(),
+            "deviceCode": self.device_code,
+            "accountId": task.get("accountId"),
+            "skillId": task.get("skillId"),
+            "skillRevision": task.get("skillRevision"),
+            "platform": str(task.get("platform") or "").strip(),
+            "accountName": str(task.get("accountName") or "").strip(),
+            "title": str(task.get("title") or "").strip(),
+            "contentText": task.get("contentText"),
+            "mediaPayload": task.get("mediaPayload") or {},
+            "status": "failed",
+            "message": f"OmniBull 本地预处理失败: {error_message}",
+            "executionPayload": {
+                "stage": "preflight_failed",
+                "deviceCode": self.device_code,
+                "failedAt": self._iso_now(),
+            },
+            "materialRefs": self._extract_material_refs_from_package(package),
+            "leaseToken": lease_token,
+        }
+        self._request("POST", "/api/v1/agent/publish-tasks/sync", payload=payload)
+
+    def _build_sync_task_payload(self, task):
+        payload = task.get("payload") or {}
+        source = str(task.get("source") or "").strip()
+        status = str(task.get("status") or "").strip()
+        task_uuid = str(task.get("taskUuid") or "").strip()
+        if not task_uuid or not status:
+            return None
+
+        binding = self._get_lease(task_uuid)
+        if source == "omnidrive_agent" and status in {"pending", "scheduled"} and binding:
+            return None
+
+        remote_status = self._map_local_status(status)
+        if not remote_status:
+            return None
+
+        verification_payload = dict(task.get("verificationData") or {})
+        if verification_payload and not verification_payload.get("screenshotData") and task.get("artifactPath"):
+            screenshot_data = self._artifact_file_to_data_url(task.get("artifactPath"))
+            if screenshot_data:
+                verification_payload["screenshotData"] = screenshot_data
+
+        media_payload = self._build_remote_media_payload(task)
+        artifacts = self._build_remote_artifacts(task, verification_payload)
+        sync_payload = {
+            "id": task_uuid,
+            "deviceCode": self.device_code,
+            "accountId": payload.get("omnidriveAccountId"),
+            "skillId": payload.get("omnidriveSkillId"),
+            "skillRevision": payload.get("omnidriveSkillRevision"),
+            "platform": task.get("platformName"),
+            "accountName": task.get("accountName"),
+            "title": task.get("title"),
+            "contentText": payload.get("contentText"),
+            "mediaPayload": media_payload,
+            "status": remote_status,
+            "message": task.get("message"),
+            "executionPayload": {
+                "stage": self._runtime_stage_for_status(status),
+                "workerName": task.get("workerName"),
+                "localStatus": status,
+                "source": source,
+                "startedAt": task.get("startedAt"),
+                "finishedAt": task.get("finishedAt"),
+                "updatedAt": task.get("updatedAt"),
+            },
+            "verificationPayload": verification_payload or None,
+            "artifacts": artifacts,
+            "runAt": self._to_rfc3339(task.get("runAt")),
+            "finishedAt": self._to_rfc3339(task.get("finishedAt")),
+            "materialRefs": self._extract_material_refs_from_local_payload(payload),
+        }
+        if binding and binding.get("lease_token"):
+            sync_payload["leaseToken"] = binding["lease_token"]
+        return sync_payload
+
+    def _build_remote_media_payload(self, task):
+        payload = task.get("payload") or {}
+        media_payload = dict(payload.get("omnidriveMediaPayload") or {})
+        media_payload.setdefault("tags", payload.get("tags") or [])
+        media_payload.setdefault("category", payload.get("category"))
+        media_payload.setdefault("isDraft", bool(payload.get("isDraft", False)))
+        media_payload.setdefault("productLink", payload.get("productLink") or "")
+        media_payload.setdefault("productTitle", payload.get("productTitle") or "")
+        media_payload.setdefault("publishDate", payload.get("publishDate") or 0)
+        media_payload.setdefault(
+            "files",
+            [
+                {
+                    "root": payload.get("materialRoot"),
+                    "path": payload.get("materialPath"),
+                    "absolutePath": payload.get("sourceAbsolutePath"),
+                }
+            ] if payload.get("fileSourceMode") == "material" else [],
+        )
+        if payload.get("thumbnailSourceMode") == "material":
+            media_payload.setdefault(
+                "thumbnail",
+                {
+                    "root": payload.get("thumbnailRoot"),
+                    "path": payload.get("thumbnailPath"),
+                    "absolutePath": payload.get("thumbnailAbsolutePath"),
+                },
+            )
+        return media_payload
+
+    def _build_remote_artifacts(self, task, verification_payload):
+        artifacts = []
+        artifact_path = task.get("artifactPath")
+        if not artifact_path:
+            return artifacts
+        if verification_payload and verification_payload.get("screenshotData"):
+            return artifacts
+        data_url = self._artifact_file_to_data_url(artifact_path)
+        if not data_url:
+            return artifacts
+        absolute_path = self._resolve_artifact_path(artifact_path)
+        file_name = Path(absolute_path).name
+        mime_type = mimetypes.guess_type(file_name)[0] or "application/octet-stream"
+        artifacts.append(
+            {
+                "artifactKey": "local-artifact",
+                "artifactType": "verification-screenshot" if mime_type.startswith("image/") else "attachment",
+                "source": "agent",
+                "title": "本地任务产物",
+                "fileName": file_name,
+                "mimeType": mime_type,
+                "data": data_url,
+            }
+        )
+        return artifacts
+
+    def _resolve_local_account_file_path(self, platform_name, account_name):
+        platform_type = PLATFORM_TYPE_BY_NAME.get(platform_name)
+        if not platform_type:
+            raise ValueError(f"不支持的平台: {platform_name}")
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT filePath, status
+                FROM user_info
+                WHERE type = ? AND userName = ?
+                ORDER BY status DESC, id DESC
+                LIMIT 1
+                """,
+                (platform_type, account_name),
+            )
+            row = cursor.fetchone()
+        if not row:
+            raise ValueError(f"本地未找到账号: {platform_name} / {account_name}")
+        return row["filePath"]
+
+    def _load_local_accounts(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, type, filePath, userName, status
+                FROM user_info
+                ORDER BY id DESC
+                """
+            )
+            return cursor.fetchall()
+
+    def _extract_material_refs_from_package(self, package):
+        refs = []
+        for item in package.get("materials") or []:
+            root_name = str(item.get("rootName") or "").strip()
+            relative_path = str(item.get("relativePath") or "").strip()
+            if not root_name or not relative_path:
+                continue
+            refs.append(
+                {
+                    "root": root_name,
+                    "path": relative_path,
+                    "role": str(item.get("role") or "media").strip() or "media",
+                }
+            )
+        return refs
+
+    def _extract_material_refs_from_local_payload(self, payload):
+        refs = []
+        existing = payload.get("omnidriveMaterialRefs") or []
+        if existing:
+            for item in existing:
+                root_name = str(item.get("root") or "").strip()
+                relative_path = str(item.get("path") or "").strip()
+                if root_name and relative_path:
+                    refs.append(
+                        {
+                            "root": root_name,
+                            "path": relative_path,
+                            "role": str(item.get("role") or "media").strip() or "media",
+                        }
+                    )
+            return refs
+
+        if payload.get("fileSourceMode") == "material" and payload.get("materialRoot") and payload.get("materialPath"):
+            refs.append(
+                {
+                    "root": payload.get("materialRoot"),
+                    "path": payload.get("materialPath"),
+                    "role": "media",
+                }
+            )
+        if payload.get("thumbnailSourceMode") == "material" and payload.get("thumbnailRoot") and payload.get("thumbnailPath"):
+            refs.append(
+                {
+                    "root": payload.get("thumbnailRoot"),
+                    "path": payload.get("thumbnailPath"),
+                    "role": "thumbnail",
+                }
+            )
+        return refs
+
+    def _choose_primary_file(self, refs):
+        media_candidates = [
+            item for item in refs
+            if str(item.get("role") or "media") not in {"thumbnail", "cover"}
+        ]
+        ordered = media_candidates or refs
+        for item in ordered:
+            root_name = str(item.get("root") or "").strip()
+            relative_path = str(item.get("path") or "").strip()
+            if not root_name or not relative_path:
+                continue
+            absolute_path = str(item.get("absolutePath") or "").strip()
+            if not absolute_path:
+                try:
+                    listing = read_material_file(
+                        self.material_roots,
+                        root_name=root_name,
+                        relative_path=relative_path,
+                        max_bytes=1024,
+                    )
+                    absolute_path = listing["absolutePath"]
+                except Exception:
+                    absolute_path = ""
+            if not absolute_path:
+                continue
+            return {
+                "root": root_name,
+                "path": relative_path,
+                "absolutePath": absolute_path,
+                "displayPath": f"{root_name}:{relative_path}",
+                "name": item.get("name") or Path(absolute_path).name,
+            }
+        return None
+
+    def _choose_thumbnail(self, refs, media_payload):
+        thumbnail_payload = media_payload.get("thumbnail")
+        if isinstance(thumbnail_payload, dict):
+            root_name = str(thumbnail_payload.get("root") or "").strip()
+            relative_path = str(thumbnail_payload.get("path") or "").strip()
+            if root_name and relative_path:
+                return {
+                    "root": root_name,
+                    "path": relative_path,
+                    "absolutePath": thumbnail_payload.get("absolutePath"),
+                }
+
+        for item in refs:
+            role = str(item.get("role") or "").strip()
+            if role not in {"thumbnail", "cover"}:
+                continue
+            root_name = str(item.get("root") or "").strip()
+            relative_path = str(item.get("path") or "").strip()
+            if root_name and relative_path:
+                return {
+                    "root": root_name,
+                    "path": relative_path,
+                    "absolutePath": item.get("absolutePath"),
+                }
+        return None
+
+    def _extract_publish_date(self, task, media_payload):
+        value = media_payload.get("publishDate") or media_payload.get("platformPublishAt")
+        if value in (None, "", 0, "0"):
+            value = task.get("runAt")
+        return self._normalize_datetime(value)
+
+    @staticmethod
+    def _normalize_tags(value):
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if value in (None, ""):
+            return []
+        return [str(value).strip()]
+
+    def _should_sync_local_task(self, task):
+        task_uuid = str(task.get("taskUuid") or "").strip()
+        status = str(task.get("status") or "").strip()
+        if not task_uuid or not status:
+            return False
+        binding = self._get_lease(task_uuid)
+        if status in {"pending", "scheduled"} and binding and str(task.get("source") or "") == "omnidrive_agent":
+            return False
+        synced_status = binding.get("last_synced_status") if binding else None
+        synced_updated_at = binding.get("last_synced_updated_at") if binding else None
+        if synced_status == status and synced_updated_at == (task.get("updatedAt") or ""):
+            return False
+        if not binding and str(task.get("source") or "") not in SYNCABLE_LOCAL_SOURCES:
+            return False
+        return True
+
+    def _mark_task_synced(self, task):
+        task_uuid = task["taskUuid"]
+        binding = self._get_lease(task_uuid)
+        if not binding and str(task.get("source") or "") != "omnidrive_agent":
+            self._upsert_lease(task_uuid, None, None)
+            binding = self._get_lease(task_uuid)
+        if not binding:
+            return
+        self._upsert_lease(
+            task_uuid,
+            binding.get("lease_token"),
+            binding.get("lease_expires_at"),
+            last_synced_status=task.get("status"),
+            last_synced_updated_at=task.get("updatedAt"),
+        )
+
+    @staticmethod
+    def _map_local_status(status):
+        if status in {"pending", "running", "success", "failed", "needs_verify", "cancelled"}:
+            return status
+        if status == "scheduled":
+            return "pending"
+        return None
+
+    @staticmethod
+    def _runtime_stage_for_status(status):
+        return {
+            "pending": "queued_local",
+            "scheduled": "queued_local",
+            "running": "running",
+            "success": "completed",
+            "failed": "failed",
+            "needs_verify": "needs_verify",
+            "cancelled": "cancelled",
+        }.get(status, status)
+
+    def _count_inflight_omnidrive_tasks(self):
+        tasks = self.publish_task_manager.list_tasks(limit=500, sources=["omnidrive_agent"])
+        return sum(1 for task in tasks if task.get("status") in {"pending", "scheduled", "running"})
+
+    def _build_runtime_payload(self):
+        task_counts = self.publish_task_manager.list_tasks(limit=500)
+        by_status = {}
+        for task in task_counts:
+            by_status[task["status"]] = by_status.get(task["status"], 0) + 1
+        return {
+            "publishTasks": by_status,
+            "materialRoots": len(self.material_roots),
+        }
+
+    def _artifact_file_to_data_url(self, artifact_path):
+        absolute_path = self._resolve_artifact_path(artifact_path)
+        if not absolute_path.exists() or not absolute_path.is_file():
+            return None
+        mime_type = mimetypes.guess_type(absolute_path.name)[0] or "application/octet-stream"
+        encoded = base64.b64encode(absolute_path.read_bytes()).decode("utf-8")
+        return f"data:{mime_type};base64,{encoded}"
+
+    @staticmethod
+    def _resolve_artifact_path(artifact_path):
+        path = Path(str(artifact_path))
+        if path.is_absolute():
+            return path
+        return Path(BASE_DIR / path)
+
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS omnidrive_task_leases (
+                    task_uuid TEXT PRIMARY KEY,
+                    lease_token TEXT,
+                    lease_expires_at TEXT,
+                    last_synced_status TEXT,
+                    last_synced_updated_at TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.commit()
+
+    def _get_lease(self, task_uuid):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT task_uuid, lease_token, lease_expires_at, last_synced_status, last_synced_updated_at
+                FROM omnidrive_task_leases
+                WHERE task_uuid = ?
+                """,
+                (task_uuid,),
+            )
+            row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def _list_leases(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT task_uuid, lease_token, lease_expires_at, last_synced_status, last_synced_updated_at
+                FROM omnidrive_task_leases
+                """
+            )
+            rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    def _upsert_lease(
+        self,
+        task_uuid,
+        lease_token,
+        lease_expires_at,
+        last_synced_status=None,
+        last_synced_updated_at=None,
+    ):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO omnidrive_task_leases (
+                    task_uuid, lease_token, lease_expires_at, last_synced_status, last_synced_updated_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(task_uuid) DO UPDATE
+                SET lease_token = COALESCE(excluded.lease_token, omnidrive_task_leases.lease_token),
+                    lease_expires_at = COALESCE(excluded.lease_expires_at, omnidrive_task_leases.lease_expires_at),
+                    last_synced_status = COALESCE(excluded.last_synced_status, omnidrive_task_leases.last_synced_status),
+                    last_synced_updated_at = COALESCE(excluded.last_synced_updated_at, omnidrive_task_leases.last_synced_updated_at),
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (task_uuid, lease_token, lease_expires_at, last_synced_status, last_synced_updated_at),
+            )
+            conn.commit()
+
+    def _delete_lease(self, task_uuid):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM omnidrive_task_leases WHERE task_uuid = ?", (task_uuid,))
+            conn.commit()
+
+    def _clear_lease_token(self, task_uuid):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE omnidrive_task_leases
+                SET lease_token = NULL,
+                    lease_expires_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE task_uuid = ?
+                """,
+                (task_uuid,),
+            )
+            conn.commit()
+
+    def _finalize_lease_record(self, task_uuid, status, updated_at):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO omnidrive_task_leases (
+                    task_uuid, lease_token, lease_expires_at, last_synced_status, last_synced_updated_at
+                )
+                VALUES (?, NULL, NULL, ?, ?)
+                ON CONFLICT(task_uuid) DO UPDATE
+                SET lease_token = NULL,
+                    lease_expires_at = NULL,
+                    last_synced_status = excluded.last_synced_status,
+                    last_synced_updated_at = excluded.last_synced_updated_at,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (task_uuid, status, updated_at),
+            )
+            conn.commit()
+
+    @staticmethod
+    def _lease_needs_renew(value):
+        if not value:
+            return True
+        try:
+            expires_at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        return (expires_at.timestamp() - time.time()) < 20
+
+    @staticmethod
+    def _normalize_datetime(value):
+        if value in (None, "", 0, "0"):
+            return None
+        if isinstance(value, datetime):
+            return value.strftime("%Y-%m-%d %H:%M:%S")
+        value_str = str(value).strip().replace("T", " ")
+        if value_str.endswith("Z"):
+            value_str = value_str[:-1]
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S.%f"):
+            try:
+                return datetime.strptime(value_str, fmt).strftime("%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                continue
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            return parsed.strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return value_str
+
+    @staticmethod
+    def _is_future_datetime(value):
+        if not value:
+            return False
+        try:
+            return datetime.strptime(value, "%Y-%m-%d %H:%M:%S") > datetime.now()
+        except ValueError:
+            return False
+
+    @staticmethod
+    def _to_rfc3339(value):
+        if value in (None, "", 0, "0"):
+            return None
+        value_str = str(value).strip().replace("T", " ")
+        if not value_str:
+            return None
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                parsed = datetime.strptime(value_str, fmt)
+                return parsed.isoformat() + "Z"
+            except ValueError:
+                continue
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            return parsed.astimezone().isoformat().replace("+00:00", "Z")
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _now_string():
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    @staticmethod
+    def _iso_now():
+        return datetime.utcnow().isoformat() + "Z"

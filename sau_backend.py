@@ -25,6 +25,7 @@ from utils.materials import (
     read_material_file,
     resolve_material_reference,
 )
+from utils.omnidrive_agent import OmniDriveBridge
 from utils.publish_task_manager import PublishTaskManager
 
 active_queues = {}
@@ -53,6 +54,16 @@ CLOUD_DEVICE_NAME = str(getattr(app_conf, 'CLOUD_DEVICE_NAME', '')).strip() or N
 CLOUD_AGENT_KEY = str(getattr(app_conf, 'CLOUD_AGENT_KEY', '')).strip()
 CLOUD_AGENT_POLL_INTERVAL = int(getattr(app_conf, 'CLOUD_AGENT_POLL_INTERVAL', 5))
 CLOUD_AGENT_HEARTBEAT_INTERVAL = int(getattr(app_conf, 'CLOUD_AGENT_HEARTBEAT_INTERVAL', 30))
+OMNIDRIVE_AGENT_ENABLED = parse_bool(getattr(app_conf, 'OMNIDRIVE_AGENT_ENABLED', False))
+OMNIDRIVE_BASE_URL = str(getattr(app_conf, 'OMNIDRIVE_BASE_URL', '')).strip()
+OMNIDRIVE_AGENT_KEY = str(getattr(app_conf, 'OMNIDRIVE_AGENT_KEY', '')).strip()
+OMNIDRIVE_AGENT_POLL_INTERVAL = int(getattr(app_conf, 'OMNIDRIVE_AGENT_POLL_INTERVAL', 5))
+OMNIDRIVE_AGENT_HEARTBEAT_INTERVAL = int(getattr(app_conf, 'OMNIDRIVE_AGENT_HEARTBEAT_INTERVAL', 30))
+OMNIDRIVE_ACCOUNT_SYNC_INTERVAL = int(getattr(app_conf, 'OMNIDRIVE_ACCOUNT_SYNC_INTERVAL', 60))
+OMNIDRIVE_MATERIAL_SYNC_INTERVAL = int(getattr(app_conf, 'OMNIDRIVE_MATERIAL_SYNC_INTERVAL', 300))
+OMNIDRIVE_SKILL_SYNC_INTERVAL = int(getattr(app_conf, 'OMNIDRIVE_SKILL_SYNC_INTERVAL', 120))
+OMNIDRIVE_PUBLISH_SYNC_INTERVAL = int(getattr(app_conf, 'OMNIDRIVE_PUBLISH_SYNC_INTERVAL', 5))
+OMNIDRIVE_MATERIAL_SYNC_MAX_FILES = int(getattr(app_conf, 'OMNIDRIVE_MATERIAL_SYNC_MAX_FILES', 1000))
 OMNIBULL_PUBLISH_WORKERS = int(getattr(app_conf, 'OMNIBULL_PUBLISH_WORKERS', 3))
 OMNIBULL_TASK_RETENTION_DAYS = int(getattr(app_conf, 'OMNIBULL_TASK_RETENTION_DAYS', 7))
 OMNIBULL_API_KEY = str(getattr(app_conf, 'OMNIBULL_API_KEY', '')).strip()
@@ -64,6 +75,8 @@ RESOLVED_DEVICE_NAME = CLOUD_DEVICE_NAME or socket.gethostname()
 DEVICE_CODE = str(getattr(app_conf, 'CLOUD_DEVICE_CODE', '')).strip() or get_device_code()
 cloud_agent = None
 cloud_agent_lock = threading.Lock()
+omnidrive_agent = None
+omnidrive_agent_lock = threading.Lock()
 publish_task_manager = PublishTaskManager(
     Path(BASE_DIR / "db" / "database.db"),
     worker_count=OMNIBULL_PUBLISH_WORKERS,
@@ -252,6 +265,7 @@ def resolve_skill_file_items(files):
 def build_skill_status_payload():
     ensure_publish_task_manager_started()
     agent_status = cloud_agent.status() if cloud_agent else None
+    omnidrive_agent_status = omnidrive_agent.status() if omnidrive_agent else None
 
     with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
         conn.row_factory = sqlite3.Row
@@ -295,6 +309,8 @@ def build_skill_status_payload():
         "skillApiAuthEnabled": bool(OMNIBULL_API_KEY),
         "cloudAgentConfig": get_cloud_agent_config(),
         "cloudAgent": agent_status,
+        "omniDriveAgentConfig": get_omnidrive_agent_config(),
+        "omniDriveAgent": omnidrive_agent_status,
         "accounts": {
             "total": account_total,
             "byStatus": account_statuses,
@@ -376,6 +392,33 @@ def get_cloud_agent_config():
     }
 
 
+def get_omnidrive_agent_config():
+    blocked_reason = None
+    if not OMNIDRIVE_AGENT_ENABLED:
+        blocked_reason = "OMNIDRIVE_AGENT_ENABLED 未开启"
+    elif not OMNIDRIVE_BASE_URL:
+        blocked_reason = "OMNIDRIVE_BASE_URL 未配置"
+    elif not OMNIDRIVE_AGENT_KEY:
+        blocked_reason = "OMNIDRIVE_AGENT_KEY 未配置"
+
+    return {
+        "enabled": OMNIDRIVE_AGENT_ENABLED,
+        "cloudUrl": OMNIDRIVE_BASE_URL,
+        "deviceName": RESOLVED_DEVICE_NAME,
+        "deviceCode": DEVICE_CODE,
+        "agentKeyConfigured": bool(OMNIDRIVE_AGENT_KEY),
+        "pollInterval": OMNIDRIVE_AGENT_POLL_INTERVAL,
+        "heartbeatInterval": OMNIDRIVE_AGENT_HEARTBEAT_INTERVAL,
+        "accountSyncInterval": OMNIDRIVE_ACCOUNT_SYNC_INTERVAL,
+        "materialSyncInterval": OMNIDRIVE_MATERIAL_SYNC_INTERVAL,
+        "skillSyncInterval": OMNIDRIVE_SKILL_SYNC_INTERVAL,
+        "publishSyncInterval": OMNIDRIVE_PUBLISH_SYNC_INTERVAL,
+        "maxMaterialFiles": OMNIDRIVE_MATERIAL_SYNC_MAX_FILES,
+        "startEligible": blocked_reason is None,
+        "blockedReason": blocked_reason,
+    }
+
+
 def ensure_publish_task_manager_started():
     publish_task_manager.start()
 
@@ -401,6 +444,33 @@ def ensure_cloud_agent_started():
             cloud_agent.start()
 
 
+def ensure_omnidrive_agent_started():
+    global omnidrive_agent
+
+    if not OMNIDRIVE_AGENT_ENABLED or not OMNIDRIVE_BASE_URL or not OMNIDRIVE_AGENT_KEY:
+        return
+
+    with omnidrive_agent_lock:
+        if omnidrive_agent is None:
+            omnidrive_agent = OmniDriveBridge(
+                db_path=Path(BASE_DIR / "db" / "database.db"),
+                cloud_base_url=OMNIDRIVE_BASE_URL,
+                agent_key=OMNIDRIVE_AGENT_KEY,
+                publish_task_manager=publish_task_manager,
+                material_roots=OMNIBULL_MATERIAL_ROOTS,
+                device_name=RESOLVED_DEVICE_NAME,
+                device_code=DEVICE_CODE,
+                poll_interval=OMNIDRIVE_AGENT_POLL_INTERVAL,
+                heartbeat_interval=OMNIDRIVE_AGENT_HEARTBEAT_INTERVAL,
+                account_sync_interval=OMNIDRIVE_ACCOUNT_SYNC_INTERVAL,
+                material_sync_interval=OMNIDRIVE_MATERIAL_SYNC_INTERVAL,
+                skill_sync_interval=OMNIDRIVE_SKILL_SYNC_INTERVAL,
+                publish_sync_interval=OMNIDRIVE_PUBLISH_SYNC_INTERVAL,
+                max_material_files=OMNIDRIVE_MATERIAL_SYNC_MAX_FILES,
+            )
+            omnidrive_agent.start()
+
+
 def should_boot_background_services():
     flask_run_from_cli = os.environ.get('FLASK_RUN_FROM_CLI') == 'true'
     werkzeug_run_main = os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
@@ -417,6 +487,7 @@ def should_boot_background_services():
 def bootstrap_cloud_agent():
     ensure_publish_task_manager_started()
     ensure_cloud_agent_started()
+    ensure_omnidrive_agent_started()
 
 # 处理所有静态资源请求（未来打包用）
 @app.route('/assets/<filename>')
@@ -905,6 +976,20 @@ def cloud_agent_status():
     }), 200
 
 
+@app.route('/omnidriveAgentStatus', methods=['GET'])
+def omnidrive_agent_status():
+    ensure_omnidrive_agent_started()
+    agent_status = omnidrive_agent.status() if omnidrive_agent else None
+    return jsonify({
+        "code": 200,
+        "msg": "success",
+        "data": {
+            "config": get_omnidrive_agent_config(),
+            "agent": agent_status,
+        }
+    }), 200
+
+
 @app.route('/api/skill/status', methods=['GET'])
 def skill_status():
     auth_error = ensure_skill_api_authorized()
@@ -912,6 +997,7 @@ def skill_status():
         return auth_error
 
     ensure_cloud_agent_started()
+    ensure_omnidrive_agent_started()
     payload = build_skill_status_payload()
     return jsonify({
         "code": 200,
@@ -1477,6 +1563,7 @@ def run_async_function(type,id,status_queue,command_queue=None):
 if should_boot_background_services():
     ensure_publish_task_manager_started()
     ensure_cloud_agent_started()
+    ensure_omnidrive_agent_started()
 
 # SSE 流生成器函数
 def sse_stream(status_queue):
@@ -1491,4 +1578,5 @@ def sse_stream(status_queue):
 if __name__ == '__main__':
     ensure_publish_task_manager_started()
     ensure_cloud_agent_started()
+    ensure_omnidrive_agent_started()
     app.run(host='0.0.0.0' ,port=5409)

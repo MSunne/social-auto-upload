@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -96,6 +98,30 @@ func skillQueryWithLoad(whereClause string) string {
 	`, skillSelectColumns, skillLoadColumns, whereClause)
 }
 
+func buildEffectiveSkillRevision(skillUpdatedAt time.Time, latestAssetUpdatedAt *time.Time, assetCount int64) string {
+	parts := []string{
+		skillUpdatedAt.UTC().Format(time.RFC3339Nano),
+		fmt.Sprintf("%d", assetCount),
+	}
+	if latestAssetUpdatedAt != nil {
+		parts = append(parts, latestAssetUpdatedAt.UTC().Format(time.RFC3339Nano))
+	} else {
+		parts = append(parts, "no-assets")
+	}
+	return strings.Join(parts, "|")
+}
+
+func trimmedStringPointer(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
 func (s *Store) ListSkillsByOwner(ctx context.Context, ownerUserID string) ([]domain.ProductSkill, error) {
 	rows, err := s.pool.Query(ctx, skillQueryWithLoad(`
 		WHERE owner_user_id = $1
@@ -146,6 +172,127 @@ func (s *Store) ListEnabledSkillsByOwner(ctx context.Context, ownerUserID string
 			return nil, scanErr
 		}
 		items = append(items, *skill)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) ListSkillsForAgentSyncByOwner(ctx context.Context, ownerUserID string, since *time.Time, limit int) ([]domain.ProductSkill, error) {
+	query := skillQueryWithLoad(`
+		WHERE owner_user_id = $1
+	`)
+	args := []any{ownerUserID}
+	if since != nil {
+		query += ` AND updated_at > $2`
+		args = append(args, since.UTC())
+	}
+	query += ` ORDER BY updated_at DESC`
+	if limit > 0 {
+		query += fmt.Sprintf(` LIMIT $%d`, len(args)+1)
+		args = append(args, limit)
+	}
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.ProductSkill, 0)
+	for rows.Next() {
+		skill, scanErr := scanSkillWithLoad(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *skill)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) GetSkillRevision(ctx context.Context, skillID string, ownerUserID string) (string, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT
+			ps.updated_at,
+			MAX(psa.updated_at),
+			COUNT(psa.id)::BIGINT
+		FROM product_skills ps
+		LEFT JOIN product_skill_assets psa
+		  ON psa.skill_id = ps.id
+		 AND psa.owner_user_id = ps.owner_user_id
+		WHERE ps.id = $1
+		  AND ps.owner_user_id = $2
+		GROUP BY ps.updated_at
+	`, skillID, ownerUserID)
+
+	var skillUpdatedAt time.Time
+	var latestAssetUpdatedAt *time.Time
+	var assetCount int64
+	if err := row.Scan(&skillUpdatedAt, &latestAssetUpdatedAt, &assetCount); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	return buildEffectiveSkillRevision(skillUpdatedAt, latestAssetUpdatedAt, assetCount), nil
+}
+
+func (s *Store) ListDeletedSkillEventsByOwner(ctx context.Context, ownerUserID string, since *time.Time, limit int) ([]domain.AgentRetiredSkillItem, error) {
+	query := `
+		SELECT resource_id, payload, message, created_at
+		FROM audit_events
+		WHERE owner_user_id = $1
+		  AND resource_type = 'skill'
+		  AND action = 'delete'
+		  AND status = 'success'
+	`
+	args := []any{ownerUserID}
+	if since != nil {
+		query += ` AND created_at > $2`
+		args = append(args, since.UTC())
+	}
+	query += ` ORDER BY created_at DESC`
+	if limit > 0 {
+		query += fmt.Sprintf(` LIMIT $%d`, len(args)+1)
+		args = append(args, limit)
+	}
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.AgentRetiredSkillItem, 0)
+	for rows.Next() {
+		var skillID *string
+		var payload []byte
+		var message *string
+		var createdAt time.Time
+		if err := rows.Scan(&skillID, &payload, &message, &createdAt); err != nil {
+			return nil, err
+		}
+		if skillID == nil || strings.TrimSpace(*skillID) == "" {
+			continue
+		}
+
+		item := domain.AgentRetiredSkillItem{
+			SkillID:       strings.TrimSpace(*skillID),
+			Reason:        "deleted",
+			Message:       message,
+			LastChangedAt: createdAt.UTC(),
+		}
+
+		if len(payload) > 0 {
+			var parsed struct {
+				Name       *string `json:"name"`
+				OutputType *string `json:"outputType"`
+			}
+			if jsonErr := json.Unmarshal(payload, &parsed); jsonErr == nil {
+				item.Name = trimmedStringPointer(parsed.Name)
+				item.OutputType = trimmedStringPointer(parsed.OutputType)
+			}
+		}
+
+		items = append(items, item)
 	}
 	return items, rows.Err()
 }
@@ -214,7 +361,7 @@ func (s *Store) GetOwnedSkillByID(ctx context.Context, skillID string, ownerUser
 
 func (s *Store) ListPublishTasksBySkill(ctx context.Context, ownerUserID string, skillID string, limit int) ([]domain.PublishTask, error) {
 	query := `
-		SELECT pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.platform, pt.account_name,
+		SELECT pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
 		       pt.title, pt.content_text, pt.media_payload, pt.status, pt.message,
 		       pt.verification_payload, pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at,
 		       pt.attempt_count, pt.cancel_requested_at, pt.run_at, pt.finished_at, pt.created_at, pt.updated_at
@@ -300,6 +447,25 @@ func scanDeviceSkillSyncState(row pgx.Row) (*domain.DeviceSkillSyncState, error)
 	item.SyncedRevision = syncedRevision
 	item.Message = message
 	item.LastSyncedAt = lastSyncedAt
+	return &item, nil
+}
+
+func scanDeviceRetiredSkillAck(row pgx.Row) (*domain.DeviceRetiredSkillAck, error) {
+	var item domain.DeviceRetiredSkillAck
+	var message *string
+	if err := row.Scan(
+		&item.ID,
+		&item.DeviceID,
+		&item.SkillID,
+		&item.Reason,
+		&message,
+		&item.LastAcknowledgedAt,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		return nil, err
+	}
+	item.Message = message
 	return &item, nil
 }
 
@@ -415,6 +581,50 @@ func (s *Store) GetDeviceSkillSyncState(ctx context.Context, deviceID string, sk
 	return item, nil
 }
 
+func (s *Store) ListDeviceRetiredSkillAcks(ctx context.Context, deviceID string) ([]domain.DeviceRetiredSkillAck, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, device_id, skill_id, reason, message, last_acknowledged_at, created_at, updated_at
+		FROM device_retired_skill_acks
+		WHERE device_id = $1
+		ORDER BY updated_at DESC
+	`, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.DeviceRetiredSkillAck, 0)
+	for rows.Next() {
+		item, scanErr := scanDeviceRetiredSkillAck(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) UpsertDeviceRetiredSkillAck(ctx context.Context, input UpsertDeviceRetiredSkillAckInput) (*domain.DeviceRetiredSkillAck, error) {
+	ackTime := time.Now().UTC()
+	if input.LastAcknowledgedAt != nil && !input.LastAcknowledgedAt.IsZero() {
+		ackTime = input.LastAcknowledgedAt.UTC()
+	}
+
+	row := s.pool.QueryRow(ctx, `
+		INSERT INTO device_retired_skill_acks (
+			id, device_id, skill_id, reason, message, last_acknowledged_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (device_id, skill_id, reason) DO UPDATE
+		SET message = EXCLUDED.message,
+		    last_acknowledged_at = EXCLUDED.last_acknowledged_at,
+		    updated_at = NOW()
+		RETURNING id, device_id, skill_id, reason, message, last_acknowledged_at, created_at, updated_at
+	`, uuid.NewString(), input.DeviceID, input.SkillID, input.Reason, input.Message, ackTime)
+
+	return scanDeviceRetiredSkillAck(row)
+}
+
 func (s *Store) UpsertDeviceSkillSyncState(ctx context.Context, input UpsertDeviceSkillSyncStateInput) (*domain.DeviceSkillSyncState, error) {
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO device_skill_sync_states (
@@ -436,7 +646,13 @@ func (s *Store) UpsertDeviceSkillSyncState(ctx context.Context, input UpsertDevi
 }
 
 func (s *Store) CreateSkillAsset(ctx context.Context, input CreateSkillAssetInput) (*domain.ProductSkillAsset, error) {
-	row := s.pool.QueryRow(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
 		INSERT INTO product_skill_assets (
 			id, skill_id, owner_user_id, asset_type, file_name, mime_type,
 			storage_key, public_url, size_bytes
@@ -447,7 +663,23 @@ func (s *Store) CreateSkillAsset(ctx context.Context, input CreateSkillAssetInpu
 	`, input.ID, input.SkillID, input.OwnerUserID, input.AssetType, input.FileName,
 		input.MimeType, input.StorageKey, input.PublicURL, input.SizeBytes)
 
-	return scanSkillAsset(row)
+	asset, err := scanSkillAsset(row)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE product_skills
+		SET updated_at = NOW()
+		WHERE id = $1 AND owner_user_id = $2
+	`, input.SkillID, input.OwnerUserID); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return asset, nil
 }
 
 func (s *Store) GetSkillUsageSummary(ctx context.Context, skillID string, ownerUserID string) (int64, int64, int64, error) {

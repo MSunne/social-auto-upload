@@ -154,16 +154,30 @@ type ProductSkillAsset struct {
 }
 
 type DeviceSkillSyncState struct {
-	ID             string     `json:"id"`
-	DeviceID       string     `json:"deviceId"`
-	SkillID        string     `json:"skillId"`
-	SyncStatus     string     `json:"syncStatus"`
-	SyncedRevision *string    `json:"syncedRevision"`
-	AssetCount     int64      `json:"assetCount"`
-	Message        *string    `json:"message"`
-	LastSyncedAt   *time.Time `json:"lastSyncedAt"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	UpdatedAt      time.Time  `json:"updatedAt"`
+	ID              string     `json:"id"`
+	DeviceID        string     `json:"deviceId"`
+	SkillID         string     `json:"skillId"`
+	SyncStatus      string     `json:"syncStatus"`
+	SyncedRevision  *string    `json:"syncedRevision"`
+	DesiredRevision *string    `json:"desiredRevision,omitempty"`
+	IsCurrent       bool       `json:"isCurrent"`
+	NeedsSync       bool       `json:"needsSync"`
+	AssetCount      int64      `json:"assetCount"`
+	Message         *string    `json:"message"`
+	LastSyncedAt    *time.Time `json:"lastSyncedAt"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
+}
+
+type DeviceRetiredSkillAck struct {
+	ID                 string    `json:"id"`
+	DeviceID           string    `json:"deviceId"`
+	SkillID            string    `json:"skillId"`
+	Reason             string    `json:"reason"`
+	Message            *string   `json:"message,omitempty"`
+	LastAcknowledgedAt time.Time `json:"lastAcknowledgedAt"`
+	CreatedAt          time.Time `json:"createdAt"`
+	UpdatedAt          time.Time `json:"updatedAt"`
 }
 
 type ProductSkillWorkspace struct {
@@ -172,6 +186,13 @@ type ProductSkillWorkspace struct {
 	RecentTasks  []PublishTask          `json:"recentTasks"`
 	RecentAIJobs []AIJob                `json:"recentAiJobs"`
 	DeviceSyncs  []DeviceSkillSyncState `json:"deviceSyncs"`
+}
+
+type ProductSkillImpactWorkspace struct {
+	Skill      ProductSkill                 `json:"skill"`
+	Items      []PublishTaskDiagnosticItem  `json:"items"`
+	Summary    PublishTaskDiagnosticSummary `json:"summary"`
+	ServerTime time.Time                    `json:"serverTime"`
 }
 
 type MaterialRoot struct {
@@ -208,11 +229,30 @@ type MaterialEntry struct {
 	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
+type MaterialImpactSummary struct {
+	TaskCount    int64            `json:"taskCount"`
+	ReadyCount   int64            `json:"readyCount"`
+	BlockedCount int64            `json:"blockedCount"`
+	ByStatus     map[string]int64 `json:"byStatus"`
+	ByDimension  map[string]int64 `json:"byDimension"`
+	ByIssueCode  map[string]int64 `json:"byIssueCode"`
+}
+
+type MaterialEntryWorkspace struct {
+	DeviceID         string                      `json:"deviceId"`
+	Root             MaterialRoot                `json:"root"`
+	Entry            MaterialEntry               `json:"entry"`
+	Scope            string                      `json:"scope"`
+	ReferencingTasks []PublishTaskDiagnosticItem `json:"referencingTasks"`
+	Summary          MaterialImpactSummary       `json:"summary"`
+}
+
 type PublishTask struct {
 	ID                  string          `json:"id"`
 	DeviceID            string          `json:"deviceId"`
 	AccountID           *string         `json:"accountId"`
 	SkillID             *string         `json:"skillId"`
+	SkillRevision       *string         `json:"skillRevision"`
 	Platform            string          `json:"platform"`
 	AccountName         string          `json:"accountName"`
 	Title               string          `json:"title"`
@@ -233,23 +273,29 @@ type PublishTask struct {
 }
 
 type PublishTaskActionState struct {
-	CanEdit          bool `json:"canEdit"`
-	CanCancel        bool `json:"canCancel"`
-	CanRetry         bool `json:"canRetry"`
-	CanDelete        bool `json:"canDelete"`
-	CanForceRelease  bool `json:"canForceRelease"`
-	CanResume        bool `json:"canResume"`
-	CanResolveManual bool `json:"canResolveManual"`
+	CanEdit             bool `json:"canEdit"`
+	CanCancel           bool `json:"canCancel"`
+	CanRetry            bool `json:"canRetry"`
+	CanDelete           bool `json:"canDelete"`
+	CanForceRelease     bool `json:"canForceRelease"`
+	CanResume           bool `json:"canResume"`
+	CanResolveManual    bool `json:"canResolveManual"`
+	CanRefreshMaterials bool `json:"canRefreshMaterials"`
+	CanRefreshSkill     bool `json:"canRefreshSkill"`
 }
 
 type PublishTaskReadiness struct {
 	DeviceReady            bool     `json:"deviceReady"`
 	AccountReady           bool     `json:"accountReady"`
 	SkillReady             bool     `json:"skillReady"`
+	SkillRevisionMatched   bool     `json:"skillRevisionMatched"`
+	SkillSyncedToDevice    bool     `json:"skillSyncedToDevice"`
 	MaterialsReady         bool     `json:"materialsReady"`
 	TotalMaterialCount     int64    `json:"totalMaterialCount"`
 	AvailableMaterialCount int64    `json:"availableMaterialCount"`
 	MissingMaterialCount   int64    `json:"missingMaterialCount"`
+	DriftedMaterialCount   int64    `json:"driftedMaterialCount"`
+	IssueCodes             []string `json:"issueCodes"`
 	Issues                 []string `json:"issues"`
 }
 
@@ -274,11 +320,44 @@ type PublishTaskWorkspace struct {
 	Runtime   *PublishTaskRuntimeState `json:"runtime,omitempty"`
 }
 
+type PublishTaskDiagnosticItem struct {
+	Task               PublishTask          `json:"task"`
+	Readiness          PublishTaskReadiness `json:"readiness"`
+	BlockingDimensions []string             `json:"blockingDimensions"`
+}
+
+type PublishTaskDiagnosticSummary struct {
+	TotalCount   int64            `json:"totalCount"`
+	ReadyCount   int64            `json:"readyCount"`
+	BlockedCount int64            `json:"blockedCount"`
+	ByStatus     map[string]int64 `json:"byStatus"`
+	ByDimension  map[string]int64 `json:"byDimension"`
+	ByIssueCode  map[string]int64 `json:"byIssueCode"`
+}
+
 type AgentSkillPackage struct {
 	Revision string                `json:"revision"`
 	Skill    ProductSkill          `json:"skill"`
 	Assets   []ProductSkillAsset   `json:"assets"`
 	Sync     *DeviceSkillSyncState `json:"sync,omitempty"`
+}
+
+type AgentRetiredSkillItem struct {
+	SkillID        string     `json:"skillId"`
+	Reason         string     `json:"reason"`
+	Name           *string    `json:"name,omitempty"`
+	OutputType     *string    `json:"outputType,omitempty"`
+	Message        *string    `json:"message,omitempty"`
+	SyncedRevision *string    `json:"syncedRevision,omitempty"`
+	LastSyncedAt   *time.Time `json:"lastSyncedAt,omitempty"`
+	LastChangedAt  time.Time  `json:"lastChangedAt"`
+}
+
+type AgentSkillManifestSummary struct {
+	ActiveCount   int64 `json:"activeCount"`
+	RetiredCount  int64 `json:"retiredCount"`
+	DisabledCount int64 `json:"disabledCount"`
+	DeletedCount  int64 `json:"deletedCount"`
 }
 
 type AgentPublishTaskPackage struct {
@@ -289,6 +368,20 @@ type AgentPublishTaskPackage struct {
 	Materials   []PublishTaskMaterialRef `json:"materials"`
 	Readiness   PublishTaskReadiness     `json:"readiness"`
 	Runtime     *PublishTaskRuntimeState `json:"runtime,omitempty"`
+}
+
+type AgentPublishTaskQueueItem struct {
+	Task               PublishTask          `json:"task"`
+	Readiness          PublishTaskReadiness `json:"readiness"`
+	BlockingDimensions []string             `json:"blockingDimensions"`
+}
+
+type AgentPublishTaskQueueSummary struct {
+	ReadyCount   int64            `json:"readyCount"`
+	BlockedCount int64            `json:"blockedCount"`
+	ByStatus     map[string]int64 `json:"byStatus"`
+	ByDimension  map[string]int64 `json:"byDimension"`
+	ByIssueCode  map[string]int64 `json:"byIssueCode"`
 }
 
 type PublishTaskEvent struct {
@@ -338,6 +431,62 @@ type PublishTaskMaterialRef struct {
 	PreviewText  *string   `json:"previewText"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+type PublishTaskMaterialRefreshIssue struct {
+	Code         string                  `json:"code"`
+	Message      string                  `json:"message"`
+	RootName     string                  `json:"rootName"`
+	RelativePath string                  `json:"relativePath"`
+	Role         string                  `json:"role"`
+	PreviousRef  *PublishTaskMaterialRef `json:"previousRef,omitempty"`
+	CurrentEntry *MaterialEntry          `json:"currentEntry,omitempty"`
+}
+
+type PublishTaskMaterialRefreshResult struct {
+	Task           PublishTask                       `json:"task"`
+	Materials      []PublishTaskMaterialRef          `json:"materials"`
+	Readiness      PublishTaskReadiness              `json:"readiness"`
+	RefreshedCount int64                             `json:"refreshedCount"`
+	ChangedCount   int64                             `json:"changedCount"`
+	MissingCount   int64                             `json:"missingCount"`
+	Issues         []PublishTaskMaterialRefreshIssue `json:"issues"`
+}
+
+type PublishTaskSkillRefreshResult struct {
+	Task             PublishTask          `json:"task"`
+	Skill            *ProductSkill        `json:"skill,omitempty"`
+	Readiness        PublishTaskReadiness `json:"readiness"`
+	PreviousRevision *string              `json:"previousRevision,omitempty"`
+	CurrentRevision  *string              `json:"currentRevision,omitempty"`
+	RevisionChanged  bool                 `json:"revisionChanged"`
+}
+
+type PublishTaskBulkRepairItem struct {
+	Task              PublishTask                       `json:"task"`
+	Status            string                            `json:"status"`
+	Message           *string                           `json:"message,omitempty"`
+	AppliedOperations []string                          `json:"appliedOperations"`
+	ReadinessBefore   PublishTaskReadiness              `json:"readinessBefore"`
+	ReadinessAfter    PublishTaskReadiness              `json:"readinessAfter"`
+	MaterialRefresh   *PublishTaskMaterialRefreshResult `json:"materialRefresh,omitempty"`
+	SkillRefresh      *PublishTaskSkillRefreshResult    `json:"skillRefresh,omitempty"`
+}
+
+type PublishTaskBulkRepairSummary struct {
+	SelectedCount  int64            `json:"selectedCount"`
+	ProcessedCount int64            `json:"processedCount"`
+	SuccessCount   int64            `json:"successCount"`
+	SkippedCount   int64            `json:"skippedCount"`
+	FailedCount    int64            `json:"failedCount"`
+	ByStatus       map[string]int64 `json:"byStatus"`
+	ByOperation    map[string]int64 `json:"byOperation"`
+}
+
+type PublishTaskBulkRepairResult struct {
+	Items      []PublishTaskBulkRepairItem  `json:"items"`
+	Summary    PublishTaskBulkRepairSummary `json:"summary"`
+	ServerTime time.Time                    `json:"serverTime"`
 }
 
 type AIModel struct {

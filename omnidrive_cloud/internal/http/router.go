@@ -62,6 +62,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 				materials.Get("/roots", materialHandler.Roots)
 				materials.Get("/list", materialHandler.List)
 				materials.Get("/file", materialHandler.File)
+				materials.Get("/workspace", materialHandler.Workspace)
 			})
 
 			private.Route("/accounts", func(accounts chi.Router) {
@@ -80,6 +81,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 				skills.Post("/", skillHandler.Create)
 				skills.Get("/{skillId}", skillHandler.Detail)
 				skills.Get("/{skillId}/workspace", skillHandler.Workspace)
+				skills.Get("/{skillId}/impact", skillHandler.Impact)
 				skills.Patch("/{skillId}", skillHandler.Update)
 				skills.Delete("/{skillId}", skillHandler.Delete)
 				skills.Get("/{skillId}/assets", skillHandler.ListAssets)
@@ -89,12 +91,16 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 
 			private.Route("/tasks", func(tasks chi.Router) {
 				tasks.Get("/", taskHandler.List)
+				tasks.Get("/diagnostics", taskHandler.Diagnostics)
+				tasks.Post("/bulk-repair", taskHandler.BulkRepair)
 				tasks.Post("/", taskHandler.Create)
 				tasks.Get("/{taskId}", taskHandler.Detail)
 				tasks.Get("/{taskId}/workspace", taskHandler.Workspace)
 				tasks.Get("/{taskId}/events", taskHandler.Events)
 				tasks.Get("/{taskId}/artifacts", taskHandler.Artifacts)
 				tasks.Get("/{taskId}/materials", taskHandler.Materials)
+				tasks.Post("/{taskId}/refresh-materials", taskHandler.RefreshMaterials)
+				tasks.Post("/{taskId}/refresh-skill", taskHandler.RefreshSkill)
 				tasks.Post("/{taskId}/cancel", taskHandler.Cancel)
 				tasks.Post("/{taskId}/force-release", taskHandler.ForceRelease)
 				tasks.Post("/{taskId}/resume", taskHandler.Resume)
@@ -126,6 +132,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 			agent.Post("/accounts/sync", agentHandler.SyncAccount)
 			agent.Get("/skills/{deviceCode}", agentHandler.ListSkills)
 			agent.Post("/skills/sync", agentHandler.SyncSkillStates)
+			agent.Post("/skills/retired-ack", agentHandler.AckRetiredSkills)
 			agent.Post("/materials/roots/sync", materialHandler.SyncRoots)
 			agent.Post("/materials/directory/sync", materialHandler.SyncDirectory)
 			agent.Post("/materials/file/sync", materialHandler.SyncFile)

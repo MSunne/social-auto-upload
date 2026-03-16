@@ -149,7 +149,7 @@ func (s *Store) GetAccountByDeviceTarget(ctx context.Context, deviceID string, p
 
 func (s *Store) ListPublishTasksByAccountTarget(ctx context.Context, ownerUserID string, deviceID string, platform string, accountName string, limit int) ([]domain.PublishTask, error) {
 	query := `
-		SELECT pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.platform, pt.account_name,
+		SELECT pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
 		       pt.title, pt.content_text, pt.media_payload, pt.status, pt.message,
 		       pt.verification_payload, pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at,
 		       pt.attempt_count, pt.cancel_requested_at, pt.run_at, pt.finished_at, pt.created_at, pt.updated_at

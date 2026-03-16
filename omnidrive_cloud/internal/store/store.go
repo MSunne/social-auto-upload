@@ -137,6 +137,14 @@ type UpsertDeviceSkillSyncStateInput struct {
 	LastSyncedAt   *time.Time
 }
 
+type UpsertDeviceRetiredSkillAckInput struct {
+	DeviceID           string
+	SkillID            string
+	Reason             string
+	Message            *string
+	LastAcknowledgedAt *time.Time
+}
+
 type SyncMaterialRootInput struct {
 	DeviceID    string
 	RootName    string
@@ -175,18 +183,19 @@ type UpdateSkillInput struct {
 }
 
 type CreatePublishTaskInput struct {
-	ID           string
-	DeviceID     string
-	AccountID    *string
-	SkillID      *string
-	Platform     string
-	AccountName  string
-	Title        string
-	ContentText  *string
-	MediaPayload []byte
-	Status       string
-	Message      *string
-	RunAt        *time.Time
+	ID            string
+	DeviceID      string
+	AccountID     *string
+	SkillID       *string
+	SkillRevision *string
+	Platform      string
+	AccountName   string
+	Title         string
+	ContentText   *string
+	MediaPayload  []byte
+	Status        string
+	Message       *string
+	RunAt         *time.Time
 }
 
 type ReplacePublishTaskMaterialRefInput struct {
@@ -219,6 +228,7 @@ type SyncPublishTaskInput struct {
 	DeviceID            string
 	AccountID           *string
 	SkillID             *string
+	SkillRevision       *string
 	Platform            string
 	AccountName         string
 	Title               string

@@ -14,6 +14,7 @@ import {
   ExternalLink,
   Pencil,
   BookOpen,
+  Search,
 } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
@@ -67,17 +68,24 @@ function Toggle({
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 ${
+      className={`group relative inline-flex h-7 w-[52px] shrink-0 cursor-pointer items-center rounded-full border transition-all duration-300 ${
         checked
-          ? "bg-gradient-to-r from-accent to-cyan"
-          : "bg-gray-600"
+          ? "border-cyan/40 bg-gradient-to-r from-accent/80 to-cyan/80 shadow-[0_0_12px_rgba(0,245,212,0.3)]"
+          : "border-border bg-surface-elevated hover:border-border"
       }`}
     >
       <span
-        className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-lg transition-transform duration-200 ${
-          checked ? "translate-x-5" : "translate-x-1"
+        className={`pointer-events-none inline-block h-5 w-5 rounded-full shadow-md transition-all duration-300 ${
+          checked
+            ? "translate-x-[26px] bg-white shadow-[0_0_6px_rgba(0,245,212,0.5)]"
+            : "translate-x-[3px] bg-gray-400 group-hover:bg-gray-300"
         }`}
       />
+      {checked && (
+        <span className="absolute right-[22px] text-[9px] font-bold text-white/90 select-none">
+          ON
+        </span>
+      )}
     </button>
   );
 }
@@ -92,6 +100,7 @@ export default function NodesPage() {
   const [deviceCode, setDeviceCode] = useState("");
   const [claiming, setClaiming] = useState(false);
   const [error, setError] = useState("");
+  const [toggleState, setToggleState] = useState<Record<string, boolean>>({});
 
   /* pagination math */
   const totalPages = Math.max(1, Math.ceil(devices.length / PAGE_SIZE));
@@ -144,34 +153,95 @@ export default function NodesPage() {
 
   return (
     <>
-      <PageHeader
-        title="OpenClaw 配置"
-        subtitle="管理已认领的 OmniBull 设备，查看心跳、算力与同步状态"
-        actions={
-          <div className="flex items-center gap-2">
-            <input
-              value={deviceCode}
-              onChange={(e) => setDeviceCode(e.target.value)}
-              placeholder="输入设备编码"
-              className="w-48 rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none focus:border-accent/50 focus:ring-2 focus:ring-accent/20"
-            />
-            <button
-              onClick={handleClaim}
-              disabled={claiming}
-              className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-accent to-cyan px-4 py-2 text-sm font-semibold text-background transition-all hover:shadow-lg hover:shadow-accent/25 disabled:opacity-50"
-            >
-              <Plus className="h-4 w-4" />
-              认领设备
-            </button>
-          </div>
-        }
-      />
+      {/* Search + Add Device — single row */}
+      <div className="mb-5 flex items-center gap-3">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+          <input
+            value={deviceCode}
+            onChange={(e) => setDeviceCode(e.target.value)}
+            placeholder="搜索设备名称、编码或 IP 地址..."
+            className="w-full rounded-xl border border-border bg-surface pl-9 pr-3 py-2.5 text-sm text-text-primary placeholder-text-muted outline-none transition-all focus:border-accent/50 focus:ring-2 focus:ring-accent/20 focus:shadow-[0_0_12px_rgba(177,73,255,0.1)]"
+          />
+        </div>
+        <button
+          onClick={handleClaim}
+          disabled={claiming}
+          className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-accent to-cyan px-4 py-2.5 text-sm font-semibold text-background transition-all hover:shadow-lg hover:shadow-accent/25 disabled:opacity-50"
+        >
+          <Plus className="h-4 w-4" />
+          添加设备
+        </button>
+      </div>
 
       {error && (
         <div className="mb-4 rounded-xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
           {error}
         </div>
       )}
+
+      {/* ───── Stats Cards ───── */}
+      <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <motion.div
+          initial={{ opacity: 0, y: 15 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="glass-card px-6 py-5"
+        >
+          <div className="flex items-center gap-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan/10">
+              <Shield className="h-6 w-6 text-cyan" />
+            </div>
+            <div>
+              <p className="text-xs text-text-muted">安全审计评分</p>
+              <div className="flex items-baseline gap-1">
+                <span className="text-2xl font-bold text-text-primary">98.4</span>
+                <span className="text-sm font-medium text-emerald-400">Excellent</span>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+        <motion.div
+          initial={{ opacity: 0, y: 15 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="glass-card px-6 py-5"
+        >
+          <div className="flex items-center gap-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/10">
+              <Activity className="h-6 w-6 text-accent" />
+            </div>
+            <div>
+              <p className="text-xs text-text-muted">实时吞吐量</p>
+              <div className="flex items-baseline gap-1">
+                <span className="text-2xl font-bold text-text-primary">1.2</span>
+                <span className="text-sm font-medium text-text-secondary">GB/s</span>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+        <motion.div
+          initial={{ opacity: 0, y: 15 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="glass-card px-6 py-5"
+        >
+          <div className="flex items-center gap-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-500/10">
+              <Link2 className="h-6 w-6 text-rose-400" />
+            </div>
+            <div>
+              <p className="text-xs text-text-muted">总节点链路</p>
+              <div className="flex items-baseline gap-1">
+                <span className="text-2xl font-bold text-text-primary">
+                  {devices.length > 0 ? (devices.length * 104).toLocaleString() : "0"}
+                </span>
+                <span className="text-sm font-medium text-text-secondary">活跃</span>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+      </div>
 
       {/* ───── Main Table ───── */}
       {devices.length > 0 ? (
@@ -257,32 +327,38 @@ export default function NodesPage() {
                       <td className="px-5 py-4">
                         <Link
                           href={`/nodes/${device.id}`}
-                          className="text-xs font-medium text-accent hover:text-accent-strong transition-colors hover:underline"
+                          className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-accent/15 to-cyan/15 border border-accent/25 px-3.5 py-1.5 text-xs font-semibold text-accent transition-all hover:from-accent/25 hover:to-cyan/25 hover:border-accent/40 hover:shadow-[0_0_14px_rgba(177,73,255,0.2)] hover:-translate-y-px"
                         >
+                          <BookOpen className="h-3 w-3" />
                           详情/编辑技能
                         </Link>
                       </td>
 
-                      {/* OMNIBULL toggle */}
+                      {/* OMNIBULL — 详情/编辑 */}
                       <td className="px-5 py-4">
-                        <Toggle
-                          checked={device.isEnabled}
-                          onChange={() => {
-                            /* mock toggle — in production call API */
-                          }}
-                        />
+                        <Link
+                          href={`/nodes/${device.id}/accounts`}
+                          className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-cyan/15 to-emerald-500/15 border border-cyan/25 px-3.5 py-1.5 text-xs font-semibold text-cyan transition-all hover:from-cyan/25 hover:to-emerald-500/25 hover:border-cyan/40 hover:shadow-[0_0_14px_rgba(0,245,212,0.2)] hover:-translate-y-px"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          详情/编辑
+                        </Link>
                       </td>
 
-                      {/* 操作 */}
+                      {/* 操作 — 启用/关闭开关 */}
                       <td className="px-5 py-4">
                         <div className="flex items-center gap-3">
-                          <Link
-                            href={`/nodes/${device.id}`}
-                            className="flex items-center gap-1 text-xs font-medium text-text-secondary hover:text-accent transition-colors"
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                            详情/编辑
-                          </Link>
+                          <Toggle
+                            checked={toggleState[device.id] ?? device.isEnabled}
+                            onChange={(v) => {
+                              setToggleState(prev => ({ ...prev, [device.id]: v }));
+                            }}
+                          />
+                          <span className={`text-xs font-medium ${
+                            (toggleState[device.id] ?? device.isEnabled) ? "text-cyan" : "text-text-muted"
+                          }`}>
+                            {(toggleState[device.id] ?? device.isEnabled) ? "已启用" : "已关闭"}
+                          </span>
                         </div>
                       </td>
                     </tr>
@@ -354,86 +430,6 @@ export default function NodesPage() {
           description="在 OmniBull 所在的 Linux 主机启动 Agent 后，输入设备编码进行认领。"
         />
       )}
-
-      {/* ───── Bottom Stats ───── */}
-      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        {/* 安全审计评分 */}
-        <motion.div
-          initial={{ opacity: 0, y: 15 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="glass-card px-6 py-5"
-        >
-          <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan/10">
-              <Shield className="h-6 w-6 text-cyan" />
-            </div>
-            <div>
-              <p className="text-xs text-text-muted">安全审计评分</p>
-              <div className="flex items-baseline gap-1">
-                <span className="text-2xl font-bold text-text-primary">
-                  98.4
-                </span>
-                <span className="text-sm font-medium text-emerald-400">
-                  Excellent
-                </span>
-              </div>
-            </div>
-          </div>
-        </motion.div>
-
-        {/* 实时吞吐量 */}
-        <motion.div
-          initial={{ opacity: 0, y: 15 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="glass-card px-6 py-5"
-        >
-          <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/10">
-              <Activity className="h-6 w-6 text-accent" />
-            </div>
-            <div>
-              <p className="text-xs text-text-muted">实时吞吐量</p>
-              <div className="flex items-baseline gap-1">
-                <span className="text-2xl font-bold text-text-primary">
-                  1.2
-                </span>
-                <span className="text-sm font-medium text-text-secondary">
-                  GB/s
-                </span>
-              </div>
-            </div>
-          </div>
-        </motion.div>
-
-        {/* 总节点链路 */}
-        <motion.div
-          initial={{ opacity: 0, y: 15 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-          className="glass-card px-6 py-5"
-        >
-          <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-500/10">
-              <Link2 className="h-6 w-6 text-rose-400" />
-            </div>
-            <div>
-              <p className="text-xs text-text-muted">总节点链路</p>
-              <div className="flex items-baseline gap-1">
-                <span className="text-2xl font-bold text-text-primary">
-                  {devices.length > 0
-                    ? (devices.length * 104).toLocaleString()
-                    : "0"}
-                </span>
-                <span className="text-sm font-medium text-text-secondary">
-                  活跃
-                </span>
-              </div>
-            </div>
-          </div>
-        </motion.div>
-      </div>
     </>
   );
 }
