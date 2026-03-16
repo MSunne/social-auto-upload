@@ -71,6 +71,31 @@ type UpdateDeviceInput struct {
 	IsEnabled             *bool
 }
 
+type CreateRechargeOrderInput struct {
+	ID                     string
+	OrderNo                string
+	UserID                 string
+	PackageID              *string
+	PackageSnapshot        []byte
+	Channel                string
+	Status                 string
+	Subject                string
+	Body                   *string
+	Currency               string
+	AmountCents            int64
+	CreditAmount           int64
+	PaymentPayload         []byte
+	CustomerServicePayload []byte
+	ProviderStatus         *string
+	ExpiresAt              *time.Time
+	TransactionID          string
+	TransactionKind        string
+	TransactionStatus      string
+	TransactionOutTradeNo  string
+	TransactionRequest     []byte
+	TransactionResponse    []byte
+}
+
 type HeartbeatInput struct {
 	DeviceCode     string
 	AgentKey       string

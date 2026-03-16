@@ -1,60 +1,80 @@
 // ═══════════════════════════════════════
-// SAU Frontend — Dark Theme Variables
+// SAU Frontend — Neon Cyber Theme Variables
+// Matching omnidrive_frontend design system
 // ═══════════════════════════════════════
 
 // ── Background ──
-$bg-dark:         #0d1117;
-$bg-surface:      #161b22;
-$bg-surface-alt:  #1c2333;
-$bg-sidebar:      #0a0f1a;
-$bg-sidebar-dark: #060a12;
-$bg-hover:        #1f2937;
-$bg-active:       #21262d;
+$bg-dark:         #050510;
+$bg-surface:      rgba(10, 10, 28, 0.78);
+$bg-surface-alt:  rgba(18, 18, 42, 0.88);
+$bg-sidebar:      rgba(8, 8, 22, 0.95);
+$bg-sidebar-dark: #040410;
+$bg-hover:        rgba(30, 30, 60, 0.72);
+$bg-active:       rgba(40, 40, 70, 0.6);
 
 // ── Border ──
-$border-color:    #30363d;
-$border-light:    #3a4250;
-$border-lighter:  #444d56;
+$border-color:    rgba(139, 92, 246, 0.12);
+$border-strong:   rgba(139, 92, 246, 0.22);
+$border-light:    rgba(139, 92, 246, 0.18);
+$border-lighter:  rgba(177, 73, 255, 0.08);
 
 // ── Text ──
-$text-primary:    #e6edf3;
-$text-secondary:  #8b949e;
-$text-muted:      #6e7681;
-$text-inverse:    #0d1117;
+$text-primary:    #f0f0ff;
+$text-secondary:  #b4b4d0;
+$text-muted:      #7a7a9e;
+$text-inverse:    #050510;
 
-// ── Brand / Accent ──
-$primary-color:   #409EFF;
-$primary-light:   #66b1ff;
-$primary-dark:    #3a8ee6;
+// ── Brand / Accent — Electric Violet ──
+$accent-color:    #b149ff;
+$accent-strong:   #d084ff;
+$accent-glow:     rgba(177, 73, 255, 0.50);
+$primary-color:   #b149ff;
+$primary-light:   #d084ff;
+$primary-dark:    #9333ea;
+
+// ── Cyan Accent ──
+$cyan-color:      #00f5d4;
+$cyan-glow:       rgba(0, 245, 212, 0.40);
+
+// ── Pink Accent ──
+$pink-color:      #ff2d78;
+$pink-glow:       rgba(255, 45, 120, 0.35);
 
 // ── Semantic Colors ──
-$success-color:   #67C23A;
-$warning-color:   #E6A23C;
-$danger-color:    #F56C6C;
-$info-color:      #909399;
+$success-color:   #00ff88;
+$warning-color:   #ffb800;
+$danger-color:    #ff3b5c;
+$info-color:      #4da6ff;
 
 // ── Accent Gradients ──
-$accent-gradient: linear-gradient(135deg, #409EFF, #36d1dc);
+$accent-gradient: linear-gradient(135deg, $accent-color, $cyan-color);
+$glow-gradient:   linear-gradient(135deg, $accent-color, $cyan-color, $pink-color);
 
-// ── Shadows ──
-$shadow-sm:       0 1px 3px rgba(0, 0, 0, 0.3);
-$shadow-md:       0 4px 12px rgba(0, 0, 0, 0.4);
-$shadow-lg:       0 8px 24px rgba(0, 0, 0, 0.5);
-$shadow-card:     0 2px 8px rgba(0, 0, 0, 0.3);
+// ── Shadows / Glow ──
+$shadow-sm:       0 1px 3px rgba(0, 0, 0, 0.4);
+$shadow-md:       0 4px 12px rgba(0, 0, 0, 0.5);
+$shadow-lg:       0 8px 24px rgba(0, 0, 0, 0.6);
+$shadow-card:     0 0 30px rgba(177, 73, 255, 0.06), 0 16px 48px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+$shadow-card-hover: 0 0 40px rgba(177, 73, 255, 0.12), 0 0 60px rgba(0, 245, 212, 0.06), 0 20px 56px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+$shadow-glow:     0 0 20px $accent-glow, 0 0 60px rgba(177, 73, 255, 0.15);
 
 // ── Card ──
 $card-bg:         $bg-surface;
 $card-border:     $border-color;
-$card-radius:     12px;
+$card-radius:     16px;
 $card-padding:    20px;
 
+// ── Glassmorphism ──
+$glass-blur:      blur(28px) saturate(1.8);
+$glass-blur-heavy: blur(36px) saturate(1.8);
+
 // ── Sidebar ──
-$sidebar-width:       200px;
+$sidebar-width:       220px;
 $sidebar-width-mini:  64px;
 
 // ── Header ──
 $header-height:   60px;
-$header-bg:       $bg-surface;
+$header-bg:       $bg-surface-alt;
 
 // ── Transitions ──
 $transition-fast: 0.2s ease;

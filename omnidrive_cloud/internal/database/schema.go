@@ -338,13 +338,74 @@ CREATE TABLE IF NOT EXISTS ai_job_publish_links (
 CREATE TABLE IF NOT EXISTS billing_packages (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
+    package_type TEXT NOT NULL DEFAULT 'credit_topup',
     channel TEXT NOT NULL,
+    payment_channels JSONB NOT NULL DEFAULT '["manual_cs","alipay","wechatpay"]'::jsonb,
+    currency TEXT NOT NULL DEFAULT 'CNY',
     price_cents BIGINT NOT NULL,
     credit_amount BIGINT NOT NULL,
     badge TEXT,
     description TEXT,
+    pricing_payload JSONB,
+    expires_in_days INT,
     is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     sort_order INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE billing_packages ADD COLUMN IF NOT EXISTS package_type TEXT NOT NULL DEFAULT 'credit_topup';
+ALTER TABLE billing_packages ADD COLUMN IF NOT EXISTS payment_channels JSONB NOT NULL DEFAULT '["manual_cs","alipay","wechatpay"]'::jsonb;
+ALTER TABLE billing_packages ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'CNY';
+ALTER TABLE billing_packages ADD COLUMN IF NOT EXISTS pricing_payload JSONB;
+ALTER TABLE billing_packages ADD COLUMN IF NOT EXISTS expires_in_days INT;
+
+CREATE TABLE IF NOT EXISTS billing_meters (
+    code TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    unit TEXT NOT NULL,
+    description TEXT,
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS billing_package_entitlements (
+    id TEXT PRIMARY KEY,
+    package_id TEXT NOT NULL REFERENCES billing_packages(id) ON DELETE CASCADE,
+    meter_code TEXT NOT NULL REFERENCES billing_meters(code) ON DELETE CASCADE,
+    grant_amount BIGINT NOT NULL,
+    grant_mode TEXT NOT NULL DEFAULT 'one_time',
+    sort_order INT NOT NULL DEFAULT 0,
+    description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(package_id, meter_code)
+);
+
+CREATE TABLE IF NOT EXISTS billing_pricing_rules (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    meter_code TEXT NOT NULL REFERENCES billing_meters(code) ON DELETE CASCADE,
+    applies_to TEXT NOT NULL DEFAULT 'global',
+    model_name TEXT,
+    job_type TEXT,
+    charge_mode TEXT NOT NULL DEFAULT 'wallet_only',
+    quota_meter_code TEXT REFERENCES billing_meters(code) ON DELETE SET NULL,
+    unit_size BIGINT NOT NULL DEFAULT 1,
+    wallet_debit_amount BIGINT NOT NULL DEFAULT 0,
+    sort_order INT NOT NULL DEFAULT 0,
+    description TEXT,
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS billing_wallets (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    credit_balance BIGINT NOT NULL DEFAULT 0,
+    frozen_credit_balance BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -354,11 +415,120 @@ CREATE TABLE IF NOT EXISTS wallet_ledgers (
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     entry_type TEXT NOT NULL,
     amount_delta BIGINT NOT NULL,
+    balance_before BIGINT NOT NULL DEFAULT 0,
     balance_after BIGINT NOT NULL,
+    meter_code TEXT,
+    quantity BIGINT,
+    unit TEXT,
+    unit_price_credits BIGINT,
     description TEXT,
     reference_type TEXT,
     reference_id TEXT,
+    metadata JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS balance_before BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS meter_code TEXT;
+ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS quantity BIGINT;
+ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS unit TEXT;
+ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS unit_price_credits BIGINT;
+ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS metadata JSONB;
+
+CREATE TABLE IF NOT EXISTS recharge_orders (
+    id TEXT PRIMARY KEY,
+    order_no TEXT NOT NULL UNIQUE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    package_id TEXT REFERENCES billing_packages(id) ON DELETE SET NULL,
+    package_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+    channel TEXT NOT NULL,
+    status TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    body TEXT,
+    currency TEXT NOT NULL DEFAULT 'CNY',
+    amount_cents BIGINT NOT NULL,
+    credit_amount BIGINT NOT NULL DEFAULT 0,
+    payment_payload JSONB,
+    customer_service_payload JSONB,
+    provider_transaction_id TEXT,
+    provider_status TEXT,
+    expires_at TIMESTAMPTZ,
+    paid_at TIMESTAMPTZ,
+    closed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS payment_transactions (
+    id TEXT PRIMARY KEY,
+    recharge_order_id TEXT NOT NULL REFERENCES recharge_orders(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    channel TEXT NOT NULL,
+    transaction_kind TEXT NOT NULL,
+    out_trade_no TEXT NOT NULL,
+    provider_transaction_id TEXT,
+    status TEXT NOT NULL,
+    request_payload JSONB,
+    response_payload JSONB,
+    notify_payload JSONB,
+    error_message TEXT,
+    paid_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(channel, out_trade_no)
+);
+
+ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS recharge_order_id TEXT REFERENCES recharge_orders(id) ON DELETE SET NULL;
+ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS payment_transaction_id TEXT REFERENCES payment_transactions(id) ON DELETE SET NULL;
+
+CREATE TABLE IF NOT EXISTS billing_quota_accounts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    meter_code TEXT NOT NULL REFERENCES billing_meters(code) ON DELETE CASCADE,
+    granted_total BIGINT NOT NULL DEFAULT 0,
+    used_total BIGINT NOT NULL DEFAULT 0,
+    reserved_total BIGINT NOT NULL DEFAULT 0,
+    remaining_total BIGINT NOT NULL DEFAULT 0,
+    expires_at TIMESTAMPTZ,
+    source_type TEXT,
+    source_id TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS billing_quota_ledgers (
+    id TEXT PRIMARY KEY,
+    quota_account_id TEXT REFERENCES billing_quota_accounts(id) ON DELETE SET NULL,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    meter_code TEXT NOT NULL REFERENCES billing_meters(code) ON DELETE CASCADE,
+    amount_delta BIGINT NOT NULL,
+    remaining_after BIGINT NOT NULL,
+    description TEXT,
+    reference_type TEXT,
+    reference_id TEXT,
+    payload JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS billing_usage_events (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source_type TEXT NOT NULL,
+    source_id TEXT,
+    meter_code TEXT NOT NULL REFERENCES billing_meters(code) ON DELETE CASCADE,
+    model_name TEXT,
+    job_type TEXT,
+    usage_quantity BIGINT NOT NULL,
+    pricing_rule_id TEXT REFERENCES billing_pricing_rules(id) ON DELETE SET NULL,
+    quota_account_id TEXT REFERENCES billing_quota_accounts(id) ON DELETE SET NULL,
+    wallet_ledger_id TEXT REFERENCES wallet_ledgers(id) ON DELETE SET NULL,
+    quota_ledger_id TEXT REFERENCES billing_quota_ledgers(id) ON DELETE SET NULL,
+    bill_status TEXT NOT NULL DEFAULT 'pending',
+    bill_message TEXT,
+    payload JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS audit_events (
@@ -404,7 +574,20 @@ CREATE INDEX IF NOT EXISTS idx_ai_jobs_source ON ai_jobs(source);
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_lease_expires_at ON ai_jobs(lease_expires_at);
 CREATE INDEX IF NOT EXISTS idx_ai_job_artifacts_job_id ON ai_job_artifacts(job_id);
 CREATE INDEX IF NOT EXISTS idx_ai_job_publish_links_job_id ON ai_job_publish_links(job_id);
+CREATE INDEX IF NOT EXISTS idx_billing_package_entitlements_package_id ON billing_package_entitlements(package_id);
+CREATE INDEX IF NOT EXISTS idx_billing_pricing_rules_meter_code ON billing_pricing_rules(meter_code);
+CREATE INDEX IF NOT EXISTS idx_billing_pricing_rules_model_name ON billing_pricing_rules(model_name);
+CREATE INDEX IF NOT EXISTS idx_billing_wallets_user_id ON billing_wallets(user_id);
 CREATE INDEX IF NOT EXISTS idx_wallet_ledgers_user_id ON wallet_ledgers(user_id);
+CREATE INDEX IF NOT EXISTS idx_recharge_orders_user_id ON recharge_orders(user_id);
+CREATE INDEX IF NOT EXISTS idx_recharge_orders_status ON recharge_orders(status);
+CREATE INDEX IF NOT EXISTS idx_payment_transactions_recharge_order_id ON payment_transactions(recharge_order_id);
+CREATE INDEX IF NOT EXISTS idx_payment_transactions_user_id ON payment_transactions(user_id);
+CREATE INDEX IF NOT EXISTS idx_billing_quota_accounts_user_id ON billing_quota_accounts(user_id);
+CREATE INDEX IF NOT EXISTS idx_billing_quota_accounts_meter_code ON billing_quota_accounts(meter_code);
+CREATE INDEX IF NOT EXISTS idx_billing_quota_ledgers_user_id ON billing_quota_ledgers(user_id);
+CREATE INDEX IF NOT EXISTS idx_billing_usage_events_user_id ON billing_usage_events(user_id);
+CREATE INDEX IF NOT EXISTS idx_billing_usage_events_source ON billing_usage_events(source_type, source_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_owner_user_id ON audit_events(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_resource_type ON audit_events(resource_type);
 
@@ -421,6 +604,92 @@ VALUES
     ('growth', '增长包', 'alipay,wechat,manual', 29900, 3500, 'Popular', '适合稳定做图做视频和日常运营', TRUE, 20),
     ('studio', '工作室包', 'alipay,wechat,manual', 69900, 9000, 'Studio', '适合内容工作室和多技能协同', TRUE, 30),
     ('enterprise', '企业包', 'alipay,wechat,manual', 149900, 22000, 'Enterprise', '适合设备多、任务多的运营场景', TRUE, 40)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO billing_meters (code, name, category, unit, description, is_enabled)
+VALUES
+    ('wallet_credit', '钱包积分', 'wallet', 'credit', '统一钱包积分，可用于模型调用和视频生成扣费', TRUE),
+    ('chat_input_tokens', '聊天输入 Token', 'usage', 'token', '聊天类模型输入 token 用量', TRUE),
+    ('chat_output_tokens', '聊天输出 Token', 'usage', 'token', '聊天类模型输出 token 用量', TRUE),
+    ('image_generations', '图片生成次数', 'usage', 'job', '图片生成作业次数', TRUE),
+    ('video_generations', '视频生成次数', 'usage', 'job', '视频生成作业次数', TRUE),
+    ('image_generation_quota', '图片生成套餐次数', 'quota', 'job', '套餐内可抵扣的图片生成次数', TRUE),
+    ('video_generation_quota', '视频生成套餐次数', 'quota', 'job', '套餐内可抵扣的视频生成次数', TRUE)
+ON CONFLICT (code) DO NOTHING;
+
+INSERT INTO billing_package_entitlements (id, package_id, meter_code, grant_amount, grant_mode, sort_order, description)
+VALUES
+    ('starter-wallet-credit', 'starter', 'wallet_credit', 1000, 'one_time', 10, '购买入门包后发放 1000 钱包积分'),
+    ('growth-wallet-credit', 'growth', 'wallet_credit', 3500, 'one_time', 10, '购买增长包后发放 3500 钱包积分'),
+    ('studio-wallet-credit', 'studio', 'wallet_credit', 9000, 'one_time', 10, '购买工作室包后发放 9000 钱包积分'),
+    ('enterprise-wallet-credit', 'enterprise', 'wallet_credit', 22000, 'one_time', 10, '购买企业包后发放 22000 钱包积分')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO billing_pricing_rules (
+    id, name, meter_code, applies_to, model_name, job_type, charge_mode, quota_meter_code,
+    unit_size, wallet_debit_amount, sort_order, description, is_enabled
+)
+VALUES
+    (
+        'rule-gemini-chat-input',
+        'Gemini 聊天输入计费',
+        'chat_input_tokens',
+        'model',
+        'gemini-3.1-pro-preview',
+        'chat',
+        'wallet_only',
+        NULL,
+        1000,
+        1,
+        10,
+        '默认占位规则：每 1000 个输入 token 扣 1 钱包积分，后续可在后台调整',
+        TRUE
+    ),
+    (
+        'rule-gemini-chat-output',
+        'Gemini 聊天输出计费',
+        'chat_output_tokens',
+        'model',
+        'gemini-3.1-pro-preview',
+        'chat',
+        'wallet_only',
+        NULL,
+        1000,
+        2,
+        20,
+        '默认占位规则：每 1000 个输出 token 扣 2 钱包积分，后续可在后台调整',
+        TRUE
+    ),
+    (
+        'rule-image-generation-default',
+        '图片生成计费',
+        'image_generations',
+        'model',
+        'gemini-3-pro-image-preview',
+        'image',
+        'quota_first_wallet_fallback',
+        'image_generation_quota',
+        1,
+        80,
+        30,
+        '默认占位规则：优先扣套餐图片次数，不足时每次扣 80 钱包积分',
+        TRUE
+    ),
+    (
+        'rule-video-generation-default',
+        '视频生成计费',
+        'video_generations',
+        'model',
+        'veo-3.1-fast-fl',
+        'video',
+        'quota_first_wallet_fallback',
+        'video_generation_quota',
+        1,
+        400,
+        40,
+        '默认占位规则：优先扣套餐视频次数，不足时每次扣 400 钱包积分',
+        TRUE
+    )
 ON CONFLICT (id) DO NOTHING;
 `
 

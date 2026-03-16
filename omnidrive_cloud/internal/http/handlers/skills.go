@@ -485,11 +485,27 @@ func (h *SkillHandler) CreateAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	payload.AssetType = strings.TrimSpace(payload.AssetType)
-	payload.FileName = strings.TrimSpace(payload.FileName)
+	payload.FileName = sanitizeUploadFilename(payload.FileName)
 	if payload.AssetType == "" || payload.FileName == "" {
 		render.Error(w, http.StatusBadRequest, "assetType and fileName are required")
 		return
 	}
+
+	managedRef, transferred, err := normalizeManagedObjectRef(r.Context(), h.app, fmt.Sprintf("skills/%s/%s", user.ID, skillID), managedObjectRef{
+		FileName:   payload.FileName,
+		MimeType:   payload.MimeType,
+		StorageKey: payload.StorageKey,
+		PublicURL:  payload.PublicURL,
+		SizeBytes:  payload.SizeBytes,
+	})
+	if err != nil {
+		render.Error(w, http.StatusBadGateway, "Failed to mirror remote asset into storage")
+		return
+	}
+	payload.MimeType = managedRef.MimeType
+	payload.StorageKey = managedRef.StorageKey
+	payload.PublicURL = managedRef.PublicURL
+	payload.SizeBytes = managedRef.SizeBytes
 
 	asset, err := h.app.Store.CreateSkillAsset(r.Context(), store.CreateSkillAssetInput{
 		ID:          uuid.NewString(),
@@ -514,7 +530,7 @@ func (h *SkillHandler) CreateAsset(w http.ResponseWriter, r *http.Request) {
 		Title:        "添加技能资产",
 		Source:       payload.AssetType,
 		Status:       "success",
-		Message:      auditStringPtr("技能资产元数据已创建"),
+		Message:      auditStringPtr(skillAssetAuditMessage(transferred)),
 		Payload: mustJSONBytes(map[string]any{
 			"skillId":  skillID,
 			"fileName": asset.FileName,
@@ -637,4 +653,11 @@ func sanitizeUploadFilename(fileName string) string {
 		return "file.bin"
 	}
 	return strings.ReplaceAll(base, " ", "_")
+}
+
+func skillAssetAuditMessage(transferred bool) string {
+	if transferred {
+		return "技能资产已从远程地址转存到对象存储"
+	}
+	return "技能资产元数据已创建"
 }

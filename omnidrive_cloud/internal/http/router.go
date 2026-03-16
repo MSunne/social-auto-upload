@@ -127,8 +127,12 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 			})
 
 			private.Route("/billing", func(billing chi.Router) {
+				billing.Get("/summary", billingHandler.Summary)
 				billing.Get("/packages", billingHandler.ListPackages)
+				billing.Get("/rules", billingHandler.ListPricingRules)
 				billing.Get("/ledger", billingHandler.Ledger)
+				billing.Get("/orders", billingHandler.ListOrders)
+				billing.Post("/orders", billingHandler.CreateOrder)
 			})
 		})
 

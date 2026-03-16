@@ -637,7 +637,7 @@ const handleUploadSuccess = (response, file, tab) => {
     // 保存文件信息到fileList，包含文件路径和其他信息
     const fileInfo = {
       name: file.name,
-      url: materialApi.getMaterialPreviewUrl(filename), // 使用getMaterialPreviewUrl生成预览URL
+      url: materialApi.getPreviewUrl(filename),
       path: filePath,
       size: file.size,
       type: file.type
@@ -886,7 +886,7 @@ const confirmMaterialSelection = () => {
       if (material) {
         const fileInfo = {
           name: material.filename,
-          url: materialApi.getMaterialPreviewUrl(material.file_path.split('/').pop()),
+          url: materialApi.getPreviewUrl(material.file_path.split('/').pop()),
           path: material.file_path,
           size: material.filesize * 1024 * 1024, // 转换为字节
           type: 'video/mp4'
@@ -1008,9 +1008,10 @@ const batchPublish = async () => {
   
   // Tab管理区域
   .tab-management {
-    background-color: #fff;
-    border-radius: 4px;
-    box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+    background-color: $card-bg;
+    border: 1px solid $card-border;
+    border-radius: $card-radius;
+    box-shadow: $shadow-card;
     margin-bottom: 20px;
     padding: 15px 20px;
     
@@ -1031,22 +1032,23 @@ const batchPublish = async () => {
            align-items: center;
            gap: 6px;
            padding: 6px 12px;
-           background-color: #f5f7fa;
-           border: 1px solid #dcdfe6;
-           border-radius: 4px;
+           background-color: $bg-surface-alt;
+           border: 1px solid $border-color;
+           border-radius: 8px;
            cursor: pointer;
            transition: all 0.3s;
            font-size: 14px;
+           color: $text-secondary;
            height: 32px;
            
            &:hover {
-             background-color: #ecf5ff;
-             border-color: #b3d8ff;
+             background-color: $bg-hover;
+             border-color: $primary-color;
            }
            
            &.active {
-             background-color: #409eff;
-             border-color: #409eff;
+             background-color: $primary-color;
+             border-color: $primary-color;
              color: #fff;
              
              .close-icon {
@@ -1098,12 +1100,12 @@ const batchPublish = async () => {
     .current-publishing {
       margin: 15px 0;
       text-align: center;
-      color: #606266;
+      color: $text-secondary;
     }
 
     .publish-results {
       margin-top: 20px;
-      border-top: 1px solid #EBEEF5;
+      border-top: 1px solid $border-color;
       padding-top: 15px;
       max-height: 300px;
       overflow-y: auto;
@@ -1112,7 +1114,7 @@ const batchPublish = async () => {
         display: flex;
         align-items: center;
         padding: 8px 0;
-        color: #606266;
+        color: $text-secondary;
 
         .el-icon {
           margin-right: 8px;
@@ -1124,7 +1126,7 @@ const batchPublish = async () => {
         }
 
         .message {
-          color: #909399;
+          color: $text-muted;
         }
 
         &.success {
@@ -1136,7 +1138,7 @@ const batchPublish = async () => {
         }
 
         &.cancelled {
-          color: #909399;
+          color: $text-muted;
         }
       }
     }
@@ -1149,9 +1151,10 @@ const batchPublish = async () => {
   // 内容区域
   .publish-content {
     flex: 1;
-    background-color: #fff;
-    border-radius: 4px;
-    box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+    background-color: $card-bg;
+    border: 1px solid $card-border;
+    border-radius: $card-radius;
+    box-shadow: $shadow-card;
     padding: 20px;
     
     .tab-content-wrapper {
@@ -1242,7 +1245,7 @@ const batchPublish = async () => {
           .schedule-settings {
             margin-top: 15px;
             padding: 15px;
-            background-color: #f5f7fa;
+            background-color: $bg-surface-alt;
             border-radius: 4px;
 
             .schedule-item {
@@ -1276,7 +1279,7 @@ const batchPublish = async () => {
           gap: 10px;
           margin-top: 30px;
           padding-top: 20px;
-          border-top: 1px solid #ebeef5;
+          border-top: 1px solid $border-color;
         }
 
         .draft-section {
@@ -1308,7 +1311,7 @@ const batchPublish = async () => {
       font-size: 16px;
       font-weight: 500;
       margin-bottom: 12px;
-      color: #303133;
+      color: $text-primary;
     }
     
     .file-list {
@@ -1320,7 +1323,7 @@ const batchPublish = async () => {
         display: flex;
         align-items: center;
         padding: 10px 15px;
-        background-color: #f5f7fa;
+        background-color: $bg-surface-alt;
         border-radius: 4px;
         
         .el-link {
@@ -1332,7 +1335,7 @@ const batchPublish = async () => {
         }
         
         .file-size {
-          color: #909399;
+          color: $text-muted;
           font-size: 13px;
           margin-right: auto;
         }
@@ -1358,7 +1361,7 @@ const batchPublish = async () => {
           margin: 0 0 16px 0;
           font-size: 16px;
           font-weight: 500;
-          color: #303133;
+          color: $text-primary;
         }
         
         .topic-grid {

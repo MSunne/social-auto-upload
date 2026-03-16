@@ -58,6 +58,20 @@ type createPublishTaskFromAIJobRequest struct {
 	RunAt        *string  `json:"runAt"`
 }
 
+type uploadAIArtifactURLRequest struct {
+	ArtifactType string  `json:"artifactType"`
+	ArtifactKey  string  `json:"artifactKey"`
+	Source       string  `json:"source"`
+	Title        *string `json:"title"`
+	PublicURL    string  `json:"publicUrl"`
+	FileName     string  `json:"fileName"`
+	MimeType     *string `json:"mimeType"`
+	DeviceID     *string `json:"deviceId"`
+	RootName     *string `json:"rootName"`
+	RelativePath *string `json:"relativePath"`
+	AbsolutePath *string `json:"absolutePath"`
+}
+
 func NewAIHandler(app *appstate.App) *AIHandler {
 	return &AIHandler{app: app}
 }
@@ -321,6 +335,11 @@ func (h *AIHandler) UploadArtifact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type"))), "application/json") {
+		h.uploadArtifactFromURL(w, r, user.ID, jobID)
+		return
+	}
+
 	if err := r.ParseMultipartForm(64 << 20); err != nil {
 		render.Error(w, http.StatusBadRequest, "Failed to parse multipart form")
 		return
@@ -336,20 +355,9 @@ func (h *AIHandler) UploadArtifact(w http.ResponseWriter, r *http.Request) {
 	rootName := normalizeTrimmedStringPtr(r.FormValue("rootName"))
 	relativePath := normalizeTrimmedStringPtr(r.FormValue("relativePath"))
 	absolutePath := normalizeTrimmedStringPtr(r.FormValue("absolutePath"))
-	if deviceID != nil {
-		device, deviceErr := h.app.Store.GetOwnedDevice(r.Context(), *deviceID, user.ID)
-		if deviceErr != nil {
-			render.Error(w, http.StatusInternalServerError, "Failed to validate artifact device")
-			return
-		}
-		if device == nil {
-			render.Error(w, http.StatusNotFound, "Artifact device not found")
-			return
-		}
-		if rootName == nil || relativePath == nil {
-			render.Error(w, http.StatusBadRequest, "rootName and relativePath are required when deviceId is provided")
-			return
-		}
+	if err := h.validateArtifactDeviceBinding(r.Context(), user.ID, deviceID, rootName, relativePath); err != nil {
+		h.renderArtifactBindingError(w, err)
+		return
 	}
 
 	file, header, err := r.FormFile("file")
@@ -425,6 +433,125 @@ func (h *AIHandler) UploadArtifact(w http.ResponseWriter, r *http.Request) {
 	})
 
 	render.JSON(w, http.StatusCreated, artifacts[0])
+}
+
+func (h *AIHandler) uploadArtifactFromURL(w http.ResponseWriter, r *http.Request, ownerUserID string, jobID string) {
+	var payload uploadAIArtifactURLRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	payload.ArtifactType = strings.TrimSpace(payload.ArtifactType)
+	payload.ArtifactKey = strings.TrimSpace(payload.ArtifactKey)
+	payload.Source = strings.TrimSpace(payload.Source)
+	payload.PublicURL = strings.TrimSpace(payload.PublicURL)
+	if payload.ArtifactType == "" || payload.PublicURL == "" {
+		render.Error(w, http.StatusBadRequest, "artifactType and publicUrl are required")
+		return
+	}
+
+	deviceID := normalizeTrimmedString(payload.DeviceID)
+	rootName := normalizeTrimmedString(payload.RootName)
+	relativePath := normalizeTrimmedString(payload.RelativePath)
+	absolutePath := normalizeTrimmedString(payload.AbsolutePath)
+	if err := h.validateArtifactDeviceBinding(r.Context(), ownerUserID, deviceID, rootName, relativePath); err != nil {
+		h.renderArtifactBindingError(w, err)
+		return
+	}
+
+	managedRef, _, err := normalizeManagedObjectRef(r.Context(), h.app, fmt.Sprintf("ai-jobs/%s/%s", ownerUserID, jobID), managedObjectRef{
+		FileName:  payload.FileName,
+		MimeType:  payload.MimeType,
+		PublicURL: normalizeTrimmedStringPtr(payload.PublicURL),
+	})
+	if err != nil {
+		render.Error(w, http.StatusBadGateway, "Failed to mirror remote artifact into storage")
+		return
+	}
+
+	artifactKey := payload.ArtifactKey
+	if artifactKey == "" {
+		artifactKey = buildAIArtifactKey(managedRef.FileName, payload.ArtifactType)
+	}
+	title := normalizeTrimmedString(payload.Title)
+	source := payload.Source
+	if source == "" {
+		source = "remote_url"
+	}
+
+	artifacts, err := h.app.Store.UpsertAIJobArtifacts(r.Context(), []store.UpsertAIJobArtifactInput{{
+		JobID:        jobID,
+		ArtifactKey:  artifactKey,
+		ArtifactType: payload.ArtifactType,
+		Source:       source,
+		Title:        title,
+		FileName:     normalizeTrimmedStringPtr(managedRef.FileName),
+		MimeType:     managedRef.MimeType,
+		StorageKey:   managedRef.StorageKey,
+		PublicURL:    managedRef.PublicURL,
+		SizeBytes:    managedRef.SizeBytes,
+		DeviceID:     deviceID,
+		RootName:     rootName,
+		RelativePath: relativePath,
+		AbsolutePath: absolutePath,
+	}})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to create AI artifact")
+		return
+	}
+
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  ownerUserID,
+		ResourceType: "ai_job_artifact",
+		ResourceID:   &artifacts[0].ID,
+		Action:       "mirror_remote_url",
+		Title:        "转存 AI 远程产物",
+		Source:       payload.ArtifactType,
+		Status:       "success",
+		Message:      auditStringPtr("AI 任务产物已从远程地址转存到对象存储"),
+		Payload: mustJSONBytes(map[string]any{
+			"jobId":       jobID,
+			"artifactKey": artifactKey,
+			"publicUrl":   artifacts[0].PublicURL,
+			"sourceUrl":   payload.PublicURL,
+		}),
+	})
+
+	render.JSON(w, http.StatusCreated, artifacts[0])
+}
+
+func (h *AIHandler) validateArtifactDeviceBinding(ctx context.Context, ownerUserID string, deviceID, rootName, relativePath *string) error {
+	if deviceID == nil {
+		return nil
+	}
+
+	device, err := h.app.Store.GetOwnedDevice(ctx, *deviceID, ownerUserID)
+	if err != nil {
+		return fmt.Errorf("validate_device: %w", err)
+	}
+	if device == nil {
+		return fmt.Errorf("device_not_found")
+	}
+	if rootName == nil || relativePath == nil {
+		return fmt.Errorf("missing_material_location")
+	}
+	return nil
+}
+
+func (h *AIHandler) renderArtifactBindingError(w http.ResponseWriter, err error) {
+	switch {
+	case err == nil:
+		return
+	case strings.Contains(err.Error(), "validate_device:"):
+		render.Error(w, http.StatusInternalServerError, "Failed to validate artifact device")
+	case err.Error() == "device_not_found":
+		render.Error(w, http.StatusNotFound, "Artifact device not found")
+	case err.Error() == "missing_material_location":
+		render.Error(w, http.StatusBadRequest, "rootName and relativePath are required when deviceId is provided")
+	default:
+		render.Error(w, http.StatusBadRequest, err.Error())
+	}
 }
 
 func (h *AIHandler) CreatePublishTask(w http.ResponseWriter, r *http.Request) {
@@ -554,14 +681,21 @@ func (h *AIHandler) CreatePublishTask(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	mediaPayload, err := json.Marshal(map[string]any{
+	taskID := uuid.NewString()
+	rawMediaPayload := map[string]any{
 		"source":      "ai_job",
 		"aiJobId":     job.ID,
 		"jobType":     job.JobType,
 		"modelName":   job.ModelName,
 		"artifacts":   mediaItems,
 		"generatedAt": job.FinishedAt,
-	})
+	}
+	normalizedMediaPayload, _, normalizeErr := normalizePublishTaskMediaPayload(r.Context(), h.app, user.ID, taskID, rawMediaPayload)
+	if normalizeErr != nil {
+		render.Error(w, http.StatusBadGateway, "Failed to mirror generated media into storage")
+		return
+	}
+	mediaPayload, err := json.Marshal(normalizedMediaPayload)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to prepare media payload")
 		return
@@ -579,7 +713,7 @@ func (h *AIHandler) CreatePublishTask(w http.ResponseWriter, r *http.Request) {
 
 	taskMessage := "来自 AI 任务的发布任务，等待执行"
 	task, err := h.app.Store.CreatePublishTask(r.Context(), store.CreatePublishTaskInput{
-		ID:           uuid.NewString(),
+		ID:           taskID,
 		DeviceID:     device.ID,
 		AccountID:    accountID,
 		Platform:     payload.Platform,

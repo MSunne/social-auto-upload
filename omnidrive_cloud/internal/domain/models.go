@@ -634,29 +634,116 @@ type AgentAIJobDeliveryItem struct {
 }
 
 type BillingPackage struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Channel      string    `json:"channel"`
-	PriceCents   int64     `json:"priceCents"`
-	CreditAmount int64     `json:"creditAmount"`
-	Badge        *string   `json:"badge"`
-	Description  *string   `json:"description"`
-	IsEnabled    bool      `json:"isEnabled"`
-	SortOrder    int       `json:"sortOrder"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	ID              string                      `json:"id"`
+	Name            string                      `json:"name"`
+	PackageType     string                      `json:"packageType"`
+	Channel         string                      `json:"channel"`
+	PaymentChannels []string                    `json:"paymentChannels"`
+	Currency        string                      `json:"currency"`
+	PriceCents      int64                       `json:"priceCents"`
+	CreditAmount    int64                       `json:"creditAmount"`
+	Badge           *string                     `json:"badge"`
+	Description     *string                     `json:"description"`
+	PricingPayload  json.RawMessage             `json:"pricingPayload,omitempty"`
+	ExpiresInDays   *int32                      `json:"expiresInDays,omitempty"`
+	IsEnabled       bool                        `json:"isEnabled"`
+	SortOrder       int                         `json:"sortOrder"`
+	Entitlements    []BillingPackageEntitlement `json:"entitlements"`
+	CreatedAt       time.Time                   `json:"createdAt"`
+	UpdatedAt       time.Time                   `json:"updatedAt"`
+}
+
+type BillingPackageEntitlement struct {
+	ID          string    `json:"id"`
+	PackageID   string    `json:"packageId"`
+	MeterCode   string    `json:"meterCode"`
+	MeterName   *string   `json:"meterName,omitempty"`
+	Unit        *string   `json:"unit,omitempty"`
+	GrantAmount int64     `json:"grantAmount"`
+	GrantMode   string    `json:"grantMode"`
+	SortOrder   int       `json:"sortOrder"`
+	Description *string   `json:"description,omitempty"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+type BillingPricingRule struct {
+	ID                string    `json:"id"`
+	Name              string    `json:"name"`
+	MeterCode         string    `json:"meterCode"`
+	MeterName         *string   `json:"meterName,omitempty"`
+	AppliesTo         string    `json:"appliesTo"`
+	ModelName         *string   `json:"modelName,omitempty"`
+	JobType           *string   `json:"jobType,omitempty"`
+	ChargeMode        string    `json:"chargeMode"`
+	QuotaMeterCode    *string   `json:"quotaMeterCode,omitempty"`
+	QuotaMeterName    *string   `json:"quotaMeterName,omitempty"`
+	UnitSize          int64     `json:"unitSize"`
+	WalletDebitAmount int64     `json:"walletDebitAmount"`
+	SortOrder         int       `json:"sortOrder"`
+	Description       *string   `json:"description,omitempty"`
+	IsEnabled         bool      `json:"isEnabled"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
+}
+
+type BillingQuotaBalance struct {
+	MeterCode        string     `json:"meterCode"`
+	MeterName        string     `json:"meterName"`
+	Unit             string     `json:"unit"`
+	RemainingTotal   int64      `json:"remainingTotal"`
+	NearestExpiresAt *time.Time `json:"nearestExpiresAt,omitempty"`
+}
+
+type BillingSummary struct {
+	CreditBalance        int64                 `json:"creditBalance"`
+	FrozenCreditBalance  int64                 `json:"frozenCreditBalance"`
+	PendingRechargeCount int64                 `json:"pendingRechargeCount"`
+	QuotaBalances        []BillingQuotaBalance `json:"quotaBalances"`
 }
 
 type WalletLedger struct {
-	ID            string    `json:"id"`
-	UserID        string    `json:"userId"`
-	EntryType     string    `json:"entryType"`
-	AmountDelta   int64     `json:"amountDelta"`
-	BalanceAfter  int64     `json:"balanceAfter"`
-	Description   *string   `json:"description"`
-	ReferenceType *string   `json:"referenceType"`
-	ReferenceID   *string   `json:"referenceId"`
-	CreatedAt     time.Time `json:"createdAt"`
+	ID                   string          `json:"id"`
+	UserID               string          `json:"userId"`
+	EntryType            string          `json:"entryType"`
+	AmountDelta          int64           `json:"amountDelta"`
+	BalanceBefore        int64           `json:"balanceBefore"`
+	BalanceAfter         int64           `json:"balanceAfter"`
+	MeterCode            *string         `json:"meterCode,omitempty"`
+	Quantity             *int64          `json:"quantity,omitempty"`
+	Unit                 *string         `json:"unit,omitempty"`
+	UnitPriceCredits     *int64          `json:"unitPriceCredits,omitempty"`
+	Description          *string         `json:"description"`
+	ReferenceType        *string         `json:"referenceType"`
+	ReferenceID          *string         `json:"referenceId"`
+	RechargeOrderID      *string         `json:"rechargeOrderId,omitempty"`
+	PaymentTransactionID *string         `json:"paymentTransactionId,omitempty"`
+	Metadata             json.RawMessage `json:"metadata,omitempty"`
+	CreatedAt            time.Time       `json:"createdAt"`
+}
+
+type RechargeOrder struct {
+	ID                     string          `json:"id"`
+	OrderNo                string          `json:"orderNo"`
+	UserID                 string          `json:"userId"`
+	PackageID              *string         `json:"packageId,omitempty"`
+	PackageSnapshot        json.RawMessage `json:"packageSnapshot,omitempty"`
+	Channel                string          `json:"channel"`
+	Status                 string          `json:"status"`
+	Subject                string          `json:"subject"`
+	Body                   *string         `json:"body,omitempty"`
+	Currency               string          `json:"currency"`
+	AmountCents            int64           `json:"amountCents"`
+	CreditAmount           int64           `json:"creditAmount"`
+	PaymentPayload         json.RawMessage `json:"paymentPayload,omitempty"`
+	CustomerServicePayload json.RawMessage `json:"customerServicePayload,omitempty"`
+	ProviderTransactionID  *string         `json:"providerTransactionId,omitempty"`
+	ProviderStatus         *string         `json:"providerStatus,omitempty"`
+	ExpiresAt              *time.Time      `json:"expiresAt,omitempty"`
+	PaidAt                 *time.Time      `json:"paidAt,omitempty"`
+	ClosedAt               *time.Time      `json:"closedAt,omitempty"`
+	CreatedAt              time.Time       `json:"createdAt"`
+	UpdatedAt              time.Time       `json:"updatedAt"`
 }
 
 type HistoryItem struct {

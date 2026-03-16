@@ -2,36 +2,70 @@
 @use './variables.scss' as *;
 
 // ═══════════════════════════════════════
-// Global Styles — SAU Dark Theme
+// Global Styles — Neon Cyber Theme
+// Matching omnidrive_frontend design
 // ═══════════════════════════════════════
 
-// ── Element Plus Dark Overrides ──
+// ── Animated Cyber Background ──
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(ellipse 80% 55% at 5% 0%, $accent-glow, transparent),
+    radial-gradient(ellipse 65% 50% at 95% 5%, $cyan-glow, transparent),
+    radial-gradient(ellipse 50% 45% at 50% 95%, $pink-glow, transparent),
+    radial-gradient(ellipse 40% 35% at 70% 60%, rgba(0, 245, 212, 0.08), transparent),
+    radial-gradient(ellipse 35% 40% at 20% 70%, rgba(177, 73, 255, 0.10), transparent),
+    $bg-dark;
+  animation: bgShift 20s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+@keyframes bgShift {
+  0%   { filter: hue-rotate(0deg) brightness(1); }
+  50%  { filter: hue-rotate(8deg) brightness(1.05); }
+  100% { filter: hue-rotate(-5deg) brightness(1); }
+}
+
+// ── Element Plus Deep Dark Overrides ──
 .el-card {
-  --el-card-bg-color: #{$card-bg};
-  --el-card-border-color: #{$card-border};
+  --el-card-bg-color: #{$bg-surface};
+  --el-card-border-color: #{$border-color};
   border-radius: $card-radius;
   box-shadow: $shadow-card;
+  backdrop-filter: $glass-blur;
+  -webkit-backdrop-filter: $glass-blur;
+  border: 1px solid $border-color;
 
   &:hover {
-    box-shadow: $shadow-md;
+    box-shadow: $shadow-card-hover;
+    border-color: $border-strong;
   }
 }
 
 .el-table {
-  --el-table-bg-color: #{$bg-surface};
-  --el-table-tr-bg-color: #{$bg-surface};
-  --el-table-header-bg-color: #{$bg-surface-alt};
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-header-bg-color: rgba(18, 18, 42, 0.6);
   --el-table-row-hover-bg-color: #{$bg-hover};
   --el-table-border-color: #{$border-color};
   --el-table-text-color: #{$text-primary};
   --el-table-header-text-color: #{$text-secondary};
+
+  .el-table__body tr:nth-child(2n) {
+    background: rgba(139, 92, 246, 0.03);
+  }
 }
 
 .el-dialog {
-  --el-dialog-bg-color: #{$bg-surface};
+  --el-dialog-bg-color: #{$bg-surface-alt};
   --el-dialog-border-radius: #{$card-radius};
-  border: 1px solid $border-color;
-  box-shadow: $shadow-lg;
+  border: 1px solid $border-strong;
+  box-shadow: $shadow-glow;
+  backdrop-filter: $glass-blur-heavy;
+  -webkit-backdrop-filter: $glass-blur-heavy;
 
   .el-dialog__header {
     border-bottom: 1px solid $border-color;
@@ -43,11 +77,12 @@
 }
 
 .el-input {
-  --el-input-bg-color: #{$bg-dark};
+  --el-input-bg-color: rgba(10, 10, 28, 0.6);
   --el-input-border-color: #{$border-color};
   --el-input-text-color: #{$text-primary};
   --el-input-placeholder-color: #{$text-muted};
-  --el-input-hover-border-color: #{$primary-color};
+  --el-input-hover-border-color: #{$accent-color};
+  --el-input-focus-border-color: #{$accent-color};
 }
 
 .el-select-dropdown {
@@ -55,22 +90,110 @@
 }
 
 .el-button {
-  border-radius: 8px;
+  border-radius: 10px;
+
+  &--primary {
+    --el-button-bg-color: #{$accent-color};
+    --el-button-border-color: #{$accent-color};
+    --el-button-hover-bg-color: #{$accent-strong};
+    --el-button-hover-border-color: #{$accent-strong};
+
+    &:not(.is-plain) {
+      box-shadow: 0 0 16px rgba(177, 73, 255, 0.3);
+    }
+  }
+
+  &--success {
+    --el-button-bg-color: #{$success-color};
+    --el-button-border-color: #{$success-color};
+    --el-button-text-color: #050510;
+
+    &:not(.is-plain) {
+      box-shadow: 0 0 16px rgba(0, 255, 136, 0.25);
+    }
+  }
+
+  &--danger {
+    --el-button-bg-color: #{$danger-color};
+    --el-button-border-color: #{$danger-color};
+
+    &:not(.is-plain) {
+      box-shadow: 0 0 12px rgba(255, 59, 92, 0.25);
+    }
+  }
 }
 
 .el-menu {
   --el-menu-bg-color: transparent;
   --el-menu-text-color: #{$text-secondary};
-  --el-menu-active-color: #{$primary-color};
+  --el-menu-active-color: #{$accent-color};
   --el-menu-hover-bg-color: #{$bg-hover};
 }
 
 .el-tag {
-  border-radius: 6px;
+  border-radius: 8px;
+
+  &--primary {
+    --el-tag-bg-color: rgba(177, 73, 255, 0.15);
+    --el-tag-border-color: rgba(177, 73, 255, 0.25);
+    --el-tag-text-color: #{$accent-strong};
+  }
+
+  &--success {
+    --el-tag-bg-color: rgba(0, 255, 136, 0.12);
+    --el-tag-border-color: rgba(0, 255, 136, 0.22);
+    --el-tag-text-color: #{$success-color};
+  }
+
+  &--danger {
+    --el-tag-bg-color: rgba(255, 59, 92, 0.12);
+    --el-tag-border-color: rgba(255, 59, 92, 0.22);
+    --el-tag-text-color: #{$danger-color};
+  }
+
+  &--warning {
+    --el-tag-bg-color: rgba(255, 184, 0, 0.12);
+    --el-tag-border-color: rgba(255, 184, 0, 0.22);
+    --el-tag-text-color: #{$warning-color};
+  }
 }
 
 .el-message-box {
   --el-messagebox-title-color: #{$text-primary};
+  background: $bg-surface-alt;
+  border: 1px solid $border-strong;
+  backdrop-filter: $glass-blur;
+}
+
+.el-upload-dragger {
+  background: rgba(10, 10, 28, 0.5);
+  border-color: $border-color;
+  border-radius: $card-radius;
+
+  &:hover {
+    border-color: $accent-color;
+    box-shadow: 0 0 20px rgba(177, 73, 255, 0.1);
+  }
+}
+
+.el-progress-bar__outer {
+  background: rgba(139, 92, 246, 0.1);
+}
+
+// ── Glass Card Utility ──
+.glass-card {
+  background: $bg-surface;
+  border: 1px solid $border-color;
+  backdrop-filter: $glass-blur;
+  -webkit-backdrop-filter: $glass-blur;
+  border-radius: $card-radius;
+  box-shadow: $shadow-card;
+  transition: box-shadow $transition-base, border-color $transition-base, transform $transition-base;
+
+  &:hover {
+    border-color: $border-strong;
+    box-shadow: $shadow-card-hover;
+  }
 }
 
 // ── Utility Classes ──
@@ -92,32 +215,36 @@
 }
 
 .stat-card {
-  background: $card-bg;
-  border: 1px solid $card-border;
+  background: $bg-surface;
+  border: 1px solid $border-color;
   border-radius: $card-radius;
   padding: $card-padding;
+  backdrop-filter: $glass-blur;
+  -webkit-backdrop-filter: $glass-blur;
   transition: all $transition-base;
 
   &:hover {
-    transform: translateY(-2px);
-    box-shadow: $shadow-md;
-    border-color: $border-light;
+    transform: translateY(-3px);
+    box-shadow: $shadow-card-hover;
+    border-color: $border-strong;
   }
 }
 
 .action-card {
-  background: $card-bg;
-  border: 1px solid $card-border;
+  background: $bg-surface;
+  border: 1px solid $border-color;
   border-radius: $card-radius;
   padding: $card-padding;
   cursor: pointer;
+  backdrop-filter: $glass-blur;
+  -webkit-backdrop-filter: $glass-blur;
   transition: all $transition-base;
   text-align: center;
 
   &:hover {
     transform: translateY(-4px);
-    box-shadow: $shadow-md;
-    border-color: rgba($primary-color, 0.3);
+    box-shadow: $shadow-card-hover;
+    border-color: rgba($accent-color, 0.3);
   }
 }
 
@@ -132,16 +259,17 @@
 }
 
 // ── Status Colors ──
-.status-normal {
-  color: $success-color;
+.status-normal { color: $success-color; }
+.status-abnormal { color: $danger-color; }
+.status-pending { color: $warning-color; }
+
+// ── Text Glow ──
+.text-glow {
+  text-shadow: 0 0 10px $accent-glow, 0 0 30px rgba(177, 73, 255, 0.25);
 }
 
-.status-abnormal {
-  color: $danger-color;
-}
-
-.status-pending {
-  color: $warning-color;
+.text-glow-cyan {
+  text-shadow: 0 0 10px $cyan-glow, 0 0 30px rgba(0, 245, 212, 0.20);
 }
 
 // ── Animations ──
@@ -154,15 +282,25 @@
   animation: fadeIn 0.4s ease forwards;
 }
 
-// ── Loading skeleton ──
+// ── Loading skeleton — neon shimmer ──
 .skeleton {
-  background: linear-gradient(90deg, $bg-surface-alt 25%, $bg-hover 50%, $bg-surface-alt 75%);
+  background: linear-gradient(90deg, rgba(177, 73, 255, 0.04) 25%, rgba(177, 73, 255, 0.10) 50%, rgba(177, 73, 255, 0.04) 75%);
   background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-  border-radius: 6px;
+  animation: shimmer 1.8s ease-in-out infinite;
+  border-radius: 8px;
 }
 
 @keyframes shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+// ── Pulse dot for status ──
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.5); }
+}
+
+.pulse-online {
+  animation: pulse-dot 2s ease-in-out infinite;
 }

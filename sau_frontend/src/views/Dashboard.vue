@@ -5,7 +5,7 @@
       <el-col :xs="24" :sm="12" :lg="6">
         <div class="stat-card">
           <div class="stat-header">
-            <div class="stat-icon blue">
+            <div class="stat-icon violet">
               <el-icon :size="22"><User /></el-icon>
             </div>
             <div class="stat-trend" :class="accountStore.stats.abnormal > 0 ? 'warn' : 'good'">
@@ -24,7 +24,7 @@
       <el-col :xs="24" :sm="12" :lg="6">
         <div class="stat-card">
           <div class="stat-header">
-            <div class="stat-icon green">
+            <div class="stat-icon cyan">
               <el-icon :size="22"><Platform /></el-icon>
             </div>
             <div class="stat-trend good">已接入</div>
@@ -43,7 +43,7 @@
       <el-col :xs="24" :sm="12" :lg="6">
         <div class="stat-card">
           <div class="stat-header">
-            <div class="stat-icon purple">
+            <div class="stat-icon pink">
               <el-icon :size="22"><Document /></el-icon>
             </div>
           </div>
@@ -60,7 +60,7 @@
       <el-col :xs="24" :sm="12" :lg="6">
         <div class="stat-card">
           <div class="stat-header">
-            <div class="stat-icon cyan">
+            <div class="stat-icon green">
               <el-icon :size="22"><Connection /></el-icon>
             </div>
             <div class="stat-trend" :class="publishStore.taskStats.total > 0 ? 'good' : ''">
@@ -104,25 +104,26 @@
         </h3>
         <el-button text type="primary" @click="router.push('/material-management')">查看全部</el-button>
       </div>
-      <el-table
-        :data="appStore.recentMaterials"
-        v-loading="loading"
-        stripe
-        style="width: 100%"
-      >
-        <el-table-column prop="filename" label="文件名" min-width="260" />
-        <el-table-column prop="filesize" label="大小" width="100">
-          <template #default="{ row }">{{ row.filesize }} MB</template>
-        </el-table-column>
-        <el-table-column prop="upload_time" label="上传时间" width="180" />
-        <el-table-column label="类型" width="100">
-          <template #default="{ row }">
-            <el-tag :type="getFileTypeColor(row.filename)" size="small" effect="dark">
-              {{ getFileTypeLabel(row.filename) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-      </el-table>
+      <div class="glass-card table-wrapper">
+        <el-table
+          :data="appStore.recentMaterials"
+          v-loading="loading"
+          style="width: 100%"
+        >
+          <el-table-column prop="filename" label="文件名" min-width="260" />
+          <el-table-column prop="filesize" label="大小" width="100">
+            <template #default="{ row }">{{ row.filesize }} MB</template>
+          </el-table-column>
+          <el-table-column prop="upload_time" label="上传时间" width="180" />
+          <el-table-column label="类型" width="100">
+            <template #default="{ row }">
+              <el-tag :type="getFileTypeColor(row.filename)" size="small" effect="dark">
+                {{ getFileTypeLabel(row.filename) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
       <el-empty v-if="!loading && appStore.recentMaterials.length === 0" description="暂无素材数据" />
     </div>
   </div>
@@ -145,10 +146,10 @@ const publishStore = usePublishStore()
 const loading = ref(false)
 
 const quickActions = [
-  { path: '/account-management', label: '账号管理', desc: '管理所有平台账号', icon: 'UserFilled', color: 'blue' },
-  { path: '/material-management', label: '素材管理', desc: '上传和管理视频素材', icon: 'FolderOpened', color: 'purple' },
-  { path: '/publish-center', label: '发布中心', desc: '发布内容到各平台', icon: 'Promotion', color: 'green' },
-  { path: '/system-status', label: '系统状态', desc: '查看设备与连接', icon: 'DataLine', color: 'cyan' },
+  { path: '/account-management', label: '账号管理', desc: '管理所有平台账号', icon: 'UserFilled', color: 'violet' },
+  { path: '/material-management', label: '素材管理', desc: '上传和管理视频素材', icon: 'FolderOpened', color: 'pink' },
+  { path: '/publish-center', label: '发布中心', desc: '发布内容到各平台', icon: 'Promotion', color: 'cyan' },
+  { path: '/system-status', label: '系统状态', desc: '查看设备与连接', icon: 'DataLine', color: 'green' },
 ]
 
 const VIDEO_EXTS = ['.mp4', '.avi', '.mov', '.wmv', '.flv', '.mkv', '.webm']
@@ -196,7 +197,12 @@ onMounted(fetchData)
   max-width: 1400px;
 }
 
-// ── Stat Cards ──
+.table-wrapper {
+  padding: 4px;
+  overflow: hidden;
+}
+
+// ── Stat Cards — Neon ──
 .stat-card {
   .stat-header {
     display: flex;
@@ -213,33 +219,37 @@ onMounted(fetchData)
     align-items: center;
     justify-content: center;
 
-    &.blue {
-      background: rgba(64, 158, 255, 0.15);
-      .el-icon { color: #409EFF; }
-    }
-    &.green {
-      background: rgba(103, 194, 58, 0.15);
-      .el-icon { color: #67C23A; }
-    }
-    &.purple {
-      background: rgba(168, 85, 247, 0.15);
-      .el-icon { color: #A855F7; }
+    &.violet {
+      background: rgba(177, 73, 255, 0.15);
+      box-shadow: 0 0 12px rgba(177, 73, 255, 0.2);
+      .el-icon { color: #b149ff; }
     }
     &.cyan {
-      background: rgba(54, 209, 220, 0.15);
-      .el-icon { color: #36d1dc; }
+      background: rgba(0, 245, 212, 0.12);
+      box-shadow: 0 0 12px rgba(0, 245, 212, 0.2);
+      .el-icon { color: #00f5d4; }
+    }
+    &.pink {
+      background: rgba(255, 45, 120, 0.12);
+      box-shadow: 0 0 12px rgba(255, 45, 120, 0.2);
+      .el-icon { color: #ff2d78; }
+    }
+    &.green {
+      background: rgba(0, 255, 136, 0.12);
+      box-shadow: 0 0 12px rgba(0, 255, 136, 0.2);
+      .el-icon { color: #00ff88; }
     }
   }
 
   .stat-trend {
     font-size: 12px;
-    padding: 2px 8px;
+    padding: 2px 10px;
     border-radius: 12px;
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, 0.04);
     color: $text-muted;
 
-    &.good { color: $success-color; background: rgba($success-color, 0.1); }
-    &.warn { color: $danger-color; background: rgba($danger-color, 0.1); }
+    &.good { color: $success-color; background: rgba(0, 255, 136, 0.08); }
+    &.warn { color: $danger-color; background: rgba(255, 59, 92, 0.08); }
   }
 
   .stat-value {
@@ -271,7 +281,7 @@ onMounted(fetchData)
   }
 }
 
-// ── Quick Actions ──
+// ── Quick Actions — Neon Hover ──
 .action-card {
   .action-icon {
     width: 48px;
@@ -281,11 +291,31 @@ onMounted(fetchData)
     align-items: center;
     justify-content: center;
     margin-bottom: 12px;
+    transition: box-shadow $transition-base;
 
-    &.blue { background: rgba(64, 158, 255, 0.15); .el-icon { color: #409EFF; } }
-    &.green { background: rgba(103, 194, 58, 0.15); .el-icon { color: #67C23A; } }
-    &.purple { background: rgba(168, 85, 247, 0.15); .el-icon { color: #A855F7; } }
-    &.cyan { background: rgba(54, 209, 220, 0.15); .el-icon { color: #36d1dc; } }
+    &.violet {
+      background: rgba(177, 73, 255, 0.12);
+      .el-icon { color: #b149ff; }
+    }
+    &.cyan {
+      background: rgba(0, 245, 212, 0.10);
+      .el-icon { color: #00f5d4; }
+    }
+    &.pink {
+      background: rgba(255, 45, 120, 0.10);
+      .el-icon { color: #ff2d78; }
+    }
+    &.green {
+      background: rgba(0, 255, 136, 0.10);
+      .el-icon { color: #00ff88; }
+    }
+  }
+
+  &:hover .action-icon {
+    &.violet { box-shadow: 0 0 20px rgba(177, 73, 255, 0.3); }
+    &.cyan   { box-shadow: 0 0 20px rgba(0, 245, 212, 0.3); }
+    &.pink   { box-shadow: 0 0 20px rgba(255, 45, 120, 0.3); }
+    &.green  { box-shadow: 0 0 20px rgba(0, 255, 136, 0.3); }
   }
 
   .action-title {

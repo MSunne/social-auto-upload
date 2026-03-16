@@ -1512,7 +1512,16 @@ func (h *AgentHandler) SyncPublishTask(w http.ResponseWriter, r *http.Request) {
 
 	var mediaPayload []byte
 	if payload.MediaPayload != nil {
-		mediaPayload, err = json.Marshal(payload.MediaPayload)
+		ownerUserID := strings.TrimSpace(stringValue(device.OwnerUserID))
+		if ownerUserID == "" {
+			ownerUserID = "unowned"
+		}
+		normalizedPayload, _, normalizeErr := normalizePublishTaskMediaPayload(r.Context(), h.app, ownerUserID, payload.ID, payload.MediaPayload)
+		if normalizeErr != nil {
+			render.Error(w, http.StatusBadGateway, "Failed to mirror remote media into storage")
+			return
+		}
+		mediaPayload, err = json.Marshal(normalizedPayload)
 		if err != nil {
 			render.Error(w, http.StatusBadRequest, "mediaPayload must be valid json")
 			return
@@ -2034,6 +2043,32 @@ func (h *AgentHandler) prepareVerificationPayload(ctx context.Context, folder st
 
 	rawScreenshot, ok := payloadMap["screenshotData"].(string)
 	if !ok || strings.TrimSpace(rawScreenshot) == "" {
+		screenshotURL, _ := payloadMap["screenshotUrl"].(string)
+		if strings.TrimSpace(screenshotURL) != "" {
+			screenshotContentType, _ := payloadMap["screenshotContentType"].(string)
+			screenshotStorageKey, _ := payloadMap["screenshotStorageKey"].(string)
+			managedRef, _, err := normalizeManagedObjectRef(ctx, h.app, fmt.Sprintf("%s/%s", folder, entityID), managedObjectRef{
+				FileName:   entityID + "-verification.png",
+				MimeType:   normalizeTrimmedStringPtr(screenshotContentType),
+				StorageKey: normalizeTrimmedStringPtr(screenshotStorageKey),
+				PublicURL:  normalizeTrimmedStringPtr(screenshotURL),
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to store verification screenshot")
+			}
+			if managedRef.PublicURL != nil {
+				payloadMap["screenshotUrl"] = *managedRef.PublicURL
+			}
+			if managedRef.StorageKey != nil {
+				payloadMap["screenshotStorageKey"] = *managedRef.StorageKey
+			}
+			if managedRef.MimeType != nil {
+				payloadMap["screenshotContentType"] = *managedRef.MimeType
+			}
+			if managedRef.SizeBytes != nil {
+				payloadMap["screenshotSizeBytes"] = *managedRef.SizeBytes
+			}
+		}
 		return json.Marshal(payloadMap)
 	}
 

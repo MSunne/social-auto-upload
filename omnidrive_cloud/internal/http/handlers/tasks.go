@@ -430,9 +430,16 @@ func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 		skillRevision = normalizeTrimmedStringPtr(revision)
 	}
 
+	taskID := uuid.NewString()
+
 	var mediaPayload []byte
 	if payload.MediaPayload != nil {
-		mediaPayload, err = json.Marshal(payload.MediaPayload)
+		normalizedPayload, _, normalizeErr := normalizePublishTaskMediaPayload(r.Context(), h.app, user.ID, taskID, payload.MediaPayload)
+		if normalizeErr != nil {
+			render.Error(w, http.StatusBadGateway, "Failed to mirror remote media into storage")
+			return
+		}
+		mediaPayload, err = json.Marshal(normalizedPayload)
 		if err != nil {
 			render.Error(w, http.StatusBadRequest, "mediaPayload must be valid json")
 			return
@@ -449,7 +456,6 @@ func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 		runAt = &parsed
 	}
 
-	taskID := uuid.NewString()
 	materialRefs, err := h.prepareTaskMaterialRefs(r.Context(), user.ID, taskID, payload.DeviceID, payload.MaterialRefs)
 	if err != nil {
 		render.Error(w, http.StatusBadRequest, err.Error())
@@ -1448,7 +1454,12 @@ func (h *TaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var mediaPayload []byte
 	mediaTouched := payload.MediaPayload != nil
 	if mediaTouched {
-		mediaPayload, err = json.Marshal(payload.MediaPayload)
+		normalizedPayload, _, normalizeErr := normalizePublishTaskMediaPayload(r.Context(), h.app, user.ID, existing.ID, payload.MediaPayload)
+		if normalizeErr != nil {
+			render.Error(w, http.StatusBadGateway, "Failed to mirror remote media into storage")
+			return
+		}
+		mediaPayload, err = json.Marshal(normalizedPayload)
 		if err != nil {
 			render.Error(w, http.StatusBadRequest, "mediaPayload must be valid json")
 			return

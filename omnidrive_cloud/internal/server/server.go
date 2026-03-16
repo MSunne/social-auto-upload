@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"omnidrive_cloud/internal/ai"
 	appstate "omnidrive_cloud/internal/app"
 	"omnidrive_cloud/internal/config"
 	"omnidrive_cloud/internal/database"
@@ -34,7 +35,23 @@ func New(cfg config.Config) (*http.Server, func(), error) {
 		Handler: apphttp.NewRouter(app),
 	}
 
+	cleanupFns := make([]func(), 0, 2)
+	if cfg.AIWorkerEnabled {
+		worker, err := ai.NewWorker(app)
+		if err != nil {
+			db.Close()
+			return nil, nil, fmt.Errorf("init ai worker: %w", err)
+		}
+		stopWorker := worker.Start(context.Background())
+		cleanupFns = append(cleanupFns, stopWorker)
+	}
+
 	cleanup := func() {
+		for _, fn := range cleanupFns {
+			if fn != nil {
+				fn()
+			}
+		}
 		db.Close()
 	}
 

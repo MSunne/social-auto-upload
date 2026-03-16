@@ -7,7 +7,7 @@
           <!-- Logo -->
           <div class="sidebar-logo">
             <div class="logo-icon">
-              <el-icon :size="24"><Monitor /></el-icon>
+              <el-icon :size="22"><Monitor /></el-icon>
             </div>
             <transition name="fade">
               <span v-show="!sidebarCollapsed" class="logo-text">OmniBull</span>
@@ -69,7 +69,7 @@
             </div>
             <div class="header-right">
               <div class="connection-dot" :class="{ online: isOnline }">
-                <span class="dot"></span>
+                <span class="dot" :class="{ 'pulse-online': isOnline }"></span>
                 <span class="label">{{ isOnline ? '后端已连接' : '后端未连接' }}</span>
               </div>
             </div>
@@ -103,7 +103,6 @@ const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const activeMenu = computed(() => route.path)
 const currentTitle = computed(() => route.meta.title || 'OmniBull')
 
-// Ping backend on mount
 const checkBackend = async () => {
   try {
     const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5409'
@@ -125,14 +124,14 @@ onMounted(() => {
 
 #app {
   min-height: 100vh;
-  background: $bg-dark;
+  background: transparent; // body::before handles animated BG
 }
 
 .el-container {
   height: 100vh;
 }
 
-// ── Sidebar ──
+// ── Sidebar — Deep Glass ──
 .el-aside {
   background: $bg-sidebar;
   height: 100vh;
@@ -140,6 +139,8 @@ onMounted(() => {
   transition: width $transition-base;
   border-right: 1px solid $border-color;
   position: relative;
+  backdrop-filter: $glass-blur;
+  -webkit-backdrop-filter: $glass-blur;
 
   .sidebar {
     display: flex;
@@ -153,7 +154,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   padding: 0 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(139, 92, 246, 0.08);
   gap: 12px;
   flex-shrink: 0;
 
@@ -166,10 +167,9 @@ onMounted(() => {
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
+    box-shadow: 0 0 16px $accent-glow;
 
-    .el-icon {
-      color: #fff;
-    }
+    .el-icon { color: #fff; }
   }
 
   .logo-text {
@@ -178,6 +178,7 @@ onMounted(() => {
     color: $text-primary;
     white-space: nowrap;
     letter-spacing: 0.5px;
+    text-shadow: 0 0 20px rgba(177, 73, 255, 0.3);
   }
 }
 
@@ -189,35 +190,39 @@ onMounted(() => {
 
   --el-menu-bg-color: transparent;
   --el-menu-text-color: #{$text-secondary};
-  --el-menu-active-color: #{$primary-color};
+  --el-menu-active-color: #{$accent-color};
   --el-menu-hover-bg-color: #{$bg-hover};
 
   .el-menu-item {
-    border-radius: 8px;
+    border-radius: 10px;
     margin-bottom: 4px;
     height: 44px;
     line-height: 44px;
+    transition: all $transition-base;
 
     .el-icon {
       font-size: 18px;
       margin-right: 10px;
     }
 
-    &.is-active {
-      background: rgba($primary-color, 0.12);
-      color: $primary-color;
-      font-weight: 600;
+    &:hover {
+      background: $bg-hover;
+    }
 
-      .el-icon {
-        color: $primary-color;
-      }
+    &.is-active {
+      background: rgba(177, 73, 255, 0.15);
+      color: $accent-color;
+      font-weight: 600;
+      box-shadow: 0 0 20px rgba(177, 73, 255, 0.08);
+
+      .el-icon { color: $accent-color; }
     }
   }
 }
 
 .sidebar-footer {
   padding: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid rgba(139, 92, 246, 0.08);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -226,9 +231,7 @@ onMounted(() => {
   transition: color $transition-fast;
   flex-shrink: 0;
 
-  &:hover {
-    color: $text-primary;
-  }
+  &:hover { color: $accent-color; }
 
   .collapse-text {
     font-size: 13px;
@@ -236,10 +239,12 @@ onMounted(() => {
   }
 }
 
-// ── Header ──
+// ── Header — Glass Bar ──
 .el-header {
-  background: $header-bg;
+  background: $bg-surface-alt;
   border-bottom: 1px solid $border-color;
+  backdrop-filter: $glass-blur;
+  -webkit-backdrop-filter: $glass-blur;
   padding: 0;
   height: $header-height;
 
@@ -261,7 +266,7 @@ onMounted(() => {
   .connection-dot {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     font-size: 12px;
     color: $text-muted;
 
@@ -270,23 +275,21 @@ onMounted(() => {
       height: 8px;
       border-radius: 50%;
       background: $danger-color;
-      transition: background $transition-base;
+      transition: all $transition-base;
     }
 
     &.online .dot {
       background: $success-color;
-      box-shadow: 0 0 6px rgba($success-color, 0.5);
+      box-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
     }
 
-    .label {
-      white-space: nowrap;
-    }
+    .label { white-space: nowrap; }
   }
 }
 
 // ── Main ──
 .el-main {
-  background: $bg-dark;
+  background: transparent;
   padding: 24px;
   overflow-y: auto;
 }
@@ -296,9 +299,7 @@ onMounted(() => {
 .fade-leave-active {
   transition: opacity 0.2s ease;
 }
-.fade-enter-from, .fade-leave-to {
-  opacity: 0;
-}
+.fade-enter-from, .fade-leave-to { opacity: 0; }
 
 .page-fade-enter-active,
 .page-fade-leave-active {
@@ -308,7 +309,5 @@ onMounted(() => {
   opacity: 0;
   transform: translateY(6px);
 }
-.page-fade-leave-to {
-  opacity: 0;
-}
+.page-fade-leave-to { opacity: 0; }
 </style>

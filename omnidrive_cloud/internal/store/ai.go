@@ -608,6 +608,38 @@ func (s *Store) ListAgentAIJobsByDevice(ctx context.Context, deviceID string, so
 	return items, rows.Err()
 }
 
+func (s *Store) ListExecutableAIJobs(ctx context.Context, limit int) ([]domain.AIJob, error) {
+	query := `
+		SELECT ` + aiJobSelectColumns + `
+		FROM ai_jobs
+		WHERE status = 'queued'
+		  AND source IN ('omnidrive_cloud', 'omnibull_local')
+		  AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
+		ORDER BY created_at ASC
+	`
+	args := []any{}
+	if limit > 0 {
+		query += ` LIMIT $1`
+		args = append(args, limit)
+	}
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.AIJob, 0)
+	for rows.Next() {
+		job, scanErr := scanAIJob(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *job)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) RecoverExpiredAIJobLeases(ctx context.Context, deviceID string) ([]domain.AIJob, error) {
 	rows, err := s.pool.Query(ctx, `
 		UPDATE ai_jobs
@@ -625,6 +657,39 @@ func (s *Store) RecoverExpiredAIJobLeases(ctx context.Context, deviceID string) 
 		  AND lease_expires_at < NOW()
 		RETURNING `+aiJobSelectColumns+`
 	`, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.AIJob, 0)
+	for rows.Next() {
+		job, scanErr := scanAIJob(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *job)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) RecoverExpiredExecutableAIJobLeases(ctx context.Context) ([]domain.AIJob, error) {
+	rows, err := s.pool.Query(ctx, `
+		UPDATE ai_jobs
+		SET status = 'queued',
+		    message = 'AI 任务租约超时，已重新排队',
+		    lease_owner_device_id = NULL,
+		    lease_token = NULL,
+		    lease_expires_at = NULL,
+		    finished_at = NULL,
+		    updated_at = NOW()
+		WHERE source IN ('omnidrive_cloud', 'omnibull_local')
+		  AND status = 'running'
+		  AND lease_token IS NOT NULL
+		  AND lease_expires_at IS NOT NULL
+		  AND lease_expires_at < NOW()
+		RETURNING `+aiJobSelectColumns+`
+	`)
 	if err != nil {
 		return nil, err
 	}
@@ -666,6 +731,31 @@ func (s *Store) ClaimAIJobLease(ctx context.Context, jobID string, deviceID stri
 	return job, nil
 }
 
+func (s *Store) ClaimCloudAIJobLease(ctx context.Context, jobID string, leaseToken string, leaseExpiresAt time.Time) (*domain.AIJob, error) {
+	row := s.pool.QueryRow(ctx, `
+		UPDATE ai_jobs
+		SET status = 'running',
+		    lease_owner_device_id = NULL,
+		    lease_token = $2,
+		    lease_expires_at = $3,
+		    updated_at = NOW()
+		WHERE id = $1
+		  AND source IN ('omnidrive_cloud', 'omnibull_local')
+		  AND status = 'queued'
+		  AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
+		RETURNING `+aiJobSelectColumns+`
+	`, jobID, leaseToken, leaseExpiresAt)
+
+	job, err := scanAIJob(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return job, nil
+}
+
 func (s *Store) RenewAIJobLease(ctx context.Context, jobID string, deviceID string, leaseToken string, leaseExpiresAt time.Time) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE ai_jobs
@@ -678,6 +768,28 @@ func (s *Store) RenewAIJobLease(ctx context.Context, jobID string, deviceID stri
 		  AND status = 'running'
 		RETURNING `+aiJobSelectColumns+`
 	`, jobID, deviceID, leaseToken, leaseExpiresAt)
+
+	job, err := scanAIJob(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return job, nil
+}
+
+func (s *Store) RenewCloudAIJobLease(ctx context.Context, jobID string, leaseToken string, leaseExpiresAt time.Time) (*domain.AIJob, error) {
+	row := s.pool.QueryRow(ctx, `
+		UPDATE ai_jobs
+		SET lease_expires_at = $3,
+		    updated_at = NOW()
+		WHERE id = $1
+		  AND lease_owner_device_id IS NULL
+		  AND lease_token = $2
+		  AND status = 'running'
+		RETURNING `+aiJobSelectColumns+`
+	`, jobID, leaseToken, leaseExpiresAt)
 
 	job, err := scanAIJob(row)
 	if err != nil {
@@ -706,6 +818,61 @@ func (s *Store) ReleaseAIJobLeaseByAgent(ctx context.Context, jobID string, devi
 		  AND status = 'running'
 		RETURNING `+aiJobSelectColumns+`
 	`, jobID, deviceID, leaseToken, message)
+
+	job, err := scanAIJob(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return job, nil
+}
+
+func (s *Store) SyncCloudAIJobExecution(ctx context.Context, jobID string, leaseToken string, input UpdateAIJobInput) (*domain.AIJob, error) {
+	var outputPayload any
+	if input.OutputTouched {
+		outputPayload = input.OutputPayload
+	}
+	var finishedAt any
+	if input.FinishedTouched {
+		finishedAt = input.FinishedAt
+	}
+
+	row := s.pool.QueryRow(ctx, `
+		UPDATE ai_jobs
+		SET status = COALESCE($3::text, status),
+		    output_payload = CASE
+		        WHEN $7 = TRUE THEN $4::jsonb
+		        ELSE output_payload
+		    END,
+		    message = COALESCE($5::text, message),
+		    cost_credits = COALESCE($6::BIGINT, cost_credits),
+		    lease_owner_device_id = CASE
+		        WHEN COALESCE($3::text, status) = 'running' THEN lease_owner_device_id
+		        ELSE NULL
+		    END,
+		    lease_token = CASE
+		        WHEN COALESCE($3::text, status) = 'running' THEN lease_token
+		        ELSE NULL
+		    END,
+		    lease_expires_at = CASE
+		        WHEN COALESCE($3::text, status) = 'running' THEN lease_expires_at
+		        ELSE NULL
+		    END,
+		    finished_at = CASE
+		        WHEN $8 = TRUE THEN $9::timestamptz
+		        WHEN COALESCE($3::text, status) IN ('success', 'completed', 'failed', 'cancelled') THEN NOW()
+		        ELSE finished_at
+		    END,
+		    updated_at = NOW()
+		WHERE id = $1
+		  AND source IN ('omnidrive_cloud', 'omnibull_local')
+		  AND lease_owner_device_id IS NULL
+		  AND lease_token = $2
+		  AND status = 'running'
+		RETURNING `+aiJobSelectColumns+`
+	`, jobID, leaseToken, input.Status, outputPayload, input.Message, input.CostCredits, input.OutputTouched, input.FinishedTouched, finishedAt)
 
 	job, err := scanAIJob(row)
 	if err != nil {
