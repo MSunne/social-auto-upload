@@ -8,6 +8,8 @@ description: |
 
 优先使用 `omnidrive_chat`。
 
+默认聊天模型来自当前已绑定 OmniBull 设备的 `defaultChatModel`。用户没有指定模型时，直接使用默认聊天模型即可；只有当用户明确追问当前模型或要求切换模型时，才先查模型信息。
+
 ## 最小调用
 
 ```json
@@ -43,4 +45,6 @@ description: |
 
 - 需要直接答案时，默认 `wait=true`
 - 如果用户只是问模型有哪些可用，先用 `omnidrive_models`
+- 如果用户追问“当前默认用什么聊天模型”，先用 `omnidrive_auth` 的 `action=status` 读取 `boundDevice.defaultChatModel`
+- 用户没有指定模型时，可以不传 `modelName`，工具会自动回落到绑定设备默认聊天模型
 - 返回结果时优先引用最终文本，不要把整个 workspace 原样倾倒给用户

@@ -46,6 +46,11 @@
       },
       "defaultVideoModel": {
         "type": "string"
+      },
+      "defaultVideoDurationSeconds": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 120
       }
     }
   }

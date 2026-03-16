@@ -55,7 +55,8 @@ openclaw plugins enable omnidrive
           "timeoutMs": 45000,
           "defaultChatModel": "gemini-3.1-pro-preview",
           "defaultImageModel": "gemini-3-pro-image-preview",
-          "defaultVideoModel": "veo-3.1-fast-fl"
+          "defaultVideoModel": "veo-3.1-fast-fl",
+          "defaultVideoDurationSeconds": 8
         }
       }
     }
@@ -81,6 +82,7 @@ openclaw plugins enable omnidrive
 - `OMNIDRIVE_DEFAULT_CHAT_MODEL`
 - `OMNIDRIVE_DEFAULT_IMAGE_MODEL`
 - `OMNIDRIVE_DEFAULT_VIDEO_MODEL`
+- `OMNIDRIVE_DEFAULT_VIDEO_DURATION_SECONDS`
 
 ## 使用建议
 

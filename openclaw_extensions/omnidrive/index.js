@@ -5,6 +5,7 @@ const DEFAULT_LOCAL_OMNIBULL_TIMEOUT_MS = 10000;
 const DEFAULT_CHAT_MODEL = "gemini-3.1-pro-preview";
 const DEFAULT_IMAGE_MODEL = "gemini-3-pro-image-preview";
 const DEFAULT_VIDEO_MODEL = "veo-3.1-fast-fl";
+const DEFAULT_VIDEO_DURATION_SECONDS = 8;
 const FINAL_AI_JOB_STATUSES = new Set(["success", "completed", "failed", "cancelled", "needs_verify"]);
 
 let cachedSession = null;
@@ -34,6 +35,11 @@ function resolveConfig(api) {
     defaultVideoModel: String(
       pluginConfig.defaultVideoModel || process.env.OMNIDRIVE_DEFAULT_VIDEO_MODEL || DEFAULT_VIDEO_MODEL,
     ).trim(),
+    defaultVideoDurationSeconds: Number(
+      pluginConfig.defaultVideoDurationSeconds ||
+        process.env.OMNIDRIVE_DEFAULT_VIDEO_DURATION_SECONDS ||
+        DEFAULT_VIDEO_DURATION_SECONDS,
+    ),
   };
 }
 
@@ -601,7 +607,10 @@ async function executeVideo(api, params) {
     inputPayload: {
       ...(params.aspectRatio ? { aspectRatio: String(params.aspectRatio) } : {}),
       ...(params.resolution ? { resolution: String(params.resolution) } : {}),
-      ...(params.durationSeconds !== undefined ? { durationSeconds: Number(params.durationSeconds) } : {}),
+      durationSeconds:
+        params.durationSeconds !== undefined
+          ? Number(params.durationSeconds)
+          : Number(cfg.defaultVideoDurationSeconds || DEFAULT_VIDEO_DURATION_SECONDS),
       ...(normalizeReferenceImages(params.referenceImages).length > 0
         ? { referenceImages: normalizeReferenceImages(params.referenceImages) }
         : {}),
