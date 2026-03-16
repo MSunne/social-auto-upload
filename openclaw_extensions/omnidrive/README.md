@@ -48,6 +48,8 @@ openclaw plugins enable omnidrive
         "enabled": true,
         "config": {
           "baseUrl": "http://127.0.0.1:8410",
+          "localOmniBullBaseUrl": "http://127.0.0.1:5409",
+          "localOmniBullApiKey": "replace-with-omnibull-api-key",
           "email": "user@example.com",
           "password": "replace-with-strong-password",
           "timeoutMs": 45000,
@@ -72,6 +74,10 @@ openclaw plugins enable omnidrive
 - `OMNIDRIVE_EMAIL`
 - `OMNIDRIVE_PASSWORD`
 - `OMNIDRIVE_TIMEOUT_MS`
+- `OMNIBULL_BASE_URL`
+- `OMNIBULL_API_KEY`
+- `OMNIBULL_TIMEOUT_MS`
+- `OMNIBULL_DEVICE_CODE`
 - `OMNIDRIVE_DEFAULT_CHAT_MODEL`
 - `OMNIDRIVE_DEFAULT_IMAGE_MODEL`
 - `OMNIDRIVE_DEFAULT_VIDEO_MODEL`
@@ -88,3 +94,5 @@ openclaw plugins enable omnidrive
 - 插件会优先使用 `accessToken`
 - 如果没有 `accessToken`，会自动用 `email/password` 登录并缓存 token
 - 遇到 `401` 时，如果配置了账号密码，会自动重登一次
+- 插件会优先从本机 OmniBull `/api/skill/status` 读取 `deviceCode`，再在云端定位当前账号已绑定的同一台设备
+- `chat/image/video` 默认只允许使用“当前本机已绑定且启用”的 OmniBull；设备解绑后，云端 AI 会直接失效，但本地 `omnibull_*` 查询不受影响

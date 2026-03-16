@@ -24,11 +24,36 @@ type claimDeviceRequest struct {
 type updateDeviceRequest struct {
 	Name                  *string `json:"name"`
 	DefaultReasoningModel *string `json:"defaultReasoningModel"`
+	DefaultChatModel      *string `json:"defaultChatModel"`
+	DefaultImageModel     *string `json:"defaultImageModel"`
+	DefaultVideoModel     *string `json:"defaultVideoModel"`
 	IsEnabled             *bool   `json:"isEnabled"`
 }
 
 func NewDeviceHandler(app *appstate.App) *DeviceHandler {
 	return &DeviceHandler{app: app}
+}
+
+func applyEffectiveDeviceModelDefaults(device *domain.Device, settings effectiveAdminSystemSettings) {
+	if device == nil {
+		return
+	}
+	if device.DefaultChatModel == nil || strings.TrimSpace(*device.DefaultChatModel) == "" {
+		value := settings.DefaultChatModel
+		device.DefaultChatModel = &value
+	}
+	if device.DefaultImageModel == nil || strings.TrimSpace(*device.DefaultImageModel) == "" {
+		value := settings.DefaultImageModel
+		device.DefaultImageModel = &value
+	}
+	if device.DefaultVideoModel == nil || strings.TrimSpace(*device.DefaultVideoModel) == "" {
+		value := settings.DefaultVideoModel
+		device.DefaultVideoModel = &value
+	}
+	if device.DefaultReasoningModel == nil || strings.TrimSpace(*device.DefaultReasoningModel) == "" {
+		value := settings.DefaultChatModel
+		device.DefaultReasoningModel = &value
+	}
 }
 
 func (h *DeviceHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -37,6 +62,14 @@ func (h *DeviceHandler) List(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load devices")
 		return
+	}
+	settings, err := loadEffectiveAdminSystemSettings(r.Context(), h.app)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device defaults")
+		return
+	}
+	for i := range items {
+		applyEffectiveDeviceModelDefaults(&items[i], settings)
 	}
 	render.JSON(w, http.StatusOK, items)
 }
@@ -58,6 +91,12 @@ func (h *DeviceHandler) Detail(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusNotFound, "Device not found")
 		return
 	}
+	settings, err := loadEffectiveAdminSystemSettings(r.Context(), h.app)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device defaults")
+		return
+	}
+	applyEffectiveDeviceModelDefaults(device, settings)
 
 	render.JSON(w, http.StatusOK, device)
 }
@@ -79,6 +118,12 @@ func (h *DeviceHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusNotFound, "Device not found")
 		return
 	}
+	settings, err := loadEffectiveAdminSystemSettings(r.Context(), h.app)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device defaults")
+		return
+	}
+	applyEffectiveDeviceModelDefaults(device, settings)
 
 	recentTasks, err := h.app.Store.ListPublishTasksByOwner(r.Context(), user.ID, store.ListPublishTasksFilter{
 		DeviceID: deviceID,
@@ -154,6 +199,28 @@ func (h *DeviceHandler) Claim(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusNotFound, "Device code not found or already claimed by another user")
 		return
 	}
+	settings, err := loadEffectiveAdminSystemSettings(r.Context(), h.app)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device defaults")
+		return
+	}
+	if device.DefaultReasoningModel == nil && settings.DefaultChatModel != "" {
+		reasoningModel := settings.DefaultChatModel
+		chatModel := settings.DefaultChatModel
+		imageModel := settings.DefaultImageModel
+		videoModel := settings.DefaultVideoModel
+		device, err = h.app.Store.UpdateDevice(r.Context(), device.ID, user.ID, store.UpdateDeviceInput{
+			DefaultReasoningModel: &reasoningModel,
+			DefaultChatModel:      &chatModel,
+			DefaultImageModel:     &imageModel,
+			DefaultVideoModel:     &videoModel,
+		})
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to initialize device AI defaults")
+			return
+		}
+	}
+	applyEffectiveDeviceModelDefaults(device, settings)
 	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
 		OwnerUserID:  user.ID,
 		ResourceType: "device",
@@ -189,6 +256,9 @@ func (h *DeviceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	device, err := h.app.Store.UpdateDevice(r.Context(), deviceID, user.ID, store.UpdateDeviceInput{
 		Name:                  payload.Name,
 		DefaultReasoningModel: payload.DefaultReasoningModel,
+		DefaultChatModel:      payload.DefaultChatModel,
+		DefaultImageModel:     payload.DefaultImageModel,
+		DefaultVideoModel:     payload.DefaultVideoModel,
 		IsEnabled:             payload.IsEnabled,
 	})
 	if err != nil {
@@ -199,6 +269,12 @@ func (h *DeviceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusNotFound, "Device not found")
 		return
 	}
+	settings, err := loadEffectiveAdminSystemSettings(r.Context(), h.app)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device defaults")
+		return
+	}
+	applyEffectiveDeviceModelDefaults(device, settings)
 	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
 		OwnerUserID:  user.ID,
 		ResourceType: "device",
@@ -211,9 +287,53 @@ func (h *DeviceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Payload: mustJSONBytes(map[string]any{
 			"name":                  payload.Name,
 			"defaultReasoningModel": payload.DefaultReasoningModel,
+			"defaultChatModel":      payload.DefaultChatModel,
+			"defaultImageModel":     payload.DefaultImageModel,
+			"defaultVideoModel":     payload.DefaultVideoModel,
 			"isEnabled":             payload.IsEnabled,
 		}),
 	})
 
 	render.JSON(w, http.StatusOK, device)
+}
+
+func (h *DeviceHandler) Unbind(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	deviceID := strings.TrimSpace(chi.URLParam(r, "deviceId"))
+	if deviceID == "" {
+		render.Error(w, http.StatusBadRequest, "deviceId is required")
+		return
+	}
+
+	device, err := h.app.Store.UnbindDevice(r.Context(), deviceID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to unbind device")
+		return
+	}
+	if device == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "device",
+		ResourceID:   &device.ID,
+		Action:       "unbind",
+		Title:        "解绑 OmniBull 设备",
+		Source:       "devices",
+		Status:       "success",
+		Message:      auditStringPtr("设备已从当前云端账户解绑，云端 AI 能力已停用"),
+		Payload: mustJSONBytes(map[string]any{
+			"deviceCode": device.DeviceCode,
+			"name":       device.Name,
+		}),
+	})
+
+	render.JSON(w, http.StatusOK, map[string]any{
+		"success":    true,
+		"deviceId":   device.ID,
+		"deviceCode": device.DeviceCode,
+		"message":    "设备已解绑，OmniDrive AI 能力已失效，本地查询能力不受影响",
+	})
 }

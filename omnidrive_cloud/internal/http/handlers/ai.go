@@ -155,6 +155,26 @@ func (h *AIHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	source := normalizeTrimmedString(payload.Source)
+	if source == nil {
+		defaultSource := "omnidrive_cloud"
+		source = &defaultSource
+	}
+	if *source == "openclaw_skill" {
+		if deviceID == nil {
+			render.Error(w, http.StatusConflict, "OpenClaw OmniSkill 必须绑定并启用当前 OmniBull 设备后才能使用云端 AI")
+			return
+		}
+		device, err := h.app.Store.GetOwnedDevice(r.Context(), *deviceID, user.ID)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to validate bound device")
+			return
+		}
+		if device == nil || !device.IsEnabled {
+			render.Error(w, http.StatusConflict, "当前 OmniBull 设备未启用或已解绑，无法使用云端 AI")
+			return
+		}
+	}
 
 	var skillID *string
 	if payload.SkillID != nil && strings.TrimSpace(*payload.SkillID) != "" {
@@ -185,11 +205,6 @@ func (h *AIHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	message := "AI 任务已创建，等待 OmniDrive 云端生成"
-	source := normalizeTrimmedString(payload.Source)
-	if source == nil {
-		defaultSource := "omnidrive_cloud"
-		source = &defaultSource
-	}
 	job, err := h.app.Store.CreateAIJob(r.Context(), store.CreateAIJobInput{
 		ID:           uuid.NewString(),
 		OwnerUserID:  user.ID,

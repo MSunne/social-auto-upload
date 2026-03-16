@@ -159,6 +159,7 @@ type AdminPublishTaskRow struct {
 	Device             AdminDeviceSummary     `json:"device"`
 	Account            *AdminAccountSummary   `json:"account,omitempty"`
 	Skill              *AdminSkillSummary     `json:"skill,omitempty"`
+	Notes              *string                `json:"notes,omitempty"`
 	Readiness          PublishTaskReadiness   `json:"readiness"`
 	BlockingDimensions []string               `json:"blockingDimensions,omitempty"`
 	Bridge             PublishTaskBridgeState `json:"bridge"`
@@ -169,11 +170,12 @@ type AdminPublishTaskRow struct {
 }
 
 type AdminPublishTaskWorkspace struct {
-	Record    AdminPublishTaskRow      `json:"record"`
-	Events    []PublishTaskEvent       `json:"events"`
-	Artifacts []PublishTaskArtifact    `json:"artifacts"`
-	Materials []PublishTaskMaterialRef `json:"materials"`
-	Runtime   *PublishTaskRuntimeState `json:"runtime,omitempty"`
+	Record       AdminPublishTaskRow      `json:"record"`
+	Events       []PublishTaskEvent       `json:"events"`
+	Artifacts    []PublishTaskArtifact    `json:"artifacts"`
+	Materials    []PublishTaskMaterialRef `json:"materials"`
+	Runtime      *PublishTaskRuntimeState `json:"runtime,omitempty"`
+	RecentAudits []AdminAuditRow          `json:"recentAudits"`
 }
 
 type AdminAIJobRow struct {
@@ -182,6 +184,7 @@ type AdminAIJobRow struct {
 	Device                *AdminDeviceSummary  `json:"device,omitempty"`
 	Skill                 *AdminSkillSummary   `json:"skill,omitempty"`
 	Model                 *AdminAIModelSummary `json:"model,omitempty"`
+	Notes                 *string              `json:"notes,omitempty"`
 	Bridge                AIJobBridgeState     `json:"bridge"`
 	Actions               AIJobActionState     `json:"actions"`
 	ArtifactCount         int64                `json:"artifactCount"`
@@ -194,6 +197,7 @@ type AdminAIJobWorkspace struct {
 	Artifacts          []AIJobArtifact     `json:"artifacts"`
 	PublishTasks       []PublishTask       `json:"publishTasks"`
 	BillingUsageEvents []BillingUsageEvent `json:"billingUsageEvents"`
+	RecentAudits       []AdminAuditRow     `json:"recentAudits"`
 }
 
 type AdminUserWorkspace struct {
@@ -675,6 +679,9 @@ type AdminSystemSettingsRecord struct {
 	AIWorkerEnabled      bool                     `json:"aiWorkerEnabled"`
 	PaymentChannels      []string                 `json:"paymentChannels"`
 	BillingManualSupport AdminManualSupportConfig `json:"billingManualSupport"`
+	DefaultChatModel     string                   `json:"defaultChatModel"`
+	DefaultImageModel    string                   `json:"defaultImageModel"`
+	DefaultVideoModel    string                   `json:"defaultVideoModel"`
 	CreatedAt            time.Time                `json:"createdAt"`
 	UpdatedAt            time.Time                `json:"updatedAt"`
 }
@@ -688,6 +695,9 @@ type AdminSystemConfig struct {
 	AIWorkerEnabled      bool                     `json:"aiWorkerEnabled"`
 	PaymentChannels      []string                 `json:"paymentChannels"`
 	BillingManualSupport AdminManualSupportConfig `json:"billingManualSupport"`
+	DefaultChatModel     string                   `json:"defaultChatModel"`
+	DefaultImageModel    string                   `json:"defaultImageModel"`
+	DefaultVideoModel    string                   `json:"defaultVideoModel"`
 	Notes                []string                 `json:"notes"`
 	UpdatedAt            *time.Time               `json:"updatedAt,omitempty"`
 }

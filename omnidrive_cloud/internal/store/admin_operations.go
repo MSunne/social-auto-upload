@@ -65,6 +65,14 @@ const adminPlatformAccountSelectColumns = `
 	pa.last_authenticated_at, pa.notes, pa.created_at, pa.updated_at
 `
 
+const adminAIJobSelectColumns = `
+	aj.id, aj.owner_user_id, aj.device_id, aj.skill_id, aj.source, aj.local_task_id,
+	aj.job_type, aj.model_name, aj.prompt, aj.status, aj.input_payload, aj.output_payload,
+	aj.message, aj.notes, aj.cost_credits, aj.lease_owner_device_id, aj.lease_token,
+	aj.lease_expires_at, aj.delivery_status, aj.delivery_message, aj.local_publish_task_id,
+	aj.created_at, aj.updated_at, aj.delivered_at, aj.finished_at
+`
+
 func scanAdminUserRow(scan scanFn) (*domain.AdminUserRow, error) {
 	var item domain.AdminUserRow
 	var notes *string
@@ -226,6 +234,7 @@ func scanAdminPublishTaskRow(scan scanFn) (*domain.AdminPublishTaskRow, error) {
 	var contentText *string
 	var mediaPayload []byte
 	var message *string
+	var notes *string
 	var verificationPayload []byte
 	var accountID *string
 	var skillID *string
@@ -263,6 +272,7 @@ func scanAdminPublishTaskRow(scan scanFn) (*domain.AdminPublishTaskRow, error) {
 		&mediaPayload,
 		&item.Task.Status,
 		&message,
+		&notes,
 		&verificationPayload,
 		&leaseOwnerDeviceID,
 		&leaseToken,
@@ -303,6 +313,7 @@ func scanAdminPublishTaskRow(scan scanFn) (*domain.AdminPublishTaskRow, error) {
 	item.Task.ContentText = contentText
 	item.Task.MediaPayload = bytesOrNil(mediaPayload)
 	item.Task.Message = message
+	item.Notes = notes
 	item.Task.VerificationPayload = bytesOrNil(verificationPayload)
 	item.Task.LeaseOwnerDeviceID = leaseOwnerDeviceID
 	item.Task.LeaseToken = leaseToken
@@ -366,6 +377,7 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 	var inputPayload []byte
 	var outputPayload []byte
 	var message *string
+	var notes *string
 	var leaseOwnerDeviceID *string
 	var leaseToken *string
 	var leaseExpiresAt *time.Time
@@ -405,6 +417,7 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 		&inputPayload,
 		&outputPayload,
 		&message,
+		&notes,
 		&item.Job.CostCredits,
 		&leaseOwnerDeviceID,
 		&leaseToken,
@@ -447,6 +460,7 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 	item.Job.InputPayload = bytesOrNil(inputPayload)
 	item.Job.OutputPayload = bytesOrNil(outputPayload)
 	item.Job.Message = message
+	item.Notes = notes
 	item.Job.LeaseOwnerDeviceID = leaseOwnerDeviceID
 	item.Job.LeaseToken = leaseToken
 	item.Job.LeaseExpiresAt = leaseExpiresAt
@@ -711,7 +725,7 @@ func (s *Store) ListAdminTasks(ctx context.Context, filter AdminTaskListFilter) 
 	argIndex := 1
 
 	if query := strings.TrimSpace(filter.Query); query != "" {
-		whereParts = append(whereParts, fmt.Sprintf("(pt.id ILIKE $%[1]d OR pt.title ILIKE $%[1]d OR pt.platform ILIKE $%[1]d OR pt.account_name ILIKE $%[1]d OR COALESCE(pt.message, '') ILIKE $%[1]d OR d.name ILIKE $%[1]d OR d.device_code ILIKE $%[1]d OR COALESCE(u.email, '') ILIKE $%[1]d OR COALESCE(u.name, '') ILIKE $%[1]d)", argIndex))
+		whereParts = append(whereParts, fmt.Sprintf("(pt.id ILIKE $%[1]d OR pt.title ILIKE $%[1]d OR pt.platform ILIKE $%[1]d OR pt.account_name ILIKE $%[1]d OR COALESCE(pt.message, '') ILIKE $%[1]d OR COALESCE(pt.notes, '') ILIKE $%[1]d OR d.name ILIKE $%[1]d OR d.device_code ILIKE $%[1]d OR COALESCE(u.email, '') ILIKE $%[1]d OR COALESCE(u.name, '') ILIKE $%[1]d)", argIndex))
 		args = append(args, ilikePattern(query))
 		argIndex++
 	}
@@ -782,7 +796,7 @@ func (s *Store) ListAdminTasks(ctx context.Context, filter AdminTaskListFilter) 
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT
 			pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
-			pt.title, pt.content_text, pt.media_payload, pt.status, pt.message,
+			pt.title, pt.content_text, pt.media_payload, pt.status, pt.message, pt.notes,
 			pt.verification_payload, pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at,
 			pt.attempt_count, pt.cancel_requested_at, pt.run_at, pt.finished_at, pt.created_at, pt.updated_at,
 			u.id, u.email, u.name,
@@ -817,7 +831,7 @@ func (s *Store) GetAdminTaskByID(ctx context.Context, taskID string) (*domain.Ad
 	row := s.pool.QueryRow(ctx, `
 		SELECT
 			pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
-			pt.title, pt.content_text, pt.media_payload, pt.status, pt.message,
+			pt.title, pt.content_text, pt.media_payload, pt.status, pt.message, pt.notes,
 			pt.verification_payload, pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at,
 			pt.attempt_count, pt.cancel_requested_at, pt.run_at, pt.finished_at, pt.created_at, pt.updated_at,
 			u.id, u.email, u.name,
@@ -854,7 +868,7 @@ func (s *Store) ListAdminAIJobs(ctx context.Context, filter AdminAIJobListFilter
 	argIndex := 1
 
 	if query := strings.TrimSpace(filter.Query); query != "" {
-		whereParts = append(whereParts, fmt.Sprintf("(aj.id ILIKE $%[1]d OR aj.job_type ILIKE $%[1]d OR aj.model_name ILIKE $%[1]d OR COALESCE(aj.prompt, '') ILIKE $%[1]d OR COALESCE(aj.message, '') ILIKE $%[1]d OR COALESCE(u.email, '') ILIKE $%[1]d OR COALESCE(u.name, '') ILIKE $%[1]d OR COALESCE(d.name, '') ILIKE $%[1]d OR COALESCE(d.device_code, '') ILIKE $%[1]d)", argIndex))
+		whereParts = append(whereParts, fmt.Sprintf("(aj.id ILIKE $%[1]d OR aj.job_type ILIKE $%[1]d OR aj.model_name ILIKE $%[1]d OR COALESCE(aj.prompt, '') ILIKE $%[1]d OR COALESCE(aj.message, '') ILIKE $%[1]d OR COALESCE(aj.notes, '') ILIKE $%[1]d OR COALESCE(u.email, '') ILIKE $%[1]d OR COALESCE(u.name, '') ILIKE $%[1]d OR COALESCE(d.name, '') ILIKE $%[1]d OR COALESCE(d.device_code, '') ILIKE $%[1]d)", argIndex))
 		args = append(args, ilikePattern(query))
 		argIndex++
 	}
@@ -941,7 +955,7 @@ func (s *Store) ListAdminAIJobs(ctx context.Context, filter AdminAIJobListFilter
 		%s
 		ORDER BY aj.updated_at DESC
 		LIMIT $%d OFFSET $%d
-	`, aiJobSelectColumns, fromClause, whereClause, argIndex, argIndex+1), append(args, pageSize, offset)...)
+	`, adminAIJobSelectColumns, fromClause, whereClause, argIndex, argIndex+1), append(args, pageSize, offset)...)
 	if err != nil {
 		return nil, 0, domain.AdminAIJobListSummary{}, err
 	}
@@ -961,7 +975,7 @@ func (s *Store) ListAdminAIJobs(ctx context.Context, filter AdminAIJobListFilter
 func (s *Store) GetAdminAIJobByID(ctx context.Context, jobID string) (*domain.AdminAIJobRow, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
-			`+aiJobSelectColumns+`,
+			`+adminAIJobSelectColumns+`,
 			u.id, u.email, u.name,
 			d.id, d.device_code, d.name, d.is_enabled, d.last_seen_at,
 			ps.id, ps.name, ps.output_type, ps.model_name, ps.is_enabled,

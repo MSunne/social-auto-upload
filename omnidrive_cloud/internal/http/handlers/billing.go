@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -35,6 +36,15 @@ type submitManualRechargeRequest struct {
 	TransferAmountCents *int64   `json:"transferAmountCents"`
 	ProofURLs           []string `json:"proofUrls"`
 	CustomerNote        string   `json:"customerNote"`
+}
+
+type createWithdrawalRequest struct {
+	AmountCents    int64           `json:"amountCents"`
+	PayoutChannel  string          `json:"payoutChannel"`
+	AccountMasked  string          `json:"accountMasked"`
+	AccountPayload json.RawMessage `json:"accountPayload"`
+	Note           string          `json:"note"`
+	ProofURLs      []string        `json:"proofUrls"`
 }
 
 func NewBillingHandler(app *appstate.App) *BillingHandler {
@@ -177,6 +187,16 @@ func (h *BillingHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, summary)
 }
 
+func (h *BillingHandler) DistributionSummary(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	summary, err := h.app.Store.GetDistributionSummaryByPromoter(r.Context(), user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load distribution summary")
+		return
+	}
+	render.JSON(w, http.StatusOK, summary)
+}
+
 func (h *BillingHandler) ListPackages(w http.ResponseWriter, r *http.Request) {
 	items, err := h.app.Store.ListBillingPackages(r.Context())
 	if err != nil {
@@ -245,6 +265,26 @@ func (h *BillingHandler) ListUsageEvents(w http.ResponseWriter, r *http.Request)
 	render.JSON(w, http.StatusOK, items)
 }
 
+func (h *BillingHandler) ListCommissions(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	limit := 50
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			limit = parsed
+		}
+	}
+
+	items, err := h.app.Store.ListCommissionItemsByPromoter(r.Context(), user.ID, store.CommissionListFilter{
+		Status: strings.TrimSpace(r.URL.Query().Get("status")),
+		Limit:  limit,
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load commission items")
+		return
+	}
+	render.JSON(w, http.StatusOK, items)
+}
+
 func (h *BillingHandler) ListOrders(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	limit := 50
@@ -260,6 +300,90 @@ func (h *BillingHandler) ListOrders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	render.JSON(w, http.StatusOK, items)
+}
+
+func (h *BillingHandler) ListWithdrawals(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	limit := 50
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			limit = parsed
+		}
+	}
+
+	items, err := h.app.Store.ListWithdrawalRequestsByUser(r.Context(), user.ID, limit)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load withdrawals")
+		return
+	}
+	render.JSON(w, http.StatusOK, items)
+}
+
+func (h *BillingHandler) DetailWithdrawal(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	withdrawalID := strings.TrimSpace(chi.URLParam(r, "withdrawalId"))
+	if withdrawalID == "" {
+		render.Error(w, http.StatusBadRequest, "withdrawalId is required")
+		return
+	}
+
+	item, err := h.app.Store.GetWithdrawalRequestByID(r.Context(), user.ID, withdrawalID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load withdrawal")
+		return
+	}
+	if item == nil {
+		render.Error(w, http.StatusNotFound, "Withdrawal request not found")
+		return
+	}
+	render.JSON(w, http.StatusOK, item)
+}
+
+func (h *BillingHandler) CreateWithdrawal(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+
+	var payload createWithdrawalRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	item, err := h.app.Store.CreateWithdrawalRequest(r.Context(), user.ID, store.CreateWithdrawalRequestInput{
+		AmountCents:    payload.AmountCents,
+		PayoutChannel:  trimmedStringPtr(payload.PayoutChannel),
+		AccountMasked:  trimmedStringPtr(payload.AccountMasked),
+		AccountPayload: payload.AccountPayload,
+		Note:           trimmedStringPtr(payload.Note),
+		ProofURLs:      payload.ProofURLs,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrWithdrawalAmountInvalid), errors.Is(err, store.ErrWithdrawalPayoutInfoRequired):
+			render.Error(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, store.ErrWithdrawalInsufficientBalance):
+			render.Error(w, http.StatusConflict, err.Error())
+		default:
+			render.Error(w, http.StatusInternalServerError, "Failed to create withdrawal request")
+		}
+		return
+	}
+
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "withdrawal_request",
+		ResourceID:   stringPtr(item.ID),
+		Action:       "create",
+		Title:        "提交提现申请",
+		Source:       "omnidrive_cloud",
+		Status:       "success",
+		Message:      auditStringPtr("提现申请已提交"),
+		Payload: mustJSONBytes(map[string]any{
+			"amountCents":   item.AmountCents,
+			"payoutChannel": valueOrEmpty(item.PayoutChannel),
+		}),
+	})
+
+	render.JSON(w, http.StatusCreated, item)
 }
 
 func (h *BillingHandler) DetailOrder(w http.ResponseWriter, r *http.Request) {

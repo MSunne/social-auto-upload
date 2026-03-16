@@ -17,6 +17,9 @@ func scanDevice(row pgx.Row) (*domain.Device, error) {
 	var localIP *string
 	var publicIP *string
 	var model *string
+	var chatModel *string
+	var imageModel *string
+	var videoModel *string
 	var notes *string
 	var agentKey *string
 	var runtimePayload []byte
@@ -32,6 +35,9 @@ func scanDevice(row pgx.Row) (*domain.Device, error) {
 		&localIP,
 		&publicIP,
 		&model,
+		&chatModel,
+		&imageModel,
+		&videoModel,
 		&device.IsEnabled,
 		&runtimePayload,
 		&lastSeenAt,
@@ -49,6 +55,9 @@ func scanDevice(row pgx.Row) (*domain.Device, error) {
 	device.LocalIP = localIP
 	device.PublicIP = publicIP
 	device.DefaultReasoningModel = model
+	device.DefaultChatModel = chatModel
+	device.DefaultImageModel = imageModel
+	device.DefaultVideoModel = videoModel
 	device.RuntimePayload = bytesOrNil(runtimePayload)
 	device.LastSeenAt = lastSeenAt
 	device.Notes = notes
@@ -61,6 +70,9 @@ func scanDeviceWithLoad(row pgx.Row) (*domain.Device, error) {
 	var localIP *string
 	var publicIP *string
 	var model *string
+	var chatModel *string
+	var imageModel *string
+	var videoModel *string
 	var notes *string
 	var agentKey *string
 	var runtimePayload []byte
@@ -76,6 +88,9 @@ func scanDeviceWithLoad(row pgx.Row) (*domain.Device, error) {
 		&localIP,
 		&publicIP,
 		&model,
+		&chatModel,
+		&imageModel,
+		&videoModel,
 		&device.IsEnabled,
 		&runtimePayload,
 		&lastSeenAt,
@@ -106,6 +121,9 @@ func scanDeviceWithLoad(row pgx.Row) (*domain.Device, error) {
 	device.LocalIP = localIP
 	device.PublicIP = publicIP
 	device.DefaultReasoningModel = model
+	device.DefaultChatModel = chatModel
+	device.DefaultImageModel = imageModel
+	device.DefaultVideoModel = videoModel
 	device.RuntimePayload = bytesOrNil(runtimePayload)
 	device.LastSeenAt = lastSeenAt
 	device.Notes = notes
@@ -116,7 +134,8 @@ func scanDeviceWithLoad(row pgx.Row) (*domain.Device, error) {
 
 const deviceSelectColumns = `
 	id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
-	default_reasoning_model, is_enabled, runtime_payload, last_seen_at, notes,
+	default_reasoning_model, default_chat_model, default_image_model, default_video_model,
+	is_enabled, runtime_payload, last_seen_at, notes,
 	created_at, updated_at
 `
 
@@ -168,7 +187,8 @@ func (s *Store) ListDevicesByOwner(ctx context.Context, ownerUserID string) ([]d
 func (s *Store) GetDeviceByID(ctx context.Context, deviceID string) (*domain.Device, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
-		       default_reasoning_model, is_enabled, runtime_payload, last_seen_at, notes,
+		       default_reasoning_model, default_chat_model, default_image_model, default_video_model,
+		       is_enabled, runtime_payload, last_seen_at, notes,
 		       created_at, updated_at
 		FROM devices
 		WHERE id = $1
@@ -200,7 +220,8 @@ func (s *Store) GetOwnedDevice(ctx context.Context, deviceID string, ownerUserID
 func (s *Store) GetDeviceByCode(ctx context.Context, deviceCode string) (*domain.Device, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
-		       default_reasoning_model, is_enabled, runtime_payload, last_seen_at, notes,
+		       default_reasoning_model, default_chat_model, default_image_model, default_video_model,
+		       is_enabled, runtime_payload, last_seen_at, notes,
 		       created_at, updated_at
 		FROM devices
 		WHERE device_code = $1
@@ -224,7 +245,8 @@ func (s *Store) ClaimDevice(ctx context.Context, deviceCode string, ownerUserID 
 		WHERE device_code = $1
 		  AND (owner_user_id IS NULL OR owner_user_id = $2)
 		RETURNING id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
-		          default_reasoning_model, is_enabled, runtime_payload, last_seen_at, notes,
+		          default_reasoning_model, default_chat_model, default_image_model, default_video_model,
+		          is_enabled, runtime_payload, last_seen_at, notes,
 		          created_at, updated_at
 	`, deviceCode, ownerUserID)
 
@@ -243,13 +265,17 @@ func (s *Store) UpdateDevice(ctx context.Context, deviceID string, ownerUserID s
 		UPDATE devices
 		SET name = COALESCE($3, name),
 		    default_reasoning_model = COALESCE($4, default_reasoning_model),
-		    is_enabled = COALESCE($5, is_enabled),
+		    default_chat_model = COALESCE($5, default_chat_model),
+		    default_image_model = COALESCE($6, default_image_model),
+		    default_video_model = COALESCE($7, default_video_model),
+		    is_enabled = COALESCE($8, is_enabled),
 		    updated_at = NOW()
 		WHERE id = $1 AND owner_user_id = $2
 		RETURNING id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
-		          default_reasoning_model, is_enabled, runtime_payload, last_seen_at, notes,
+		          default_reasoning_model, default_chat_model, default_image_model, default_video_model,
+		          is_enabled, runtime_payload, last_seen_at, notes,
 		          created_at, updated_at
-	`, deviceID, ownerUserID, input.Name, input.DefaultReasoningModel, input.IsEnabled)
+	`, deviceID, ownerUserID, input.Name, input.DefaultReasoningModel, input.DefaultChatModel, input.DefaultImageModel, input.DefaultVideoModel, input.IsEnabled)
 
 	device, err := scanDevice(row)
 	if err != nil {
@@ -287,7 +313,8 @@ func (s *Store) UpsertHeartbeatDevice(ctx context.Context, input HeartbeatInput)
 		    last_seen_at = EXCLUDED.last_seen_at,
 		    updated_at = NOW()
 		RETURNING id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
-		          default_reasoning_model, is_enabled, runtime_payload, last_seen_at, notes,
+		          default_reasoning_model, default_chat_model, default_image_model, default_video_model,
+		          is_enabled, runtime_payload, last_seen_at, notes,
 		          created_at, updated_at
 	`,
 		uuid.NewString(),
@@ -302,6 +329,32 @@ func (s *Store) UpsertHeartbeatDevice(ctx context.Context, input HeartbeatInput)
 
 	device, err := scanDevice(row)
 	if err != nil {
+		return nil, err
+	}
+	return device, nil
+}
+
+func (s *Store) UnbindDevice(ctx context.Context, deviceID string, ownerUserID string) (*domain.Device, error) {
+	row := s.pool.QueryRow(ctx, `
+		UPDATE devices
+		SET owner_user_id = NULL,
+		    is_enabled = FALSE,
+		    default_reasoning_model = NULL,
+		    default_chat_model = NULL,
+		    default_image_model = NULL,
+		    default_video_model = NULL,
+		    updated_at = NOW()
+		WHERE id = $1 AND owner_user_id = $2
+		RETURNING id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
+		          default_reasoning_model, default_chat_model, default_image_model, default_video_model,
+		          is_enabled, runtime_payload, last_seen_at, notes, created_at, updated_at
+	`, deviceID, ownerUserID)
+
+	device, err := scanDevice(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return device, nil

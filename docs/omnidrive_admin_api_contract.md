@@ -628,6 +628,7 @@ Item shape:
     "modelName": "gpt-image-1",
     "isEnabled": true
   },
+  "notes": "等待平台申诉结果，先不要自动重试",
   "readiness": {
     "deviceReady": true,
     "accountReady": true,
@@ -674,6 +675,25 @@ Response:
 
 - same shape as one item from `GET /api/admin/v1/publish-tasks`
 
+### `PATCH /api/admin/v1/publish-tasks/{taskId}`
+
+Request:
+
+```json
+{
+  "notes": "需要运营人工跟进素材合规"
+}
+```
+
+Notes:
+
+- `notes` is optional
+- sending `""` clears the stored notes
+
+Response:
+
+- refreshed task row, same shape as `GET /api/admin/v1/publish-tasks/{taskId}`
+
 ### `GET /api/admin/v1/publish-tasks/{taskId}/workspace`
 
 Response shape:
@@ -684,7 +704,8 @@ Response shape:
   "events": [],
   "artifacts": [],
   "materials": [],
-  "runtime": null
+  "runtime": null,
+  "recentAudits": []
 }
 ```
 
@@ -832,6 +853,7 @@ Item shape:
     "category": "image",
     "isEnabled": true
   },
+  "notes": "需要确认回传素材是否已镜像到 Omnibull",
   "bridge": {
     "source": "omnidrive_cloud",
     "deliveryStage": "generating",
@@ -871,6 +893,25 @@ Response:
 
 - same shape as one item from `GET /api/admin/v1/ai-jobs`
 
+### `PATCH /api/admin/v1/ai-jobs/{jobId}`
+
+Request:
+
+```json
+{
+  "notes": "优先人工跟进导入链路"
+}
+```
+
+Notes:
+
+- `notes` is optional
+- sending `""` clears the stored notes
+
+Response:
+
+- refreshed AI job row, same shape as `GET /api/admin/v1/ai-jobs/{jobId}`
+
 ### `GET /api/admin/v1/ai-jobs/{jobId}/workspace`
 
 Response shape:
@@ -879,7 +920,9 @@ Response shape:
 {
   "record": {},
   "artifacts": [],
-  "publishTasks": []
+  "publishTasks": [],
+  "billingUsageEvents": [],
+  "recentAudits": []
 }
 ```
 

@@ -32,6 +32,14 @@ type adminUpdateMediaAccountRequest struct {
 	Notes *string `json:"notes"`
 }
 
+type adminUpdatePublishTaskRequest struct {
+	Notes *string `json:"notes"`
+}
+
+type adminUpdateAIJobRequest struct {
+	Notes *string `json:"notes"`
+}
+
 type adminBatchActionPublishTasksRequest struct {
 	TaskIDs       []string    `json:"taskIds"`
 	Action        string      `json:"action"`
@@ -1622,6 +1630,57 @@ func (h *AdminConsoleHandler) DetailPublishTask(w http.ResponseWriter, r *http.R
 	render.JSON(w, http.StatusOK, record)
 }
 
+func (h *AdminConsoleHandler) UpdatePublishTask(w http.ResponseWriter, r *http.Request) {
+	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
+	if taskID == "" {
+		render.Error(w, http.StatusBadRequest, "taskId is required")
+		return
+	}
+
+	var payload adminUpdatePublishTaskRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if payload.Notes == nil {
+		render.Error(w, http.StatusBadRequest, "at least one field must be provided")
+		return
+	}
+
+	record, err := h.app.Store.UpdateAdminPublishTaskTarget(r.Context(), taskID, store.UpdateAdminPublishTaskTargetInput{
+		Notes:        normalizeTrimmedString(payload.Notes),
+		NotesTouched: payload.Notes != nil,
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to update publish task")
+		return
+	}
+	if record == nil {
+		render.Error(w, http.StatusNotFound, "Publish task not found")
+		return
+	}
+	if record.Owner != nil && strings.TrimSpace(record.Owner.ID) != "" {
+		recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+			OwnerUserID:  record.Owner.ID,
+			ResourceType: "publish_task",
+			ResourceID:   &record.Task.ID,
+			Action:       "admin_update",
+			Title:        "运营后台更新发布任务备注",
+			Source:       "admin_console",
+			Status:       "success",
+			Message:      auditStringPtr("发布任务内部备注已由运营后台更新"),
+			Payload: mustJSONBytes(map[string]any{
+				"notes": normalizeTrimmedString(payload.Notes),
+			}),
+		})
+	}
+	h.recordAdminAction(r.Context(), "publish_task", &record.Task.ID, "update", "更新发布任务备注", "success", auditStringPtr("发布任务内部备注已更新"), mustJSONBytes(map[string]any{
+		"notes": normalizeTrimmedString(payload.Notes),
+	}))
+
+	render.JSON(w, http.StatusOK, record)
+}
+
 func (h *AdminConsoleHandler) PublishTaskWorkspace(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
 	if taskID == "" {
@@ -1659,6 +1718,11 @@ func (h *AdminConsoleHandler) PublishTaskWorkspace(w http.ResponseWriter, r *htt
 			render.Error(w, http.StatusInternalServerError, "Failed to load task materials")
 			return
 		}
+	}
+	workspace.RecentAudits, err = h.app.Store.ListRecentAdminAuditsByPublishTaskID(r.Context(), taskID, 20)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load task audits")
+		return
 	}
 
 	render.JSON(w, http.StatusOK, workspace)
@@ -2199,6 +2263,56 @@ func (h *AdminConsoleHandler) DetailAIJob(w http.ResponseWriter, r *http.Request
 	render.JSON(w, http.StatusOK, record)
 }
 
+func (h *AdminConsoleHandler) UpdateAIJob(w http.ResponseWriter, r *http.Request) {
+	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
+	if jobID == "" {
+		render.Error(w, http.StatusBadRequest, "jobId is required")
+		return
+	}
+
+	var payload adminUpdateAIJobRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if payload.Notes == nil {
+		render.Error(w, http.StatusBadRequest, "at least one field must be provided")
+		return
+	}
+
+	record, err := h.app.Store.UpdateAdminAIJobTarget(r.Context(), jobID, store.UpdateAdminAIJobTargetInput{
+		Notes:        normalizeTrimmedString(payload.Notes),
+		NotesTouched: payload.Notes != nil,
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to update AI job")
+		return
+	}
+	if record == nil {
+		render.Error(w, http.StatusNotFound, "AI job not found")
+		return
+	}
+
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  record.Job.OwnerUserID,
+		ResourceType: "ai_job",
+		ResourceID:   &record.Job.ID,
+		Action:       "admin_update",
+		Title:        "运营后台更新 AI 任务备注",
+		Source:       "admin_console",
+		Status:       "success",
+		Message:      auditStringPtr("AI 任务内部备注已由运营后台更新"),
+		Payload: mustJSONBytes(map[string]any{
+			"notes": normalizeTrimmedString(payload.Notes),
+		}),
+	})
+	h.recordAdminAction(r.Context(), "ai_job", &record.Job.ID, "update", "更新 AI 任务备注", "success", auditStringPtr("AI 任务内部备注已更新"), mustJSONBytes(map[string]any{
+		"notes": normalizeTrimmedString(payload.Notes),
+	}))
+
+	render.JSON(w, http.StatusOK, record)
+}
+
 func (h *AdminConsoleHandler) AIJobWorkspace(w http.ResponseWriter, r *http.Request) {
 	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
 	if jobID == "" {
@@ -2234,6 +2348,11 @@ func (h *AdminConsoleHandler) AIJobWorkspace(w http.ResponseWriter, r *http.Requ
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load billing usage events")
+		return
+	}
+	workspace.RecentAudits, err = h.app.Store.ListRecentAdminAuditsByAIJobID(r.Context(), jobID, 20)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load AI job audits")
 		return
 	}
 

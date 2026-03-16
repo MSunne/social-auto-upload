@@ -76,18 +76,163 @@ body::before {
   }
 }
 
-.el-input {
+// ── Input & Textarea ──
+.el-input,
+.el-textarea {
   --el-input-bg-color: rgba(10, 10, 28, 0.6);
   --el-input-border-color: #{$border-color};
   --el-input-text-color: #{$text-primary};
   --el-input-placeholder-color: #{$text-muted};
   --el-input-hover-border-color: #{$accent-color};
   --el-input-focus-border-color: #{$accent-color};
+
+  .el-input__wrapper,
+  .el-textarea__inner {
+    background-color: rgba(10, 10, 28, 0.6) !important;
+    box-shadow: 0 0 0 1px #{$border-color} inset !important;
+    color: #{$text-primary} !important;
+
+    &:hover {
+      box-shadow: 0 0 0 1px #{$accent-color} inset !important;
+    }
+
+    &:focus {
+      box-shadow: 0 0 0 1px #{$accent-color} inset, 0 0 10px rgba(177, 73, 255, 0.15) !important;
+    }
+  }
+
+  .el-input__inner {
+    color: #{$text-primary} !important;
+    background: transparent !important;
+    &::placeholder { color: #{$text-muted}; }
+  }
+
+  .el-textarea__inner {
+    resize: vertical;
+    &::placeholder { color: #{$text-muted}; }
+  }
+}
+
+// ── Select ──
+.el-select {
+  .el-select__wrapper {
+    background-color: rgba(10, 10, 28, 0.6) !important;
+    box-shadow: 0 0 0 1px #{$border-color} inset !important;
+    color: #{$text-primary} !important;
+
+    &:hover { box-shadow: 0 0 0 1px #{$accent-color} inset !important; }
+  }
 }
 
 .el-select-dropdown {
-  --el-bg-color-overlay: #{$bg-surface-alt};
+  --el-bg-color-overlay: rgba(12, 12, 32, 0.96);
+  background: rgba(12, 12, 32, 0.96) !important;
+  border: 1px solid #{$border-color} !important;
+  backdrop-filter: blur(20px);
+
+  .el-select-dropdown__item {
+    color: #{$text-secondary};
+
+    &:hover, &.hover { background: #{$bg-hover}; color: #{$text-primary}; }
+    &.selected { color: #{$accent-color}; }
+  }
 }
+
+// ── Radio ──
+.el-radio {
+  --el-radio-text-color: #{$text-secondary};
+  --el-radio-input-border-color: #{$border-strong};
+  --el-radio-input-bg-color: rgba(10, 10, 28, 0.6);
+  --el-radio-input-bg-color-checked: #{$accent-color};
+  --el-radio-button-checked-bg-color: #{$accent-color};
+  --el-radio-button-checked-border-color: #{$accent-color};
+  color: $text-secondary;
+
+  .el-radio__input.is-checked .el-radio__inner {
+    background: $accent-color;
+    border-color: $accent-color;
+    box-shadow: 0 0 8px rgba(177, 73, 255, 0.4);
+  }
+
+  .el-radio__inner {
+    background: rgba(10, 10, 28, 0.6);
+    border-color: $border-strong;
+  }
+
+  &.is-checked .el-radio__label { color: $accent-color; }
+}
+
+// ── Checkbox ──
+.el-checkbox {
+  --el-checkbox-text-color: #{$text-secondary};
+  --el-checkbox-input-border-color: #{$border-strong};
+  --el-checkbox-bg-color: rgba(10, 10, 28, 0.6);
+  --el-checkbox-input-background-color-white: rgba(10, 10, 28, 0.6);
+  --el-checkbox-checked-bg-color: #{$accent-color};
+  --el-checkbox-checked-input-border-color: #{$accent-color};
+  --el-checkbox-checked-text-color: #{$accent-color};
+  color: $text-secondary;
+
+  .el-checkbox__inner {
+    background: rgba(10, 10, 28, 0.6);
+    border-color: $border-strong;
+  }
+
+  &.is-checked {
+    .el-checkbox__inner {
+      background: $accent-color;
+      border-color: $accent-color;
+      box-shadow: 0 0 8px rgba(177, 73, 255, 0.3);
+    }
+    .el-checkbox__label { color: $accent-color; }
+  }
+}
+
+// ── Switch ──
+.el-switch {
+  --el-switch-off-color: #{rgba($border-strong, 1)};
+  --el-switch-on-color: #{$accent-color};
+
+  &.is-checked .el-switch__core {
+    box-shadow: 0 0 10px rgba(177, 73, 255, 0.35);
+  }
+}
+
+// ── Form ──
+.el-form-item__label {
+  color: $text-secondary;
+}
+
+// ── DatePicker / TimePicker ──
+.el-picker-panel {
+  background: rgba(12, 12, 32, 0.96) !important;
+  border: 1px solid #{$border-color} !important;
+  color: #{$text-primary} !important;
+
+  .el-date-picker__header-label,
+  .el-picker-panel__icon-btn { color: #{$text-secondary}; }
+
+  .el-date-table td.today .el-date-table-cell__text { color: #{$accent-color}; }
+  .el-date-table td.current:not(.disabled) .el-date-table-cell__text {
+    background: #{$accent-color};
+    box-shadow: 0 0 10px rgba(177, 73, 255, 0.4);
+  }
+  .el-date-table td:hover .el-date-table-cell__text { color: #{$accent-color}; }
+}
+
+.el-input__suffix .el-input__suffix-inner .el-icon {
+  color: #{$text-muted};
+}
+
+// ── Popover / Tooltip ──
+.el-popover.el-popper,
+.el-tooltip__popper {
+  background: rgba(12, 12, 32, 0.96) !important;
+  border: 1px solid #{$border-color} !important;
+  color: #{$text-primary} !important;
+  backdrop-filter: blur(20px);
+}
+
 
 .el-button {
   border-radius: 10px;

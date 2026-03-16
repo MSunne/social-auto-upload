@@ -100,6 +100,9 @@ CREATE TABLE IF NOT EXISTS admin_system_configs (
     billing_manual_support_contact TEXT NOT NULL DEFAULT '',
     billing_manual_support_qr_code_url TEXT NOT NULL DEFAULT '',
     billing_manual_support_note TEXT NOT NULL DEFAULT '请联系客服完成转账，并在订单内补充转账说明或凭证。',
+    default_chat_model TEXT NOT NULL DEFAULT 'gemini-3.1-pro-preview',
+    default_image_model TEXT NOT NULL DEFAULT 'gemini-3-pro-image-preview',
+    default_video_model TEXT NOT NULL DEFAULT 'veo-3.1-fast-fl',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -113,6 +116,9 @@ CREATE TABLE IF NOT EXISTS devices (
     local_ip TEXT,
     public_ip TEXT,
     default_reasoning_model TEXT,
+    default_chat_model TEXT,
+    default_image_model TEXT,
+    default_video_model TEXT,
     is_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     runtime_payload JSONB,
     last_seen_at TIMESTAMPTZ,
@@ -262,6 +268,7 @@ CREATE TABLE IF NOT EXISTS publish_tasks (
     media_payload JSONB,
     status TEXT NOT NULL,
     message TEXT,
+    notes TEXT,
     verification_payload JSONB,
     lease_owner_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
     lease_token TEXT,
@@ -339,8 +346,15 @@ ALTER TABLE publish_tasks ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ;
 ALTER TABLE publish_tasks ADD COLUMN IF NOT EXISTS attempt_count INT NOT NULL DEFAULT 0;
 ALTER TABLE publish_tasks ADD COLUMN IF NOT EXISTS cancel_requested_at TIMESTAMPTZ;
 ALTER TABLE publish_tasks ADD COLUMN IF NOT EXISTS skill_revision TEXT;
+ALTER TABLE publish_tasks ADD COLUMN IF NOT EXISTS notes TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS notes TEXT;
 ALTER TABLE platform_accounts ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS default_chat_model TEXT NOT NULL DEFAULT 'gemini-3.1-pro-preview';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS default_image_model TEXT NOT NULL DEFAULT 'gemini-3-pro-image-preview';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS default_video_model TEXT NOT NULL DEFAULT 'veo-3.1-fast-fl';
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_chat_model TEXT;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_image_model TEXT;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_video_model TEXT;
 
 CREATE TABLE IF NOT EXISTS ai_models (
     id TEXT PRIMARY KEY,
@@ -368,6 +382,7 @@ CREATE TABLE IF NOT EXISTS ai_jobs (
     input_payload JSONB,
     output_payload JSONB,
     message TEXT,
+    notes TEXT,
     cost_credits BIGINT NOT NULL DEFAULT 0,
     lease_owner_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
     lease_token TEXT,
@@ -392,6 +407,7 @@ ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS delivery_status TEXT NOT NULL DEFAU
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS delivery_message TEXT;
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS local_publish_task_id TEXT;
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS notes TEXT;
 
 CREATE TABLE IF NOT EXISTS ai_job_artifacts (
     id TEXT PRIMARY KEY,

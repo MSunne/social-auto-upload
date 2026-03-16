@@ -1,5 +1,7 @@
 const DEFAULT_BASE_URL = "http://127.0.0.1:8410";
 const DEFAULT_TIMEOUT_MS = 45000;
+const DEFAULT_LOCAL_OMNIBULL_BASE_URL = "http://127.0.0.1:5409";
+const DEFAULT_LOCAL_OMNIBULL_TIMEOUT_MS = 10000;
 const DEFAULT_CHAT_MODEL = "gemini-3.1-pro-preview";
 const DEFAULT_IMAGE_MODEL = "gemini-3-pro-image-preview";
 const DEFAULT_VIDEO_MODEL = "veo-3.1-fast-fl";
@@ -15,6 +17,14 @@ function resolveConfig(api) {
     email: String(pluginConfig.email || process.env.OMNIDRIVE_EMAIL || "").trim(),
     password: String(pluginConfig.password || process.env.OMNIDRIVE_PASSWORD || "").trim(),
     timeoutMs: Number(pluginConfig.timeoutMs || process.env.OMNIDRIVE_TIMEOUT_MS || DEFAULT_TIMEOUT_MS),
+    localOmniBullBaseUrl: String(
+      pluginConfig.localOmniBullBaseUrl || process.env.OMNIBULL_BASE_URL || DEFAULT_LOCAL_OMNIBULL_BASE_URL,
+    ).replace(/\/+$/, ""),
+    localOmniBullApiKey: String(pluginConfig.localOmniBullApiKey || process.env.OMNIBULL_API_KEY || "").trim(),
+    localOmniBullTimeoutMs: Number(
+      pluginConfig.localOmniBullTimeoutMs || process.env.OMNIBULL_TIMEOUT_MS || DEFAULT_LOCAL_OMNIBULL_TIMEOUT_MS,
+    ),
+    localDeviceCode: String(pluginConfig.localDeviceCode || process.env.OMNIBULL_DEVICE_CODE || "").trim(),
     defaultChatModel: String(
       pluginConfig.defaultChatModel || process.env.OMNIDRIVE_DEFAULT_CHAT_MODEL || DEFAULT_CHAT_MODEL,
     ).trim(),
@@ -58,6 +68,43 @@ function buildQuery(params) {
 
 function clearCachedSession() {
   cachedSession = null;
+}
+
+async function requestLocalOmniBull(api, path, options = {}) {
+  const cfg = resolveConfig(api);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), cfg.localOmniBullTimeoutMs);
+  const headers = {
+    Accept: "application/json",
+    ...(options.headers || {}),
+  };
+  if (cfg.localOmniBullApiKey) {
+    headers["X-Omnibull-Key"] = cfg.localOmniBullApiKey;
+  }
+  if (options.body !== undefined && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  try {
+    const response = await fetch(`${cfg.localOmniBullBaseUrl}${path}`, {
+      ...options,
+      headers,
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    let payload = null;
+    try {
+      payload = text ? JSON.parse(text) : null;
+    } catch {
+      payload = text;
+    }
+    if (!response.ok) {
+      throw new Error(extractErrorMessage(payload, response.status));
+    }
+    return payload;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function nowISO() {
@@ -236,6 +283,10 @@ function extractPublicUrls(workspace) {
     .filter((value) => typeof value === "string" && value.trim());
 }
 
+function findDeviceByCode(items, deviceCode) {
+  return (items || []).find((item) => String(item?.deviceCode || "").trim() === String(deviceCode || "").trim()) || null;
+}
+
 function summarizeWorkspace(workspace) {
   const job = workspace?.job || {};
   return {
@@ -270,6 +321,26 @@ function normalizeReferenceImages(items) {
       return null;
     })
     .filter(Boolean);
+}
+
+async function resolveLocalDeviceCode(api) {
+  const cfg = resolveConfig(api);
+  if (cfg.localDeviceCode) {
+    return cfg.localDeviceCode;
+  }
+  const payload = await requestLocalOmniBull(api, "/api/skill/status", { method: "GET" });
+  const deviceCode = String(payload?.data?.deviceCode || payload?.deviceCode || "").trim();
+  ensure(deviceCode, "无法从本地 OmniBull 读取 deviceCode，请检查本地插件配置");
+  return deviceCode;
+}
+
+async function resolveBoundOmniBullDevice(api, overrides = {}) {
+  const localDeviceCode = await resolveLocalDeviceCode(api);
+  const devices = await requestJson(api, "/api/v1/devices", { method: "GET" }, overrides);
+  const device = findDeviceByCode(devices, localDeviceCode);
+  ensure(device, "当前 OpenClaw 所在 OmniBull 尚未绑定到当前 OmniDrive 账户，无法使用云端 AI");
+  ensure(device.isEnabled !== false, "当前 OmniBull 设备已被停用或解绑，无法使用云端 AI");
+  return device;
 }
 
 async function createAIJob(api, payload, overrides = {}) {
@@ -311,6 +382,12 @@ async function executeAuth(api, params) {
   const action = String(params.action || "status").trim();
   if (action === "status") {
     const cfg = resolveConfig(api);
+    let boundDevice = null;
+    try {
+      boundDevice = await resolveBoundOmniBullDevice(api, params || {});
+    } catch {
+      boundDevice = null;
+    }
     return toolResult({
       authenticated: Boolean(cachedSession?.accessToken || cfg.accessToken),
       hasConfiguredAccessToken: Boolean(cfg.accessToken),
@@ -323,6 +400,18 @@ async function executeAuth(api, params) {
           }
         : null,
       baseUrl: cfg.baseUrl,
+      localOmniBullBaseUrl: cfg.localOmniBullBaseUrl,
+      boundDevice: boundDevice
+        ? {
+            id: boundDevice.id,
+            deviceCode: boundDevice.deviceCode,
+            name: boundDevice.name,
+            isEnabled: boundDevice.isEnabled,
+            defaultChatModel: boundDevice.defaultChatModel || null,
+            defaultImageModel: boundDevice.defaultImageModel || null,
+            defaultVideoModel: boundDevice.defaultVideoModel || null,
+          }
+        : null,
     });
   }
   if (action === "logout") {
@@ -351,11 +440,27 @@ async function executeAuth(api, params) {
     const session = await performLogin(api, params || {});
     const user = await getCurrentUser(api, { accessToken: session.accessToken, retryOnAuth: false });
     cachedSession.user = user;
+    let boundDevice = null;
+    try {
+      boundDevice = await resolveBoundOmniBullDevice(api, { accessToken: session.accessToken, retryOnAuth: false });
+    } catch {
+      boundDevice = null;
+    }
     return toolResult({
       success: true,
       accessTokenPreview: `${session.accessToken.slice(0, 10)}...`,
       user,
       source: session.source,
+      boundDevice: boundDevice
+        ? {
+            id: boundDevice.id,
+            deviceCode: boundDevice.deviceCode,
+            name: boundDevice.name,
+            defaultChatModel: boundDevice.defaultChatModel || null,
+            defaultImageModel: boundDevice.defaultImageModel || null,
+            defaultVideoModel: boundDevice.defaultVideoModel || null,
+          }
+        : null,
     });
   }
   if (action === "me") {
@@ -363,7 +468,25 @@ async function executeAuth(api, params) {
     if (cachedSession) {
       cachedSession.user = user;
     }
-    return toolResult(user);
+    let boundDevice = null;
+    try {
+      boundDevice = await resolveBoundOmniBullDevice(api, params || {});
+    } catch {
+      boundDevice = null;
+    }
+    return toolResult({
+      user,
+      boundDevice: boundDevice
+        ? {
+            id: boundDevice.id,
+            deviceCode: boundDevice.deviceCode,
+            name: boundDevice.name,
+            defaultChatModel: boundDevice.defaultChatModel || null,
+            defaultImageModel: boundDevice.defaultImageModel || null,
+            defaultVideoModel: boundDevice.defaultVideoModel || null,
+          }
+        : null,
+    });
   }
   throw new Error(`不支持的 auth action: ${action}`);
 }
@@ -384,12 +507,17 @@ async function executeChat(api, params) {
   const prompt = typeof params.prompt === "string" ? params.prompt.trim() : "";
   const messages = Array.isArray(params.messages) ? params.messages : null;
   ensure(prompt || (messages && messages.length > 0), "chat 需要 prompt 或 messages");
+  const boundDevice = await resolveBoundOmniBullDevice(api, params || {});
+  if (params.deviceId && String(params.deviceId).trim() !== String(boundDevice.id || "").trim()) {
+    throw new Error("OpenClaw OmniDrive chat 只能使用当前本机已绑定的 OmniBull 设备");
+  }
 
   const payload = {
+    source: "openclaw_skill",
     jobType: "chat",
-    modelName: String(params.modelName || cfg.defaultChatModel || DEFAULT_CHAT_MODEL).trim(),
+    modelName: String(params.modelName || boundDevice.defaultChatModel || cfg.defaultChatModel || DEFAULT_CHAT_MODEL).trim(),
     prompt: prompt || undefined,
-    deviceId: params.deviceId || undefined,
+    deviceId: boundDevice.id,
     skillId: params.skillId || undefined,
     inputPayload: {
       ...(messages ? { messages } : {}),
@@ -416,12 +544,17 @@ async function executeImage(api, params) {
   const cfg = resolveConfig(api);
   const prompt = typeof params.prompt === "string" ? params.prompt.trim() : "";
   ensure(prompt, "image 需要 prompt");
+  const boundDevice = await resolveBoundOmniBullDevice(api, params || {});
+  if (params.deviceId && String(params.deviceId).trim() !== String(boundDevice.id || "").trim()) {
+    throw new Error("OpenClaw OmniDrive image 只能使用当前本机已绑定的 OmniBull 设备");
+  }
 
   const payload = {
+    source: "openclaw_skill",
     jobType: "image",
-    modelName: String(params.modelName || cfg.defaultImageModel || DEFAULT_IMAGE_MODEL).trim(),
+    modelName: String(params.modelName || boundDevice.defaultImageModel || cfg.defaultImageModel || DEFAULT_IMAGE_MODEL).trim(),
     prompt,
-    deviceId: params.deviceId || undefined,
+    deviceId: boundDevice.id,
     skillId: params.skillId || undefined,
     inputPayload: {
       ...(params.aspectRatio ? { aspectRatio: String(params.aspectRatio) } : {}),
@@ -453,12 +586,17 @@ async function executeVideo(api, params) {
   const cfg = resolveConfig(api);
   const prompt = typeof params.prompt === "string" ? params.prompt.trim() : "";
   ensure(prompt, "video 需要 prompt");
+  const boundDevice = await resolveBoundOmniBullDevice(api, params || {});
+  if (params.deviceId && String(params.deviceId).trim() !== String(boundDevice.id || "").trim()) {
+    throw new Error("OpenClaw OmniDrive video 只能使用当前本机已绑定的 OmniBull 设备");
+  }
 
   const payload = {
+    source: "openclaw_skill",
     jobType: "video",
-    modelName: String(params.modelName || cfg.defaultVideoModel || DEFAULT_VIDEO_MODEL).trim(),
+    modelName: String(params.modelName || boundDevice.defaultVideoModel || cfg.defaultVideoModel || DEFAULT_VIDEO_MODEL).trim(),
     prompt,
-    deviceId: params.deviceId || undefined,
+    deviceId: boundDevice.id,
     skillId: params.skillId || undefined,
     inputPayload: {
       ...(params.aspectRatio ? { aspectRatio: String(params.aspectRatio) } : {}),

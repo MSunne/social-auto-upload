@@ -23,6 +23,9 @@ type Device struct {
 	LocalIP               *string         `json:"localIp"`
 	PublicIP              *string         `json:"publicIp"`
 	DefaultReasoningModel *string         `json:"defaultReasoningModel"`
+	DefaultChatModel      *string         `json:"defaultChatModel,omitempty"`
+	DefaultImageModel     *string         `json:"defaultImageModel,omitempty"`
+	DefaultVideoModel     *string         `json:"defaultVideoModel,omitempty"`
 	IsEnabled             bool            `json:"isEnabled"`
 	RuntimePayload        json.RawMessage `json:"runtimePayload,omitempty"`
 	LastSeenAt            *time.Time      `json:"lastSeenAt"`
@@ -704,6 +707,51 @@ type BillingSummary struct {
 	FrozenCreditBalance  int64                 `json:"frozenCreditBalance"`
 	PendingRechargeCount int64                 `json:"pendingRechargeCount"`
 	QuotaBalances        []BillingQuotaBalance `json:"quotaBalances"`
+}
+
+type DistributionSummary struct {
+	InviteeCount                   int64 `json:"inviteeCount"`
+	PendingConsumeAmountCents      int64 `json:"pendingConsumeAmountCents"`
+	PendingSettlementAmountCents   int64 `json:"pendingSettlementAmountCents"`
+	SettledAmountCents             int64 `json:"settledAmountCents"`
+	AvailableWithdrawalAmountCents int64 `json:"availableWithdrawalAmountCents"`
+	RequestedWithdrawalAmountCents int64 `json:"requestedWithdrawalAmountCents"`
+	ApprovedWithdrawalAmountCents  int64 `json:"approvedWithdrawalAmountCents"`
+	PaidWithdrawalAmountCents      int64 `json:"paidWithdrawalAmountCents"`
+}
+
+type CommissionItem struct {
+	ID                        string     `json:"id"`
+	InviteeUserID             string     `json:"inviteeUserId"`
+	InviteeEmail              string     `json:"inviteeEmail"`
+	InviteeName               string     `json:"inviteeName"`
+	Status                    string     `json:"status"`
+	CommissionRate            float64    `json:"commissionRate"`
+	CommissionBaseAmountCents int64      `json:"commissionBaseAmountCents"`
+	AmountCents               int64      `json:"amountCents"`
+	ReleasedAmountCents       int64      `json:"releasedAmountCents"`
+	SettledAmountCents        int64      `json:"settledAmountCents"`
+	RechargeOrderID           string     `json:"rechargeOrderId"`
+	RechargeOrderNo           *string    `json:"rechargeOrderNo,omitempty"`
+	CreatedAt                 time.Time  `json:"createdAt"`
+	ReleasedAt                *time.Time `json:"releasedAt,omitempty"`
+	SettledAt                 *time.Time `json:"settledAt,omitempty"`
+}
+
+type WithdrawalRequest struct {
+	ID               string          `json:"id"`
+	PromoterUserID   string          `json:"promoterUserId"`
+	Status           string          `json:"status"`
+	AmountCents      int64           `json:"amountCents"`
+	PayoutChannel    *string         `json:"payoutChannel,omitempty"`
+	AccountMasked    *string         `json:"accountMasked,omitempty"`
+	AccountPayload   json.RawMessage `json:"accountPayload,omitempty"`
+	Note             *string         `json:"note,omitempty"`
+	ProofURLs        []string        `json:"proofUrls"`
+	PaymentReference *string         `json:"paymentReference,omitempty"`
+	CreatedAt        time.Time       `json:"createdAt"`
+	ReviewedAt       *time.Time      `json:"reviewedAt,omitempty"`
+	PaidAt           *time.Time      `json:"paidAt,omitempty"`
 }
 
 type BillingUsageEvent struct {

@@ -24,6 +24,20 @@
         "minimum": 1000,
         "maximum": 180000
       },
+      "localOmniBullBaseUrl": {
+        "type": "string"
+      },
+      "localOmniBullApiKey": {
+        "type": "string"
+      },
+      "localOmniBullTimeoutMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 180000
+      },
+      "localDeviceCode": {
+        "type": "string"
+      },
       "defaultChatModel": {
         "type": "string"
       },

@@ -29,6 +29,9 @@ type Config struct {
 	AIWorkerConcurrency           int
 	AIVideoPollSeconds            int
 	AIVideoTimeoutSeconds         int
+	DefaultChatModel              string
+	DefaultImageModel             string
+	DefaultVideoModel             string
 	JWTSecret                     string
 	AccessTokenExpireMinutes      int
 	AdminJWTSecret                string
@@ -75,6 +78,9 @@ func Load() Config {
 		AIWorkerConcurrency:           envAsInt("OMNIDRIVE_AI_WORKER_CONCURRENCY", 2),
 		AIVideoPollSeconds:            envAsInt("OMNIDRIVE_AI_VIDEO_POLL_SECONDS", 6),
 		AIVideoTimeoutSeconds:         envAsInt("OMNIDRIVE_AI_VIDEO_TIMEOUT_SECONDS", 600),
+		DefaultChatModel:              envOrDefault("OMNIDRIVE_DEFAULT_CHAT_MODEL", "gemini-3.1-pro-preview"),
+		DefaultImageModel:             envOrDefault("OMNIDRIVE_DEFAULT_IMAGE_MODEL", "gemini-3-pro-image-preview"),
+		DefaultVideoModel:             envOrDefault("OMNIDRIVE_DEFAULT_VIDEO_MODEL", "veo-3.1-fast-fl"),
 		JWTSecret:                     jwtSecret,
 		AccessTokenExpireMinutes:      accessTokenExpireMinutes,
 		AdminJWTSecret:                adminJWTSecret,

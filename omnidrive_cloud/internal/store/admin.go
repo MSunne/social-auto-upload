@@ -250,6 +250,76 @@ func (s *Store) ListRecentAdminAuditsByMediaAccountID(ctx context.Context, accou
 	return scanAdminAuditRows(rows)
 }
 
+func (s *Store) ListRecentAdminAuditsByPublishTaskID(ctx context.Context, taskID string, limit int) ([]domain.AdminAuditRow, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.pool.Query(ctx, adminAuditEntriesBaseQuery+`
+		SELECT
+			entries.id,
+			entries.actor_type,
+			entries.owner_user_id,
+			entries.owner_email,
+			entries.owner_name,
+			entries.admin_id,
+			entries.admin_email,
+			entries.admin_name,
+			entries.resource_type,
+			entries.resource_id,
+			entries.action,
+			entries.title,
+			entries.source,
+			entries.status,
+			entries.message,
+			entries.payload,
+			entries.created_at
+		FROM entries
+		WHERE entries.resource_type = 'publish_task'
+		  AND entries.resource_id = $1
+		ORDER BY entries.created_at DESC
+		LIMIT $2
+	`, strings.TrimSpace(taskID), limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanAdminAuditRows(rows)
+}
+
+func (s *Store) ListRecentAdminAuditsByAIJobID(ctx context.Context, jobID string, limit int) ([]domain.AdminAuditRow, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.pool.Query(ctx, adminAuditEntriesBaseQuery+`
+		SELECT
+			entries.id,
+			entries.actor_type,
+			entries.owner_user_id,
+			entries.owner_email,
+			entries.owner_name,
+			entries.admin_id,
+			entries.admin_email,
+			entries.admin_name,
+			entries.resource_type,
+			entries.resource_id,
+			entries.action,
+			entries.title,
+			entries.source,
+			entries.status,
+			entries.message,
+			entries.payload,
+			entries.created_at
+		FROM entries
+		WHERE entries.resource_type = 'ai_job'
+		  AND entries.resource_id = $1
+		ORDER BY entries.created_at DESC
+		LIMIT $2
+	`, strings.TrimSpace(jobID), limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanAdminAuditRows(rows)
+}
+
 func (s *Store) GetAdminDashboardSummary(ctx context.Context) (*domain.AdminDashboardSummary, error) {
 	summary := &domain.AdminDashboardSummary{
 		ServerTime: time.Now().UTC(),

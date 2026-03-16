@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"omnidrive_cloud/internal/domain"
@@ -17,6 +18,8 @@ var (
 	ErrWithdrawalNotFound            = errors.New("withdrawal request not found")
 	ErrWithdrawalInvalidTransition   = errors.New("withdrawal request status transition is invalid")
 	ErrWithdrawalInsufficientBalance = errors.New("withdrawal amount exceeds settled commission balance")
+	ErrWithdrawalAmountInvalid       = errors.New("withdrawal amount must be greater than 0")
+	ErrWithdrawalPayoutInfoRequired  = errors.New("withdrawal payout channel and account are required")
 )
 
 type AdminWithdrawalListFilter struct {
@@ -32,6 +35,15 @@ type ReviewWithdrawalInput struct {
 	Note             *string
 	PaymentReference *string
 	ProofURLs        []string
+}
+
+type CreateWithdrawalRequestInput struct {
+	AmountCents    int64
+	PayoutChannel  *string
+	AccountMasked  *string
+	AccountPayload []byte
+	Note           *string
+	ProofURLs      []string
 }
 
 type adminWithdrawalRecord struct {
@@ -66,6 +78,32 @@ func decodeProofURLs(raw []byte) []string {
 		return []string{}
 	}
 	return items
+}
+
+func scanWithdrawalRequest(scan scanFn) (*domain.WithdrawalRequest, error) {
+	var item domain.WithdrawalRequest
+	var accountPayload []byte
+	var proofURLs []byte
+	if err := scan(
+		&item.ID,
+		&item.PromoterUserID,
+		&item.Status,
+		&item.AmountCents,
+		&item.PayoutChannel,
+		&item.AccountMasked,
+		&accountPayload,
+		&item.Note,
+		&proofURLs,
+		&item.PaymentReference,
+		&item.CreatedAt,
+		&item.ReviewedAt,
+		&item.PaidAt,
+	); err != nil {
+		return nil, err
+	}
+	item.AccountPayload = bytesOrNil(accountPayload)
+	item.ProofURLs = decodeProofURLs(proofURLs)
+	return &item, nil
 }
 
 func normalizeProofURLs(items []string) []string {
@@ -395,6 +433,142 @@ func (s *Store) ListAdminWithdrawals(ctx context.Context, filter AdminWithdrawal
 		items = append(items, buildAdminWithdrawalRow(record))
 	}
 	return items, total, summary, rows.Err()
+}
+
+func (s *Store) ListWithdrawalRequestsByUser(ctx context.Context, promoterUserID string, limit int) ([]domain.WithdrawalRequest, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT
+			id,
+			promoter_user_id,
+			status,
+			amount_cents,
+			payout_channel,
+			account_masked,
+			account_payload,
+			note,
+			proof_urls,
+			payment_reference,
+			created_at,
+			reviewed_at,
+			paid_at
+		FROM withdrawal_requests
+		WHERE promoter_user_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2
+	`, promoterUserID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.WithdrawalRequest, 0)
+	for rows.Next() {
+		item, scanErr := scanWithdrawalRequest(rows.Scan)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) GetWithdrawalRequestByID(ctx context.Context, promoterUserID string, withdrawalID string) (*domain.WithdrawalRequest, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT
+			id,
+			promoter_user_id,
+			status,
+			amount_cents,
+			payout_channel,
+			account_masked,
+			account_payload,
+			note,
+			proof_urls,
+			payment_reference,
+			created_at,
+			reviewed_at,
+			paid_at
+		FROM withdrawal_requests
+		WHERE promoter_user_id = $1
+		  AND id = $2
+	`, promoterUserID, withdrawalID)
+	item, err := scanWithdrawalRequest(row.Scan)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return item, nil
+}
+
+func (s *Store) CreateWithdrawalRequest(ctx context.Context, promoterUserID string, input CreateWithdrawalRequestInput) (*domain.WithdrawalRequest, error) {
+	if input.AmountCents <= 0 {
+		return nil, ErrWithdrawalAmountInvalid
+	}
+	payoutChannel := trimOptionalString(input.PayoutChannel)
+	accountMasked := trimOptionalString(input.AccountMasked)
+	if payoutChannel == nil || accountMasked == nil {
+		return nil, ErrWithdrawalPayoutInfoRequired
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	availableAmountCents, err := computePromoterAvailableWithdrawalAmountTx(ctx, tx, promoterUserID, "")
+	if err != nil {
+		return nil, err
+	}
+	if availableAmountCents < input.AmountCents {
+		return nil, ErrWithdrawalInsufficientBalance
+	}
+
+	proofURLs := normalizeProofURLs(input.ProofURLs)
+	proofPayload, _ := json.Marshal(proofURLs)
+	withdrawalID := uuid.NewString()
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO withdrawal_requests (
+			id, promoter_user_id, status, amount_cents, payout_channel, account_masked,
+			account_payload, note, proof_urls
+		)
+		VALUES ($1, $2, 'requested', $3, $4, $5, $6, $7, $8)
+	`, withdrawalID, promoterUserID, input.AmountCents, payoutChannel, accountMasked, bytesOrNil(input.AccountPayload), trimOptionalString(input.Note), proofPayload); err != nil {
+		return nil, err
+	}
+
+	row := tx.QueryRow(ctx, `
+		SELECT
+			id,
+			promoter_user_id,
+			status,
+			amount_cents,
+			payout_channel,
+			account_masked,
+			account_payload,
+			note,
+			proof_urls,
+			payment_reference,
+			created_at,
+			reviewed_at,
+			paid_at
+		FROM withdrawal_requests
+		WHERE id = $1
+	`, withdrawalID)
+	item, err := scanWithdrawalRequest(row.Scan)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return item, nil
 }
 
 func (s *Store) ApproveWithdrawal(ctx context.Context, withdrawalID string, input ReviewWithdrawalInput) (*domain.AdminWithdrawalDetail, error) {

@@ -75,6 +75,9 @@ type CreateUserInput struct {
 type UpdateDeviceInput struct {
 	Name                  *string
 	DefaultReasoningModel *string
+	DefaultChatModel      *string
+	DefaultImageModel     *string
+	DefaultVideoModel     *string
 	IsEnabled             *bool
 }
 

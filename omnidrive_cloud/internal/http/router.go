@@ -64,6 +64,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 				devices.Get("/{deviceId}", deviceHandler.Detail)
 				devices.Get("/{deviceId}/workspace", deviceHandler.Workspace)
 				devices.Patch("/{deviceId}", deviceHandler.Update)
+				devices.Post("/{deviceId}/unbind", deviceHandler.Unbind)
 			})
 
 			private.Route("/materials", func(materials chi.Router) {
@@ -136,11 +137,16 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 
 			private.Route("/billing", func(billing chi.Router) {
 				billing.Get("/summary", billingHandler.Summary)
+				billing.Get("/distribution/summary", billingHandler.DistributionSummary)
+				billing.Get("/commissions", billingHandler.ListCommissions)
 				billing.Get("/packages", billingHandler.ListPackages)
 				billing.Get("/rules", billingHandler.ListPricingRules)
 				billing.Get("/ledger", billingHandler.Ledger)
 				billing.Get("/usage-events", billingHandler.ListUsageEvents)
 				billing.Get("/orders", billingHandler.ListOrders)
+				billing.Get("/withdrawals", billingHandler.ListWithdrawals)
+				billing.Post("/withdrawals", billingHandler.CreateWithdrawal)
+				billing.Get("/withdrawals/{withdrawalId}", billingHandler.DetailWithdrawal)
 				billing.Post("/orders", billingHandler.CreateOrder)
 				billing.Get("/orders/{orderId}", billingHandler.DetailOrder)
 				billing.Get("/orders/{orderId}/events", billingHandler.ListOrderEvents)
@@ -219,6 +225,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 			private.With(authmiddleware.RequireAdminPermission("task.read")).Get("/publish-tasks", adminConsoleHandler.ListPublishTasks)
 			private.With(authmiddleware.RequireAdminPermission("task.operate")).Post("/publish-tasks/bulk-action", adminConsoleHandler.BulkActionPublishTasks)
 			private.With(authmiddleware.RequireAdminPermission("task.read")).Get("/publish-tasks/{taskId}", adminConsoleHandler.DetailPublishTask)
+			private.With(authmiddleware.RequireAdminPermission("task.operate")).Patch("/publish-tasks/{taskId}", adminConsoleHandler.UpdatePublishTask)
 			private.With(authmiddleware.RequireAdminPermission("task.read")).Get("/publish-tasks/{taskId}/workspace", adminConsoleHandler.PublishTaskWorkspace)
 			private.With(authmiddleware.RequireAdminPermission("task.read")).Get("/publish-tasks/{taskId}/events", adminConsoleHandler.ListPublishTaskEvents)
 			private.With(authmiddleware.RequireAdminPermission("task.read")).Get("/publish-tasks/{taskId}/artifacts", adminConsoleHandler.ListPublishTaskArtifacts)
@@ -231,6 +238,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 			private.With(authmiddleware.RequireAdminPermission("task.read")).Get("/ai-jobs", adminConsoleHandler.ListAIJobs)
 			private.With(authmiddleware.RequireAdminPermission("task.operate")).Post("/ai-jobs/bulk-action", adminConsoleHandler.BulkActionAIJobs)
 			private.With(authmiddleware.RequireAdminPermission("task.read")).Get("/ai-jobs/{jobId}", adminConsoleHandler.DetailAIJob)
+			private.With(authmiddleware.RequireAdminPermission("task.operate")).Patch("/ai-jobs/{jobId}", adminConsoleHandler.UpdateAIJob)
 			private.With(authmiddleware.RequireAdminPermission("task.read")).Get("/ai-jobs/{jobId}/workspace", adminConsoleHandler.AIJobWorkspace)
 			private.With(authmiddleware.RequireAdminPermission("task.read")).Get("/ai-jobs/{jobId}/artifacts", adminConsoleHandler.ListAIJobArtifacts)
 			private.With(authmiddleware.RequireAdminPermission("task.operate")).Post("/ai-jobs/{jobId}/cancel", adminConsoleHandler.CancelAIJob)

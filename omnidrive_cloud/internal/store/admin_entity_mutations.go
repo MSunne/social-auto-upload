@@ -27,6 +27,16 @@ type UpdateAdminMediaAccountTargetInput struct {
 	NotesTouched bool
 }
 
+type UpdateAdminPublishTaskTargetInput struct {
+	Notes        *string
+	NotesTouched bool
+}
+
+type UpdateAdminAIJobTargetInput struct {
+	Notes        *string
+	NotesTouched bool
+}
+
 func trimOptionalStringPointer(value *string) *string {
 	if value == nil {
 		return nil
@@ -117,6 +127,56 @@ func (s *Store) UpdateAdminMediaAccountTarget(ctx context.Context, accountID str
 		return nil, nil
 	}
 	return s.GetAdminAccountByID(ctx, accountID)
+}
+
+func (s *Store) UpdateAdminPublishTaskTarget(ctx context.Context, taskID string, input UpdateAdminPublishTaskTargetInput) (*domain.AdminPublishTaskRow, error) {
+	notesValue := ""
+	if input.Notes != nil {
+		notesValue = strings.TrimSpace(*input.Notes)
+	}
+
+	commandTag, err := s.pool.Exec(ctx, `
+		UPDATE publish_tasks
+		SET
+			notes = CASE
+				WHEN $2 THEN NULLIF($3, '')
+				ELSE notes
+			END,
+			updated_at = NOW()
+		WHERE id = $1
+	`, strings.TrimSpace(taskID), input.NotesTouched, notesValue)
+	if err != nil {
+		return nil, err
+	}
+	if commandTag.RowsAffected() == 0 {
+		return nil, nil
+	}
+	return s.GetAdminTaskByID(ctx, taskID)
+}
+
+func (s *Store) UpdateAdminAIJobTarget(ctx context.Context, jobID string, input UpdateAdminAIJobTargetInput) (*domain.AdminAIJobRow, error) {
+	notesValue := ""
+	if input.Notes != nil {
+		notesValue = strings.TrimSpace(*input.Notes)
+	}
+
+	commandTag, err := s.pool.Exec(ctx, `
+		UPDATE ai_jobs
+		SET
+			notes = CASE
+				WHEN $2 THEN NULLIF($3, '')
+				ELSE notes
+			END,
+			updated_at = NOW()
+		WHERE id = $1
+	`, strings.TrimSpace(jobID), input.NotesTouched, notesValue)
+	if err != nil {
+		return nil, err
+	}
+	if commandTag.RowsAffected() == 0 {
+		return nil, nil
+	}
+	return s.GetAdminAIJobByID(ctx, jobID)
 }
 
 func (s *Store) ForceReleasePublishTaskLeasesByDevice(ctx context.Context, deviceID string, message *string) ([]domain.PublishTask, error) {

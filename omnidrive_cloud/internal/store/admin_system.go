@@ -19,6 +19,9 @@ type UpsertAdminSystemSettingsInput struct {
 	BillingManualSupportContact   string
 	BillingManualSupportQRCodeURL string
 	BillingManualSupportNote      string
+	DefaultChatModel              string
+	DefaultImageModel             string
+	DefaultVideoModel             string
 }
 
 func scanAdminSystemSettings(scan scanFn) (*domain.AdminSystemSettingsRecord, error) {
@@ -33,6 +36,9 @@ func scanAdminSystemSettings(scan scanFn) (*domain.AdminSystemSettingsRecord, er
 		&item.BillingManualSupport.Contact,
 		&item.BillingManualSupport.QRCodeURL,
 		&item.BillingManualSupport.Note,
+		&item.DefaultChatModel,
+		&item.DefaultImageModel,
+		&item.DefaultVideoModel,
 		&item.CreatedAt,
 		&item.UpdatedAt,
 	); err != nil {
@@ -61,6 +67,9 @@ func (s *Store) GetAdminSystemSettings(ctx context.Context) (*domain.AdminSystem
 			billing_manual_support_contact,
 			billing_manual_support_qr_code_url,
 			billing_manual_support_note,
+			default_chat_model,
+			default_image_model,
+			default_video_model,
 			created_at,
 			updated_at
 		FROM admin_system_configs
@@ -91,9 +100,12 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 			billing_manual_support_name,
 			billing_manual_support_contact,
 			billing_manual_support_qr_code_url,
-			billing_manual_support_note
+			billing_manual_support_note,
+			default_chat_model,
+			default_image_model,
+			default_video_model
 		)
-		VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7)
+		VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (id) DO UPDATE
 		SET
 			ai_worker_enabled = EXCLUDED.ai_worker_enabled,
@@ -102,6 +114,9 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 			billing_manual_support_contact = EXCLUDED.billing_manual_support_contact,
 			billing_manual_support_qr_code_url = EXCLUDED.billing_manual_support_qr_code_url,
 			billing_manual_support_note = EXCLUDED.billing_manual_support_note,
+			default_chat_model = EXCLUDED.default_chat_model,
+			default_image_model = EXCLUDED.default_image_model,
+			default_video_model = EXCLUDED.default_video_model,
 			updated_at = NOW()
 		RETURNING
 			id,
@@ -111,6 +126,9 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 			billing_manual_support_contact,
 			billing_manual_support_qr_code_url,
 			billing_manual_support_note,
+			default_chat_model,
+			default_image_model,
+			default_video_model,
 			created_at,
 			updated_at
 	`,
@@ -121,6 +139,9 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 		input.BillingManualSupportContact,
 		input.BillingManualSupportQRCodeURL,
 		input.BillingManualSupportNote,
+		input.DefaultChatModel,
+		input.DefaultImageModel,
+		input.DefaultVideoModel,
 	)
 
 	return scanAdminSystemSettings(row.Scan)
