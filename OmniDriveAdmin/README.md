@@ -34,6 +34,10 @@ The admin backend is expected to expose:
 
 - `/api/admin/v1/*`
 
+Current frontend integration contract:
+
+- `/Volumes/mud/project/github/social-auto-upload/docs/omnidrive_admin_api_contract.md`
+
 ## Initial Route Map
 
 - `/dashboard`

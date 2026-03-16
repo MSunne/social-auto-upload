@@ -29,6 +29,8 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 	billingHandler := handlers.NewBillingHandler(app)
 	agentHandler := handlers.NewAgentHandler(app)
 	fileHandler := handlers.NewFileHandler(app)
+	adminAuthHandler := handlers.NewAdminAuthHandler(app)
+	adminConsoleHandler := handlers.NewAdminConsoleHandler(app)
 
 	r.Get("/health", healthHandler.Health)
 	r.Get("/ready", healthHandler.Ready)
@@ -133,6 +135,9 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 				billing.Get("/ledger", billingHandler.Ledger)
 				billing.Get("/orders", billingHandler.ListOrders)
 				billing.Post("/orders", billingHandler.CreateOrder)
+				billing.Get("/orders/{orderId}", billingHandler.DetailOrder)
+				billing.Get("/orders/{orderId}/events", billingHandler.ListOrderEvents)
+				billing.Post("/orders/{orderId}/manual-submit", billingHandler.SubmitManualRecharge)
 			})
 		})
 
@@ -157,6 +162,38 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 			agent.Post("/publish-tasks/{taskId}/renew", agentHandler.RenewPublishTaskLease)
 			agent.Post("/publish-tasks/{taskId}/release", agentHandler.ReleasePublishTaskLease)
 			agent.Post("/publish-tasks/sync", agentHandler.SyncPublishTask)
+		})
+	})
+
+	r.Route("/api/admin/v1", func(admin chi.Router) {
+		admin.Route("/auth", func(auth chi.Router) {
+			auth.Post("/login", adminAuthHandler.Login)
+		})
+
+		admin.Group(func(private chi.Router) {
+			private.Use(authmiddleware.RequireAdmin(app))
+
+			private.Get("/me", adminAuthHandler.Me)
+			private.Get("/admins", adminAuthHandler.ListAdmins)
+			private.Get("/system-config", adminAuthHandler.SystemConfig)
+
+			private.With(authmiddleware.RequireAdminPermission("admin.manage")).Get("/dashboard/summary", adminConsoleHandler.DashboardSummary)
+			private.With(authmiddleware.RequireAdminPermission("user.read")).Get("/users", adminConsoleHandler.ListUsers)
+			private.With(authmiddleware.RequireAdminPermission("device.read")).Get("/devices", adminConsoleHandler.ListDevices)
+			private.With(authmiddleware.RequireAdminPermission("finance.read")).Get("/pricing/packages", adminConsoleHandler.ListPricingPackages)
+			private.With(authmiddleware.RequireAdminPermission("finance.read")).Get("/pricing/rules", adminConsoleHandler.ListPricingRules)
+			private.With(authmiddleware.RequireAdminPermission("finance.read")).Get("/orders", adminConsoleHandler.ListOrders)
+			private.With(authmiddleware.RequireAdminPermission("finance.read")).Get("/wallet-ledgers", adminConsoleHandler.ListWalletLedgers)
+			private.With(authmiddleware.RequireAdminPermission("support_recharge.review")).Get("/support-recharges", adminConsoleHandler.ListSupportRecharges)
+			private.With(authmiddleware.RequireAdminPermission("support_recharge.review")).Get("/support-recharges/{orderId}", adminConsoleHandler.DetailSupportRecharge)
+			private.With(authmiddleware.RequireAdminPermission("support_recharge.review")).Get("/support-recharges/{orderId}/events", adminConsoleHandler.ListSupportRechargeEvents)
+			private.With(authmiddleware.RequireAdminPermission("support_recharge.review")).Post("/support-recharges/{orderId}/credit", adminConsoleHandler.CreditSupportRecharge)
+			private.With(authmiddleware.RequireAdminPermission("support_recharge.review")).Post("/support-recharges/{orderId}/reject", adminConsoleHandler.RejectSupportRecharge)
+			private.With(authmiddleware.RequireAdminPermission("distribution.read")).Get("/distribution/relations", adminConsoleHandler.ListDistributionRelations)
+			private.With(authmiddleware.RequireAdminPermission("distribution.read")).Get("/distribution/commissions", adminConsoleHandler.ListDistributionCommissions)
+			private.With(authmiddleware.RequireAdminPermission("distribution.read")).Get("/distribution/settlements", adminConsoleHandler.ListDistributionSettlements)
+			private.With(authmiddleware.RequireAdminPermission("withdrawal.review")).Get("/withdrawals", adminConsoleHandler.ListWithdrawals)
+			private.With(authmiddleware.RequireAdminPermission("admin.manage")).Get("/audits", adminConsoleHandler.ListAudits)
 		})
 	})
 

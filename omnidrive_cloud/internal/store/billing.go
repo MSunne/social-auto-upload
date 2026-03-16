@@ -137,6 +137,37 @@ func scanRechargeOrder(scan scanFn) (*domain.RechargeOrder, error) {
 	return &item, nil
 }
 
+func scanRechargeOrderEvent(scan scanFn) (*domain.RechargeOrderEvent, error) {
+	var item domain.RechargeOrderEvent
+	var message *string
+	var payload []byte
+	if err := scan(
+		&item.ID,
+		&item.RechargeOrderID,
+		&item.UserID,
+		&item.EventType,
+		&item.Status,
+		&message,
+		&payload,
+		&item.CreatedAt,
+	); err != nil {
+		return nil, err
+	}
+	item.Message = message
+	item.Payload = bytesOrNil(payload)
+	return &item, nil
+}
+
+func (s *Store) appendRechargeOrderEventTx(ctx context.Context, tx pgx.Tx, eventID string, orderID string, userID string, eventType string, status string, message *string, payload []byte) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO recharge_order_events (
+			id, recharge_order_id, user_id, event_type, status, message, payload
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, eventID, orderID, userID, eventType, status, message, payload)
+	return err
+}
+
 func (s *Store) loadPackageEntitlements(ctx context.Context, packageIDs []string) (map[string][]domain.BillingPackageEntitlement, error) {
 	if len(packageIDs) == 0 {
 		return map[string][]domain.BillingPackageEntitlement{}, nil
@@ -481,6 +512,35 @@ func (s *Store) getRechargeOrderByID(ctx context.Context, userID string, orderID
 	return item, nil
 }
 
+func (s *Store) GetRechargeOrderByID(ctx context.Context, userID string, orderID string) (*domain.RechargeOrder, error) {
+	return s.getRechargeOrderByID(ctx, userID, orderID)
+}
+
+func (s *Store) ListRechargeOrderEvents(ctx context.Context, userID string, orderID string) ([]domain.RechargeOrderEvent, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT e.id, e.recharge_order_id, e.user_id, e.event_type, e.status, e.message, e.payload, e.created_at
+		FROM recharge_order_events e
+		INNER JOIN recharge_orders o ON o.id = e.recharge_order_id
+		WHERE e.user_id = $1
+		  AND e.recharge_order_id = $2
+		ORDER BY e.created_at ASC
+	`, userID, orderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.RechargeOrderEvent, 0)
+	for rows.Next() {
+		item, scanErr := scanRechargeOrderEvent(rows.Scan)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) CreateRechargeOrder(ctx context.Context, input CreateRechargeOrderInput) (*domain.RechargeOrder, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -510,6 +570,20 @@ func (s *Store) CreateRechargeOrder(ctx context.Context, input CreateRechargeOrd
 		return nil, err
 	}
 
+	if err := s.appendRechargeOrderEventTx(
+		ctx,
+		tx,
+		fmt.Sprintf("%s-created", input.ID),
+		input.ID,
+		input.UserID,
+		"created",
+		input.Status,
+		stringPtr("充值订单已创建"),
+		input.PaymentPayload,
+	); err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -522,4 +596,81 @@ func (s *Store) CreateRechargeOrder(ctx context.Context, input CreateRechargeOrd
 		return nil, fmt.Errorf("created recharge order not found")
 	}
 	return order, nil
+}
+
+func (s *Store) SubmitManualRecharge(ctx context.Context, userID string, orderID string, input SubmitManualRechargeInput) (*domain.RechargeOrder, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
+		SELECT id, order_no, user_id, package_id, package_snapshot, channel, status, subject, body, currency,
+		       amount_cents, credit_amount, payment_payload, customer_service_payload, provider_transaction_id,
+		       provider_status, expires_at, paid_at, closed_at, created_at, updated_at
+		FROM recharge_orders
+		WHERE user_id = $1
+		  AND id = $2
+		FOR UPDATE
+	`, userID, orderID)
+
+	order, err := scanRechargeOrder(row.Scan)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if order.Channel != "manual_cs" {
+		return nil, fmt.Errorf("recharge order is not a manual customer-service order")
+	}
+	if isRechargeOrderCredited(order) {
+		return nil, ErrRechargeOrderAlreadyCredited
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE recharge_orders
+		SET status = $3,
+		    provider_transaction_id = COALESCE($4, provider_transaction_id),
+		    provider_status = COALESCE($5, provider_status),
+		    customer_service_payload = $6,
+		    updated_at = NOW()
+		WHERE user_id = $1
+		  AND id = $2
+	`, userID, orderID, input.Status, input.ProviderTransactionID, input.ProviderStatus, input.CustomerServicePayload); err != nil {
+		return nil, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE payment_transactions
+		SET status = 'processing',
+		    provider_transaction_id = COALESCE($3, provider_transaction_id),
+		    response_payload = $4,
+		    error_message = NULL,
+		    updated_at = NOW()
+		WHERE recharge_order_id = $1
+		  AND user_id = $2
+	`, orderID, userID, input.ProviderTransactionID, input.CustomerServicePayload); err != nil {
+		return nil, err
+	}
+
+	if err := s.appendRechargeOrderEventTx(
+		ctx,
+		tx,
+		input.EventID,
+		orderID,
+		userID,
+		input.EventType,
+		input.EventStatus,
+		input.EventMessage,
+		input.EventPayload,
+	); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return s.getRechargeOrderByID(ctx, userID, orderID)
 }

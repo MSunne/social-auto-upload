@@ -8,9 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	appstate "omnidrive_cloud/internal/app"
+	"omnidrive_cloud/internal/config"
 	httpcontext "omnidrive_cloud/internal/http/context"
 	"omnidrive_cloud/internal/http/render"
 	"omnidrive_cloud/internal/store"
@@ -24,6 +26,15 @@ type createRechargeOrderRequest struct {
 	PackageID string `json:"packageId"`
 	Channel   string `json:"channel"`
 	Subject   string `json:"subject"`
+}
+
+type submitManualRechargeRequest struct {
+	ContactChannel      string   `json:"contactChannel"`
+	ContactHandle       string   `json:"contactHandle"`
+	PaymentReference    string   `json:"paymentReference"`
+	TransferAmountCents *int64   `json:"transferAmountCents"`
+	ProofURLs           []string `json:"proofUrls"`
+	CustomerNote        string   `json:"customerNote"`
 }
 
 func NewBillingHandler(app *appstate.App) *BillingHandler {
@@ -49,6 +60,13 @@ func packageSupportsChannel(pkgChannels []string, channel string) bool {
 		}
 	}
 	return false
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 func buildRechargeBlueprint(channel string, orderNo string, pkgID string, amountCents int64) (string, *string, []byte, []byte, *time.Time, string) {
@@ -82,7 +100,7 @@ func buildRechargeBlueprint(channel string, orderNo string, pkgID string, amount
 		paymentPayload = customerServicePayload
 	case "alipay":
 		status = "pending_payment"
-		transactionKind = "page_pay"
+		transactionKind = "precreate"
 		expires := now.Add(30 * time.Minute)
 		expiresAt = &expires
 		value := "sdk_pending"
@@ -90,8 +108,8 @@ func buildRechargeBlueprint(channel string, orderNo string, pkgID string, amount
 		paymentPayload, _ = json.Marshal(map[string]any{
 			"provider":               "alipay",
 			"orderNo":                orderNo,
-			"recommendedApi":         "alipay.trade.page.pay",
-			"alternativeApi":         "alipay.trade.precreate",
+			"recommendedApi":         "alipay.trade.precreate",
+			"alternativeApi":         "alipay.trade.page.pay",
 			"sdkModule":              "github.com/go-pay/gopay",
 			"sdkNamespace":           "alipay/v3",
 			"sdkStatus":              "gopay_ready",
@@ -120,6 +138,28 @@ func buildRechargeBlueprint(channel string, orderNo string, pkgID string, amount
 	}
 
 	return status, providerStatus, paymentPayload, customerServicePayload, expiresAt, transactionKind
+}
+
+func buildManualSupportPayload(cfg config.Config, orderNo string, pkgID string, amountCents int64) []byte {
+	payload, _ := json.Marshal(map[string]any{
+		"provider":    "manual_cs",
+		"nextAction":  "contact_support",
+		"orderNo":     orderNo,
+		"packageId":   pkgID,
+		"amountCents": amountCents,
+		"support": map[string]any{
+			"name":      cfg.BillingManualSupportName,
+			"contact":   cfg.BillingManualSupportContact,
+			"qrCodeUrl": cfg.BillingManualSupportQRCodeURL,
+			"note":      cfg.BillingManualSupportNote,
+		},
+		"submission": map[string]any{
+			"status":      "pending",
+			"proofUrls":   []string{},
+			"submittedAt": nil,
+		},
+	})
+	return payload
 }
 
 func (h *BillingHandler) Summary(w http.ResponseWriter, r *http.Request) {
@@ -177,6 +217,42 @@ func (h *BillingHandler) ListOrders(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, items)
 }
 
+func (h *BillingHandler) DetailOrder(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	orderID := strings.TrimSpace(chi.URLParam(r, "orderId"))
+	if orderID == "" {
+		render.Error(w, http.StatusBadRequest, "orderId is required")
+		return
+	}
+
+	order, err := h.app.Store.GetRechargeOrderByID(r.Context(), user.ID, orderID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load recharge order")
+		return
+	}
+	if order == nil {
+		render.Error(w, http.StatusNotFound, "Recharge order not found")
+		return
+	}
+	render.JSON(w, http.StatusOK, order)
+}
+
+func (h *BillingHandler) ListOrderEvents(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	orderID := strings.TrimSpace(chi.URLParam(r, "orderId"))
+	if orderID == "" {
+		render.Error(w, http.StatusBadRequest, "orderId is required")
+		return
+	}
+
+	items, err := h.app.Store.ListRechargeOrderEvents(r.Context(), user.ID, orderID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load recharge order events")
+		return
+	}
+	render.JSON(w, http.StatusOK, items)
+}
+
 func (h *BillingHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 
@@ -214,6 +290,10 @@ func (h *BillingHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		pkg.ID,
 		pkg.PriceCents,
 	)
+	if channel == "manual_cs" {
+		customerServicePayload = buildManualSupportPayload(h.app.Config, orderNo, pkg.ID, pkg.PriceCents)
+		paymentPayload = customerServicePayload
+	}
 
 	subject := strings.TrimSpace(payload.Subject)
 	if subject == "" {
@@ -264,4 +344,101 @@ func (h *BillingHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	render.JSON(w, http.StatusCreated, order)
+}
+
+func (h *BillingHandler) SubmitManualRecharge(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	orderID := strings.TrimSpace(chi.URLParam(r, "orderId"))
+	if orderID == "" {
+		render.Error(w, http.StatusBadRequest, "orderId is required")
+		return
+	}
+
+	var payload submitManualRechargeRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	order, err := h.app.Store.GetRechargeOrderByID(r.Context(), user.ID, orderID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load recharge order")
+		return
+	}
+	if order == nil {
+		render.Error(w, http.StatusNotFound, "Recharge order not found")
+		return
+	}
+	if order.Channel != "manual_cs" {
+		render.Error(w, http.StatusConflict, "Recharge order is not a manual customer-service order")
+		return
+	}
+	if order.PaidAt != nil || order.Status == "credited" || order.Status == "paid" || order.Status == "completed" || order.Status == "success" {
+		render.Error(w, http.StatusConflict, "Recharge order has already been credited")
+		return
+	}
+
+	servicePayload := map[string]any{}
+	if len(order.CustomerServicePayload) > 0 {
+		_ = json.Unmarshal(order.CustomerServicePayload, &servicePayload)
+	}
+	if _, ok := servicePayload["support"]; !ok {
+		_ = json.Unmarshal(buildManualSupportPayload(h.app.Config, order.OrderNo, valueOrEmpty(order.PackageID), order.AmountCents), &servicePayload)
+	}
+
+	proofURLs := payload.ProofURLs
+	if proofURLs == nil {
+		proofURLs = []string{}
+	}
+	submittedAt := time.Now().UTC().Format(time.RFC3339)
+	servicePayload["submission"] = map[string]any{
+		"status":              "submitted",
+		"contactChannel":      strings.TrimSpace(payload.ContactChannel),
+		"contactHandle":       strings.TrimSpace(payload.ContactHandle),
+		"paymentReference":    strings.TrimSpace(payload.PaymentReference),
+		"transferAmountCents": payload.TransferAmountCents,
+		"proofUrls":           proofURLs,
+		"customerNote":        strings.TrimSpace(payload.CustomerNote),
+		"submittedAt":         submittedAt,
+	}
+	servicePayload["nextAction"] = "waiting_manual_confirmation"
+
+	servicePayloadBytes, err := json.Marshal(servicePayload)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to encode manual recharge payload")
+		return
+	}
+
+	eventPayload, _ := json.Marshal(map[string]any{
+		"contactChannel":      strings.TrimSpace(payload.ContactChannel),
+		"contactHandle":       strings.TrimSpace(payload.ContactHandle),
+		"paymentReference":    strings.TrimSpace(payload.PaymentReference),
+		"transferAmountCents": payload.TransferAmountCents,
+		"proofUrls":           proofURLs,
+		"customerNote":        strings.TrimSpace(payload.CustomerNote),
+		"submittedAt":         submittedAt,
+	})
+
+	providerStatus := "manual_submitted"
+	var providerTransactionID *string
+	if paymentReference := strings.TrimSpace(payload.PaymentReference); paymentReference != "" {
+		providerTransactionID = &paymentReference
+	}
+	message := "客服充值资料已提交，等待人工确认入账"
+	updatedOrder, err := h.app.Store.SubmitManualRecharge(r.Context(), user.ID, orderID, store.SubmitManualRechargeInput{
+		Status:                 "processing",
+		ProviderTransactionID:  providerTransactionID,
+		ProviderStatus:         &providerStatus,
+		CustomerServicePayload: servicePayloadBytes,
+		EventID:                uuid.NewString(),
+		EventType:              "manual_submission",
+		EventStatus:            "processing",
+		EventMessage:           &message,
+		EventPayload:           eventPayload,
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to submit manual recharge information")
+		return
+	}
+	render.JSON(w, http.StatusOK, updatedOrder)
 }

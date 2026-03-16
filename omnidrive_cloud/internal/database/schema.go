@@ -481,6 +481,17 @@ CREATE TABLE IF NOT EXISTS payment_transactions (
 ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS recharge_order_id TEXT REFERENCES recharge_orders(id) ON DELETE SET NULL;
 ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS payment_transaction_id TEXT REFERENCES payment_transactions(id) ON DELETE SET NULL;
 
+CREATE TABLE IF NOT EXISTS recharge_order_events (
+    id TEXT PRIMARY KEY,
+    recharge_order_id TEXT NOT NULL REFERENCES recharge_orders(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    message TEXT,
+    payload JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS billing_quota_accounts (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -583,6 +594,7 @@ CREATE INDEX IF NOT EXISTS idx_recharge_orders_user_id ON recharge_orders(user_i
 CREATE INDEX IF NOT EXISTS idx_recharge_orders_status ON recharge_orders(status);
 CREATE INDEX IF NOT EXISTS idx_payment_transactions_recharge_order_id ON payment_transactions(recharge_order_id);
 CREATE INDEX IF NOT EXISTS idx_payment_transactions_user_id ON payment_transactions(user_id);
+CREATE INDEX IF NOT EXISTS idx_recharge_order_events_order_id ON recharge_order_events(recharge_order_id);
 CREATE INDEX IF NOT EXISTS idx_billing_quota_accounts_user_id ON billing_quota_accounts(user_id);
 CREATE INDEX IF NOT EXISTS idx_billing_quota_accounts_meter_code ON billing_quota_accounts(meter_code);
 CREATE INDEX IF NOT EXISTS idx_billing_quota_ledgers_user_id ON billing_quota_ledgers(user_id);

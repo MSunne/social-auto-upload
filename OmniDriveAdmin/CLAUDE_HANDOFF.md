@@ -22,6 +22,10 @@ The backend implementation plan lives here:
 
 - `/Volumes/mud/project/github/social-auto-upload/docs/omnidrive_admin_implementation_plan.md`
 
+The current callable admin API contract lives here:
+
+- `/Volumes/mud/project/github/social-auto-upload/docs/omnidrive_admin_api_contract.md`
+
 The admin backend should be served from the existing Go service under:
 
 - `/api/admin/v1/*`
@@ -119,3 +123,9 @@ Then continue with:
 - Keep components reusable across tables, filters, drawers, and approval panels.
 - Admin UIs should optimize for dense information and trust, not marketing polish.
 - If you need API mocks first, mirror the route names above so backend integration stays straightforward.
+- Support recharge status set is now `awaiting_submission | pending_review | rejected | credited`.
+- Support recharge detail/review routes are available under:
+  - `GET /api/admin/v1/support-recharges/:orderId`
+  - `GET /api/admin/v1/support-recharges/:orderId/events`
+  - `POST /api/admin/v1/support-recharges/:orderId/credit`
+  - `POST /api/admin/v1/support-recharges/:orderId/reject`

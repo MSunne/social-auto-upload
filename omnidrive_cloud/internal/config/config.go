@@ -9,58 +9,84 @@ import (
 )
 
 type Config struct {
-	Environment              string
-	BindAddr                 string
-	DatabaseDSN              string
-	RedisAddr                string
-	PublicBaseURL            string
-	LocalStorageDir          string
-	S3Endpoint               string
-	S3Bucket                 string
-	S3AccessKey              string
-	S3SecretKey              string
-	S3PublicBaseURL          string
-	S3ImageStorePath         string
-	S3VideoStorePath         string
-	APIYIBaseURL             string
-	APIYIApiKey              string
-	AIWorkerEnabled          bool
-	AIWorkerPollSeconds      int
-	AIWorkerConcurrency      int
-	AIVideoPollSeconds       int
-	AIVideoTimeoutSeconds    int
-	JWTSecret                string
-	AccessTokenExpireMinutes int
-	AutoCreateSchema         bool
+	Environment                   string
+	BindAddr                      string
+	DatabaseDSN                   string
+	RedisAddr                     string
+	PublicBaseURL                 string
+	LocalStorageDir               string
+	S3Endpoint                    string
+	S3Bucket                      string
+	S3AccessKey                   string
+	S3SecretKey                   string
+	S3PublicBaseURL               string
+	S3ImageStorePath              string
+	S3VideoStorePath              string
+	APIYIBaseURL                  string
+	APIYIApiKey                   string
+	AIWorkerEnabled               bool
+	AIWorkerPollSeconds           int
+	AIWorkerConcurrency           int
+	AIVideoPollSeconds            int
+	AIVideoTimeoutSeconds         int
+	JWTSecret                     string
+	AccessTokenExpireMinutes      int
+	AdminJWTSecret                string
+	AdminEmail                    string
+	AdminName                     string
+	AdminPassword                 string
+	AdminAccessTokenExpireMinutes int
+	AutoCreateSchema              bool
+	BillingManualSupportName      string
+	BillingManualSupportContact   string
+	BillingManualSupportQRCodeURL string
+	BillingManualSupportNote      string
 }
 
 func Load() Config {
 	_ = godotenv.Load()
 
+	jwtSecret := envOrDefault("OMNIDRIVE_JWT_SECRET", "change-me")
+	accessTokenExpireMinutes := envAsInt("OMNIDRIVE_ACCESS_TOKEN_EXPIRE_MINUTES", 720)
+	adminJWTSecret := envFirst("", "OMNIDRIVE_ADMIN_JWT_SECRET")
+	if adminJWTSecret == "" {
+		adminJWTSecret = jwtSecret
+	}
+	adminAccessTokenExpireMinutes := envAsInt("OMNIDRIVE_ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES", accessTokenExpireMinutes)
+
 	return Config{
-		Environment:              envOrDefault("OMNIDRIVE_ENV", "development"),
-		BindAddr:                 envOrDefault("OMNIDRIVE_BIND_ADDR", ":8410"),
-		DatabaseDSN:              envOrDefault("OMNIDRIVE_DATABASE_DSN", ""),
-		RedisAddr:                envOrDefault("OMNIDRIVE_REDIS_ADDR", ""),
-		PublicBaseURL:            envOrDefault("OMNIDRIVE_PUBLIC_BASE_URL", ""),
-		LocalStorageDir:          envOrDefault("OMNIDRIVE_LOCAL_STORAGE_DIR", "./data"),
-		S3Endpoint:               envFirst("", "OMNIDRIVE_S3_ENDPOINT", "S3_ENDPOINT_URL"),
-		S3Bucket:                 envFirst("", "OMNIDRIVE_S3_BUCKET", "S3_BUCKET_NAME"),
-		S3AccessKey:              envFirst("", "OMNIDRIVE_S3_ACCESS_KEY", "S3_ACCESS_KEY_ID"),
-		S3SecretKey:              envFirst("", "OMNIDRIVE_S3_SECRET_KEY", "S3_SECRET_ACCESS_KEY"),
-		S3PublicBaseURL:          envFirst("", "OMNIDRIVE_S3_PUBLIC_BASE_URL", "S3_PRIVATE_URL"),
-		S3ImageStorePath:         envFirst("", "OMNIDRIVE_S3_IMAGE_STORE_PATH", "IMAGE_STORE_PATH"),
-		S3VideoStorePath:         envFirst("", "OMNIDRIVE_S3_VIDEO_STORE_PATH", "VIDEO_STORE_PATH"),
-		APIYIBaseURL:             envOrDefault("OMNIDRIVE_APIYI_BASE_URL", "https://api.apiyi.com"),
-		APIYIApiKey:              envFirst("", "OMNIDRIVE_APIYI_API_KEY", "APIYI_API_KEY"),
-		AIWorkerEnabled:          envAsBool("OMNIDRIVE_AI_WORKER_ENABLED", true),
-		AIWorkerPollSeconds:      envAsInt("OMNIDRIVE_AI_WORKER_POLL_SECONDS", 5),
-		AIWorkerConcurrency:      envAsInt("OMNIDRIVE_AI_WORKER_CONCURRENCY", 2),
-		AIVideoPollSeconds:       envAsInt("OMNIDRIVE_AI_VIDEO_POLL_SECONDS", 6),
-		AIVideoTimeoutSeconds:    envAsInt("OMNIDRIVE_AI_VIDEO_TIMEOUT_SECONDS", 600),
-		JWTSecret:                envOrDefault("OMNIDRIVE_JWT_SECRET", "change-me"),
-		AccessTokenExpireMinutes: envAsInt("OMNIDRIVE_ACCESS_TOKEN_EXPIRE_MINUTES", 720),
-		AutoCreateSchema:         envAsBool("OMNIDRIVE_AUTO_CREATE_SCHEMA", true),
+		Environment:                   envOrDefault("OMNIDRIVE_ENV", "development"),
+		BindAddr:                      envOrDefault("OMNIDRIVE_BIND_ADDR", ":8410"),
+		DatabaseDSN:                   envOrDefault("OMNIDRIVE_DATABASE_DSN", ""),
+		RedisAddr:                     envOrDefault("OMNIDRIVE_REDIS_ADDR", ""),
+		PublicBaseURL:                 envOrDefault("OMNIDRIVE_PUBLIC_BASE_URL", ""),
+		LocalStorageDir:               envOrDefault("OMNIDRIVE_LOCAL_STORAGE_DIR", "./data"),
+		S3Endpoint:                    envFirst("", "OMNIDRIVE_S3_ENDPOINT", "S3_ENDPOINT_URL"),
+		S3Bucket:                      envFirst("", "OMNIDRIVE_S3_BUCKET", "S3_BUCKET_NAME"),
+		S3AccessKey:                   envFirst("", "OMNIDRIVE_S3_ACCESS_KEY", "S3_ACCESS_KEY_ID"),
+		S3SecretKey:                   envFirst("", "OMNIDRIVE_S3_SECRET_KEY", "S3_SECRET_ACCESS_KEY"),
+		S3PublicBaseURL:               envFirst("", "OMNIDRIVE_S3_PUBLIC_BASE_URL", "S3_PRIVATE_URL"),
+		S3ImageStorePath:              envFirst("", "OMNIDRIVE_S3_IMAGE_STORE_PATH", "IMAGE_STORE_PATH"),
+		S3VideoStorePath:              envFirst("", "OMNIDRIVE_S3_VIDEO_STORE_PATH", "VIDEO_STORE_PATH"),
+		APIYIBaseURL:                  envOrDefault("OMNIDRIVE_APIYI_BASE_URL", "https://api.apiyi.com"),
+		APIYIApiKey:                   envFirst("", "OMNIDRIVE_APIYI_API_KEY", "APIYI_API_KEY"),
+		AIWorkerEnabled:               envAsBool("OMNIDRIVE_AI_WORKER_ENABLED", true),
+		AIWorkerPollSeconds:           envAsInt("OMNIDRIVE_AI_WORKER_POLL_SECONDS", 5),
+		AIWorkerConcurrency:           envAsInt("OMNIDRIVE_AI_WORKER_CONCURRENCY", 2),
+		AIVideoPollSeconds:            envAsInt("OMNIDRIVE_AI_VIDEO_POLL_SECONDS", 6),
+		AIVideoTimeoutSeconds:         envAsInt("OMNIDRIVE_AI_VIDEO_TIMEOUT_SECONDS", 600),
+		JWTSecret:                     jwtSecret,
+		AccessTokenExpireMinutes:      accessTokenExpireMinutes,
+		AdminJWTSecret:                adminJWTSecret,
+		AdminEmail:                    envOrDefault("OMNIDRIVE_ADMIN_EMAIL", "admin@omnidrive.local"),
+		AdminName:                     envOrDefault("OMNIDRIVE_ADMIN_NAME", "OmniDriveAdmin"),
+		AdminPassword:                 envOrDefault("OMNIDRIVE_ADMIN_PASSWORD", "change-me-admin"),
+		AdminAccessTokenExpireMinutes: adminAccessTokenExpireMinutes,
+		AutoCreateSchema:              envAsBool("OMNIDRIVE_AUTO_CREATE_SCHEMA", true),
+		BillingManualSupportName:      envOrDefault("OMNIDRIVE_BILLING_MANUAL_SUPPORT_NAME", "客服充值"),
+		BillingManualSupportContact:   envOrDefault("OMNIDRIVE_BILLING_MANUAL_SUPPORT_CONTACT", ""),
+		BillingManualSupportQRCodeURL: envOrDefault("OMNIDRIVE_BILLING_MANUAL_SUPPORT_QRCODE_URL", ""),
+		BillingManualSupportNote:      envOrDefault("OMNIDRIVE_BILLING_MANUAL_SUPPORT_NOTE", "请联系客服完成转账，并在订单内补充转账说明或凭证。"),
 	}
 }
 

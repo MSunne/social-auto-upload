@@ -746,6 +746,17 @@ type RechargeOrder struct {
 	UpdatedAt              time.Time       `json:"updatedAt"`
 }
 
+type RechargeOrderEvent struct {
+	ID              string          `json:"id"`
+	RechargeOrderID string          `json:"rechargeOrderId"`
+	UserID          string          `json:"userId"`
+	EventType       string          `json:"eventType"`
+	Status          string          `json:"status"`
+	Message         *string         `json:"message,omitempty"`
+	Payload         json.RawMessage `json:"payload,omitempty"`
+	CreatedAt       time.Time       `json:"createdAt"`
+}
+
 type HistoryItem struct {
 	ID         string     `json:"id"`
 	Kind       string     `json:"kind"`

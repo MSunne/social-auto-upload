@@ -187,4 +187,5 @@ db/database.db
 cookiesFile
 uploadFile
 videoFile
+.codex_tmp
 

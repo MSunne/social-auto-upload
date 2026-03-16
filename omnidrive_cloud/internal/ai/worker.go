@@ -227,6 +227,7 @@ func (w *Worker) executeChat(ctx context.Context, job *domain.AIJob, leaseToken 
 	if err != nil {
 		return err
 	}
+	billing := w.applyUsageBilling(ctx, job, buildChatBillingInput(job, result))
 
 	outputPayload := mustJSON(map[string]any{
 		"provider":     "apiyi",
@@ -236,11 +237,12 @@ func (w *Worker) executeChat(ctx context.Context, job *domain.AIJob, leaseToken 
 		"role":         result.Role,
 		"finishReason": result.FinishReason,
 		"usage":        result.Usage,
+		"billing":      billingToPayload(billing),
 		"artifacts":    summarizeArtifacts(artifacts),
 		"completedAt":  time.Now().UTC().Format(time.RFC3339),
 	})
-	message := "AI 聊天已完成"
-	if _, err := w.completeJob(ctx, job, leaseToken, message, outputPayload); err != nil {
+	message := buildCompletionMessage("AI 聊天已完成", billing)
+	if _, err := w.completeJob(ctx, job, leaseToken, message, outputPayload, billingCreditsPtr(billing)); err != nil {
 		return err
 	}
 	w.recordAuditEvent(ctx, job, "cloud_generate_success", "AI 云端生成完成", "success", stringPtr(message), map[string]any{
@@ -298,16 +300,18 @@ func (w *Worker) executeImage(ctx context.Context, job *domain.AIJob, leaseToken
 	if err != nil {
 		return err
 	}
+	billing := w.applyUsageBilling(ctx, job, buildImageBillingInput(job, len(result.Images)))
 	outputPayload := mustJSON(map[string]any{
 		"provider":    "apiyi",
 		"kind":        "image",
 		"model":       job.ModelName,
 		"text":        result.Text,
+		"billing":     billingToPayload(billing),
 		"artifacts":   summarizeArtifacts(artifacts),
 		"completedAt": time.Now().UTC().Format(time.RFC3339),
 	})
-	message := fmt.Sprintf("AI 图片生成完成，共生成 %d 个结果", len(result.Images))
-	if _, err := w.completeJob(ctx, job, leaseToken, message, outputPayload); err != nil {
+	message := buildCompletionMessage(fmt.Sprintf("AI 图片生成完成，共生成 %d 个结果", len(result.Images)), billing)
+	if _, err := w.completeJob(ctx, job, leaseToken, message, outputPayload, billingCreditsPtr(billing)); err != nil {
 		return err
 	}
 	w.recordAuditEvent(ctx, job, "cloud_generate_success", "AI 云端生成完成", "success", stringPtr(message), map[string]any{
@@ -398,9 +402,11 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 			if err != nil {
 				return err
 			}
+			billing := w.applyUsageBilling(ctx, job, buildVideoBillingInput(job))
 			outputPayload := buildVideoOutputPayload(job, state, artifacts)
-			message := "AI 视频生成完成"
-			if _, err := w.completeJob(ctx, job, leaseToken, message, outputPayload); err != nil {
+			outputPayload = mergeBillingIntoPayload(outputPayload, billing)
+			message := buildCompletionMessage("AI 视频生成完成", billing)
+			if _, err := w.completeJob(ctx, job, leaseToken, message, outputPayload, billingCreditsPtr(billing)); err != nil {
 				return err
 			}
 			w.recordAuditEvent(ctx, job, "cloud_generate_success", "AI 云端生成完成", "success", stringPtr(message), map[string]any{
@@ -465,13 +471,14 @@ func (w *Worker) syncRunningState(ctx context.Context, job *domain.AIJob, leaseT
 	})
 }
 
-func (w *Worker) completeJob(ctx context.Context, job *domain.AIJob, leaseToken string, message string, outputPayload []byte) (*domain.AIJob, error) {
+func (w *Worker) completeJob(ctx context.Context, job *domain.AIJob, leaseToken string, message string, outputPayload []byte, costCredits *int64) (*domain.AIJob, error) {
 	status := "success"
 	return w.app.Store.SyncCloudAIJobExecution(ctx, job.ID, leaseToken, store.UpdateAIJobInput{
 		Status:        &status,
 		Message:       stringPtr(message),
 		OutputPayload: outputPayload,
 		OutputTouched: len(outputPayload) > 0,
+		CostCredits:   costCredits,
 	})
 }
 
@@ -537,6 +544,56 @@ func (w *Worker) recordAuditEvent(ctx context.Context, job *domain.AIJob, action
 	_ = w.app.Store.CreateAuditEvent(ctx, input)
 }
 
+func (w *Worker) applyUsageBilling(ctx context.Context, job *domain.AIJob, input store.ApplyUsageBillingInput) *store.ApplyUsageBillingResult {
+	if strings.TrimSpace(input.UserID) == "" || strings.TrimSpace(input.SourceID) == "" {
+		return &store.ApplyUsageBillingResult{
+			BillStatus:  "skipped",
+			BillMessage: "billing input incomplete",
+			Details:     []store.UsageBillingDetail{},
+		}
+	}
+
+	result, err := w.app.Store.ApplyUsageBilling(ctx, input)
+	if err != nil {
+		message := fmt.Sprintf("AI 计费失败: %v", err)
+		w.recordAuditEvent(ctx, job, "ai_billing_failed", "AI 计费失败", "failed", stringPtr(message), map[string]any{
+			"jobType":   job.JobType,
+			"modelName": job.ModelName,
+			"source":    job.Source,
+		})
+		return &store.ApplyUsageBillingResult{
+			BillStatus:  "failed",
+			BillMessage: message,
+			Details:     []store.UsageBillingDetail{},
+		}
+	}
+
+	switch result.BillStatus {
+	case "billed":
+		message := fmt.Sprintf("AI 计费完成，扣减 %d 积分", result.TotalCredits)
+		w.recordAuditEvent(ctx, job, "ai_billing_billed", "AI 计费完成", "success", stringPtr(message), map[string]any{
+			"jobType":      job.JobType,
+			"modelName":    job.ModelName,
+			"source":       job.Source,
+			"totalCredits": result.TotalCredits,
+			"details":      result.Details,
+		})
+	case "failed":
+		message := result.BillMessage
+		if strings.TrimSpace(message) == "" {
+			message = "AI 计费失败"
+		}
+		w.recordAuditEvent(ctx, job, "ai_billing_failed", "AI 计费失败", "failed", stringPtr(message), map[string]any{
+			"jobType":   job.JobType,
+			"modelName": job.ModelName,
+			"source":    job.Source,
+			"details":   result.Details,
+		})
+	}
+
+	return result
+}
+
 type videoExecutionState struct {
 	RemoteVideoID string
 	RemoteStatus  string
@@ -563,6 +620,15 @@ func buildVideoOutputPayload(job *domain.AIJob, state videoExecutionState, artif
 		},
 		"artifacts": summarizeArtifacts(artifacts),
 	})
+}
+
+func mergeBillingIntoPayload(raw []byte, billing *store.ApplyUsageBillingResult) []byte {
+	payload := map[string]any{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &payload)
+	}
+	payload["billing"] = billingToPayload(billing)
+	return mustJSON(payload)
 }
 
 func parseVideoExecutionState(raw []byte) videoExecutionState {
@@ -623,6 +689,52 @@ func summarizeArtifacts(items []domain.AIJobArtifact) []map[string]any {
 		})
 	}
 	return result
+}
+
+func billingToPayload(result *store.ApplyUsageBillingResult) map[string]any {
+	if result == nil {
+		return map[string]any{
+			"billStatus": "skipped",
+		}
+	}
+	return map[string]any{
+		"billStatus":    result.BillStatus,
+		"billMessage":   result.BillMessage,
+		"totalCredits":  result.TotalCredits,
+		"alreadyBilled": result.AlreadyBilled,
+		"details":       result.Details,
+	}
+}
+
+func buildCompletionMessage(base string, billing *store.ApplyUsageBillingResult) string {
+	if billing == nil {
+		return base
+	}
+	switch billing.BillStatus {
+	case "billed":
+		if billing.TotalCredits > 0 {
+			return fmt.Sprintf("%s，已扣减 %d 积分", base, billing.TotalCredits)
+		}
+		return base
+	case "failed":
+		if strings.TrimSpace(billing.BillMessage) != "" {
+			return fmt.Sprintf("%s，计费待处理: %s", base, strings.TrimSpace(billing.BillMessage))
+		}
+		return base + "，计费待处理"
+	default:
+		return base
+	}
+}
+
+func billingCreditsPtr(result *store.ApplyUsageBillingResult) *int64 {
+	if result == nil {
+		return nil
+	}
+	if result.BillStatus != "billed" {
+		return nil
+	}
+	credits := result.TotalCredits
+	return &credits
 }
 
 func mustJSON(payload any) []byte {

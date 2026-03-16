@@ -38,6 +38,13 @@ func stringPtr(value string) *string {
 	return &value
 }
 
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
 func timePtr(value time.Time) *time.Time {
 	if value.IsZero() {
 		return nil
@@ -94,6 +101,43 @@ type CreateRechargeOrderInput struct {
 	TransactionOutTradeNo  string
 	TransactionRequest     []byte
 	TransactionResponse    []byte
+}
+
+type GrantWalletCreditsInput struct {
+	UserID               string
+	Amount               int64
+	EntryType            *string
+	Description          *string
+	ReferenceType        *string
+	ReferenceID          *string
+	RechargeOrderID      *string
+	PaymentTransactionID *string
+	Metadata             []byte
+}
+
+type GrantQuotaInput struct {
+	UserID        string
+	MeterCode     string
+	Amount        int64
+	ExpiresAt     *time.Time
+	SourceType    *string
+	SourceID      *string
+	Description   *string
+	ReferenceType *string
+	ReferenceID   *string
+	Payload       []byte
+}
+
+type SubmitManualRechargeInput struct {
+	Status                 string
+	ProviderTransactionID  *string
+	ProviderStatus         *string
+	CustomerServicePayload []byte
+	EventID                string
+	EventType              string
+	EventStatus            string
+	EventMessage           *string
+	EventPayload           []byte
 }
 
 type HeartbeatInput struct {
