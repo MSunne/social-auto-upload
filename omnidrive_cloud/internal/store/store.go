@@ -11,6 +11,7 @@ import (
 
 const onlineWindow = 45 * time.Second
 const publishTaskLeaseWindow = 90 * time.Second
+const aiJobLeaseWindow = 90 * time.Second
 
 type Store struct {
 	pool *pgxpool.Pool
@@ -287,7 +288,10 @@ type UpsertPublishTaskArtifactInput struct {
 type CreateAIJobInput struct {
 	ID           string
 	OwnerUserID  string
+	DeviceID     *string
 	SkillID      *string
+	Source       string
+	LocalTaskID  *string
 	JobType      string
 	ModelName    string
 	Prompt       *string
@@ -297,25 +301,62 @@ type CreateAIJobInput struct {
 }
 
 type UpdateAIJobInput struct {
-	SkillID         *string
-	SkillTouched    bool
-	Prompt          *string
-	Status          *string
-	InputPayload    []byte
-	InputTouched    bool
-	OutputPayload   []byte
-	OutputTouched   bool
-	Message         *string
-	CostCredits     *int64
-	FinishedAt      *time.Time
-	FinishedTouched bool
+	DeviceID                *string
+	DeviceTouched           bool
+	SkillID                 *string
+	SkillTouched            bool
+	LocalTaskID             *string
+	LocalTaskTouched        bool
+	Prompt                  *string
+	Status                  *string
+	InputPayload            []byte
+	InputTouched            bool
+	OutputPayload           []byte
+	OutputTouched           bool
+	Message                 *string
+	CostCredits             *int64
+	DeliveryStatus          *string
+	DeliveryMessage         *string
+	LocalPublishTaskID      *string
+	LocalPublishTaskTouched bool
+	FinishedAt              *time.Time
+	FinishedTouched         bool
+	DeliveredAt             *time.Time
+	DeliveredTouched        bool
 }
 
 type ListAIJobsFilter struct {
-	JobType string
-	Status  string
-	SkillID string
-	Limit   int
+	JobType  string
+	Status   string
+	SkillID  string
+	DeviceID string
+	Source   string
+	Limit    int
+}
+
+type UpsertAIJobArtifactInput struct {
+	JobID        string
+	ArtifactKey  string
+	ArtifactType string
+	Source       string
+	Title        *string
+	FileName     *string
+	MimeType     *string
+	StorageKey   *string
+	PublicURL    *string
+	SizeBytes    *int64
+	TextContent  *string
+	DeviceID     *string
+	RootName     *string
+	RelativePath *string
+	AbsolutePath *string
+	Payload      []byte
+}
+
+type LinkAIJobPublishTaskInput struct {
+	JobID       string
+	TaskID      string
+	OwnerUserID string
 }
 
 type CreateAuditEventInput struct {
@@ -365,4 +406,8 @@ func (s *Store) Ping(ctx context.Context) error {
 
 func PublishTaskLeaseTTL() time.Duration {
 	return publishTaskLeaseWindow
+}
+
+func AIJobLeaseTTL() time.Duration {
+	return aiJobLeaseWindow
 }

@@ -1,69 +1,69 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
+
+// ═══════════════════════════════════════
+// App Store — global state
+// ═══════════════════════════════════════
+
+const VIDEO_EXTS = ['.mp4', '.avi', '.mov', '.wmv', '.flv', '.mkv', '.webm']
+const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
+
+function classifyFile(filename) {
+  const lower = filename.toLowerCase()
+  if (VIDEO_EXTS.some((ext) => lower.endsWith(ext))) return 'video'
+  if (IMAGE_EXTS.some((ext) => lower.endsWith(ext))) return 'image'
+  return 'other'
+}
 
 export const useAppStore = defineStore('app', () => {
-  // 是否是第一次进入账号管理页面
-  const isFirstTimeAccountManagement = ref(true)
-  
-  // 是否是第一次进入素材管理页面
-  const isFirstTimeMaterialManagement = ref(true)
-
-  // 账号管理页面刷新状态
-  const isAccountRefreshing = ref(false)
-
-  // 素材列表数据
   const materials = ref([])
-  
-  // 设置账号管理页面已访问
-  const setAccountManagementVisited = () => {
-    isFirstTimeAccountManagement.value = false
-  }
-  
-  // 设置素材管理页面已访问
-  const setMaterialManagementVisited = () => {
-    isFirstTimeMaterialManagement.value = false
-  }
-  
-  // 重置所有访问状态（用于重新登录或刷新应用时）
-  const resetVisitStatus = () => {
-    isFirstTimeAccountManagement.value = true
-    isFirstTimeMaterialManagement.value = true
+  const sidebarCollapsed = ref(false)
+
+  const setMaterials = (list) => {
+    materials.value = list
   }
 
-  // 更新素材列表
-  const setMaterials = (materialList) => {
-    materials.value = materialList
+  const addMaterial = (m) => {
+    materials.value.push(m)
   }
 
-  // 添加新素材
-  const addMaterial = (material) => {
-    materials.value.push(material)
+  const removeMaterial = (id) => {
+    const idx = materials.value.findIndex((m) => m.id === id)
+    if (idx > -1) materials.value.splice(idx, 1)
   }
 
-  // 删除素材
-  const removeMaterial = (materialId) => {
-    const index = materials.value.findIndex(m => m.id === materialId)
-    if (index > -1) {
-      materials.value.splice(index, 1)
+  const toggleSidebar = () => {
+    sidebarCollapsed.value = !sidebarCollapsed.value
+  }
+
+  // ── Computed material stats ──
+  const materialStats = computed(() => {
+    const all = materials.value
+    const videos = all.filter((m) => classifyFile(m.filename) === 'video').length
+    const images = all.filter((m) => classifyFile(m.filename) === 'image').length
+    return {
+      total: all.length,
+      videos,
+      images,
+      others: all.length - videos - images,
     }
-  }
-  
-  // 设置账号管理页面刷新状态
-  const setAccountRefreshing = (status) => {
-    isAccountRefreshing.value = status
-  }
+  })
+
+  const recentMaterials = computed(() => {
+    return [...materials.value]
+      .sort((a, b) => new Date(b.upload_time) - new Date(a.upload_time))
+      .slice(0, 5)
+  })
 
   return {
-    isFirstTimeAccountManagement,
-    isFirstTimeMaterialManagement,
-    isAccountRefreshing,
     materials,
-    setAccountManagementVisited,
-    setMaterialManagementVisited,
-    resetVisitStatus,
+    sidebarCollapsed,
+    materialStats,
+    recentMaterials,
     setMaterials,
     addMaterial,
     removeMaterial,
-    setAccountRefreshing
+    toggleSidebar,
+    classifyFile,
   }
 })

@@ -268,7 +268,10 @@ CREATE TABLE IF NOT EXISTS ai_models (
 CREATE TABLE IF NOT EXISTS ai_jobs (
     id TEXT PRIMARY KEY,
     owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    device_id TEXT REFERENCES devices(id) ON DELETE CASCADE,
     skill_id TEXT REFERENCES product_skills(id) ON DELETE SET NULL,
+    source TEXT NOT NULL DEFAULT 'omnidrive_cloud',
+    local_task_id TEXT,
     job_type TEXT NOT NULL,
     model_name TEXT NOT NULL,
     prompt TEXT,
@@ -277,12 +280,60 @@ CREATE TABLE IF NOT EXISTS ai_jobs (
     output_payload JSONB,
     message TEXT,
     cost_credits BIGINT NOT NULL DEFAULT 0,
+    lease_owner_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
+    lease_token TEXT,
+    lease_expires_at TIMESTAMPTZ,
+    delivery_status TEXT NOT NULL DEFAULT 'pending',
+    delivery_message TEXT,
+    local_publish_task_id TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    delivered_at TIMESTAMPTZ,
     finished_at TIMESTAMPTZ
 );
 
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS device_id TEXT REFERENCES devices(id) ON DELETE CASCADE;
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS skill_id TEXT REFERENCES product_skills(id) ON DELETE SET NULL;
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'omnidrive_cloud';
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS local_task_id TEXT;
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS lease_owner_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL;
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS lease_token TEXT;
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ;
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS delivery_status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS delivery_message TEXT;
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS local_publish_task_id TEXT;
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS ai_job_artifacts (
+    id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL REFERENCES ai_jobs(id) ON DELETE CASCADE,
+    artifact_key TEXT NOT NULL,
+    artifact_type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    title TEXT,
+    file_name TEXT,
+    mime_type TEXT,
+    storage_key TEXT,
+    public_url TEXT,
+    size_bytes BIGINT,
+    text_content TEXT,
+    device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
+    root_name TEXT,
+    relative_path TEXT,
+    absolute_path TEXT,
+    payload JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (job_id, artifact_key)
+);
+
+CREATE TABLE IF NOT EXISTS ai_job_publish_links (
+    job_id TEXT NOT NULL REFERENCES ai_jobs(id) ON DELETE CASCADE,
+    task_id TEXT NOT NULL REFERENCES publish_tasks(id) ON DELETE CASCADE,
+    owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (job_id, task_id)
+);
 
 CREATE TABLE IF NOT EXISTS billing_packages (
     id TEXT PRIMARY KEY,
@@ -348,6 +399,11 @@ CREATE INDEX IF NOT EXISTS idx_publish_task_material_refs_task_id ON publish_tas
 CREATE INDEX IF NOT EXISTS idx_ai_models_category ON ai_models(category);
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_owner_user_id ON ai_jobs(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_job_type ON ai_jobs(job_type);
+CREATE INDEX IF NOT EXISTS idx_ai_jobs_device_id ON ai_jobs(device_id);
+CREATE INDEX IF NOT EXISTS idx_ai_jobs_source ON ai_jobs(source);
+CREATE INDEX IF NOT EXISTS idx_ai_jobs_lease_expires_at ON ai_jobs(lease_expires_at);
+CREATE INDEX IF NOT EXISTS idx_ai_job_artifacts_job_id ON ai_job_artifacts(job_id);
+CREATE INDEX IF NOT EXISTS idx_ai_job_publish_links_job_id ON ai_job_publish_links(job_id);
 CREATE INDEX IF NOT EXISTS idx_wallet_ledgers_user_id ON wallet_ledgers(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_owner_user_id ON audit_events(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_resource_type ON audit_events(resource_type);

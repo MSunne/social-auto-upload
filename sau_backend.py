@@ -26,6 +26,7 @@ from utils.materials import (
     resolve_material_reference,
 )
 from utils.omnidrive_agent import OmniDriveBridge
+from utils.omnidrive_ai_task_manager import OmniDriveAITaskManager
 from utils.publish_task_manager import PublishTaskManager
 
 active_queues = {}
@@ -71,12 +72,17 @@ OMNIBULL_MATERIAL_ROOTS = build_material_roots(
     BASE_DIR,
     getattr(app_conf, 'OMNIBULL_MATERIAL_ROOTS', None),
 )
+OMNIBULL_GENERATED_ROOT_NAME = str(getattr(app_conf, 'OMNIBULL_GENERATED_ROOT_NAME', 'omnidriveGenerated')).strip() or 'omnidriveGenerated'
+OMNIBULL_GENERATED_ROOT_PATH = Path(BASE_DIR / "omnidriveSync" / "generated").resolve()
+OMNIBULL_GENERATED_ROOT_PATH.mkdir(parents=True, exist_ok=True)
+OMNIBULL_MATERIAL_ROOTS.setdefault(OMNIBULL_GENERATED_ROOT_NAME, OMNIBULL_GENERATED_ROOT_PATH)
 RESOLVED_DEVICE_NAME = CLOUD_DEVICE_NAME or socket.gethostname()
 DEVICE_CODE = str(getattr(app_conf, 'CLOUD_DEVICE_CODE', '')).strip() or get_device_code()
 cloud_agent = None
 cloud_agent_lock = threading.Lock()
 omnidrive_agent = None
 omnidrive_agent_lock = threading.Lock()
+omnidrive_ai_task_manager = OmniDriveAITaskManager(Path(BASE_DIR / "db" / "database.db"))
 publish_task_manager = PublishTaskManager(
     Path(BASE_DIR / "db" / "database.db"),
     worker_count=OMNIBULL_PUBLISH_WORKERS,
@@ -264,6 +270,7 @@ def resolve_skill_file_items(files):
 
 def build_skill_status_payload():
     ensure_publish_task_manager_started()
+    ensure_omnidrive_ai_task_manager_started()
     agent_status = cloud_agent.status() if cloud_agent else None
     omnidrive_agent_status = omnidrive_agent.status() if omnidrive_agent else None
 
@@ -318,6 +325,7 @@ def build_skill_status_payload():
         "publishTasks": {
             "byStatus": publish_task_counts,
         },
+        "aiTasks": omnidrive_ai_task_manager.summary(),
     }
 
 
@@ -423,6 +431,10 @@ def ensure_publish_task_manager_started():
     publish_task_manager.start()
 
 
+def ensure_omnidrive_ai_task_manager_started():
+    omnidrive_ai_task_manager.start()
+
+
 def ensure_cloud_agent_started():
     global cloud_agent
 
@@ -457,9 +469,12 @@ def ensure_omnidrive_agent_started():
                 cloud_base_url=OMNIDRIVE_BASE_URL,
                 agent_key=OMNIDRIVE_AGENT_KEY,
                 publish_task_manager=publish_task_manager,
+                ai_task_manager=omnidrive_ai_task_manager,
                 material_roots=OMNIBULL_MATERIAL_ROOTS,
                 device_name=RESOLVED_DEVICE_NAME,
                 device_code=DEVICE_CODE,
+                generated_root_name=OMNIBULL_GENERATED_ROOT_NAME,
+                generated_root_path=OMNIBULL_GENERATED_ROOT_PATH,
                 poll_interval=OMNIDRIVE_AGENT_POLL_INTERVAL,
                 heartbeat_interval=OMNIDRIVE_AGENT_HEARTBEAT_INTERVAL,
                 account_sync_interval=OMNIDRIVE_ACCOUNT_SYNC_INTERVAL,
@@ -486,6 +501,7 @@ def should_boot_background_services():
 @app.before_request
 def bootstrap_cloud_agent():
     ensure_publish_task_manager_started()
+    ensure_omnidrive_ai_task_manager_started()
     ensure_cloud_agent_started()
     ensure_omnidrive_agent_started()
 
@@ -978,6 +994,7 @@ def cloud_agent_status():
 
 @app.route('/omnidriveAgentStatus', methods=['GET'])
 def omnidrive_agent_status():
+    ensure_omnidrive_ai_task_manager_started()
     ensure_omnidrive_agent_started()
     agent_status = omnidrive_agent.status() if omnidrive_agent else None
     return jsonify({
@@ -988,6 +1005,46 @@ def omnidrive_agent_status():
             "agent": agent_status,
         }
     }), 200
+
+
+def create_local_ai_task(data, source="local_ui"):
+    ensure_omnidrive_ai_task_manager_started()
+    task = omnidrive_ai_task_manager.create_task(data, source=source)
+    return task
+
+
+@app.route('/aiTasks', methods=['GET', 'POST'])
+def local_ai_tasks():
+    if request.method == 'POST':
+        try:
+            task = create_local_ai_task(request.get_json(silent=True) or {}, source="local_ui")
+            return jsonify({"code": 200, "msg": "success", "data": task}), 200
+        except ValueError as exc:
+            return jsonify({"code": 400, "msg": str(exc), "data": None}), 400
+        except Exception as exc:
+            return jsonify({"code": 500, "msg": f"创建 AI 任务失败: {exc}", "data": None}), 500
+
+    ensure_omnidrive_ai_task_manager_started()
+    limit = request.args.get('limit', 100)
+    status = str(request.args.get('status') or '').strip() or None
+    source = str(request.args.get('source') or '').strip() or None
+    try:
+        tasks = omnidrive_ai_task_manager.list_tasks(limit=limit, status=status, source=source)
+        return jsonify({"code": 200, "msg": "success", "data": tasks}), 200
+    except Exception as exc:
+        return jsonify({"code": 500, "msg": f"获取 AI 任务失败: {exc}", "data": None}), 500
+
+
+@app.route('/aiTaskDetail', methods=['GET'])
+def local_ai_task_detail():
+    ensure_omnidrive_ai_task_manager_started()
+    task_uuid = str(request.args.get('taskUuid') or request.args.get('id') or '').strip()
+    if not task_uuid:
+        return jsonify({"code": 400, "msg": "taskUuid 不能为空", "data": None}), 400
+    task = omnidrive_ai_task_manager.get_task(task_uuid)
+    if not task:
+        return jsonify({"code": 404, "msg": "AI 任务不存在", "data": None}), 404
+    return jsonify({"code": 200, "msg": "success", "data": task}), 200
 
 
 @app.route('/api/skill/status', methods=['GET'])
@@ -1158,6 +1215,43 @@ def skill_material_file():
         "msg": "success",
         "data": payload,
     }), 200
+
+
+@app.route('/api/skill/ai/tasks', methods=['GET', 'POST'])
+def skill_ai_tasks():
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    if request.method == 'POST':
+        data = request.get_json(silent=True) or {}
+        try:
+            task = create_local_ai_task(data, source="openclaw_skill")
+            return jsonify({"code": 200, "msg": "success", "data": task}), 200
+        except ValueError as exc:
+            return jsonify({"code": 400, "msg": str(exc), "data": None}), 400
+        except Exception as exc:
+            return jsonify({"code": 500, "msg": f"创建 AI 任务失败: {exc}", "data": None}), 500
+
+    ensure_omnidrive_ai_task_manager_started()
+    limit = request.args.get('limit', 100)
+    status = str(request.args.get('status') or '').strip() or None
+    source = str(request.args.get('source') or '').strip() or None
+    tasks = omnidrive_ai_task_manager.list_tasks(limit=limit, status=status, source=source)
+    return jsonify({"code": 200, "msg": "success", "data": tasks}), 200
+
+
+@app.route('/api/skill/ai/tasks/<task_uuid>', methods=['GET'])
+def skill_ai_task_detail(task_uuid):
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    ensure_omnidrive_ai_task_manager_started()
+    task = omnidrive_ai_task_manager.get_task(task_uuid)
+    if not task:
+        return jsonify({"code": 404, "msg": "AI 任务不存在", "data": None}), 404
+    return jsonify({"code": 200, "msg": "success", "data": task}), 200
 
 
 @app.route('/api/skill/publish', methods=['POST'])

@@ -93,6 +93,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 				tasks.Get("/", taskHandler.List)
 				tasks.Get("/diagnostics", taskHandler.Diagnostics)
 				tasks.Post("/bulk-repair", taskHandler.BulkRepair)
+				tasks.Post("/bulk-action", taskHandler.BulkAction)
 				tasks.Post("/", taskHandler.Create)
 				tasks.Get("/{taskId}", taskHandler.Detail)
 				tasks.Get("/{taskId}/workspace", taskHandler.Workspace)
@@ -116,9 +117,13 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 				ai.Post("/jobs", aiHandler.CreateJob)
 				ai.Get("/jobs/{jobId}", aiHandler.DetailJob)
 				ai.Get("/jobs/{jobId}/workspace", aiHandler.WorkspaceJob)
+				ai.Get("/jobs/{jobId}/artifacts", aiHandler.ListArtifacts)
+				ai.Post("/jobs/{jobId}/artifacts/upload", aiHandler.UploadArtifact)
+				ai.Post("/jobs/{jobId}/publish-task", aiHandler.CreatePublishTask)
 				ai.Patch("/jobs/{jobId}", aiHandler.UpdateJob)
 				ai.Post("/jobs/{jobId}/cancel", aiHandler.CancelJob)
 				ai.Post("/jobs/{jobId}/retry", aiHandler.RetryJob)
+				ai.Post("/jobs/{jobId}/force-release", aiHandler.ForceReleaseJob)
 			})
 
 			private.Route("/billing", func(billing chi.Router) {
@@ -130,6 +135,9 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 		api.Route("/agent", func(agent chi.Router) {
 			agent.Post("/heartbeat", agentHandler.Heartbeat)
 			agent.Post("/accounts/sync", agentHandler.SyncAccount)
+			agent.Get("/ai-jobs/{deviceCode}", agentHandler.ListAIJobs)
+			agent.Post("/ai-jobs/sync", agentHandler.SyncAIJob)
+			agent.Post("/ai-jobs/{jobId}/delivery", agentHandler.UpdateAIJobDelivery)
 			agent.Get("/skills/{deviceCode}", agentHandler.ListSkills)
 			agent.Post("/skills/sync", agentHandler.SyncSkillStates)
 			agent.Post("/skills/retired-ack", agentHandler.AckRetiredSkills)

@@ -1,18 +1,23 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 
-// 创建axios实例
+// ═══════════════════════════════════════
+// Axios Instance — SAU Backend
+// ═══════════════════════════════════════
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5409'
+
 const request = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:5409',
+  baseURL: API_BASE,
+  timeout: 30000,
   headers: {
-    'Content-Type': 'application/json'
-  }
+    'Content-Type': 'application/json',
+  },
 })
 
-// 请求拦截器
+// ── Request interceptor ──
 request.interceptors.request.use(
   (config) => {
-    // 可以在这里添加token等认证信息
     const token = localStorage.getItem('token')
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
@@ -25,76 +30,90 @@ request.interceptors.request.use(
   }
 )
 
-// 响应拦截器
+// ── Response interceptor ──
 request.interceptors.response.use(
   (response) => {
     const { data } = response
-    
-    // 根据后端接口规范处理响应
+
+    // Backend uses { code: 200, msg, data } convention
     if (data.code === 200 || data.success) {
       return data
     } else {
-      ElMessage.error(data.msg || data.message || '请求失败')
-      return Promise.reject(new Error(data.msg || data.message || '请求失败'))
+      const msg = data.msg || data.message || '请求失败'
+      ElMessage.error(msg)
+      return Promise.reject(new Error(msg))
     }
   },
   (error) => {
     console.error('响应错误:', error)
-    
-    // 处理HTTP错误状态码
+
     if (error.response) {
       const { status } = error.response
-      switch (status) {
-        case 401:
-          ElMessage.error('未授权，请重新登录')
-          // 可以在这里处理登录跳转
-          break
-        case 403:
-          ElMessage.error('拒绝访问')
-          break
-        case 404:
-          ElMessage.error('请求地址不存在')
-          break
-        case 500:
-          ElMessage.error('服务器内部错误')
-          break
-        default:
-          ElMessage.error('网络错误')
+      const messages = {
+        401: '未授权，请重新登录',
+        403: '拒绝访问',
+        404: '请求地址不存在',
+        500: '服务器内部错误',
       }
+      ElMessage.error(messages[status] || `网络错误 (${status})`)
+    } else if (error.code === 'ECONNABORTED') {
+      ElMessage.error('请求超时，请检查网络')
     } else {
-      ElMessage.error('网络连接失败')
+      ElMessage.error('网络连接失败，请确认后端已启动')
     }
-    
+
     return Promise.reject(error)
   }
 )
 
-// 封装常用的请求方法
+// ── Wrapped http helpers ──
 export const http = {
   get(url, params) {
     return request.get(url, { params })
   },
-  
+
   post(url, data, config = {}) {
     return request.post(url, data, config)
   },
-  
+
   put(url, data, config = {}) {
     return request.put(url, data, config)
   },
-  
+
   delete(url, params) {
     return request.delete(url, { params })
   },
-  
+
   upload(url, formData, onUploadProgress) {
     return request.post(url, formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      },
-      onUploadProgress
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,
+      onUploadProgress,
     })
-  }
+  },
 }
 
+// ── SSE helper ──
+export function createSSE(path, onMessage, onError) {
+  const url = `${API_BASE}${path}`
+  const source = new EventSource(url)
+
+  source.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data)
+      onMessage(data)
+    } catch {
+      onMessage(event.data)
+    }
+  }
+
+  source.onerror = (err) => {
+    if (onError) onError(err)
+    source.close()
+  }
+
+  return source
+}
+
+export { API_BASE }
 export default request

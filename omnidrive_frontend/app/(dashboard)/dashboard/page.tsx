@@ -12,7 +12,7 @@ import {
   Clock,
 } from "lucide-react";
 import Link from "next/link";
-import api from "@/lib/api";
+import { listDevices, listTasks } from "@/lib/services";
 import type { Device, Task } from "@/lib/types";
 import { PageHeader, StatCard, StatusBadge, EmptyState } from "@/components/ui/common";
 
@@ -24,12 +24,12 @@ const fadeUp = {
 export default function DashboardPage() {
   const { data: devices = [] } = useQuery<Device[]>({
     queryKey: ["devices"],
-    queryFn: () => api.get("/devices").then((r) => r.data),
+    queryFn: listDevices,
   });
 
   const { data: tasks = [] } = useQuery<Task[]>({
     queryKey: ["tasks"],
-    queryFn: () => api.get("/tasks").then((r) => r.data),
+    queryFn: () => listTasks(),
   });
 
   const onlineDevices = devices.filter((d) => d.status === "online").length;

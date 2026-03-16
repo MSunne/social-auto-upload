@@ -71,6 +71,37 @@ type batchRepairTasksRequest struct {
 	Limit       int      `json:"limit"`
 }
 
+type batchActionTasksRequest struct {
+	TaskIDs       []string    `json:"taskIds"`
+	Action        string      `json:"action"`
+	DeviceID      string      `json:"deviceId"`
+	Status        string      `json:"status"`
+	Platform      string      `json:"platform"`
+	AccountName   string      `json:"accountName"`
+	SkillID       string      `json:"skillId"`
+	Readiness     string      `json:"readiness"`
+	Dimension     string      `json:"dimension"`
+	IssueCode     string      `json:"issueCode"`
+	Limit         int         `json:"limit"`
+	Message       *string     `json:"message"`
+	ResolveStatus string      `json:"resolveStatus"`
+	TextEvidence  *string     `json:"textEvidence"`
+	Payload       interface{} `json:"payload"`
+}
+
+type publishTaskSelectionFilter struct {
+	TaskIDs     []string
+	DeviceID    string
+	Status      string
+	Platform    string
+	AccountName string
+	SkillID     string
+	Readiness   string
+	Dimension   string
+	IssueCode   string
+	Limit       int
+}
+
 type taskMaterialRefRequest struct {
 	Root string  `json:"root"`
 	Path string  `json:"path"`
@@ -219,7 +250,18 @@ func (h *TaskHandler) BulkRepair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tasks, err := h.selectTasksForBatchRepair(r.Context(), user.ID, payload)
+	tasks, err := h.selectTasksForOperation(r.Context(), user.ID, publishTaskSelectionFilter{
+		TaskIDs:     payload.TaskIDs,
+		DeviceID:    payload.DeviceID,
+		Status:      payload.Status,
+		Platform:    payload.Platform,
+		AccountName: payload.AccountName,
+		SkillID:     payload.SkillID,
+		Readiness:   payload.Readiness,
+		Dimension:   payload.Dimension,
+		IssueCode:   payload.IssueCode,
+		Limit:       payload.Limit,
+	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to select tasks for bulk repair")
 		return
@@ -238,6 +280,80 @@ func (h *TaskHandler) BulkRepair(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, domain.PublishTaskBulkRepairResult{
 		Items:      items,
 		Summary:    summarizeBulkRepairItems(items),
+		ServerTime: time.Now().UTC(),
+	})
+}
+
+func (h *TaskHandler) BulkAction(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+
+	var payload batchActionTasksRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	payload.Action = strings.TrimSpace(strings.ToLower(payload.Action))
+	payload.ResolveStatus = strings.TrimSpace(payload.ResolveStatus)
+	payload.Message = normalizeTrimmedString(payload.Message)
+	payload.TextEvidence = normalizeTrimmedString(payload.TextEvidence)
+	if payload.Limit < 0 {
+		render.Error(w, http.StatusBadRequest, "limit must be a positive integer")
+		return
+	}
+	if payload.Readiness != "" && payload.Readiness != "ready" && payload.Readiness != "blocked" {
+		render.Error(w, http.StatusBadRequest, "readiness must be ready or blocked")
+		return
+	}
+	if payload.Dimension != "" && payload.Dimension != "device" && payload.Dimension != "account" && payload.Dimension != "skill" && payload.Dimension != "materials" {
+		render.Error(w, http.StatusBadRequest, "dimension must be device, account, skill, or materials")
+		return
+	}
+	switch payload.Action {
+	case "cancel", "retry", "force_release", "resume", "manual_resolve":
+	default:
+		render.Error(w, http.StatusBadRequest, "action must be one of cancel, retry, force_release, resume, manual_resolve")
+		return
+	}
+	if payload.Action == "manual_resolve" {
+		switch payload.ResolveStatus {
+		case "success", "completed", "failed", "cancelled":
+		default:
+			render.Error(w, http.StatusBadRequest, "resolveStatus must be one of success, completed, failed, cancelled")
+			return
+		}
+	}
+
+	tasks, err := h.selectTasksForOperation(r.Context(), user.ID, publishTaskSelectionFilter{
+		TaskIDs:     payload.TaskIDs,
+		DeviceID:    payload.DeviceID,
+		Status:      payload.Status,
+		Platform:    payload.Platform,
+		AccountName: payload.AccountName,
+		SkillID:     payload.SkillID,
+		Readiness:   payload.Readiness,
+		Dimension:   payload.Dimension,
+		IssueCode:   payload.IssueCode,
+		Limit:       payload.Limit,
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to select tasks for bulk action")
+		return
+	}
+
+	items := make([]domain.PublishTaskBulkActionItem, 0, len(tasks))
+	for _, task := range tasks {
+		item, itemErr := h.bulkActOnTask(r.Context(), user.ID, &task, payload)
+		if itemErr != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to execute bulk task action")
+			return
+		}
+		items = append(items, item)
+	}
+
+	render.JSON(w, http.StatusOK, domain.PublishTaskBulkActionResult{
+		Items:      items,
+		Summary:    summarizeBulkActionItems(items),
 		ServerTime: time.Now().UTC(),
 	})
 }
@@ -468,6 +584,7 @@ func (h *TaskHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	readiness := buildPublishTaskReadiness(r.Context(), h.app, task, device, account, skill)
+	bridge := buildPublishTaskBridgeState(task, runtimeState)
 
 	render.JSON(w, http.StatusOK, domain.PublishTaskWorkspace{
 		Task:      *task,
@@ -480,6 +597,7 @@ func (h *TaskHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 		Actions:   computePublishTaskActions(task, len(materials)),
 		Readiness: readiness,
 		Runtime:   runtimeState,
+		Bridge:    bridge,
 	})
 }
 
@@ -610,7 +728,7 @@ func normalizeBatchRepairOperations(input []string) []string {
 	return items
 }
 
-func (h *TaskHandler) selectTasksForBatchRepair(ctx context.Context, ownerUserID string, payload batchRepairTasksRequest) ([]domain.PublishTask, error) {
+func (h *TaskHandler) selectTasksForOperation(ctx context.Context, ownerUserID string, payload publishTaskSelectionFilter) ([]domain.PublishTask, error) {
 	selected := make([]domain.PublishTask, 0)
 	seen := map[string]struct{}{}
 
@@ -980,6 +1098,329 @@ func summarizeBulkRepairItems(items []domain.PublishTaskBulkRepairItem) domain.P
 	return summary
 }
 
+func (h *TaskHandler) bulkActOnTask(ctx context.Context, ownerUserID string, task *domain.PublishTask, payload batchActionTasksRequest) (domain.PublishTaskBulkActionItem, error) {
+	item := domain.PublishTaskBulkActionItem{
+		TaskBefore: *task,
+		Status:     "skipped",
+		Action:     payload.Action,
+	}
+
+	switch payload.Action {
+	case "cancel":
+		updatedTask, outcome, message, err := h.executeTaskCancel(ctx, ownerUserID, task.ID, task)
+		if err != nil {
+			item.Status = "failed"
+			item.Message = auditStringPtr(err.Error())
+			return item, nil
+		}
+		item.Status = outcome
+		item.Message = auditStringPtr(message)
+		item.TaskAfter = updatedTask
+	case "retry":
+		updatedTask, clearedArtifactCount, outcome, message, err := h.executeTaskRetry(ctx, ownerUserID, task.ID, task)
+		if err != nil {
+			item.Status = "failed"
+			item.Message = auditStringPtr(err.Error())
+			return item, nil
+		}
+		item.Status = outcome
+		item.Message = auditStringPtr(message)
+		item.TaskAfter = updatedTask
+		item.ArtifactCount = clearedArtifactCount
+	case "force_release":
+		updatedTask, outcome, message, err := h.executeTaskForceRelease(ctx, ownerUserID, task.ID)
+		if err != nil {
+			item.Status = "failed"
+			item.Message = auditStringPtr(err.Error())
+			return item, nil
+		}
+		item.Status = outcome
+		item.Message = auditStringPtr(message)
+		item.TaskAfter = updatedTask
+	case "resume":
+		updatedTask, outcome, message, err := h.executeTaskResume(ctx, ownerUserID, task.ID, payload.Message)
+		if err != nil {
+			item.Status = "failed"
+			item.Message = auditStringPtr(err.Error())
+			return item, nil
+		}
+		item.Status = outcome
+		item.Message = auditStringPtr(message)
+		item.TaskAfter = updatedTask
+	case "manual_resolve":
+		updatedTask, artifactCount, outcome, message, err := h.executeTaskManualResolve(ctx, ownerUserID, task.ID, payload.ResolveStatus, payload.Message, payload.TextEvidence, payload.Payload)
+		if err != nil {
+			item.Status = "failed"
+			item.Message = auditStringPtr(err.Error())
+			return item, nil
+		}
+		item.Status = outcome
+		item.Message = auditStringPtr(message)
+		item.TaskAfter = updatedTask
+		item.ArtifactCount = artifactCount
+	default:
+		item.Message = auditStringPtr("不支持的批量动作")
+	}
+	return item, nil
+}
+
+func summarizeBulkActionItems(items []domain.PublishTaskBulkActionItem) domain.PublishTaskBulkActionSummary {
+	summary := domain.PublishTaskBulkActionSummary{
+		ByStatus: map[string]int64{},
+		ByAction: map[string]int64{},
+	}
+	for _, item := range items {
+		summary.SelectedCount++
+		summary.ProcessedCount++
+		summary.ByStatus[item.Status]++
+		summary.ByAction[item.Action]++
+		switch item.Status {
+		case "success":
+			summary.SuccessCount++
+		case "failed":
+			summary.FailedCount++
+		default:
+			summary.SkippedCount++
+		}
+	}
+	return summary
+}
+
+func (h *TaskHandler) executeTaskCancel(ctx context.Context, ownerUserID string, taskID string, existing *domain.PublishTask) (*domain.PublishTask, string, string, error) {
+	if existing != nil && !canCancelTask(existing.Status) {
+		return existing, "skipped", "任务当前状态不支持取消", nil
+	}
+	task, err := h.app.Store.RequestCancelPublishTask(ctx, taskID, ownerUserID)
+	if err != nil {
+		return nil, "failed", "", err
+	}
+	if task == nil {
+		return nil, "skipped", "任务不存在", nil
+	}
+	_, _ = h.app.Store.CreatePublishTaskEvent(ctx, store.CreatePublishTaskEventInput{
+		ID:        uuid.NewString(),
+		TaskID:    task.ID,
+		EventType: "cancel_requested",
+		Source:    "cloud",
+		Status:    task.Status,
+		Message:   task.Message,
+	})
+	recordAuditEvent(h.app, ctx, store.CreateAuditEventInput{
+		OwnerUserID:  ownerUserID,
+		ResourceType: "publish_task",
+		ResourceID:   &task.ID,
+		Action:       "cancel",
+		Title:        "请求取消发布任务",
+		Source:       task.Platform,
+		Status:       task.Status,
+		Message:      task.Message,
+	})
+	return task, "success", trimmedStringValue(task.Message), nil
+}
+
+func (h *TaskHandler) executeTaskRetry(ctx context.Context, ownerUserID string, taskID string, existing *domain.PublishTask) (*domain.PublishTask, int64, string, string, error) {
+	if existing == nil {
+		return nil, 0, "skipped", "任务不存在", nil
+	}
+	if existing.Status == "running" || existing.Status == "cancel_requested" {
+		return existing, 0, "skipped", "任务仍在执行或等待取消确认", nil
+	}
+
+	artifactsBeforeRetry, err := h.app.Store.ListPublishTaskArtifactsByOwner(ctx, taskID, ownerUserID)
+	if err != nil {
+		return nil, 0, "failed", "", err
+	}
+	task, err := h.app.Store.RetryPublishTask(ctx, taskID, ownerUserID)
+	if err != nil {
+		return nil, 0, "failed", "", err
+	}
+	if task == nil {
+		return nil, 0, "skipped", "任务不存在", nil
+	}
+
+	cleanupArtifactFiles(h.app, ctx, artifactsBeforeRetry)
+	clearedArtifactCount, clearErr := h.app.Store.DeletePublishTaskArtifactsByOwner(ctx, task.ID, ownerUserID)
+	if clearErr != nil {
+		return nil, 0, "failed", "", clearErr
+	}
+	if err := h.app.Store.DeletePublishTaskRuntimeState(ctx, task.ID); err != nil {
+		return nil, 0, "failed", "", err
+	}
+
+	_, _ = h.app.Store.CreatePublishTaskEvent(ctx, store.CreatePublishTaskEventInput{
+		ID:        uuid.NewString(),
+		TaskID:    task.ID,
+		EventType: "retried",
+		Source:    "cloud",
+		Status:    task.Status,
+		Message:   task.Message,
+		Payload: mustJSONBytes(map[string]any{
+			"clearedArtifactCount": clearedArtifactCount,
+		}),
+	})
+	recordAuditEvent(h.app, ctx, store.CreateAuditEventInput{
+		OwnerUserID:  ownerUserID,
+		ResourceType: "publish_task",
+		ResourceID:   &task.ID,
+		Action:       "retry",
+		Title:        "重试发布任务",
+		Source:       task.Platform,
+		Status:       task.Status,
+		Message:      task.Message,
+		Payload: mustJSONBytes(map[string]any{
+			"clearedArtifactCount": clearedArtifactCount,
+		}),
+	})
+	return task, clearedArtifactCount, "success", trimmedStringValue(task.Message), nil
+}
+
+func (h *TaskHandler) executeTaskForceRelease(ctx context.Context, ownerUserID string, taskID string) (*domain.PublishTask, string, string, error) {
+	task, err := h.app.Store.ForceReleasePublishTaskLease(ctx, taskID, ownerUserID)
+	if err != nil {
+		return nil, "failed", "", err
+	}
+	if task == nil {
+		return nil, "skipped", "任务当前不处于可释放租约状态", nil
+	}
+	if err := h.app.Store.DeletePublishTaskRuntimeState(ctx, task.ID); err != nil {
+		return nil, "failed", "", err
+	}
+	_, _ = h.app.Store.CreatePublishTaskEvent(ctx, store.CreatePublishTaskEventInput{
+		ID:        uuid.NewString(),
+		TaskID:    task.ID,
+		EventType: "force_released",
+		Source:    "cloud",
+		Status:    task.Status,
+		Message:   task.Message,
+	})
+	recordAuditEvent(h.app, ctx, store.CreateAuditEventInput{
+		OwnerUserID:  ownerUserID,
+		ResourceType: "publish_task",
+		ResourceID:   &task.ID,
+		Action:       "force_release",
+		Title:        "手动释放任务租约",
+		Source:       task.Platform,
+		Status:       task.Status,
+		Message:      task.Message,
+	})
+	return task, "success", trimmedStringValue(task.Message), nil
+}
+
+func (h *TaskHandler) executeTaskResume(ctx context.Context, ownerUserID string, taskID string, message *string) (*domain.PublishTask, string, string, error) {
+	task, err := h.app.Store.ResumePublishTaskFromVerification(ctx, taskID, ownerUserID, message)
+	if err != nil {
+		return nil, "failed", "", err
+	}
+	if task == nil {
+		return nil, "skipped", "任务当前不处于 needs_verify，可恢复失败", nil
+	}
+	if err := h.app.Store.DeletePublishTaskRuntimeState(ctx, task.ID); err != nil {
+		return nil, "failed", "", err
+	}
+	finalMessage := message
+	if finalMessage == nil {
+		finalMessage = auditStringPtr("人工验证后任务已恢复为待执行")
+	}
+	_, _ = h.app.Store.CreatePublishTaskEvent(ctx, store.CreatePublishTaskEventInput{
+		ID:        uuid.NewString(),
+		TaskID:    task.ID,
+		EventType: "resumed",
+		Source:    "cloud",
+		Status:    task.Status,
+		Message:   finalMessage,
+	})
+	recordAuditEvent(h.app, ctx, store.CreateAuditEventInput{
+		OwnerUserID:  ownerUserID,
+		ResourceType: "publish_task",
+		ResourceID:   &task.ID,
+		Action:       "resume",
+		Title:        "恢复发布任务",
+		Source:       task.Platform,
+		Status:       task.Status,
+		Message:      finalMessage,
+	})
+	return task, "success", trimmedStringValue(finalMessage), nil
+}
+
+func (h *TaskHandler) executeTaskManualResolve(ctx context.Context, ownerUserID string, taskID string, status string, message *string, textEvidence *string, payload any) (*domain.PublishTask, int64, string, string, error) {
+	task, err := h.app.Store.ResolvePublishTaskManually(ctx, taskID, ownerUserID, status, message)
+	if err != nil {
+		return nil, 0, "failed", "", err
+	}
+	if task == nil {
+		return nil, 0, "skipped", "任务当前不处于 needs_verify，不能人工收尾", nil
+	}
+
+	var artifactCount int64
+	if textEvidence != nil || payload != nil {
+		var artifactPayload []byte
+		if payload != nil {
+			artifactPayload = mustJSONBytes(payload)
+		}
+		title := "人工处理记录"
+		if _, err := h.app.Store.UpsertPublishTaskArtifacts(ctx, []store.UpsertPublishTaskArtifactInput{{
+			TaskID:       task.ID,
+			ArtifactKey:  "manual-resolution",
+			ArtifactType: "manual_note",
+			Source:       "cloud",
+			Title:        &title,
+			TextContent:  textEvidence,
+			Payload:      artifactPayload,
+		}}); err != nil {
+			return nil, 0, "failed", "", err
+		}
+		artifactCount = 1
+	}
+
+	finalMessage := message
+	if finalMessage == nil {
+		switch status {
+		case "success", "completed":
+			finalMessage = auditStringPtr("任务已人工处理完成")
+		case "failed":
+			finalMessage = auditStringPtr("任务已人工标记为失败")
+		case "cancelled":
+			finalMessage = auditStringPtr("任务已人工取消")
+		}
+	}
+	_, _ = h.app.Store.CreatePublishTaskEvent(ctx, store.CreatePublishTaskEventInput{
+		ID:        uuid.NewString(),
+		TaskID:    task.ID,
+		EventType: "manual_resolved",
+		Source:    "cloud",
+		Status:    task.Status,
+		Message:   finalMessage,
+		Payload: mustJSONBytes(map[string]any{
+			"artifactCount": artifactCount,
+			"status":        status,
+		}),
+	})
+	recordAuditEvent(h.app, ctx, store.CreateAuditEventInput{
+		OwnerUserID:  ownerUserID,
+		ResourceType: "publish_task",
+		ResourceID:   &task.ID,
+		Action:       "manual_resolve",
+		Title:        "人工处理发布任务",
+		Source:       task.Platform,
+		Status:       task.Status,
+		Message:      finalMessage,
+		Payload: mustJSONBytes(map[string]any{
+			"artifactCount": artifactCount,
+			"status":        status,
+		}),
+	})
+	return task, artifactCount, "success", trimmedStringValue(finalMessage), nil
+}
+
+func canCancelTask(status string) bool {
+	switch status {
+	case "pending", "running", "needs_verify":
+		return true
+	default:
+		return false
+	}
+}
+
 func (h *TaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
@@ -1102,34 +1543,25 @@ func (h *TaskHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := h.app.Store.RequestCancelPublishTask(r.Context(), taskID, user.ID)
+	existing, err := h.app.Store.GetPublishTaskByOwner(r.Context(), taskID, user.ID)
 	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to cancel task")
+		render.Error(w, http.StatusInternalServerError, "Failed to inspect task")
 		return
 	}
-	if task == nil {
+	if existing == nil {
 		render.Error(w, http.StatusNotFound, "Task not found")
 		return
 	}
 
-	_, _ = h.app.Store.CreatePublishTaskEvent(r.Context(), store.CreatePublishTaskEventInput{
-		ID:        uuid.NewString(),
-		TaskID:    task.ID,
-		EventType: "cancel_requested",
-		Source:    "cloud",
-		Status:    task.Status,
-		Message:   task.Message,
-	})
-	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
-		OwnerUserID:  user.ID,
-		ResourceType: "publish_task",
-		ResourceID:   &task.ID,
-		Action:       "cancel",
-		Title:        "请求取消发布任务",
-		Source:       task.Platform,
-		Status:       task.Status,
-		Message:      task.Message,
-	})
+	task, outcome, _, err := h.executeTaskCancel(r.Context(), user.ID, taskID, existing)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to cancel task")
+		return
+	}
+	if outcome != "success" || task == nil {
+		render.Error(w, http.StatusConflict, "Task is not cancellable")
+		return
+	}
 
 	render.JSON(w, http.StatusOK, task)
 }
@@ -1156,57 +1588,15 @@ func (h *TaskHandler) Retry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	artifactsBeforeRetry, err := h.app.Store.ListPublishTaskArtifactsByOwner(r.Context(), taskID, user.ID)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to inspect task artifacts")
-		return
-	}
-
-	task, err := h.app.Store.RetryPublishTask(r.Context(), taskID, user.ID)
+	task, _, outcome, _, err := h.executeTaskRetry(r.Context(), user.ID, taskID, existing)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to retry task")
 		return
 	}
-	if task == nil {
-		render.Error(w, http.StatusNotFound, "Task not found")
+	if outcome != "success" || task == nil {
+		render.Error(w, http.StatusConflict, "Task is not retryable")
 		return
 	}
-
-	cleanupArtifactFiles(h.app, r.Context(), artifactsBeforeRetry)
-	clearedArtifactCount, clearErr := h.app.Store.DeletePublishTaskArtifactsByOwner(r.Context(), task.ID, user.ID)
-	if clearErr != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to clear previous task artifacts")
-		return
-	}
-	if err := h.app.Store.DeletePublishTaskRuntimeState(r.Context(), task.ID); err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to clear previous task runtime state")
-		return
-	}
-
-	_, _ = h.app.Store.CreatePublishTaskEvent(r.Context(), store.CreatePublishTaskEventInput{
-		ID:        uuid.NewString(),
-		TaskID:    task.ID,
-		EventType: "retried",
-		Source:    "cloud",
-		Status:    task.Status,
-		Message:   task.Message,
-		Payload: mustJSONBytes(map[string]any{
-			"clearedArtifactCount": clearedArtifactCount,
-		}),
-	})
-	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
-		OwnerUserID:  user.ID,
-		ResourceType: "publish_task",
-		ResourceID:   &task.ID,
-		Action:       "retry",
-		Title:        "重试发布任务",
-		Source:       task.Platform,
-		Status:       task.Status,
-		Message:      task.Message,
-		Payload: mustJSONBytes(map[string]any{
-			"clearedArtifactCount": clearedArtifactCount,
-		}),
-	})
 
 	render.JSON(w, http.StatusOK, task)
 }
@@ -1219,38 +1609,15 @@ func (h *TaskHandler) ForceRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := h.app.Store.ForceReleasePublishTaskLease(r.Context(), taskID, user.ID)
+	task, outcome, _, err := h.executeTaskForceRelease(r.Context(), user.ID, taskID)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to force release task lease")
 		return
 	}
-	if task == nil {
+	if outcome != "success" || task == nil {
 		render.Error(w, http.StatusConflict, "Task is not in a releasable leased state")
 		return
 	}
-	if err := h.app.Store.DeletePublishTaskRuntimeState(r.Context(), task.ID); err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to clear task runtime state")
-		return
-	}
-
-	_, _ = h.app.Store.CreatePublishTaskEvent(r.Context(), store.CreatePublishTaskEventInput{
-		ID:        uuid.NewString(),
-		TaskID:    task.ID,
-		EventType: "force_released",
-		Source:    "cloud",
-		Status:    task.Status,
-		Message:   task.Message,
-	})
-	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
-		OwnerUserID:  user.ID,
-		ResourceType: "publish_task",
-		ResourceID:   &task.ID,
-		Action:       "force_release",
-		Title:        "手动释放任务租约",
-		Source:       task.Platform,
-		Status:       task.Status,
-		Message:      task.Message,
-	})
 
 	render.JSON(w, http.StatusOK, task)
 }
@@ -1270,42 +1637,15 @@ func (h *TaskHandler) Resume(w http.ResponseWriter, r *http.Request) {
 	}
 	payload.Message = normalizeTrimmedString(payload.Message)
 
-	task, err := h.app.Store.ResumePublishTaskFromVerification(r.Context(), taskID, user.ID, payload.Message)
+	task, outcome, _, err := h.executeTaskResume(r.Context(), user.ID, taskID, payload.Message)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to resume task")
 		return
 	}
-	if task == nil {
+	if outcome != "success" || task == nil {
 		render.Error(w, http.StatusConflict, "Task is not resumable from needs_verify")
 		return
 	}
-	if err := h.app.Store.DeletePublishTaskRuntimeState(r.Context(), task.ID); err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to clear task runtime state")
-		return
-	}
-
-	message := payload.Message
-	if message == nil {
-		message = auditStringPtr("人工验证后任务已恢复为待执行")
-	}
-	_, _ = h.app.Store.CreatePublishTaskEvent(r.Context(), store.CreatePublishTaskEventInput{
-		ID:        uuid.NewString(),
-		TaskID:    task.ID,
-		EventType: "resumed",
-		Source:    "cloud",
-		Status:    task.Status,
-		Message:   message,
-	})
-	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
-		OwnerUserID:  user.ID,
-		ResourceType: "publish_task",
-		ResourceID:   &task.ID,
-		Action:       "resume",
-		Title:        "恢复发布任务",
-		Source:       task.Platform,
-		Status:       task.Status,
-		Message:      message,
-	})
 
 	render.JSON(w, http.StatusOK, task)
 }
@@ -1331,75 +1671,15 @@ func (h *TaskHandler) ManualResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := h.app.Store.ResolvePublishTaskManually(r.Context(), taskID, user.ID, payload.Status, payload.Message)
+	task, _, outcome, _, err := h.executeTaskManualResolve(r.Context(), user.ID, taskID, payload.Status, payload.Message, payload.TextEvidence, payload.Payload)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to resolve task manually")
 		return
 	}
-	if task == nil {
+	if outcome != "success" || task == nil {
 		render.Error(w, http.StatusConflict, "Task is not manually resolvable")
 		return
 	}
-
-	var artifactCount int
-	if payload.TextEvidence != nil || payload.Payload != nil {
-		var artifactPayload []byte
-		if payload.Payload != nil {
-			artifactPayload = mustJSONBytes(payload.Payload)
-		}
-		title := "人工处理记录"
-		if _, err := h.app.Store.UpsertPublishTaskArtifacts(r.Context(), []store.UpsertPublishTaskArtifactInput{{
-			TaskID:       task.ID,
-			ArtifactKey:  "manual-resolution",
-			ArtifactType: "manual_note",
-			Source:       "cloud",
-			Title:        &title,
-			TextContent:  payload.TextEvidence,
-			Payload:      artifactPayload,
-		}}); err != nil {
-			render.Error(w, http.StatusInternalServerError, "Failed to persist manual resolution evidence")
-			return
-		}
-		artifactCount = 1
-	}
-
-	message := payload.Message
-	if message == nil {
-		switch payload.Status {
-		case "success", "completed":
-			message = auditStringPtr("任务已人工处理完成")
-		case "failed":
-			message = auditStringPtr("任务已人工标记为失败")
-		case "cancelled":
-			message = auditStringPtr("任务已人工取消")
-		}
-	}
-	_, _ = h.app.Store.CreatePublishTaskEvent(r.Context(), store.CreatePublishTaskEventInput{
-		ID:        uuid.NewString(),
-		TaskID:    task.ID,
-		EventType: "manual_resolved",
-		Source:    "cloud",
-		Status:    task.Status,
-		Message:   message,
-		Payload: mustJSONBytes(map[string]any{
-			"artifactCount": artifactCount,
-			"status":        payload.Status,
-		}),
-	})
-	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
-		OwnerUserID:  user.ID,
-		ResourceType: "publish_task",
-		ResourceID:   &task.ID,
-		Action:       "manual_resolve",
-		Title:        "人工处理发布任务",
-		Source:       task.Platform,
-		Status:       task.Status,
-		Message:      message,
-		Payload: mustJSONBytes(map[string]any{
-			"artifactCount": artifactCount,
-			"status":        payload.Status,
-		}),
-	})
 
 	render.JSON(w, http.StatusOK, task)
 }

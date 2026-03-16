@@ -322,6 +322,46 @@ This document is the contract target for the cloud backend and the frontend impl
   - `byStatus`
   - `byOperation`
 
+### `POST /tasks/bulk-action`
+
+- batch operator action endpoint for publish tasks
+- request supports:
+  - `taskIds`
+  - `action=cancel|retry|force_release|resume|manual_resolve`
+  - `deviceId`
+  - `status`
+  - `platform`
+  - `accountName`
+  - `skillId`
+  - `readiness=ready|blocked`
+  - `dimension=device|account|skill|materials`
+  - `issueCode`
+  - `limit`
+  - optional `message`
+  - when `action=manual_resolve`:
+    - `resolveStatus=success|completed|failed|cancelled`
+    - optional `textEvidence`
+    - optional `payload`
+- returns:
+  - `items`
+  - `summary`
+  - `serverTime`
+- each item includes:
+  - `taskBefore`
+  - optional `taskAfter`
+  - `status=success|skipped|failed`
+  - `message`
+  - `action`
+  - optional `artifactCount`
+- `summary` includes:
+  - `selectedCount`
+  - `processedCount`
+  - `successCount`
+  - `skippedCount`
+  - `failedCount`
+  - `byStatus`
+  - `byAction`
+
 ### `POST /tasks`
 
 - create a cloud publish task for a specific device and account
@@ -349,6 +389,7 @@ This document is the contract target for the cloud backend and the frontend impl
   - `actions`
   - `readiness`
   - optional `runtime`
+  - `bridge`
 - `actions` exposes backend-computed booleans such as `canEdit`, `canCancel`, `canRetry`, `canDelete`
 - `actions` also includes `canResume` and `canResolveManual` for `needs_verify` handling
 - `actions` also includes:
@@ -367,6 +408,17 @@ This document is the contract target for the cloud backend and the frontend impl
   - `material_missing`
   - `material_drifted`
 - `runtime` exposes the latest agent-side execution snapshot and `lastAgentSyncAt`
+- `bridge` exposes a normalized cloud/local execution relationship view:
+  - `origin=cloud|local|imported`
+  - optional `localSource`
+  - optional `stage`
+  - optional `localStatus`
+  - optional `workerName`
+  - optional `updatedAt`
+  - optional `startedAt`
+  - optional `finishedAt`
+  - optional `lastAgentSyncAt`
+  - `hasActiveLease`
 
 ### `GET /tasks/{taskId}/events`
 
@@ -469,13 +521,17 @@ This document is the contract target for the cloud backend and the frontend impl
 ### `GET /ai/jobs`
 
 - list AI jobs created by the current user
-- optional filters: `jobType`, `status`, `skillId`, `limit`
+- optional filters: `jobType`, `status`, `skillId`, `deviceId`, `source`, `limit`
 
 ### `POST /ai/jobs`
 
 - create a queued AI job record
-- request: `jobType`, `modelName`, optional `skillId`, optional `prompt`, optional `inputPayload`
+- request: `jobType`, `modelName`, optional `deviceId`, optional `skillId`, optional `prompt`, optional `inputPayload`
+- optional advanced fields:
+  - `source`
+  - `localTaskId`
 - when `skillId` is provided, the backend validates that the referenced skill belongs to the user and its `outputType` matches `jobType`
+- `deviceId` here means the target `OmniBull` device for later task sync / publish handoff, not the cloud-side AI executor
 
 ### `GET /ai/jobs/{jobId}`
 
@@ -488,12 +544,90 @@ This document is the contract target for the cloud backend and the frontend impl
   - `job`
   - `model`
   - `skill`
+  - `artifacts`
+  - `publishTasks`
+  - `bridge`
   - `actions`
+- `bridge` is the normalized cloud-to-OmniBull handoff view for this AI job:
+  - `source`
+  - `generationSide`
+  - `targetDeviceId`
+  - `localTaskId`
+  - `localPublishTaskId`
+  - `deliveryStage`
+  - `artifactCount`
+  - `mirroredArtifactCount`
+  - `linkedPublishTaskCount`
+- when `job.source = "omnibull_local"`, `deliveryStage` should be interpreted as:
+  - `queued_generation`
+  - `generating`
+  - `awaiting_omnibull_import`
+  - `mirrored_to_omnibull`
+  - `publish_queued_on_omnibull`
+  - `publishing_on_omnibull`
+  - `published_on_omnibull`
+  - `publish_failed_on_omnibull`
+  - `publish_needs_verify_on_omnibull`
+
+### `GET /ai/jobs/{jobId}/artifacts`
+
+- fetch structured AI output artifacts
+- each artifact may optionally include local mirror information:
+  - `deviceId`
+  - `rootName`
+  - `relativePath`
+  - `absolutePath`
+- this is how the cloud backend knows whether one generated output is already mirrored onto a target `OmniBull` device
+
+### `POST /ai/jobs/{jobId}/artifacts/upload`
+
+- upload one AI output artifact into cloud storage
+- uses `multipart/form-data`
+- fields:
+  - `artifactType`
+  - optional `artifactKey`
+  - optional `source`
+  - optional `title`
+  - `file`
+  - optional `deviceId`
+  - optional `rootName`
+  - optional `relativePath`
+  - optional `absolutePath`
+- when `deviceId` is provided, `rootName` and `relativePath` are also required
+- this supports the real chain where OmniDrive generates media first, then later marks that output as mirrored into one `OmniBull` material root
+
+### `POST /ai/jobs/{jobId}/publish-task`
+
+- create one publish task from completed AI outputs
+- request:
+  - optional `deviceId`
+  - optional `accountId`
+  - `platform`
+  - `accountName`
+  - optional `title`
+  - optional `contentText`
+  - optional `artifactKeys`
+  - optional `runAt`
+- the backend only allows this when:
+  - AI job status is `success` or `completed`
+  - selected AI artifacts are already mirrored to the chosen `OmniBull` device
+- this is primarily for cloud-native AI jobs
+- when `job.source = "omnibull_local"`, the preferred chain is:
+  - OmniBull creates the local AI task
+  - OmniDrive generates the output
+  - OmniBull pulls the output back locally
+  - SAU publishes locally
+- on success, the backend:
+  - creates a publish task
+  - attaches mirrored material refs
+  - records `created_from_ai_job` in the publish-task timeline
+  - links the AI job and publish task in cloud history
 
 ### `PATCH /ai/jobs/{jobId}`
 
 - update editable AI job fields
 - supports:
+  - `deviceId`
   - `skillId`
   - `prompt`
   - `status`
@@ -513,6 +647,12 @@ This document is the contract target for the cloud backend and the frontend impl
 - move a finished or failed AI job back to `queued`
 - clears previous `outputPayload`
 - clears `finishedAt`
+- clears previous AI artifacts so the next generation run starts clean
+
+### `POST /ai/jobs/{jobId}/force-release`
+
+- manually releases a running AI job lease from the cloud side
+- current purpose is to support later real executor recovery, even though current chain is still cloud-generation-first
 
 ## Billing
 
@@ -554,6 +694,54 @@ This document is the contract target for the cloud backend and the frontend impl
 ### `POST /agent/accounts/sync`
 
 - local agent upserts a mirrored social account state into cloud
+
+### `GET /agent/ai-jobs/{deviceCode}`
+
+- local agent polls AI jobs that belong to one claimed device
+- current phase is primarily for `source = omnibull_local`
+- returns items with:
+  - `job`
+  - `artifacts`
+  - `bridge`
+  - `actions`
+
+### `POST /agent/ai-jobs/sync`
+
+- local OmniBull syncs one locally-created AI task into OmniDrive
+- request body:
+  - `id` as the local OmniBull task UUID
+  - `deviceCode`
+  - optional `skillId`
+  - `jobType`
+  - `modelName`
+  - optional `prompt`
+  - optional `inputPayload`
+  - optional `publishPayload`
+  - optional `status`
+  - optional `message`
+  - optional `runAt`
+- backend behavior:
+  - creates a cloud AI job with `source = omnibull_local` when this local task is first seen
+  - binds `localTaskId`
+  - keeps `deviceId` as the target OmniBull device for later result delivery
+
+### `POST /agent/ai-jobs/{jobId}/delivery`
+
+- local OmniBull acknowledges cloud AI result handoff progress
+- request body:
+  - `deviceCode`
+  - `status`
+  - optional `message`
+  - optional `localPublishTaskId`
+  - optional `deliveredAt`
+- current delivery statuses include:
+  - `imported`
+  - `publish_queued`
+  - `publishing`
+  - `success`
+  - `needs_verify`
+  - `failed`
+  - `cancelled`
 
 ### `GET /agent/skills/{deviceCode}?since=...&limit=...`
 

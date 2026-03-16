@@ -1,7 +1,10 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,7 +25,10 @@ type AIHandler struct {
 }
 
 type createAIJobRequest struct {
+	DeviceID     *string     `json:"deviceId"`
 	SkillID      *string     `json:"skillId"`
+	Source       *string     `json:"source"`
+	LocalTaskID  *string     `json:"localTaskId"`
 	JobType      string      `json:"jobType"`
 	ModelName    string      `json:"modelName"`
 	Prompt       *string     `json:"prompt"`
@@ -30,6 +36,7 @@ type createAIJobRequest struct {
 }
 
 type updateAIJobRequest struct {
+	DeviceID      *string     `json:"deviceId"`
 	SkillID       *string     `json:"skillId"`
 	Prompt        *string     `json:"prompt"`
 	Status        *string     `json:"status"`
@@ -38,6 +45,17 @@ type updateAIJobRequest struct {
 	Message       *string     `json:"message"`
 	CostCredits   *int64      `json:"costCredits"`
 	FinishedAt    *string     `json:"finishedAt"`
+}
+
+type createPublishTaskFromAIJobRequest struct {
+	DeviceID     *string  `json:"deviceId"`
+	AccountID    *string  `json:"accountId"`
+	Platform     string   `json:"platform"`
+	AccountName  string   `json:"accountName"`
+	Title        *string  `json:"title"`
+	ContentText  *string  `json:"contentText"`
+	ArtifactKeys []string `json:"artifactKeys"`
+	RunAt        *string  `json:"runAt"`
 }
 
 func NewAIHandler(app *appstate.App) *AIHandler {
@@ -66,10 +84,12 @@ func (h *AIHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 	items, err := h.app.Store.ListAIJobsByOwner(r.Context(), user.ID, store.ListAIJobsFilter{
-		JobType: strings.TrimSpace(r.URL.Query().Get("jobType")),
-		Status:  strings.TrimSpace(r.URL.Query().Get("status")),
-		SkillID: strings.TrimSpace(r.URL.Query().Get("skillId")),
-		Limit:   limit,
+		JobType:  strings.TrimSpace(r.URL.Query().Get("jobType")),
+		Status:   strings.TrimSpace(r.URL.Query().Get("status")),
+		SkillID:  strings.TrimSpace(r.URL.Query().Get("skillId")),
+		DeviceID: strings.TrimSpace(r.URL.Query().Get("deviceId")),
+		Source:   strings.TrimSpace(r.URL.Query().Get("source")),
+		Limit:    limit,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load AI jobs")
@@ -102,6 +122,15 @@ func (h *AIHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusNotFound, "AI model not found")
 		return
 	}
+	if model.Category != payload.JobType {
+		render.Error(w, http.StatusConflict, "AI model category does not match job type")
+		return
+	}
+
+	deviceID, ok := h.resolveOwnedDeviceID(w, r, payload.DeviceID, user.ID)
+	if !ok {
+		return
+	}
 
 	var skillID *string
 	if payload.SkillID != nil && strings.TrimSpace(*payload.SkillID) != "" {
@@ -131,11 +160,19 @@ func (h *AIHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	message := "任务已创建，等待后续执行器接管"
+	message := "AI 任务已创建，等待 OmniDrive 云端生成"
+	source := normalizeTrimmedString(payload.Source)
+	if source == nil {
+		defaultSource := "omnidrive_cloud"
+		source = &defaultSource
+	}
 	job, err := h.app.Store.CreateAIJob(r.Context(), store.CreateAIJobInput{
 		ID:           uuid.NewString(),
 		OwnerUserID:  user.ID,
+		DeviceID:     deviceID,
 		SkillID:      skillID,
+		Source:       *source,
+		LocalTaskID:  normalizeTrimmedString(payload.LocalTaskID),
 		JobType:      payload.JobType,
 		ModelName:    payload.ModelName,
 		Prompt:       payload.Prompt,
@@ -147,6 +184,7 @@ func (h *AIHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to create AI job")
 		return
 	}
+
 	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
 		OwnerUserID:  user.ID,
 		ResourceType: "ai_job",
@@ -157,9 +195,12 @@ func (h *AIHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		Status:       job.Status,
 		Message:      job.Message,
 		Payload: mustJSONBytes(map[string]any{
-			"jobType":   job.JobType,
-			"modelName": job.ModelName,
-			"prompt":    job.Prompt,
+			"jobType":     job.JobType,
+			"modelName":   job.ModelName,
+			"deviceId":    job.DeviceID,
+			"skillId":     job.SkillID,
+			"source":      job.Source,
+			"localTaskId": job.LocalTaskID,
 		}),
 	})
 	render.JSON(w, http.StatusCreated, job)
@@ -216,13 +257,391 @@ func (h *AIHandler) WorkspaceJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	artifacts, err := h.app.Store.ListAIJobArtifactsByOwner(r.Context(), job.ID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load AI artifacts")
+		return
+	}
+	publishTasks, err := h.app.Store.ListPublishTasksByAIJobOwner(r.Context(), job.ID, user.ID, 20)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load linked publish tasks")
+		return
+	}
 
 	render.JSON(w, http.StatusOK, domain.AIJobWorkspace{
-		Job:     *job,
-		Model:   model,
-		Skill:   skill,
-		Actions: computeAIJobActions(job),
+		Job:          *job,
+		Model:        model,
+		Skill:        skill,
+		Artifacts:    artifacts,
+		PublishTasks: publishTasks,
+		Bridge:       buildAIJobBridgeState(job, artifacts, publishTasks),
+		Actions:      computeAIJobActions(job, len(artifacts)),
 	})
+}
+
+func (h *AIHandler) ListArtifacts(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
+	if jobID == "" {
+		render.Error(w, http.StatusBadRequest, "jobId is required")
+		return
+	}
+	job, err := h.app.Store.GetAIJobByOwner(r.Context(), jobID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load AI job")
+		return
+	}
+	if job == nil {
+		render.Error(w, http.StatusNotFound, "AI job not found")
+		return
+	}
+	items, err := h.app.Store.ListAIJobArtifactsByOwner(r.Context(), jobID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load AI artifacts")
+		return
+	}
+	render.JSON(w, http.StatusOK, items)
+}
+
+func (h *AIHandler) UploadArtifact(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
+	if jobID == "" {
+		render.Error(w, http.StatusBadRequest, "jobId is required")
+		return
+	}
+
+	job, err := h.app.Store.GetAIJobByOwner(r.Context(), jobID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load AI job")
+		return
+	}
+	if job == nil {
+		render.Error(w, http.StatusNotFound, "AI job not found")
+		return
+	}
+
+	if err := r.ParseMultipartForm(64 << 20); err != nil {
+		render.Error(w, http.StatusBadRequest, "Failed to parse multipart form")
+		return
+	}
+
+	artifactType := strings.TrimSpace(r.FormValue("artifactType"))
+	artifactKey := strings.TrimSpace(r.FormValue("artifactKey"))
+	if artifactType == "" {
+		render.Error(w, http.StatusBadRequest, "artifactType is required")
+		return
+	}
+	deviceID := normalizeTrimmedStringPtr(r.FormValue("deviceId"))
+	rootName := normalizeTrimmedStringPtr(r.FormValue("rootName"))
+	relativePath := normalizeTrimmedStringPtr(r.FormValue("relativePath"))
+	absolutePath := normalizeTrimmedStringPtr(r.FormValue("absolutePath"))
+	if deviceID != nil {
+		device, deviceErr := h.app.Store.GetOwnedDevice(r.Context(), *deviceID, user.ID)
+		if deviceErr != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to validate artifact device")
+			return
+		}
+		if device == nil {
+			render.Error(w, http.StatusNotFound, "Artifact device not found")
+			return
+		}
+		if rootName == nil || relativePath == nil {
+			render.Error(w, http.StatusBadRequest, "rootName and relativePath are required when deviceId is provided")
+			return
+		}
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		render.Error(w, http.StatusBadRequest, "file is required")
+		return
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(io.LimitReader(file, 64<<20))
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to read file")
+		return
+	}
+
+	fileName := sanitizeUploadFilename(header.Filename)
+	contentType := header.Header.Get("Content-Type")
+	object, err := h.app.Storage.SaveBytes(
+		r.Context(),
+		fmt.Sprintf("ai-jobs/%s/%s/%s-%s", user.ID, jobID, uuid.NewString(), fileName),
+		contentType,
+		data,
+	)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to store file")
+		return
+	}
+
+	if artifactKey == "" {
+		artifactKey = buildAIArtifactKey(fileName, artifactType)
+	}
+	title := strings.TrimSpace(r.FormValue("title"))
+	source := strings.TrimSpace(r.FormValue("source"))
+	if source == "" {
+		source = "manual_upload"
+	}
+
+	artifacts, err := h.app.Store.UpsertAIJobArtifacts(r.Context(), []store.UpsertAIJobArtifactInput{{
+		JobID:        jobID,
+		ArtifactKey:  artifactKey,
+		ArtifactType: artifactType,
+		Source:       source,
+		Title:        normalizeTrimmedStringPtr(title),
+		FileName:     &fileName,
+		MimeType:     &object.ContentType,
+		StorageKey:   &object.StorageKey,
+		PublicURL:    &object.PublicURL,
+		SizeBytes:    &object.SizeBytes,
+		DeviceID:     deviceID,
+		RootName:     rootName,
+		RelativePath: relativePath,
+		AbsolutePath: absolutePath,
+	}})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to create AI artifact")
+		return
+	}
+
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "ai_job_artifact",
+		ResourceID:   &artifacts[0].ID,
+		Action:       "upload",
+		Title:        "上传 AI 产物",
+		Source:       artifactType,
+		Status:       "success",
+		Message:      auditStringPtr("AI 任务产物文件已上传"),
+		Payload: mustJSONBytes(map[string]any{
+			"jobId":       jobID,
+			"artifactKey": artifactKey,
+			"publicUrl":   artifacts[0].PublicURL,
+		}),
+	})
+
+	render.JSON(w, http.StatusCreated, artifacts[0])
+}
+
+func (h *AIHandler) CreatePublishTask(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
+	if jobID == "" {
+		render.Error(w, http.StatusBadRequest, "jobId is required")
+		return
+	}
+
+	job, err := h.app.Store.GetAIJobByOwner(r.Context(), jobID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load AI job")
+		return
+	}
+	if job == nil {
+		render.Error(w, http.StatusNotFound, "AI job not found")
+		return
+	}
+	if job.Status != "success" && job.Status != "completed" {
+		render.Error(w, http.StatusConflict, "AI job must be completed before creating publish task")
+		return
+	}
+
+	var payload createPublishTaskFromAIJobRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	deviceID := firstNonEmptyString(payload.DeviceID, job.DeviceID)
+	if deviceID == nil {
+		render.Error(w, http.StatusBadRequest, "deviceId is required")
+		return
+	}
+	device, err := h.app.Store.GetOwnedDevice(r.Context(), *deviceID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to validate device")
+		return
+	}
+	if device == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+	if !device.IsEnabled {
+		render.Error(w, http.StatusConflict, "Device is disabled")
+		return
+	}
+
+	payload.Platform = strings.TrimSpace(payload.Platform)
+	payload.AccountName = strings.TrimSpace(payload.AccountName)
+	if payload.Platform == "" || payload.AccountName == "" {
+		render.Error(w, http.StatusBadRequest, "platform and accountName are required")
+		return
+	}
+
+	accountID := normalizeTrimmedString(payload.AccountID)
+	var account *domain.PlatformAccount
+	if accountID != nil {
+		account, err = h.app.Store.GetOwnedAccountByID(r.Context(), *accountID, user.ID)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to validate account")
+			return
+		}
+		if account == nil {
+			render.Error(w, http.StatusNotFound, "Account not found")
+			return
+		}
+		if account.DeviceID != device.ID || account.Platform != payload.Platform || account.AccountName != payload.AccountName {
+			render.Error(w, http.StatusConflict, "Account does not match device/platform/accountName")
+			return
+		}
+	}
+
+	artifacts, err := h.app.Store.ListAIJobArtifactsByOwner(r.Context(), jobID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load AI artifacts")
+		return
+	}
+	selectedArtifacts := filterAIArtifactsByKeys(artifacts, payload.ArtifactKeys)
+	if len(selectedArtifacts) == 0 {
+		render.Error(w, http.StatusConflict, "No AI artifacts are available for publish task creation")
+		return
+	}
+
+	materialRefs := make([]store.ReplacePublishTaskMaterialRefInput, 0, len(selectedArtifacts))
+	mediaItems := make([]map[string]any, 0, len(selectedArtifacts))
+	for _, artifact := range selectedArtifacts {
+		mediaItems = append(mediaItems, map[string]any{
+			"artifactKey":  artifact.ArtifactKey,
+			"artifactType": artifact.ArtifactType,
+			"publicUrl":    artifact.PublicURL,
+			"fileName":     artifact.FileName,
+			"mimeType":     artifact.MimeType,
+			"source":       artifact.Source,
+		})
+		if artifact.DeviceID == nil || strings.TrimSpace(*artifact.DeviceID) != device.ID || artifact.RootName == nil || artifact.RelativePath == nil {
+			render.Error(w, http.StatusConflict, "AI artifacts are not mirrored to the selected OmniBull device")
+			return
+		}
+		entry, entryErr := h.app.Store.GetMaterialEntryByOwner(r.Context(), user.ID, device.ID, strings.TrimSpace(*artifact.RootName), strings.TrimSpace(*artifact.RelativePath))
+		if entryErr != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to validate mirrored AI artifact")
+			return
+		}
+		if entry == nil || !entry.IsAvailable {
+			render.Error(w, http.StatusConflict, "Mirrored AI artifact is not available on the selected OmniBull device")
+			return
+		}
+
+		role := "media"
+		materialRefs = append(materialRefs, store.ReplacePublishTaskMaterialRefInput{
+			TaskID:       "",
+			DeviceID:     device.ID,
+			RootName:     entry.RootName,
+			RelativePath: entry.RelativePath,
+			Role:         role,
+			Name:         entry.Name,
+			Kind:         entry.Kind,
+			AbsolutePath: entry.AbsolutePath,
+			SizeBytes:    entry.SizeBytes,
+			ModifiedAt:   entry.ModifiedAt,
+			Extension:    entry.Extension,
+			MimeType:     entry.MimeType,
+			IsText:       entry.IsText,
+			PreviewText:  entry.PreviewText,
+		})
+	}
+
+	mediaPayload, err := json.Marshal(map[string]any{
+		"source":      "ai_job",
+		"aiJobId":     job.ID,
+		"jobType":     job.JobType,
+		"modelName":   job.ModelName,
+		"artifacts":   mediaItems,
+		"generatedAt": job.FinishedAt,
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to prepare media payload")
+		return
+	}
+
+	title := strings.TrimSpace(stringValue(payload.Title))
+	if title == "" {
+		title = buildPublishTaskTitleFromAIJob(job, selectedArtifacts)
+	}
+
+	runAt, ok := parseOptionalRFC3339(w, payload.RunAt, "runAt")
+	if !ok {
+		return
+	}
+
+	taskMessage := "来自 AI 任务的发布任务，等待执行"
+	task, err := h.app.Store.CreatePublishTask(r.Context(), store.CreatePublishTaskInput{
+		ID:           uuid.NewString(),
+		DeviceID:     device.ID,
+		AccountID:    accountID,
+		Platform:     payload.Platform,
+		AccountName:  payload.AccountName,
+		Title:        title,
+		ContentText:  payload.ContentText,
+		MediaPayload: mediaPayload,
+		Status:       "pending",
+		Message:      &taskMessage,
+		RunAt:        runAt,
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to create publish task from AI job")
+		return
+	}
+
+	for i := range materialRefs {
+		materialRefs[i].TaskID = task.ID
+	}
+	if _, err := h.app.Store.ReplacePublishTaskMaterialRefs(r.Context(), task.ID, user.ID, materialRefs); err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to attach AI materials to publish task")
+		return
+	}
+	if err := h.app.Store.LinkAIJobToPublishTask(r.Context(), store.LinkAIJobPublishTaskInput{
+		JobID:       job.ID,
+		TaskID:      task.ID,
+		OwnerUserID: user.ID,
+	}); err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to link AI job to publish task")
+		return
+	}
+	_, _ = h.app.Store.CreatePublishTaskEvent(r.Context(), store.CreatePublishTaskEventInput{
+		ID:        uuid.NewString(),
+		TaskID:    task.ID,
+		EventType: "created_from_ai_job",
+		Source:    "omnidrive",
+		Status:    task.Status,
+		Message:   auditStringPtr("发布任务由 AI 任务生成"),
+		Payload: mustJSONBytes(map[string]any{
+			"aiJobId":      job.ID,
+			"artifactKeys": collectAIArtifactKeys(selectedArtifacts),
+		}),
+	})
+
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "publish_task",
+		ResourceID:   &task.ID,
+		Action:       "create_from_ai_job",
+		Title:        "由 AI 任务创建发布任务",
+		Source:       task.Platform,
+		Status:       task.Status,
+		Message:      task.Message,
+		Payload: mustJSONBytes(map[string]any{
+			"aiJobId":     job.ID,
+			"deviceId":    device.ID,
+			"accountId":   accountID,
+			"accountName": task.AccountName,
+		}),
+	})
+
+	render.JSON(w, http.StatusCreated, task)
 }
 
 func (h *AIHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
@@ -246,6 +665,11 @@ func (h *AIHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	var payload updateAIJobRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
 		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	deviceID, ok := h.resolveOwnedDeviceID(w, r, payload.DeviceID, user.ID)
+	if !ok {
 		return
 	}
 
@@ -298,17 +722,14 @@ func (h *AIHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var finishedAt *time.Time
-	if payload.FinishedAt != nil && strings.TrimSpace(*payload.FinishedAt) != "" {
-		parsed, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(*payload.FinishedAt))
-		if parseErr != nil {
-			render.Error(w, http.StatusBadRequest, "finishedAt must be RFC3339")
-			return
-		}
-		finishedAt = &parsed
+	finishedAt, finishedTouched, ok := parseOptionalRFC3339Touched(w, payload.FinishedAt, "finishedAt")
+	if !ok {
+		return
 	}
 
 	job, err := h.app.Store.UpdateAIJob(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
+		DeviceID:        deviceID,
+		DeviceTouched:   payload.DeviceID != nil,
 		SkillID:         skillID,
 		SkillTouched:    skillTouched,
 		Prompt:          payload.Prompt,
@@ -320,7 +741,7 @@ func (h *AIHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 		Message:         payload.Message,
 		CostCredits:     payload.CostCredits,
 		FinishedAt:      finishedAt,
-		FinishedTouched: payload.FinishedAt != nil,
+		FinishedTouched: finishedTouched,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to update AI job")
@@ -341,6 +762,7 @@ func (h *AIHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 		Status:       job.Status,
 		Message:      job.Message,
 		Payload: mustJSONBytes(map[string]any{
+			"deviceId":    payload.DeviceID,
 			"skillId":     payload.SkillID,
 			"status":      payload.Status,
 			"costCredits": payload.CostCredits,
@@ -370,22 +792,19 @@ func (h *AIHandler) CancelJob(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusNotFound, "AI job not found")
 		return
 	}
-	if !computeAIJobActions(existing).CanCancel {
+	if !computeAIJobActions(existing, 0).CanCancel {
 		render.Error(w, http.StatusConflict, "AI job cannot be cancelled")
 		return
 	}
 
-	now := time.Now().UTC()
 	message := "AI 任务已取消"
-	status := "cancelled"
-	job, err := h.app.Store.UpdateAIJob(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
-		Status:          &status,
-		Message:         &message,
-		FinishedAt:      &now,
-		FinishedTouched: true,
-	})
+	job, err := h.app.Store.CancelAIJob(r.Context(), jobID, user.ID, &message)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to cancel AI job")
+		return
+	}
+	if job == nil {
+		render.Error(w, http.StatusConflict, "AI job cannot be cancelled")
 		return
 	}
 
@@ -420,25 +839,29 @@ func (h *AIHandler) RetryJob(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusNotFound, "AI job not found")
 		return
 	}
-	if !computeAIJobActions(existing).CanRetry {
+	if !computeAIJobActions(existing, 0).CanRetry {
 		render.Error(w, http.StatusConflict, "AI job cannot be retried")
 		return
 	}
 
-	status := "queued"
+	existingArtifacts, err := h.app.Store.ListAIJobArtifactsByOwner(r.Context(), jobID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load AI artifacts")
+		return
+	}
+
 	message := "AI 任务已重新排队"
-	job, err := h.app.Store.UpdateAIJob(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
-		Status:          &status,
-		Message:         &message,
-		OutputPayload:   []byte("null"),
-		OutputTouched:   true,
-		FinishedAt:      nil,
-		FinishedTouched: true,
-	})
+	job, err := h.app.Store.RetryAIJob(r.Context(), jobID, user.ID, &message)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to retry AI job")
 		return
 	}
+	if job == nil {
+		render.Error(w, http.StatusConflict, "AI job cannot be retried")
+		return
+	}
+	_, _ = h.app.Store.DeleteAIJobArtifactsByOwner(r.Context(), jobID, user.ID)
+	cleanupAIArtifactFiles(h.app, r.Context(), existingArtifacts)
 
 	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
 		OwnerUserID:  user.ID,
@@ -452,6 +875,151 @@ func (h *AIHandler) RetryJob(w http.ResponseWriter, r *http.Request) {
 	})
 
 	render.JSON(w, http.StatusOK, job)
+}
+
+func (h *AIHandler) ForceReleaseJob(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
+	if jobID == "" {
+		render.Error(w, http.StatusBadRequest, "jobId is required")
+		return
+	}
+	job, err := h.app.Store.ForceReleaseAIJobLeaseByOwner(r.Context(), jobID, user.ID, auditStringPtr("AI 任务租约已由云端手动释放"))
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to force release AI job")
+		return
+	}
+	if job == nil {
+		render.Error(w, http.StatusConflict, "AI job has no active lease to force release")
+		return
+	}
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "ai_job",
+		ResourceID:   &job.ID,
+		Action:       "force_release",
+		Title:        "释放 AI 任务租约",
+		Source:       job.ModelName,
+		Status:       job.Status,
+		Message:      job.Message,
+	})
+	render.JSON(w, http.StatusOK, job)
+}
+
+func (h *AIHandler) resolveOwnedDeviceID(w http.ResponseWriter, r *http.Request, raw *string, ownerUserID string) (*string, bool) {
+	if raw == nil {
+		return nil, true
+	}
+	trimmed := strings.TrimSpace(*raw)
+	if trimmed == "" {
+		return nil, true
+	}
+	device, err := h.app.Store.GetOwnedDevice(r.Context(), trimmed, ownerUserID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to validate device")
+		return nil, false
+	}
+	if device == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return nil, false
+	}
+	return &trimmed, true
+}
+
+func parseOptionalRFC3339(w http.ResponseWriter, raw *string, fieldName string) (*time.Time, bool) {
+	if raw == nil || strings.TrimSpace(*raw) == "" {
+		return nil, true
+	}
+	parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(*raw))
+	if err != nil {
+		render.Error(w, http.StatusBadRequest, fieldName+" must be RFC3339")
+		return nil, false
+	}
+	return &parsed, true
+}
+
+func parseOptionalRFC3339Touched(w http.ResponseWriter, raw *string, fieldName string) (*time.Time, bool, bool) {
+	if raw == nil {
+		return nil, false, true
+	}
+	if strings.TrimSpace(*raw) == "" {
+		return nil, true, true
+	}
+	parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(*raw))
+	if err != nil {
+		render.Error(w, http.StatusBadRequest, fieldName+" must be RFC3339")
+		return nil, false, false
+	}
+	return &parsed, true, true
+}
+
+func filterAIArtifactsByKeys(items []domain.AIJobArtifact, requested []string) []domain.AIJobArtifact {
+	if len(requested) == 0 {
+		return items
+	}
+	allowed := make(map[string]struct{}, len(requested))
+	for _, key := range requested {
+		key = strings.TrimSpace(key)
+		if key != "" {
+			allowed[key] = struct{}{}
+		}
+	}
+	filtered := make([]domain.AIJobArtifact, 0, len(items))
+	for _, item := range items {
+		if _, ok := allowed[item.ArtifactKey]; ok {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
+func collectAIArtifactKeys(items []domain.AIJobArtifact) []string {
+	keys := make([]string, 0, len(items))
+	for _, item := range items {
+		keys = append(keys, item.ArtifactKey)
+	}
+	return keys
+}
+
+func buildPublishTaskTitleFromAIJob(job *domain.AIJob, artifacts []domain.AIJobArtifact) string {
+	if job == nil {
+		return "AI 产物发布任务"
+	}
+	if job.Prompt != nil && strings.TrimSpace(*job.Prompt) != "" {
+		return strings.TrimSpace(*job.Prompt)
+	}
+	if len(artifacts) > 0 && artifacts[0].FileName != nil && strings.TrimSpace(*artifacts[0].FileName) != "" {
+		return strings.TrimSpace(*artifacts[0].FileName)
+	}
+	return fmt.Sprintf("%s 生成内容发布", job.ModelName)
+}
+
+func buildAIArtifactKey(fileName string, artifactType string) string {
+	key := strings.TrimSpace(fileName)
+	key = strings.ReplaceAll(key, " ", "-")
+	key = strings.Trim(key, "-_/")
+	if key != "" {
+		return key
+	}
+	return strings.Trim(strings.ReplaceAll(artifactType, " ", "-"), "-_/")
+}
+
+func cleanupAIArtifactFiles(app *appstate.App, ctx context.Context, items []domain.AIJobArtifact) {
+	if app == nil || app.Storage == nil {
+		return
+	}
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		if item.StorageKey == nil || strings.TrimSpace(*item.StorageKey) == "" {
+			continue
+		}
+		key := strings.TrimSpace(*item.StorageKey)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		_ = app.Storage.DeleteObject(ctx, key)
+	}
 }
 
 func normalizeAIStatus(value *string) *string {
@@ -487,19 +1055,94 @@ func isAllowedAIJobTransition(current string, next string) bool {
 	}
 }
 
-func computeAIJobActions(job *domain.AIJob) domain.AIJobActionState {
+func computeAIJobActions(job *domain.AIJob, artifactCount int) domain.AIJobActionState {
 	if job == nil {
 		return domain.AIJobActionState{}
 	}
 
+	state := domain.AIJobActionState{
+		CanCreatePublishTask: (job.Status == "success" || job.Status == "completed") && artifactCount > 0 && job.Source != "omnibull_local",
+		CanForceRelease:      job.Status == "running" && job.LeaseToken != nil,
+	}
+
 	switch job.Status {
 	case "queued":
-		return domain.AIJobActionState{CanEdit: true, CanCancel: true, CanRetry: false}
+		state.CanEdit = true
+		state.CanCancel = true
 	case "running":
-		return domain.AIJobActionState{CanEdit: false, CanCancel: true, CanRetry: false}
+		state.CanCancel = true
 	case "failed", "cancelled", "success", "completed":
-		return domain.AIJobActionState{CanEdit: true, CanCancel: false, CanRetry: true}
+		state.CanEdit = true
+		state.CanRetry = true
 	default:
-		return domain.AIJobActionState{CanEdit: true, CanCancel: false, CanRetry: false}
+		state.CanEdit = true
+	}
+	return state
+}
+
+func buildAIJobBridgeState(job *domain.AIJob, artifacts []domain.AIJobArtifact, publishTasks []domain.PublishTask) domain.AIJobBridgeState {
+	if job == nil {
+		return domain.AIJobBridgeState{}
+	}
+
+	stage := "queued_generation"
+	if job.Source == "omnibull_local" {
+		switch job.Status {
+		case "running":
+			stage = "generating"
+		case "success", "completed":
+			stage = "awaiting_omnibull_import"
+		case "failed":
+			stage = "failed"
+		case "cancelled":
+			stage = "cancelled"
+		}
+		switch strings.TrimSpace(job.DeliveryStatus) {
+		case "imported":
+			stage = "mirrored_to_omnibull"
+		case "publish_queued":
+			stage = "publish_queued_on_omnibull"
+		case "publishing":
+			stage = "publishing_on_omnibull"
+		case "success", "completed":
+			stage = "published_on_omnibull"
+		case "failed":
+			stage = "publish_failed_on_omnibull"
+		case "needs_verify":
+			stage = "publish_needs_verify_on_omnibull"
+		case "cancelled":
+			stage = "cancelled_on_omnibull"
+		}
+	} else {
+		switch job.Status {
+		case "running":
+			stage = "generating"
+		case "success", "completed":
+			stage = "output_ready"
+		case "failed":
+			stage = "failed"
+		case "cancelled":
+			stage = "cancelled"
+		}
+		if len(publishTasks) > 0 {
+			stage = "publish_tasks_created"
+		}
+	}
+	mirroredCount := 0
+	for _, artifact := range artifacts {
+		if artifact.DeviceID != nil && artifact.RootName != nil && artifact.RelativePath != nil {
+			mirroredCount++
+		}
+	}
+	return domain.AIJobBridgeState{
+		Source:                 job.Source,
+		GenerationSide:         "omnidrive_cloud",
+		TargetDeviceID:         job.DeviceID,
+		LocalTaskID:            job.LocalTaskID,
+		LocalPublishTaskID:     job.LocalPublishTaskID,
+		DeliveryStage:          stage,
+		ArtifactCount:          len(artifacts),
+		MirroredArtifactCount:  mirroredCount,
+		LinkedPublishTaskCount: len(publishTasks),
 	}
 }

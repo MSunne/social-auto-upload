@@ -4,6 +4,29 @@
 项目实现了对 `抖音`、`Bilibili`、`小红书`、`快手`、`视频号`、`百家号` 以及 `TikTok` 等平台的视频上传、定时发布等功能。
 结合各平台 `uploader` 模块，您可以轻松配置和扩展支持的平台，并通过示例脚本快速上手。
 
+## 工程地图
+
+当前仓库里，目录职责是这样的：
+
+- `sau_frontend`
+  - 这是当前的 `OmniBull / SAU / LocaWeb` 本地前端工程。
+- `omnibull_frontend`
+  - 这是 `sau_frontend` 的直达别名，方便按产品名快速进入本地前端工程。
+- `omnidrive_cloud`
+  - 这是 `OmniDrive` 的 Go 云端后端工程。
+- `omnidrive_frontend`
+  - 这是 `OmniDrive` 的云端前端工程。
+- `openclaw_extensions/omnibull`
+  - 这是本地 `OpenClaw` 调用 `OmniBull / SAU` 的插件工程。
+- `projects`
+  - 这是统一工程入口目录，收口了 `OmniBull`、`OmniDrive`、`OpenClaw` 相关活跃工程的快捷入口。
+- `sau_backend.py`、`uploader`、`myUtils`、`utils`
+  - 这些仍然属于 `SAU / OmniBull` 本地执行器本体。
+
+更详细的结构说明见：
+
+- `docs/project_structure.md`
+
 <img src="media/show/tkupload.gif" alt="tiktok show" width="800"/>
 
 ## 目录

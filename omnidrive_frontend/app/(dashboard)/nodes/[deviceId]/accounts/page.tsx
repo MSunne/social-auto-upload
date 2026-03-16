@@ -9,17 +9,18 @@ import {
   Layout,
   ListChecks,
   Sparkles,
-  ShieldCheck,
-  ShieldAlert,
+  KeyRound,
+  BadgeCheck,
   Trash2,
   ChevronLeft,
   ChevronRight,
   ExternalLink,
 } from "lucide-react";
 import Link from "next/link";
-import api from "@/lib/api";
+import { getDevice, listAccounts, listSkills, listTasks } from "@/lib/services";
 import type { Device, Account, Skill, Task } from "@/lib/types";
 import { StatusBadge } from "@/components/ui/common";
+import { AddTaskModal } from "@/components/ui/add-task-modal";
 
 /* Platform icon config */
 const PLATFORMS = [
@@ -43,27 +44,30 @@ export default function DeviceAccountsPage({
 
   const { data: device } = useQuery<Device>({
     queryKey: ["device", deviceId],
-    queryFn: () => api.get(`/devices/${deviceId}`).then((r) => r.data),
+    queryFn: () => getDevice(deviceId),
   });
 
   const { data: accounts = [] } = useQuery<Account[]>({
     queryKey: ["accounts", deviceId],
-    queryFn: () =>
-      api.get(`/accounts?deviceId=${deviceId}`).then((r) => r.data),
+    queryFn: () => listAccounts(deviceId),
   });
 
   const { data: skills = [] } = useQuery<Skill[]>({
     queryKey: ["skills"],
-    queryFn: () => api.get("/skills").then((r) => r.data),
+    queryFn: listSkills,
   });
 
   const { data: tasks = [] } = useQuery<Task[]>({
     queryKey: ["tasks"],
-    queryFn: () => api.get("/tasks").then((r) => r.data),
+    queryFn: () => listTasks(),
   });
 
   /* Platform filter */
   const [platformFilter, setPlatformFilter] = useState<string | null>(null);
+
+  /* Modal state */
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedAccountName, setSelectedAccountName] = useState<string>("");
 
   /* Computed stats */
   const uniquePlatforms = new Set(accounts.map((a) => a.platform));
@@ -326,13 +330,16 @@ export default function DeviceAccountsPage({
 
                       {/* Task Table */}
                       <td className="px-6 py-4">
-                        <Link
-                          href="/tasks"
+                        <button
+                          onClick={() => {
+                            setSelectedAccountName(acc.accountName);
+                            setIsModalOpen(true);
+                          }}
                           className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-accent/15 to-cyan/15 border border-accent/25 px-3 py-1.5 text-xs font-semibold text-accent transition-all hover:from-accent/25 hover:to-cyan/25 hover:border-accent/40 hover:shadow-[0_0_12px_rgba(177,73,255,0.2)] hover:-translate-y-px"
                         >
                           <ExternalLink className="h-3 w-3" />
                           详情/增加任务
-                        </Link>
+                        </button>
                       </td>
 
                       {/* Actions */}
@@ -340,17 +347,17 @@ export default function DeviceAccountsPage({
                         <div className="flex items-center justify-center gap-2">
                           {acc.status === "invalid" ? (
                             <button
-                              className="flex h-8 w-8 items-center justify-center rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 transition-all hover:border-amber-400/60 hover:bg-amber-500/20 hover:shadow-[0_0_10px_rgba(245,158,11,0.2)]"
+                              className="flex h-8 w-8 items-center justify-center rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 cursor-pointer transition-all hover:border-amber-400/60 hover:bg-amber-500/20 hover:shadow-[0_0_10px_rgba(245,158,11,0.25)] hover:scale-110 active:scale-95"
                               title="重新认证"
                             >
-                              <ShieldAlert className="h-3.5 w-3.5" />
+                              <KeyRound className="h-3.5 w-3.5" />
                             </button>
                           ) : (
                             <button
-                              className="flex h-8 w-8 items-center justify-center rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 transition-all hover:border-emerald-400/60 hover:bg-emerald-500/20 hover:shadow-[0_0_10px_rgba(16,185,129,0.2)]"
+                              className="flex h-8 w-8 items-center justify-center rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 cursor-pointer transition-all hover:border-emerald-400/60 hover:bg-emerald-500/20 hover:shadow-[0_0_10px_rgba(16,185,129,0.25)] hover:scale-110 active:scale-95"
                               title="已认证"
                             >
-                              <ShieldCheck className="h-3.5 w-3.5" />
+                              <BadgeCheck className="h-3.5 w-3.5" />
                             </button>
                           )}
                           <button
@@ -400,6 +407,14 @@ export default function DeviceAccountsPage({
           </div>
         )}
       </motion.div>
+
+      {/* Add Task Modal */}
+      <AddTaskModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        skills={skills}
+        accountName={selectedAccountName}
+      />
     </>
   );
 }

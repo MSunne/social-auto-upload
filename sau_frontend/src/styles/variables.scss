@@ -1,54 +1,61 @@
-// 颜色变量
-$primary-color: #409eff;
-$success-color: #67c23a;
-$warning-color: #e6a23c;
-$danger-color: #f56c6c;
-$info-color: #909399;
+// ═══════════════════════════════════════
+// SAU Frontend — Dark Theme Variables
+// ═══════════════════════════════════════
 
-// 文字颜色
-$text-primary: #303133;
-$text-regular: #606266;
-$text-secondary: #909399;
-$text-placeholder: #c0c4cc;
+// ── Background ──
+$bg-dark:         #0d1117;
+$bg-surface:      #161b22;
+$bg-surface-alt:  #1c2333;
+$bg-sidebar:      #0a0f1a;
+$bg-sidebar-dark: #060a12;
+$bg-hover:        #1f2937;
+$bg-active:       #21262d;
 
-// 边框颜色
-$border-base: #dcdfe6;
-$border-light: #e4e7ed;
-$border-lighter: #ebeef5;
-$border-extra-light: #f2f6fc;
+// ── Border ──
+$border-color:    #30363d;
+$border-light:    #3a4250;
+$border-lighter:  #444d56;
 
-// 背景颜色
-$bg-color: #ffffff;
-$bg-color-page: #f2f3f5;
-$bg-color-overlay: #ffffff;
+// ── Text ──
+$text-primary:    #e6edf3;
+$text-secondary:  #8b949e;
+$text-muted:      #6e7681;
+$text-inverse:    #0d1117;
 
-// 字体大小
-$font-size-extra-large: 20px;
-$font-size-large: 18px;
-$font-size-medium: 16px;
-$font-size-base: 14px;
-$font-size-small: 13px;
-$font-size-extra-small: 12px;
+// ── Brand / Accent ──
+$primary-color:   #409EFF;
+$primary-light:   #66b1ff;
+$primary-dark:    #3a8ee6;
 
-// 间距
-$spacing-xs: 4px;
-$spacing-sm: 8px;
-$spacing-md: 16px;
-$spacing-lg: 24px;
-$spacing-xl: 32px;
+// ── Semantic Colors ──
+$success-color:   #67C23A;
+$warning-color:   #E6A23C;
+$danger-color:    #F56C6C;
+$info-color:      #909399;
 
-// 圆角
-$border-radius-base: 4px;
-$border-radius-small: 2px;
-$border-radius-round: 20px;
-$border-radius-circle: 50%;
+// ── Accent Gradients ──
+$accent-gradient: linear-gradient(135deg, #409EFF, #36d1dc);
 
-// 阴影
-$box-shadow-base: 0 2px 4px rgba(0, 0, 0, 0.12), 0 0 6px rgba(0, 0, 0, 0.04);
-$box-shadow-dark: 0 2px 4px rgba(0, 0, 0, 0.12), 0 0 6px rgba(0, 0, 0, 0.12);
-$box-shadow-light: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+// ── Shadows ──
+$shadow-sm:       0 1px 3px rgba(0, 0, 0, 0.3);
+$shadow-md:       0 4px 12px rgba(0, 0, 0, 0.4);
+$shadow-lg:       0 8px 24px rgba(0, 0, 0, 0.5);
+$shadow-card:     0 2px 8px rgba(0, 0, 0, 0.3);
 
-// 层级
-$z-index-normal: 1;
-$z-index-top: 1000;
-$z-index-popper: 2000;
+// ── Card ──
+$card-bg:         $bg-surface;
+$card-border:     $border-color;
+$card-radius:     12px;
+$card-padding:    20px;
+
+// ── Sidebar ──
+$sidebar-width:       200px;
+$sidebar-width-mini:  64px;
+
+// ── Header ──
+$header-height:   60px;
+$header-bg:       $bg-surface;
+
+// ── Transitions ──
+$transition-fast: 0.2s ease;
+$transition-base: 0.3s ease;

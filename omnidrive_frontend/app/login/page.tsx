@@ -4,10 +4,9 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Zap, Eye, EyeOff, Sparkles } from "lucide-react";
-import api from "@/lib/api";
+import { login, register, getCurrentUser } from "@/lib/services";
 import { useAuthStore } from "@/lib/store";
 import { mockUser, mockToken } from "@/lib/mock-data";
-import type { AuthResponse, User } from "@/lib/types";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -28,16 +27,12 @@ export default function LoginPage() {
 
     try {
       if (mode === "register") {
-        await api.post("/auth/register", { email, name, password });
+        await register(email, name, password);
       }
-      const { data } = await api.post<AuthResponse>("/auth/login", {
-        email,
-        password,
-      });
-      const { data: user } = await api.get<User>("/auth/me", {
-        headers: { Authorization: `Bearer ${data.accessToken}` },
-      });
-      setAuth(user, data.accessToken);
+      const resp = await login(email, password);
+      // Backend may return user in the login response, or we fetch it separately
+      const user = resp.user ?? await getCurrentUser();
+      setAuth(user, resp.accessToken);
       router.push("/dashboard");
     } catch (err: unknown) {
       const msg =

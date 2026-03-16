@@ -17,7 +17,7 @@ import {
   Search,
 } from "lucide-react";
 import Link from "next/link";
-import api from "@/lib/api";
+import { listDevices, claimDevice } from "@/lib/services";
 import type { Device } from "@/lib/types";
 import { PageHeader, EmptyState } from "@/components/ui/common";
 
@@ -93,7 +93,7 @@ function Toggle({
 export default function NodesPage() {
   const { data: devices = [], refetch } = useQuery<Device[]>({
     queryKey: ["devices"],
-    queryFn: () => api.get("/devices").then((r) => r.data),
+    queryFn: listDevices,
   });
 
   const [page, setPage] = useState(1);
@@ -120,7 +120,7 @@ export default function NodesPage() {
     setClaiming(true);
     setError("");
     try {
-      await api.post("/devices/claim", { deviceCode: deviceCode.trim() });
+      await claimDevice(deviceCode.trim());
       setDeviceCode("");
       refetch();
     } catch (err: unknown) {

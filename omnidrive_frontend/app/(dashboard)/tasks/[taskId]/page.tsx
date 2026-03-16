@@ -17,7 +17,7 @@ import {
   PlaySquare,
   Image as ImageIcon,
 } from "lucide-react";
-import api from "@/lib/api";
+import { listTasks, listDevices, listAccounts } from "@/lib/services";
 import type { Task, Device, Account } from "@/lib/types";
 import { PageHeader, StatusBadge } from "@/components/ui/common";
 
@@ -29,15 +29,15 @@ export default function TaskDetailPage() {
   // Fetch data
   const { data: tasks = [] } = useQuery<Task[]>({
     queryKey: ["tasks"],
-    queryFn: () => api.get("/tasks").then((r) => r.data),
+    queryFn: () => listTasks(),
   });
   const { data: devices = [] } = useQuery<Device[]>({
     queryKey: ["devices"],
-    queryFn: () => api.get("/devices").then((r) => r.data),
+    queryFn: listDevices,
   });
   const { data: accounts = [] } = useQuery<Account[]>({
     queryKey: ["accounts"],
-    queryFn: () => api.get("/accounts").then((r) => r.data),
+    queryFn: () => listAccounts(),
   });
 
   const task = tasks.find((t) => t.id === taskId);
@@ -54,6 +54,7 @@ export default function TaskDetailPage() {
   }
 
   const isNeedsVerify = task.status === "needs_verify";
+  const vp = task.verificationPayload as Record<string, string> | null | undefined;
 
   return (
     <>
@@ -81,7 +82,7 @@ export default function TaskDetailPage() {
         }
       />
 
-      {isNeedsVerify && task.verificationPayload && (
+      {isNeedsVerify && vp && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -100,7 +101,7 @@ export default function TaskDetailPage() {
                 <div className="overflow-hidden rounded-xl border border-border bg-black">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={task.verificationPayload.screenshotUrl}
+                    src={vp.screenshotUrl}
                     alt="验证预留图"
                     className="w-full object-contain"
                   />
@@ -112,7 +113,7 @@ export default function TaskDetailPage() {
                     准备填写的标题
                   </p>
                   <p className="rounded-lg bg-surface-hover p-3 text-sm font-medium text-text-primary">
-                    {task.verificationPayload.generatedTitle}
+                    {vp.generatedTitle}
                   </p>
                 </div>
                 <div>
@@ -120,7 +121,7 @@ export default function TaskDetailPage() {
                     准备填写的正文
                   </p>
                   <p className="rounded-lg bg-surface-hover p-3 text-sm text-text-secondary whitespace-pre-wrap">
-                    {task.verificationPayload.contentPreview}
+                    {vp.contentPreview}
                   </p>
                 </div>
                 <div className="flex gap-3 pt-2">
@@ -290,9 +291,9 @@ export default function TaskDetailPage() {
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-text-muted">
                   媒体资产
                 </p>
-                {task.mediaPayload && task.mediaPayload.images ? (
+                {task.mediaPayload && (task.mediaPayload as Record<string, unknown>).images ? (
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                    {task.mediaPayload.images.map((img: string, i: number) => (
+                    {((task.mediaPayload as Record<string, unknown>).images as string[]).map((img: string, i: number) => (
                       <div
                         key={i}
                         className="group relative aspect-square overflow-hidden rounded-lg border border-border bg-surface-hover"

@@ -307,6 +307,19 @@ type PublishTaskRuntimeState struct {
 	UpdatedAt        time.Time       `json:"updatedAt"`
 }
 
+type PublishTaskBridgeState struct {
+	Origin          string     `json:"origin"`
+	LocalSource     *string    `json:"localSource,omitempty"`
+	Stage           *string    `json:"stage,omitempty"`
+	LocalStatus     *string    `json:"localStatus,omitempty"`
+	WorkerName      *string    `json:"workerName,omitempty"`
+	UpdatedAt       *string    `json:"updatedAt,omitempty"`
+	StartedAt       *string    `json:"startedAt,omitempty"`
+	FinishedAt      *string    `json:"finishedAt,omitempty"`
+	LastAgentSyncAt *time.Time `json:"lastAgentSyncAt,omitempty"`
+	HasActiveLease  bool       `json:"hasActiveLease"`
+}
+
 type PublishTaskWorkspace struct {
 	Task      PublishTask              `json:"task"`
 	Device    *Device                  `json:"device,omitempty"`
@@ -318,6 +331,7 @@ type PublishTaskWorkspace struct {
 	Actions   PublishTaskActionState   `json:"actions"`
 	Readiness PublishTaskReadiness     `json:"readiness"`
 	Runtime   *PublishTaskRuntimeState `json:"runtime,omitempty"`
+	Bridge    PublishTaskBridgeState   `json:"bridge"`
 }
 
 type PublishTaskDiagnosticItem struct {
@@ -489,6 +503,31 @@ type PublishTaskBulkRepairResult struct {
 	ServerTime time.Time                    `json:"serverTime"`
 }
 
+type PublishTaskBulkActionItem struct {
+	TaskBefore    PublishTask  `json:"taskBefore"`
+	TaskAfter     *PublishTask `json:"taskAfter,omitempty"`
+	Status        string       `json:"status"`
+	Message       *string      `json:"message,omitempty"`
+	Action        string       `json:"action"`
+	ArtifactCount int64        `json:"artifactCount,omitempty"`
+}
+
+type PublishTaskBulkActionSummary struct {
+	SelectedCount  int64            `json:"selectedCount"`
+	ProcessedCount int64            `json:"processedCount"`
+	SuccessCount   int64            `json:"successCount"`
+	SkippedCount   int64            `json:"skippedCount"`
+	FailedCount    int64            `json:"failedCount"`
+	ByStatus       map[string]int64 `json:"byStatus"`
+	ByAction       map[string]int64 `json:"byAction"`
+}
+
+type PublishTaskBulkActionResult struct {
+	Items      []PublishTaskBulkActionItem  `json:"items"`
+	Summary    PublishTaskBulkActionSummary `json:"summary"`
+	ServerTime time.Time                    `json:"serverTime"`
+}
+
 type AIModel struct {
 	ID             string          `json:"id"`
 	Vendor         string          `json:"vendor"`
@@ -502,33 +541,96 @@ type AIModel struct {
 }
 
 type AIJob struct {
-	ID            string          `json:"id"`
-	OwnerUserID   string          `json:"ownerUserId"`
-	SkillID       *string         `json:"skillId"`
-	JobType       string          `json:"jobType"`
-	ModelName     string          `json:"modelName"`
-	Prompt        *string         `json:"prompt"`
-	Status        string          `json:"status"`
-	InputPayload  json.RawMessage `json:"inputPayload,omitempty"`
-	OutputPayload json.RawMessage `json:"outputPayload,omitempty"`
-	Message       *string         `json:"message"`
-	CostCredits   int64           `json:"costCredits"`
-	CreatedAt     time.Time       `json:"createdAt"`
-	UpdatedAt     time.Time       `json:"updatedAt"`
-	FinishedAt    *time.Time      `json:"finishedAt"`
+	ID                 string          `json:"id"`
+	OwnerUserID        string          `json:"ownerUserId"`
+	DeviceID           *string         `json:"deviceId"`
+	SkillID            *string         `json:"skillId"`
+	Source             string          `json:"source"`
+	LocalTaskID        *string         `json:"localTaskId"`
+	JobType            string          `json:"jobType"`
+	ModelName          string          `json:"modelName"`
+	Prompt             *string         `json:"prompt"`
+	Status             string          `json:"status"`
+	InputPayload       json.RawMessage `json:"inputPayload,omitempty"`
+	OutputPayload      json.RawMessage `json:"outputPayload,omitempty"`
+	Message            *string         `json:"message"`
+	CostCredits        int64           `json:"costCredits"`
+	LeaseOwnerDeviceID *string         `json:"leaseOwnerDeviceId"`
+	LeaseToken         *string         `json:"leaseToken"`
+	LeaseExpiresAt     *time.Time      `json:"leaseExpiresAt"`
+	DeliveryStatus     string          `json:"deliveryStatus"`
+	DeliveryMessage    *string         `json:"deliveryMessage"`
+	LocalPublishTaskID *string         `json:"localPublishTaskId"`
+	CreatedAt          time.Time       `json:"createdAt"`
+	UpdatedAt          time.Time       `json:"updatedAt"`
+	DeliveredAt        *time.Time      `json:"deliveredAt"`
+	FinishedAt         *time.Time      `json:"finishedAt"`
 }
 
 type AIJobActionState struct {
-	CanEdit   bool `json:"canEdit"`
-	CanCancel bool `json:"canCancel"`
-	CanRetry  bool `json:"canRetry"`
+	CanEdit              bool `json:"canEdit"`
+	CanCancel            bool `json:"canCancel"`
+	CanRetry             bool `json:"canRetry"`
+	CanCreatePublishTask bool `json:"canCreatePublishTask"`
+	CanForceRelease      bool `json:"canForceRelease"`
+}
+
+type AIJobArtifact struct {
+	ID           string          `json:"id"`
+	JobID        string          `json:"jobId"`
+	ArtifactKey  string          `json:"artifactKey"`
+	ArtifactType string          `json:"artifactType"`
+	Source       string          `json:"source"`
+	Title        *string         `json:"title"`
+	FileName     *string         `json:"fileName"`
+	MimeType     *string         `json:"mimeType"`
+	StorageKey   *string         `json:"storageKey"`
+	PublicURL    *string         `json:"publicUrl"`
+	SizeBytes    *int64          `json:"sizeBytes"`
+	TextContent  *string         `json:"textContent"`
+	DeviceID     *string         `json:"deviceId"`
+	RootName     *string         `json:"rootName"`
+	RelativePath *string         `json:"relativePath"`
+	AbsolutePath *string         `json:"absolutePath"`
+	Payload      json.RawMessage `json:"payload,omitempty"`
+	CreatedAt    time.Time       `json:"createdAt"`
+	UpdatedAt    time.Time       `json:"updatedAt"`
+}
+
+type AIJobBridgeState struct {
+	Source                 string  `json:"source"`
+	GenerationSide         string  `json:"generationSide"`
+	TargetDeviceID         *string `json:"targetDeviceId"`
+	LocalTaskID            *string `json:"localTaskId"`
+	LocalPublishTaskID     *string `json:"localPublishTaskId"`
+	DeliveryStage          string  `json:"deliveryStage"`
+	ArtifactCount          int     `json:"artifactCount"`
+	MirroredArtifactCount  int     `json:"mirroredArtifactCount"`
+	LinkedPublishTaskCount int     `json:"linkedPublishTaskCount"`
 }
 
 type AIJobWorkspace struct {
-	Job     AIJob            `json:"job"`
-	Model   *AIModel         `json:"model,omitempty"`
-	Skill   *ProductSkill    `json:"skill,omitempty"`
-	Actions AIJobActionState `json:"actions"`
+	Job          AIJob            `json:"job"`
+	Model        *AIModel         `json:"model,omitempty"`
+	Skill        *ProductSkill    `json:"skill,omitempty"`
+	Artifacts    []AIJobArtifact  `json:"artifacts"`
+	PublishTasks []PublishTask    `json:"publishTasks"`
+	Bridge       AIJobBridgeState `json:"bridge"`
+	Actions      AIJobActionState `json:"actions"`
+}
+
+type AgentAIJobPackage struct {
+	Job         AIJob               `json:"job"`
+	Skill       *ProductSkill       `json:"skill,omitempty"`
+	SkillAssets []ProductSkillAsset `json:"skillAssets"`
+	Artifacts   []AIJobArtifact     `json:"artifacts"`
+}
+
+type AgentAIJobDeliveryItem struct {
+	Job       AIJob            `json:"job"`
+	Artifacts []AIJobArtifact  `json:"artifacts"`
+	Bridge    AIJobBridgeState `json:"bridge"`
+	Actions   AIJobActionState `json:"actions"`
 }
 
 type BillingPackage struct {

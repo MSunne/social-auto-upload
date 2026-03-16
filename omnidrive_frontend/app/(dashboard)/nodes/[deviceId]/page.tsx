@@ -16,7 +16,7 @@ import {
   Zap,
 } from "lucide-react";
 import Link from "next/link";
-import api from "@/lib/api";
+import { getDevice, listSkills } from "@/lib/services";
 import type { Device, Skill } from "@/lib/types";
 import { PageHeader, EmptyState } from "@/components/ui/common";
 
@@ -30,12 +30,12 @@ export default function NodeDetailPage({
 
   const { data: device } = useQuery<Device>({
     queryKey: ["device", deviceId],
-    queryFn: () => api.get(`/devices/${deviceId}`).then((r) => r.data),
+    queryFn: () => getDevice(deviceId),
   });
 
   const { data: skills = [] } = useQuery<Skill[]>({
     queryKey: ["skills"],
-    queryFn: () => api.get("/skills").then((r) => r.data),
+    queryFn: listSkills,
   });
 
   if (!device)

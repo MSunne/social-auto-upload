@@ -13,14 +13,14 @@ import {
   Settings2,
   Eye,
 } from "lucide-react";
-import api from "@/lib/api";
+import { listSkills } from "@/lib/services";
 import type { Skill } from "@/lib/types";
 import { PageHeader, EmptyState, StatusBadge } from "@/components/ui/common";
 
 export default function SkillsPage() {
   const { data: skills = [] } = useQuery<Skill[]>({
     queryKey: ["skills"],
-    queryFn: () => api.get("/skills").then((r) => r.data),
+    queryFn: listSkills,
   });
 
   const [search, setSearch] = useState("");

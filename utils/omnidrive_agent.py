@@ -6,6 +6,7 @@ import socket
 import sqlite3
 import threading
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -24,7 +25,8 @@ PLATFORM_TYPE_BY_NAME = {
 }
 
 PLATFORM_NAME_BY_TYPE = {value: key for key, value in PLATFORM_TYPE_BY_NAME.items()}
-SYNCABLE_LOCAL_SOURCES = ("local_api", "openclaw_skill", "omnidrive_agent")
+SYNCABLE_LOCAL_SOURCES = ("local_api", "openclaw_skill", "omnidrive_agent", "omnidrive_ai")
+SYNCABLE_LOCAL_AI_SOURCES = ("local_ui", "openclaw_skill")
 FINAL_LOCAL_STATUSES = {"success", "failed", "needs_verify", "cancelled"}
 
 
@@ -35,9 +37,12 @@ class OmniDriveBridge:
         cloud_base_url,
         agent_key,
         publish_task_manager,
+        ai_task_manager,
         material_roots,
         device_name,
         device_code,
+        generated_root_name,
+        generated_root_path,
         poll_interval=5,
         heartbeat_interval=30,
         account_sync_interval=60,
@@ -52,9 +57,13 @@ class OmniDriveBridge:
         self.cloud_base_url = str(cloud_base_url or "").rstrip("/")
         self.agent_key = str(agent_key or "").strip()
         self.publish_task_manager = publish_task_manager
+        self.ai_task_manager = ai_task_manager
         self.material_roots = material_roots or {}
         self.device_name = str(device_name or socket.gethostname()).strip() or socket.gethostname()
         self.device_code = str(device_code or "").strip()
+        self.generated_root_name = str(generated_root_name or "omnidriveGenerated").strip() or "omnidriveGenerated"
+        self.generated_root_path = Path(generated_root_path).resolve()
+        self.generated_root_path.mkdir(parents=True, exist_ok=True)
         self.poll_interval = max(2, int(poll_interval))
         self.heartbeat_interval = max(10, int(heartbeat_interval))
         self.account_sync_interval = max(10, int(account_sync_interval))
@@ -82,6 +91,8 @@ class OmniDriveBridge:
             "lastPublishPollAt": None,
             "lastPublishSyncAt": None,
             "lastLeaseRenewAt": None,
+            "lastAISyncAt": None,
+            "lastAIPollAt": None,
             "lastError": None,
             "localIp": get_local_ip(),
             "syncedRoots": 0,
@@ -91,6 +102,8 @@ class OmniDriveBridge:
             "mirroredAccounts": 0,
             "mirroredTasks": 0,
             "importedCloudTasks": 0,
+            "mirroredAITasks": 0,
+            "importedAIResults": 0,
         }
 
         self._workspace_dir = Path(BASE_DIR / "omnidriveSync")
@@ -115,7 +128,9 @@ class OmniDriveBridge:
 
     def status(self):
         with self._state_lock:
-            return dict(self._state)
+            snapshot = dict(self._state)
+        snapshot.update(self._build_status_snapshot())
+        return snapshot
 
     def _update_state(self, **kwargs):
         with self._state_lock:
@@ -130,6 +145,8 @@ class OmniDriveBridge:
         last_publish_sync = 0.0
         last_publish_poll = 0.0
         last_lease_renew = 0.0
+        last_ai_sync = 0.0
+        last_ai_poll = 0.0
 
         while not self._stop_event.is_set():
             try:
@@ -155,6 +172,13 @@ class OmniDriveBridge:
                 if now - last_publish_poll >= self.poll_interval:
                     self._import_remote_publish_tasks()
                     last_publish_poll = now
+                if now - last_ai_sync >= self.publish_sync_interval:
+                    self._sync_local_ai_tasks()
+                    self._sync_local_ai_publish_state()
+                    last_ai_sync = now
+                if now - last_ai_poll >= self.poll_interval:
+                    self._import_remote_ai_jobs()
+                    last_ai_poll = now
             except Exception as exc:
                 self._update_state(lastError=str(exc))
 
@@ -522,6 +546,162 @@ class OmniDriveBridge:
             mirroredTasks=mirrored,
             lastPublishSyncAt=self._now_string(),
         )
+
+    def _sync_local_ai_tasks(self):
+        if not self.ai_task_manager:
+            return 0
+        tasks = self.ai_task_manager.list_tasks_for_cloud_sync(limit=200)
+        mirrored = 0
+        for task in tasks:
+            payload = self._build_sync_ai_task_payload(task)
+            if not payload:
+                continue
+            data = self._request("POST", "/api/v1/agent/ai-jobs/sync", payload=payload) or {}
+            job = data.get("job") or {}
+            cloud_job_id = str(job.get("id") or "").strip()
+            cloud_status = str(job.get("status") or "queued").strip() or "queued"
+            message = job.get("message") or "AI 任务已同步到 OmniDrive 云端"
+            if cloud_job_id:
+                self.ai_task_manager.update_cloud_binding(task["taskUuid"], cloud_job_id, cloud_status, message)
+                mirrored += 1
+        self._update_state(
+            mirroredAITasks=mirrored,
+            lastAISyncAt=self._now_string(),
+        )
+        return mirrored
+
+    def _import_remote_ai_jobs(self):
+        if not self.ai_task_manager:
+            return 0
+        items = self._request(
+            "GET",
+            f"/api/v1/agent/ai-jobs/{self.device_code}",
+            params={"limit": 200},
+        ) or []
+        imported = 0
+        for item in items:
+            job = item.get("job") or {}
+            artifacts = item.get("artifacts") or []
+            cloud_job_id = str(job.get("id") or "").strip()
+            local_task_id = str(job.get("localTaskId") or "").strip()
+            cloud_status = str(job.get("status") or "").strip()
+            if not cloud_job_id or not local_task_id:
+                continue
+
+            local_task = self.ai_task_manager.get_task(local_task_id)
+            if not local_task:
+                continue
+
+            self.ai_task_manager.update_cloud_binding(
+                local_task_id,
+                cloud_job_id,
+                cloud_status or local_task.get("cloudStatus") or "queued",
+                job.get("message"),
+            )
+
+            if cloud_status in {"queued", "running"}:
+                continue
+
+            if cloud_status in {"failed", "cancelled"}:
+                self.ai_task_manager.mark_cloud_state(local_task_id, cloud_status, job.get("message"))
+                continue
+
+            if cloud_status not in {"success", "completed"}:
+                continue
+
+            if local_task.get("linkedPublishTaskUuid"):
+                continue
+
+            artifact_refs = self._download_ai_artifacts(local_task, artifacts)
+            if not artifact_refs:
+                self.ai_task_manager.mark_cloud_state(local_task_id, "failed", "云端 AI 任务没有可导入的有效产物")
+                self._request(
+                    "POST",
+                    f"/api/v1/agent/ai-jobs/{cloud_job_id}/delivery",
+                    payload={
+                        "deviceCode": self.device_code,
+                        "status": "failed",
+                        "message": "云端 AI 任务没有可导入的有效产物",
+                        "deliveredAt": self._iso_now(),
+                    },
+                )
+                continue
+
+            publish_task_uuid = self._enqueue_publish_from_ai_task(local_task, artifact_refs)
+            if publish_task_uuid:
+                self.ai_task_manager.mark_result_imported(
+                    local_task_id,
+                    artifact_refs,
+                    linked_publish_task_uuid=publish_task_uuid,
+                    message="AI 产物已回流 OmniBull，并进入 SAU 发布队列",
+                )
+                self._request(
+                    "POST",
+                    f"/api/v1/agent/ai-jobs/{cloud_job_id}/delivery",
+                    payload={
+                        "deviceCode": self.device_code,
+                        "status": "publish_queued",
+                        "message": "AI 产物已回流 OmniBull，并进入 SAU 发布队列",
+                        "localPublishTaskId": publish_task_uuid,
+                        "deliveredAt": self._iso_now(),
+                    },
+                )
+            else:
+                self.ai_task_manager.mark_result_imported(
+                    local_task_id,
+                    artifact_refs,
+                    message="AI 产物已回流 OmniBull，本地尚未生成发布任务",
+                )
+                self._request(
+                    "POST",
+                    f"/api/v1/agent/ai-jobs/{cloud_job_id}/delivery",
+                    payload={
+                        "deviceCode": self.device_code,
+                        "status": "imported",
+                        "message": "AI 产物已回流 OmniBull，本地尚未生成发布任务",
+                        "deliveredAt": self._iso_now(),
+                    },
+                )
+            imported += 1
+
+        self._update_state(
+            importedAIResults=imported,
+            lastAIPollAt=self._now_string(),
+        )
+        return imported
+
+    def _sync_local_ai_publish_state(self):
+        if not self.ai_task_manager:
+            return 0
+        tasks = self.ai_task_manager.list_tasks(limit=500)
+        synced = 0
+        for task in tasks:
+            linked_publish_task_uuid = str(task.get("linkedPublishTaskUuid") or "").strip()
+            cloud_job_id = str(task.get("cloudJobId") or "").strip()
+            if not linked_publish_task_uuid or not cloud_job_id:
+                continue
+            publish_task = self.publish_task_manager.get_task(linked_publish_task_uuid)
+            if not publish_task:
+                continue
+            publish_status = str(publish_task.get("status") or "").strip()
+            current_status = str(task.get("status") or "").strip()
+            desired_status = self._map_publish_status_to_local_ai_status(publish_status)
+            if desired_status and desired_status != current_status:
+                message = publish_task.get("message") or "本地发布任务状态已更新"
+                self.ai_task_manager.sync_linked_publish_status(task["taskUuid"], publish_status, message)
+                self._request(
+                    "POST",
+                    f"/api/v1/agent/ai-jobs/{cloud_job_id}/delivery",
+                    payload={
+                        "deviceCode": self.device_code,
+                        "status": self._map_publish_status_to_delivery_status(publish_status),
+                        "message": message,
+                        "localPublishTaskId": linked_publish_task_uuid,
+                        "deliveredAt": self._iso_now(),
+                    },
+                )
+                synced += 1
+        return synced
 
     def _renew_active_leases(self):
         renewed = 0
@@ -1007,6 +1187,155 @@ class OmniDriveBridge:
             "cancelled": "cancelled",
         }.get(status, status)
 
+    def _build_sync_ai_task_payload(self, task):
+        payload = task.get("payload") or {}
+        return {
+            "id": task["taskUuid"],
+            "deviceCode": self.device_code,
+            "skillId": payload.get("skillId"),
+            "jobType": task.get("jobType"),
+            "modelName": task.get("modelName"),
+            "prompt": task.get("prompt"),
+            "inputPayload": payload.get("inputPayload") or {},
+            "publishPayload": payload.get("publishPayload") or {},
+            "status": task.get("status"),
+            "message": task.get("message"),
+            "runAt": self._to_rfc3339(payload.get("runAt")),
+        }
+
+    def _download_ai_artifacts(self, local_task, artifacts):
+        task_uuid = str(local_task.get("taskUuid") or "").strip()
+        if not task_uuid:
+            return []
+        target_dir = self.generated_root_path / task_uuid
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        refs = []
+        for index, artifact in enumerate(artifacts):
+            public_url = str(artifact.get("publicUrl") or "").strip()
+            mime_type = str(artifact.get("mimeType") or "").strip()
+            artifact_type = str(artifact.get("artifactType") or "").strip()
+            file_name = str(artifact.get("fileName") or f"artifact-{index + 1}").strip() or f"artifact-{index + 1}"
+            if not public_url:
+                continue
+            if public_url.startswith("/"):
+                public_url = f"{self.cloud_base_url}{public_url}"
+            if mime_type and not (mime_type.startswith("image/") or mime_type.startswith("video/")):
+                continue
+
+            response = self._session.get(public_url, timeout=self.http_timeout)
+            response.raise_for_status()
+            target_path = target_dir / file_name
+            target_path.write_bytes(response.content)
+            relative_path = target_path.relative_to(self.generated_root_path).as_posix()
+            role = "thumbnail" if artifact_type in {"thumbnail", "cover"} else "media"
+            refs.append(
+                {
+                    "root": self.generated_root_name,
+                    "path": relative_path,
+                    "absolutePath": str(target_path),
+                    "name": file_name,
+                    "role": role,
+                    "artifactKey": artifact.get("artifactKey"),
+                    "mimeType": mime_type or mimetypes.guess_type(file_name)[0],
+                }
+            )
+        return refs
+
+    def _enqueue_publish_from_ai_task(self, local_task, artifact_refs):
+        payload = local_task.get("payload") or {}
+        publish_payload = dict(payload.get("publishPayload") or {})
+        platform_type = int(publish_payload.get("platformType") or publish_payload.get("type") or 0)
+        platform_name = PLATFORM_NAME_BY_TYPE.get(platform_type)
+        account_file_path = str(publish_payload.get("accountFilePath") or "").strip()
+        account_name = str(publish_payload.get("accountName") or "").strip()
+        if not platform_type or not platform_name or not account_file_path or not account_name:
+            return None
+
+        primary_file = next((item for item in artifact_refs if item.get("role") != "thumbnail"), None)
+        if not primary_file:
+            return None
+        thumbnail_ref = next((item for item in artifact_refs if item.get("role") == "thumbnail"), None)
+        title = str(publish_payload.get("title") or local_task.get("prompt") or "AI 生成内容").strip() or "AI 生成内容"
+        run_at = self._normalize_datetime(publish_payload.get("runAt") or payload.get("runAt"))
+        status = "scheduled" if self._is_future_datetime(run_at) else "pending"
+        publish_date = self._normalize_datetime(publish_payload.get("publishDate") or 0)
+        local_publish_task_uuid = str(uuid.uuid4())
+        local_spec = {
+            "taskUuid": local_publish_task_uuid,
+            "source": "omnidrive_ai",
+            "platformType": platform_type,
+            "platformName": platform_name,
+            "accountName": account_name,
+            "accountFilePath": account_file_path,
+            "fileName": primary_file["name"],
+            "filePath": f"{primary_file['root']}:{primary_file['path']}",
+            "title": title,
+            "runAt": run_at,
+            "platformPublishAt": publish_date,
+            "status": status,
+            "message": "等待 AI 产物发布" if status == "pending" else "等待 AI 产物定时发布",
+            "payload": {
+                "platformType": platform_type,
+                "platformName": platform_name,
+                "title": title,
+                "tags": publish_payload.get("tags") or [],
+                "filePath": f"{primary_file['root']}:{primary_file['path']}",
+                "accountFilePath": account_file_path,
+                "accountName": account_name,
+                "publishDate": publish_date or 0,
+                "category": publish_payload.get("category"),
+                "fileSourceMode": "material",
+                "materialRoot": primary_file["root"],
+                "materialPath": primary_file["path"],
+                "sourceAbsolutePath": primary_file["absolutePath"],
+                "productLink": publish_payload.get("productLink") or "",
+                "productTitle": publish_payload.get("productTitle") or "",
+                "isDraft": bool(publish_payload.get("isDraft", False)),
+                "contentText": publish_payload.get("contentText"),
+                "omnidriveAICloudJobId": local_task.get("cloudJobId"),
+                "omnidriveAITaskUuid": local_task.get("taskUuid"),
+                "omnidriveMaterialRefs": [
+                    {"root": item["root"], "path": item["path"], "role": item.get("role") or "media"}
+                    for item in artifact_refs
+                ],
+            },
+        }
+        if thumbnail_ref:
+            local_spec["payload"].update(
+                {
+                    "thumbnailSourceMode": "material",
+                    "thumbnailRoot": thumbnail_ref["root"],
+                    "thumbnailPath": thumbnail_ref["path"],
+                    "thumbnailAbsolutePath": thumbnail_ref["absolutePath"],
+                }
+            )
+        self.publish_task_manager.enqueue_specs([local_spec])
+        return local_publish_task_uuid
+
+    @staticmethod
+    def _map_publish_status_to_local_ai_status(publish_status):
+        return {
+            "pending": "publish_pending",
+            "scheduled": "publish_pending",
+            "running": "publishing",
+            "success": "success",
+            "needs_verify": "needs_verify",
+            "failed": "failed",
+            "cancelled": "cancelled",
+        }.get(str(publish_status or "").strip())
+
+    @staticmethod
+    def _map_publish_status_to_delivery_status(publish_status):
+        value = str(publish_status or "").strip()
+        if value in {"pending", "scheduled"}:
+            return "publish_queued"
+        if value == "running":
+            return "publishing"
+        if value in {"success", "needs_verify", "failed", "cancelled"}:
+            return value
+        return "imported"
+
     def _count_inflight_omnidrive_tasks(self):
         tasks = self.publish_task_manager.list_tasks(limit=500, sources=["omnidrive_agent"])
         return sum(1 for task in tasks if task.get("status") in {"pending", "scheduled", "running"})
@@ -1014,12 +1343,71 @@ class OmniDriveBridge:
     def _build_runtime_payload(self):
         task_counts = self.publish_task_manager.list_tasks(limit=500)
         by_status = {}
+        by_source = {}
         for task in task_counts:
-            by_status[task["status"]] = by_status.get(task["status"], 0) + 1
+            status = str(task.get("status") or "").strip()
+            source = str(task.get("source") or "local_api").strip() or "local_api"
+            by_status[status] = by_status.get(status, 0) + 1
+            by_source[source] = by_source.get(source, 0) + 1
+        active_leases = [
+            binding for binding in self._list_leases()
+            if str(binding.get("lease_token") or "").strip()
+        ]
         return {
             "publishTasks": by_status,
+            "publishTasksBySource": by_source,
+            "aiTasks": self.ai_task_manager.summary() if self.ai_task_manager else {},
             "materialRoots": len(self.material_roots),
+            "activeLeaseCount": len(active_leases),
+            "activeLeaseTaskIds": [binding.get("task_uuid") for binding in active_leases[:20]],
         }
+
+    def _build_status_snapshot(self):
+        tasks = self.publish_task_manager.list_tasks(limit=500, sources=SYNCABLE_LOCAL_SOURCES)
+        by_source = {}
+        by_status = {}
+        imported_queue = 0
+        local_origin = 0
+        for task in tasks:
+            source = str(task.get("source") or "local_api").strip() or "local_api"
+            status = str(task.get("status") or "").strip()
+            by_source[source] = by_source.get(source, 0) + 1
+            by_status[status] = by_status.get(status, 0) + 1
+            if source == "omnidrive_agent":
+                imported_queue += 1
+            else:
+                local_origin += 1
+
+        leases = self._list_leases()
+        active_leases = []
+        for binding in leases:
+            lease_token = str(binding.get("lease_token") or "").strip()
+            if not lease_token:
+                continue
+            active_leases.append(
+                {
+                    "taskUuid": binding.get("task_uuid"),
+                    "leaseExpiresAt": binding.get("lease_expires_at"),
+                    "lastSyncedStatus": binding.get("last_synced_status"),
+                    "lastSyncedUpdatedAt": binding.get("last_synced_updated_at"),
+                }
+            )
+
+        return {
+            "bridgeTaskCountsBySource": by_source,
+            "bridgeTaskCountsByStatus": by_status,
+            "aiTaskSummary": self.ai_task_manager.summary() if self.ai_task_manager else {},
+            "activeLeaseCount": len(active_leases),
+            "activeLeases": active_leases[:20],
+            "importedCloudQueueCount": imported_queue,
+            "mirroredLocalTaskCount": local_origin,
+            "skillCacheCount": self._count_cached_skills(),
+        }
+
+    def _count_cached_skills(self):
+        if not self._skill_cache_dir.exists():
+            return 0
+        return sum(1 for item in self._skill_cache_dir.iterdir() if item.is_dir())
 
     def _artifact_file_to_data_url(self, artifact_path):
         absolute_path = self._resolve_artifact_path(artifact_path)

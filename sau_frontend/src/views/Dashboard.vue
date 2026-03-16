@@ -1,431 +1,311 @@
 <template>
-  <div class="dashboard">
-    <div class="page-header">
-      <h1>自媒体自动化运营系统</h1>
-    </div>
+  <div class="dashboard fade-in">
+    <!-- ═══ Stat Cards ═══ -->
+    <el-row :gutter="16">
+      <el-col :xs="24" :sm="12" :lg="6">
+        <div class="stat-card">
+          <div class="stat-header">
+            <div class="stat-icon blue">
+              <el-icon :size="22"><User /></el-icon>
+            </div>
+            <div class="stat-trend" :class="accountStore.stats.abnormal > 0 ? 'warn' : 'good'">
+              {{ accountStore.stats.abnormal > 0 ? `${accountStore.stats.abnormal} 异常` : '全部正常' }}
+            </div>
+          </div>
+          <div class="stat-value">{{ accountStore.stats.total }}</div>
+          <div class="stat-label">账号总数</div>
+          <div class="stat-footer">
+            <span>正常 {{ accountStore.stats.normal }}</span>
+            <span>异常 {{ accountStore.stats.abnormal }}</span>
+          </div>
+        </div>
+      </el-col>
 
-    <div class="dashboard-content">
-      <el-row :gutter="20">
-        <!-- 账号统计卡片 -->
-        <el-col :span="8">
-          <el-card class="stat-card">
-            <div class="stat-card-content">
-              <div class="stat-icon">
-                <el-icon><User /></el-icon>
-              </div>
-              <div class="stat-info">
-                <div class="stat-value">{{ accountStats.total }}</div>
-                <div class="stat-label">账号总数</div>
-              </div>
+      <el-col :xs="24" :sm="12" :lg="6">
+        <div class="stat-card">
+          <div class="stat-header">
+            <div class="stat-icon green">
+              <el-icon :size="22"><Platform /></el-icon>
             </div>
-            <div class="stat-footer">
-              <div class="stat-detail">
-                <span>正常: {{ accountStats.normal }}</span>
-                <span>异常: {{ accountStats.abnormal }}</span>
-              </div>
-            </div>
-          </el-card>
-        </el-col>
+            <div class="stat-trend good">已接入</div>
+          </div>
+          <div class="stat-value">{{ accountStore.platformStats.activeCount }}</div>
+          <div class="stat-label">平台数量</div>
+          <div class="stat-footer platform-tags">
+            <el-tag v-if="accountStore.platformStats['抖音']" size="small" type="danger" effect="dark">抖音 {{ accountStore.platformStats['抖音'] }}</el-tag>
+            <el-tag v-if="accountStore.platformStats['快手']" size="small" type="success" effect="dark">快手 {{ accountStore.platformStats['快手'] }}</el-tag>
+            <el-tag v-if="accountStore.platformStats['视频号']" size="small" type="warning" effect="dark">视频号 {{ accountStore.platformStats['视频号'] }}</el-tag>
+            <el-tag v-if="accountStore.platformStats['小红书']" size="small" effect="dark">小红书 {{ accountStore.platformStats['小红书'] }}</el-tag>
+          </div>
+        </div>
+      </el-col>
 
-        <!-- 平台统计卡片 -->
-        <el-col :span="8">
-          <el-card class="stat-card">
-            <div class="stat-card-content">
-              <div class="stat-icon platform-icon">
-                <el-icon><Platform /></el-icon>
-              </div>
-              <div class="stat-info">
-                <div class="stat-value">{{ platformStats.total }}</div>
-                <div class="stat-label">已接入平台</div>
-              </div>
+      <el-col :xs="24" :sm="12" :lg="6">
+        <div class="stat-card">
+          <div class="stat-header">
+            <div class="stat-icon purple">
+              <el-icon :size="22"><Document /></el-icon>
             </div>
-            <div class="stat-footer">
-              <div class="stat-detail">
-                <el-tooltip content="快手账号" placement="top">
-                  <el-tag size="small" type="success">{{ platformStats.kuaishou }}</el-tag>
-                </el-tooltip>
-                <el-tooltip content="抖音账号" placement="top">
-                  <el-tag size="small" type="danger">{{ platformStats.douyin }}</el-tag>
-                </el-tooltip>
-                <el-tooltip content="视频号账号" placement="top">
-                  <el-tag size="small" type="warning">{{ platformStats.channels }}</el-tag>
-                </el-tooltip>
-                <el-tooltip content="小红书账号" placement="top">
-                  <el-tag size="small" type="info">{{ platformStats.xiaohongshu }}</el-tag>
-                </el-tooltip>
-              </div>
-            </div>
-          </el-card>
-        </el-col>
+          </div>
+          <div class="stat-value">{{ appStore.materialStats.total }}</div>
+          <div class="stat-label">素材总数</div>
+          <div class="stat-footer">
+            <span>视频 {{ appStore.materialStats.videos }}</span>
+            <span>图片 {{ appStore.materialStats.images }}</span>
+            <span>其他 {{ appStore.materialStats.others }}</span>
+          </div>
+        </div>
+      </el-col>
 
-        <!-- 素材统计卡片 -->
-        <el-col :span="8">
-          <el-card class="stat-card">
-            <div class="stat-card-content">
-              <div class="stat-icon content-icon">
-                <el-icon><Document /></el-icon>
-              </div>
-              <div class="stat-info">
-                <div class="stat-value">{{ contentStats.total }}</div>
-                <div class="stat-label">素材总数</div>
-              </div>
+      <el-col :xs="24" :sm="12" :lg="6">
+        <div class="stat-card">
+          <div class="stat-header">
+            <div class="stat-icon cyan">
+              <el-icon :size="22"><Connection /></el-icon>
             </div>
-            <div class="stat-footer">
-              <div class="stat-detail">
-                <span>视频: {{ contentStats.videos }}</span>
-                <span>图片: {{ contentStats.images }}</span>
-                <span>其他: {{ contentStats.others }}</span>
-              </div>
+            <div class="stat-trend" :class="publishStore.taskStats.total > 0 ? 'good' : ''">
+              {{ publishStore.taskStats.total }} 条任务
             </div>
-          </el-card>
+          </div>
+          <div class="stat-value">{{ publishStore.taskStats.total }}</div>
+          <div class="stat-label">发布任务</div>
+          <div class="stat-footer">
+            <span v-for="(count, status) in publishStore.taskStats.byStatus" :key="status">
+              {{ status }} {{ count }}
+            </span>
+          </div>
+        </div>
+      </el-col>
+    </el-row>
+
+    <!-- ═══ Quick Actions ═══ -->
+    <div class="section" style="margin-top: 24px">
+      <h3 class="section-title">
+        <el-icon><Compass /></el-icon> 快捷操作
+      </h3>
+      <el-row :gutter="16">
+        <el-col :xs="12" :sm="6" v-for="action in quickActions" :key="action.path">
+          <div class="action-card" @click="router.push(action.path)">
+            <div class="action-icon" :class="action.color">
+              <el-icon :size="24"><component :is="action.icon" /></el-icon>
+            </div>
+            <div class="action-title">{{ action.label }}</div>
+            <div class="action-desc">{{ action.desc }}</div>
+          </div>
         </el-col>
       </el-row>
+    </div>
 
-      <!-- 快捷操作区域 -->
-      <div class="quick-actions">
-        <h2>快捷操作</h2>
-        <el-row :gutter="20">
-          <el-col :span="6">
-            <el-card class="action-card" @click="navigateTo('/account-management')">
-              <div class="action-icon">
-                <el-icon><UserFilled /></el-icon>
-              </div>
-              <div class="action-title">账号管理</div>
-              <div class="action-desc">管理所有平台账号</div>
-            </el-card>
-          </el-col>
-          <el-col :span="6">
-            <el-card class="action-card" @click="navigateTo('/material-management')">
-              <div class="action-icon">
-                <el-icon><Upload /></el-icon>
-              </div>
-              <div class="action-title">素材管理</div>
-              <div class="action-desc">上传和管理视频素材</div>
-            </el-card>
-          </el-col>
-          <el-col :span="6">
-            <el-card class="action-card" @click="navigateTo('/publish-center')">
-              <div class="action-icon">
-                <el-icon><Timer /></el-icon>
-              </div>
-              <div class="action-title">发布中心</div>
-              <div class="action-desc">发布内容到各平台</div>
-            </el-card>
-          </el-col>
-          <el-col :span="6">
-            <el-card class="action-card" @click="navigateTo('/about')">
-              <div class="action-icon">
-                <el-icon><DataAnalysis /></el-icon>
-              </div>
-              <div class="action-title">关于系统</div>
-              <div class="action-desc">查看系统信息</div>
-            </el-card>
-          </el-col>
-        </el-row>
+    <!-- ═══ Recent Materials ═══ -->
+    <div class="section" style="margin-top: 24px">
+      <div class="section-header">
+        <h3 class="section-title">
+          <el-icon><Clock /></el-icon> 最近上传素材
+        </h3>
+        <el-button text type="primary" @click="router.push('/material-management')">查看全部</el-button>
       </div>
-
-      <!-- 素材列表 -->
-      <div class="recent-tasks">
-        <div class="section-header">
-          <h2>最近上传素材</h2>
-          <el-button text @click="navigateTo('/material-management')">查看全部</el-button>
-        </div>
-
-        <el-table :data="recentMaterials" style="width: 100%" v-loading="loading">
-          <el-table-column prop="filename" label="文件名" width="300" />
-          <el-table-column prop="filesize" label="文件大小" width="120">
-            <template #default="scope">
-              {{ scope.row.filesize }} MB
-            </template>
-          </el-table-column>
-          <el-table-column prop="upload_time" label="上传时间" width="200" />
-          <el-table-column label="类型" width="100">
-            <template #default="scope">
-              <el-tag
-                :type="getFileTypeTag(scope.row.filename)"
-                effect="plain"
-                size="small"
-              >
-                {{ getFileType(scope.row.filename) }}
-              </el-tag>
-            </template>
-          </el-table-column>
-        </el-table>
-
-        <el-empty v-if="!loading && recentMaterials.length === 0" description="暂无素材数据" />
-      </div>
+      <el-table
+        :data="appStore.recentMaterials"
+        v-loading="loading"
+        stripe
+        style="width: 100%"
+      >
+        <el-table-column prop="filename" label="文件名" min-width="260" />
+        <el-table-column prop="filesize" label="大小" width="100">
+          <template #default="{ row }">{{ row.filesize }} MB</template>
+        </el-table-column>
+        <el-table-column prop="upload_time" label="上传时间" width="180" />
+        <el-table-column label="类型" width="100">
+          <template #default="{ row }">
+            <el-tag :type="getFileTypeColor(row.filename)" size="small" effect="dark">
+              {{ getFileTypeLabel(row.filename) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!loading && appStore.recentMaterials.length === 0" description="暂无素材数据" />
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import {
-  User, UserFilled, Platform, Document,
-  Upload, Timer, DataAnalysis
-} from '@element-plus/icons-vue'
-import { accountApi } from '@/api/account'
-import { materialApi } from '@/api/material'
 import { useAccountStore } from '@/stores/account'
 import { useAppStore } from '@/stores/app'
+import { usePublishStore } from '@/stores/publish'
+import { accountApi } from '@/api/account'
+import { materialApi } from '@/api/material'
+import { publishApi } from '@/api/publish'
 
 const router = useRouter()
 const accountStore = useAccountStore()
 const appStore = useAppStore()
+const publishStore = usePublishStore()
 const loading = ref(false)
 
-// 账号统计数据 - 从真实数据计算
-const accountStats = computed(() => {
-  const accounts = accountStore.accounts
-  const normal = accounts.filter(a => a.status === '正常').length
-  const abnormal = accounts.filter(a => a.status !== '正常' && a.status !== '验证中').length
-  return {
-    total: accounts.length,
-    normal,
-    abnormal
-  }
-})
+const quickActions = [
+  { path: '/account-management', label: '账号管理', desc: '管理所有平台账号', icon: 'UserFilled', color: 'blue' },
+  { path: '/material-management', label: '素材管理', desc: '上传和管理视频素材', icon: 'FolderOpened', color: 'purple' },
+  { path: '/publish-center', label: '发布中心', desc: '发布内容到各平台', icon: 'Promotion', color: 'green' },
+  { path: '/system-status', label: '系统状态', desc: '查看设备与连接', icon: 'DataLine', color: 'cyan' },
+]
 
-// 平台统计数据 - 从真实数据计算
-const platformStats = computed(() => {
-  const accounts = accountStore.accounts
-  const kuaishou = accounts.filter(a => a.platform === '快手').length
-  const douyin = accounts.filter(a => a.platform === '抖音').length
-  const channels = accounts.filter(a => a.platform === '视频号').length
-  const xiaohongshu = accounts.filter(a => a.platform === '小红书').length
-  // 统计有账号的平台数量
-  const total = [kuaishou, douyin, channels, xiaohongshu].filter(n => n > 0).length
-  return { total, kuaishou, douyin, channels, xiaohongshu }
-})
+const VIDEO_EXTS = ['.mp4', '.avi', '.mov', '.wmv', '.flv', '.mkv', '.webm']
+const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
 
-// 素材统计数据 - 从真实数据计算
-const videoExtensions = ['.mp4', '.avi', '.mov', '.wmv', '.flv', '.mkv']
-const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
-
-const contentStats = computed(() => {
-  const materials = appStore.materials
-  const videos = materials.filter(m => videoExtensions.some(ext => m.filename.toLowerCase().endsWith(ext))).length
-  const images = materials.filter(m => imageExtensions.some(ext => m.filename.toLowerCase().endsWith(ext))).length
-  return {
-    total: materials.length,
-    videos,
-    images,
-    others: materials.length - videos - images
-  }
-})
-
-// 最近上传的素材（最多显示5条）
-const recentMaterials = computed(() => {
-  return [...appStore.materials]
-    .sort((a, b) => new Date(b.upload_time) - new Date(a.upload_time))
-    .slice(0, 5)
-})
-
-// 获取文件类型
-const getFileType = (filename) => {
-  if (videoExtensions.some(ext => filename.toLowerCase().endsWith(ext))) return '视频'
-  if (imageExtensions.some(ext => filename.toLowerCase().endsWith(ext))) return '图片'
+const getFileTypeLabel = (filename) => {
+  const lower = filename.toLowerCase()
+  if (VIDEO_EXTS.some((e) => lower.endsWith(e))) return '视频'
+  if (IMAGE_EXTS.some((e) => lower.endsWith(e))) return '图片'
   return '其他'
 }
 
-// 获取文件类型标签颜色
-const getFileTypeTag = (filename) => {
-  const type = getFileType(filename)
-  return { '视频': 'success', '图片': 'warning', '其他': 'info' }[type] || 'info'
+const getFileTypeColor = (filename) => {
+  const label = getFileTypeLabel(filename)
+  return { '视频': 'success', '图片': 'warning', '其他': 'info' }[label] || 'info'
 }
 
-// 导航到指定路由
-const navigateTo = (path) => {
-  router.push(path)
-}
-
-// 加载数据
-const fetchDashboardData = async () => {
+const fetchData = async () => {
   loading.value = true
-  try {
-    // 并行获取账号和素材数据
-    const [accountRes, materialRes] = await Promise.allSettled([
-      accountApi.getAccounts(),
-      materialApi.getAllMaterials()
-    ])
+  const results = await Promise.allSettled([
+    accountApi.getAccounts(),
+    materialApi.getAllMaterials(),
+    publishApi.getPublishTasks(),
+  ])
 
-    if (accountRes.status === 'fulfilled' && accountRes.value.code === 200) {
-      accountStore.setAccounts(accountRes.value.data)
-    }
-    if (materialRes.status === 'fulfilled' && materialRes.value.code === 200) {
-      appStore.setMaterials(materialRes.value.data)
-    }
-  } catch (error) {
-    console.error('获取仪表盘数据失败:', error)
-  } finally {
-    loading.value = false
+  if (results[0].status === 'fulfilled' && results[0].value?.data) {
+    accountStore.setAccounts(results[0].value.data)
   }
+  if (results[1].status === 'fulfilled' && results[1].value?.data) {
+    appStore.setMaterials(results[1].value.data)
+  }
+  if (results[2].status === 'fulfilled' && results[2].value?.data) {
+    publishStore.setTasks(results[2].value.data)
+  }
+  loading.value = false
 }
 
-onMounted(() => {
-  fetchDashboardData()
-})
+onMounted(fetchData)
 </script>
 
 <style lang="scss" scoped>
 @use '@/styles/variables.scss' as *;
 
 .dashboard {
-  .page-header {
-    margin-bottom: 20px;
+  max-width: 1400px;
+}
 
-    h1 {
-      font-size: 24px;
-      color: $text-primary;
-      margin: 0;
+// ── Stat Cards ──
+.stat-card {
+  .stat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+
+  .stat-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    &.blue {
+      background: rgba(64, 158, 255, 0.15);
+      .el-icon { color: #409EFF; }
+    }
+    &.green {
+      background: rgba(103, 194, 58, 0.15);
+      .el-icon { color: #67C23A; }
+    }
+    &.purple {
+      background: rgba(168, 85, 247, 0.15);
+      .el-icon { color: #A855F7; }
+    }
+    &.cyan {
+      background: rgba(54, 209, 220, 0.15);
+      .el-icon { color: #36d1dc; }
     }
   }
 
-  .dashboard-content {
-    .stat-card {
-      height: 140px;
-      margin-bottom: 20px;
+  .stat-trend {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    color: $text-muted;
 
-      .stat-card-content {
-        display: flex;
-        align-items: center;
-        margin-bottom: 15px;
+    &.good { color: $success-color; background: rgba($success-color, 0.1); }
+    &.warn { color: $danger-color; background: rgba($danger-color, 0.1); }
+  }
 
-        .stat-icon {
-          width: 60px;
-          height: 60px;
-          border-radius: 50%;
-          background-color: rgba($primary-color, 0.1);
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          margin-right: 15px;
+  .stat-value {
+    font-size: 32px;
+    font-weight: 700;
+    color: $text-primary;
+    line-height: 1.1;
+  }
 
-          .el-icon {
-            font-size: 30px;
-            color: $primary-color;
-          }
+  .stat-label {
+    font-size: 13px;
+    color: $text-secondary;
+    margin-top: 4px;
+    margin-bottom: 16px;
+  }
 
-          &.platform-icon {
-            background-color: rgba($success-color, 0.1);
+  .stat-footer {
+    border-top: 1px solid $border-color;
+    padding-top: 12px;
+    display: flex;
+    gap: 12px;
+    font-size: 12px;
+    color: $text-muted;
 
-            .el-icon {
-              color: $success-color;
-            }
-          }
-
-          &.content-icon {
-            background-color: rgba($info-color, 0.1);
-
-            .el-icon {
-              color: $info-color;
-            }
-          }
-        }
-
-        .stat-info {
-          .stat-value {
-            font-size: 24px;
-            font-weight: bold;
-            color: $text-primary;
-            line-height: 1.2;
-          }
-
-          .stat-label {
-            font-size: 14px;
-            color: $text-secondary;
-          }
-        }
-      }
-
-      .stat-footer {
-        border-top: 1px solid $border-lighter;
-        padding-top: 10px;
-
-        .stat-detail {
-          display: flex;
-          justify-content: space-between;
-          color: $text-secondary;
-          font-size: 13px;
-
-          .el-tag {
-            margin-right: 5px;
-          }
-        }
-      }
-    }
-
-    .quick-actions {
-      margin: 20px 0 30px;
-
-      h2 {
-        font-size: 18px;
-        margin-bottom: 15px;
-        color: $text-primary;
-      }
-
-      .action-card {
-        height: 160px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        transition: all 0.3s;
-
-        &:hover {
-          transform: translateY(-5px);
-          box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
-        }
-
-        .action-icon {
-          width: 50px;
-          height: 50px;
-          border-radius: 50%;
-          background-color: rgba($primary-color, 0.1);
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          margin-bottom: 15px;
-
-          .el-icon {
-            font-size: 24px;
-            color: $primary-color;
-          }
-        }
-
-        .action-title {
-          font-size: 16px;
-          font-weight: bold;
-          color: $text-primary;
-          margin-bottom: 5px;
-        }
-
-        .action-desc {
-          font-size: 13px;
-          color: $text-secondary;
-          text-align: center;
-        }
-      }
-    }
-
-    .recent-tasks {
-      margin-top: 30px;
-
-      .section-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 15px;
-
-        h2 {
-          font-size: 18px;
-          color: $text-primary;
-          margin: 0;
-        }
-      }
+    &.platform-tags {
+      gap: 6px;
+      flex-wrap: wrap;
     }
   }
+}
+
+// ── Quick Actions ──
+.action-card {
+  .action-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 12px;
+
+    &.blue { background: rgba(64, 158, 255, 0.15); .el-icon { color: #409EFF; } }
+    &.green { background: rgba(103, 194, 58, 0.15); .el-icon { color: #67C23A; } }
+    &.purple { background: rgba(168, 85, 247, 0.15); .el-icon { color: #A855F7; } }
+    &.cyan { background: rgba(54, 209, 220, 0.15); .el-icon { color: #36d1dc; } }
+  }
+
+  .action-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: $text-primary;
+    margin-bottom: 4px;
+  }
+
+  .action-desc {
+    font-size: 12px;
+    color: $text-muted;
+  }
+}
+
+// ── Sections ──
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0;
 }
 </style>

@@ -120,6 +120,28 @@ type retiredSkillAckRequest struct {
 	} `json:"items"`
 }
 
+type syncAIJobRequest struct {
+	ID             string      `json:"id"`
+	DeviceCode     string      `json:"deviceCode"`
+	SkillID        *string     `json:"skillId"`
+	JobType        string      `json:"jobType"`
+	ModelName      string      `json:"modelName"`
+	Prompt         *string     `json:"prompt"`
+	InputPayload   interface{} `json:"inputPayload"`
+	PublishPayload interface{} `json:"publishPayload"`
+	Status         *string     `json:"status"`
+	Message        *string     `json:"message"`
+	RunAt          *string     `json:"runAt"`
+}
+
+type agentAIJobDeliveryRequest struct {
+	DeviceCode         string  `json:"deviceCode"`
+	Status             string  `json:"status"`
+	Message            *string `json:"message"`
+	LocalPublishTaskID *string `json:"localPublishTaskId"`
+	DeliveredAt        *string `json:"deliveredAt"`
+}
+
 func NewAgentHandler(app *appstate.App) *AgentHandler {
 	return &AgentHandler{app: app}
 }
@@ -763,6 +785,313 @@ func (h *AgentHandler) SyncSkillStates(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, map[string]any{
 		"items": results,
 	})
+}
+
+func (h *AgentHandler) ListAIJobs(w http.ResponseWriter, r *http.Request) {
+	deviceCode := strings.TrimSpace(chi.URLParam(r, "deviceCode"))
+	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
+	if deviceCode == "" || agentKey == "" {
+		render.Error(w, http.StatusBadRequest, "deviceCode and X-Agent-Key are required")
+		return
+	}
+
+	device, err := h.app.Store.GetDeviceByCode(r.Context(), deviceCode)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device")
+		return
+	}
+	if device == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+	if !agentKeyMatches(device, agentKey) {
+		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+		return
+	}
+	if !device.IsEnabled {
+		render.Error(w, http.StatusConflict, "Device is disabled")
+		return
+	}
+
+	limit := 100
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		var parsed int
+		if _, err := fmt.Sscanf(rawLimit, "%d", &parsed); err != nil || parsed < 1 {
+			render.Error(w, http.StatusBadRequest, "limit must be a positive integer")
+			return
+		}
+		limit = parsed
+	}
+
+	items, err := h.app.Store.ListAgentAIJobsByDevice(r.Context(), device.ID, "omnibull_local", limit)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load AI jobs")
+		return
+	}
+	result := make([]domain.AgentAIJobDeliveryItem, 0, len(items))
+	for _, job := range items {
+		artifacts, listErr := h.app.Store.ListAIJobArtifactsByJobID(r.Context(), job.ID)
+		if listErr != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to load AI job artifacts")
+			return
+		}
+		publishTasks, listErr := h.app.Store.ListPublishTasksByAIJobOwner(r.Context(), job.ID, job.OwnerUserID, 20)
+		if listErr != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to load linked publish tasks")
+			return
+		}
+		result = append(result, domain.AgentAIJobDeliveryItem{
+			Job:       job,
+			Artifacts: artifacts,
+			Bridge:    buildAIJobBridgeState(&job, artifacts, publishTasks),
+			Actions:   computeAIJobActions(&job, len(artifacts)),
+		})
+	}
+	render.JSON(w, http.StatusOK, result)
+}
+
+func (h *AgentHandler) SyncAIJob(w http.ResponseWriter, r *http.Request) {
+	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
+	if agentKey == "" {
+		render.Error(w, http.StatusBadRequest, "X-Agent-Key is required")
+		return
+	}
+
+	var payload syncAIJobRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	payload.ID = strings.TrimSpace(payload.ID)
+	payload.DeviceCode = strings.TrimSpace(payload.DeviceCode)
+	payload.JobType = strings.TrimSpace(payload.JobType)
+	payload.ModelName = strings.TrimSpace(payload.ModelName)
+	payload.SkillID = normalizeTrimmedString(payload.SkillID)
+	payload.Message = normalizeTrimmedString(payload.Message)
+	if payload.ID == "" || payload.DeviceCode == "" || payload.JobType == "" || payload.ModelName == "" {
+		render.Error(w, http.StatusBadRequest, "id, deviceCode, jobType, and modelName are required")
+		return
+	}
+
+	device, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device")
+		return
+	}
+	if device == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+	if !agentKeyMatches(device, agentKey) {
+		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+		return
+	}
+	if !device.IsEnabled {
+		render.Error(w, http.StatusConflict, "Device is disabled")
+		return
+	}
+	if device.OwnerUserID == nil || strings.TrimSpace(*device.OwnerUserID) == "" {
+		render.Error(w, http.StatusConflict, "Device is not claimed")
+		return
+	}
+
+	model, err := h.app.Store.GetAIModelByName(r.Context(), payload.ModelName)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to validate AI model")
+		return
+	}
+	if model == nil || !model.IsEnabled {
+		render.Error(w, http.StatusNotFound, "AI model not found")
+		return
+	}
+	if model.Category != payload.JobType {
+		render.Error(w, http.StatusConflict, "AI model category does not match job type")
+		return
+	}
+
+	var skill *domain.ProductSkill
+	if payload.SkillID != nil {
+		skill, err = h.app.Store.GetOwnedSkillByID(r.Context(), *payload.SkillID, *device.OwnerUserID)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to validate skill")
+			return
+		}
+		if skill == nil {
+			render.Error(w, http.StatusNotFound, "Skill not found")
+			return
+		}
+		if skill.OutputType != payload.JobType {
+			render.Error(w, http.StatusConflict, "Skill outputType does not match AI job type")
+			return
+		}
+	}
+
+	inputPayload, err := h.buildAgentAIJobInputPayload(payload)
+	if err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	existing, err := h.app.Store.GetAIJobByLocalTask(r.Context(), *device.OwnerUserID, device.ID, payload.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to query local AI task binding")
+		return
+	}
+
+	if existing == nil {
+		message := payload.Message
+		if message == nil {
+			message = auditStringPtr("OmniBull 本地任务已同步到 OmniDrive，等待云端生成")
+		}
+		job, createErr := h.app.Store.CreateAIJob(r.Context(), store.CreateAIJobInput{
+			ID:           uuid.NewString(),
+			OwnerUserID:  *device.OwnerUserID,
+			DeviceID:     &device.ID,
+			SkillID:      payload.SkillID,
+			Source:       "omnibull_local",
+			LocalTaskID:  &payload.ID,
+			JobType:      payload.JobType,
+			ModelName:    payload.ModelName,
+			Prompt:       payload.Prompt,
+			InputPayload: inputPayload,
+			Status:       "queued",
+			Message:      message,
+		})
+		if createErr != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to create AI job")
+			return
+		}
+		recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+			OwnerUserID:  *device.OwnerUserID,
+			ResourceType: "ai_job",
+			ResourceID:   &job.ID,
+			Action:       "agent_sync_create",
+			Title:        "OmniBull 同步本地 AI 任务",
+			Source:       "omnibull_local",
+			Status:       job.Status,
+			Message:      job.Message,
+			Payload: mustJSONBytes(map[string]any{
+				"deviceId":    device.ID,
+				"localTaskId": payload.ID,
+				"jobType":     payload.JobType,
+				"modelName":   payload.ModelName,
+			}),
+		})
+		render.JSON(w, http.StatusCreated, map[string]any{
+			"job":    job,
+			"bridge": buildAIJobBridgeState(job, nil, nil),
+		})
+		return
+	}
+
+	message := payload.Message
+	if message == nil {
+		message = existing.Message
+	}
+	job, err := h.app.Store.UpdateAIJob(r.Context(), existing.ID, *device.OwnerUserID, store.UpdateAIJobInput{
+		DeviceID:         &device.ID,
+		DeviceTouched:    true,
+		SkillID:          payload.SkillID,
+		SkillTouched:     true,
+		LocalTaskID:      &payload.ID,
+		LocalTaskTouched: true,
+		Prompt:           payload.Prompt,
+		InputPayload:     inputPayload,
+		InputTouched:     true,
+		Message:          message,
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to update AI job")
+		return
+	}
+	if job == nil {
+		render.Error(w, http.StatusNotFound, "AI job not found")
+		return
+	}
+	render.JSON(w, http.StatusOK, map[string]any{
+		"job":    job,
+		"bridge": buildAIJobBridgeState(job, nil, nil),
+	})
+}
+
+func (h *AgentHandler) UpdateAIJobDelivery(w http.ResponseWriter, r *http.Request) {
+	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
+	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
+	if jobID == "" || agentKey == "" {
+		render.Error(w, http.StatusBadRequest, "jobId and X-Agent-Key are required")
+		return
+	}
+
+	var payload agentAIJobDeliveryRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	payload.DeviceCode = strings.TrimSpace(payload.DeviceCode)
+	payload.Status = strings.TrimSpace(payload.Status)
+	payload.Message = normalizeTrimmedString(payload.Message)
+	payload.LocalPublishTaskID = normalizeTrimmedString(payload.LocalPublishTaskID)
+	if payload.DeviceCode == "" || payload.Status == "" {
+		render.Error(w, http.StatusBadRequest, "deviceCode and status are required")
+		return
+	}
+
+	device, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device")
+		return
+	}
+	if device == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+	if !agentKeyMatches(device, agentKey) {
+		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+		return
+	}
+
+	var deliveredAt *time.Time
+	if payload.DeliveredAt != nil && strings.TrimSpace(*payload.DeliveredAt) != "" {
+		parsed, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(*payload.DeliveredAt))
+		if parseErr != nil {
+			render.Error(w, http.StatusBadRequest, "deliveredAt must be RFC3339")
+			return
+		}
+		deliveredAt = &parsed
+	}
+	if deliveredAt == nil {
+		now := time.Now().UTC()
+		deliveredAt = &now
+	}
+
+	job, err := h.app.Store.UpdateAIJobDeliveryByDevice(r.Context(), jobID, device.ID, payload.Status, payload.Message, payload.LocalPublishTaskID, deliveredAt)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to update AI delivery state")
+		return
+	}
+	if job == nil {
+		render.Error(w, http.StatusNotFound, "AI job not found")
+		return
+	}
+
+	if device.OwnerUserID != nil {
+		recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+			OwnerUserID:  *device.OwnerUserID,
+			ResourceType: "ai_job",
+			ResourceID:   &job.ID,
+			Action:       "agent_delivery_update",
+			Title:        "OmniBull 回写 AI 任务交付状态",
+			Source:       "omnibull_local",
+			Status:       payload.Status,
+			Message:      payload.Message,
+			Payload: mustJSONBytes(map[string]any{
+				"deviceId":           device.ID,
+				"localTaskId":        job.LocalTaskID,
+				"localPublishTaskId": payload.LocalPublishTaskID,
+			}),
+		})
+	}
+	render.JSON(w, http.StatusOK, job)
 }
 
 func (h *AgentHandler) PublishTaskPackage(w http.ResponseWriter, r *http.Request) {
@@ -1603,6 +1932,33 @@ func normalizeTrimmedStringPtr(value string) *string {
 		return nil
 	}
 	return &trimmed
+}
+
+func (h *AgentHandler) buildAgentAIJobInputPayload(payload syncAIJobRequest) ([]byte, error) {
+	result := map[string]any{
+		"origin":      "omnibull_local",
+		"localTaskId": payload.ID,
+	}
+	if payload.InputPayload != nil {
+		switch typed := payload.InputPayload.(type) {
+		case map[string]any:
+			for key, value := range typed {
+				result[key] = value
+			}
+		default:
+			result["input"] = typed
+		}
+	}
+	if payload.PublishPayload != nil {
+		result["publishPayload"] = payload.PublishPayload
+	}
+	if payload.RunAt != nil && strings.TrimSpace(*payload.RunAt) != "" {
+		result["runAt"] = strings.TrimSpace(*payload.RunAt)
+	}
+	if payload.Status != nil && strings.TrimSpace(*payload.Status) != "" {
+		result["localStatus"] = strings.TrimSpace(*payload.Status)
+	}
+	return json.Marshal(result)
 }
 
 func (h *AgentHandler) inspectPublishTaskReadiness(ctx context.Context, device *domain.Device, task *domain.PublishTask) (domain.PublishTaskReadiness, error) {

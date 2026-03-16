@@ -98,6 +98,7 @@ Key screens to prioritize:
 - `GET /api/v1/tasks`
 - `GET /api/v1/tasks/diagnostics`
 - `POST /api/v1/tasks/bulk-repair`
+- `POST /api/v1/tasks/bulk-action`
 - `POST /api/v1/tasks`
 - `GET /api/v1/tasks/{taskId}`
 - `GET /api/v1/tasks/{taskId}/workspace`
@@ -118,9 +119,13 @@ Key screens to prioritize:
 - `POST /api/v1/ai/jobs`
 - `GET /api/v1/ai/jobs/{jobId}`
 - `GET /api/v1/ai/jobs/{jobId}/workspace`
+- `GET /api/v1/ai/jobs/{jobId}/artifacts`
+- `POST /api/v1/ai/jobs/{jobId}/artifacts/upload`
+- `POST /api/v1/ai/jobs/{jobId}/publish-task`
 - `PATCH /api/v1/ai/jobs/{jobId}`
 - `POST /api/v1/ai/jobs/{jobId}/cancel`
 - `POST /api/v1/ai/jobs/{jobId}/retry`
+- `POST /api/v1/ai/jobs/{jobId}/force-release`
 - `GET /api/v1/billing/packages`
 - `GET /api/v1/billing/ledger`
 
@@ -138,10 +143,11 @@ Device `skillSyncStates` now also expose `desiredRevision`, `isCurrent`, and `ne
 Skill detail and skill-management drilldowns can call `/skills/{skillId}/impact` when they need the full blocked/ready publish-task set for one skill, not just the recent 8 tasks from workspace.
 Skill-related UI should treat `task.skillRevision` as an effective version that also changes when skill assets change, not only when the skill form itself changes.
 Skill `deviceSyncs` now also expose `desiredRevision`, `isCurrent`, and `needsSync`.
-9. Task detail can call `/tasks/{taskId}/workspace` to get the related device, account, skill, events, artifacts, materials, backend-computed action flags, `readiness` checks, and optional `runtime` snapshot in one request.
+9. Task detail can call `/tasks/{taskId}/workspace` to get the related device, account, skill, events, artifacts, materials, backend-computed action flags, `readiness` checks, optional `runtime` snapshot, and normalized `bridge` state in one request.
 Task detail should surface `task.skillRevision`, `readiness.skillRevisionMatched`, and `readiness.driftedMaterialCount` so operators can see when a task's skill or mirrored materials have drifted since creation.
 Task detail should also surface `readiness.skillSyncedToDevice`, because a task can look valid in the cloud but still be blocked until the target OmniBull has synced the linked skill revision.
 Task detail and diagnostics views should also surface `readiness.issueCodes`, because these are the stable machine-readable reasons for badges, filters, and empty-state CTAs.
+Task detail should also surface `bridge.origin` and `bridge.localSource`, because this is now the safest way to explain whether a task was created in the cloud, mirrored from local OpenClaw / OmniBull work, or already imported into the local execution queue.
 10. Task detail must display `needs_verify` clearly.
 11. Task detail should also show the event timeline from `/tasks/{taskId}/events`.
 12. Task detail should also render task artifacts from `/tasks/{taskId}/artifacts`, especially verification screenshots and text evidence.
@@ -158,6 +164,8 @@ Both `/tasks/diagnostics` and `includeBlocked=true` queue responses now expose `
 `/tasks/diagnostics` also supports backend-side filtering by `dimension` and `issueCode`, so task-center tabs and filters do not need to rescan the full diagnostics list on the client.
 Task center bulk actions can call `/tasks/bulk-repair` with the same filtering dimensions when an operator wants to repair many blocked tasks together.
 The bulk-repair response already includes per-task `status`, `message`, `appliedOperations`, `readinessBefore`, and `readinessAfter`, so the UI can show a batch-result drawer without refetching every row immediately.
+Task center operator trays can now call `/tasks/bulk-action` for one-shot cancel, retry, force-release, resume, and manual-resolve flows across many selected or filtered tasks.
+The bulk-action response already includes `taskBefore`, optional `taskAfter`, `status`, `message`, `action`, and optional `artifactCount`, so the UI can show an action-result drawer without refetching every row immediately.
 15. Materials page should let users switch by device, root, and path, with file preview for text content.
 Materials detail can now call `/materials/workspace?deviceId=...&root=...&path=...&scope=auto` to show not only the mirrored file/directory itself, but also which publish tasks currently depend on it and whether those tasks are blocked.
 16. Skill pages should show both metadata and attached asset previews.
@@ -168,10 +176,20 @@ If the local agent implements cleanup confirmation, it can call `POST /agent/ski
 19. Dashboard cards should read directly from `/overview/summary`, including material counts, task breakdown counts, `activeLoginSessionCount`, and AI breakdown counts.
 20. History should render mixed item types using `kind`, `source`, and `status`, including `audit` items, and can use backend filters for tabs.
 21. Billing can start read-only with package cards and ledger table.
-22. AI detail pages can call `/ai/jobs/{jobId}/workspace` for model metadata, optional linked skill, and backend action flags, then use `PATCH/cancel/retry` to drive the lifecycle UI.
-23. AI job create/update can optionally bind `skillId`; when used, the chosen skill must match the job `jobType`.
-24. Skill delete should surface the backend `409` usage summary for both publish-task and AI-job references.
-25. AI list pages can use backend filters `jobType/status/skillId/limit` instead of client-side slicing.
+22. AI detail pages can call `/ai/jobs/{jobId}/workspace` for model metadata, optional linked skill, AI artifacts, linked publish tasks, backend action flags, and normalized `bridge` state.
+The AI `bridge` object is the safest way to explain this chain to users:
+- cloud-native AI jobs: OmniDrive can generate in the cloud first, then optionally create cloud publish tasks
+- `source = omnibull_local` AI jobs: OmniBull creates the task first, OmniDrive only generates in the cloud, then the result is handed back to OmniBull so SAU can publish locally
+23. AI job create/update can optionally bind both `deviceId` and `skillId`.
+`deviceId` here means the target OmniBull node for later material sync / publish handoff, not the cloud-side generation executor.
+AI list pages can also filter by `source`, which is important when the UI wants to separate cloud-native AI jobs from OmniBull-origin AI tasks.
+24. AI output tabs can call `/ai/jobs/{jobId}/artifacts`.
+If a design needs manual output upload, it can call `/ai/jobs/{jobId}/artifacts/upload` with optional local mirror fields `deviceId`, `rootName`, and `relativePath`.
+25. AI detail should surface the `publishTasks` array from workspace and offer a CTA to call `/ai/jobs/{jobId}/publish-task` after outputs are ready.
+That CTA should only appear when `actions.canCreatePublishTask === true`.
+If `job.source === "omnibull_local"`, the detail page should instead explain the handoff lifecycle using `bridge.deliveryStage`, `bridge.localTaskId`, and `bridge.localPublishTaskId`, rather than offering a cloud publish-task CTA.
+26. Skill delete should surface the backend `409` usage summary for both publish-task and AI-job references.
+27. AI list pages can use backend filters `jobType/status/skillId/deviceId/source/limit` instead of client-side slicing.
 
 ## Notes For Implementation
 

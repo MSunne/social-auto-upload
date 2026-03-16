@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { ListTodo, ArrowUpRight } from "lucide-react";
 import Link from "next/link";
-import api from "@/lib/api";
+import { listTasks } from "@/lib/services";
 import type { Task } from "@/lib/types";
 import { PageHeader, StatusBadge, EmptyState } from "@/components/ui/common";
 import { useState } from "react";
@@ -23,7 +23,7 @@ export default function TasksPage() {
 
   const { data: tasks = [] } = useQuery<Task[]>({
     queryKey: ["tasks"],
-    queryFn: () => api.get("/tasks").then((r) => r.data),
+    queryFn: () => listTasks(),
   });
 
   const filteredTasks = tasks.filter((t) => {

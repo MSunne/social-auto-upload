@@ -71,6 +71,7 @@ go run ./cmd/omnidrive-api
 - `needs_verify` tasks can now either be resumed back to `pending` or manually resolved into a final state with structured evidence
 - cloud-side force-release endpoint can manually free a stuck leased publish task before the lease naturally expires
 - task workspace and agent package can now expose a lightweight runtime snapshot from the local executor, such as current step or progress
+- task workspace now also exposes a normalized `bridge` object so the cloud can distinguish cloud-native tasks from OpenClaw/local-origin tasks and already-imported local queue items without parsing raw runtime payloads
 - publish task event timeline for cloud edits and agent execution evidence
 - structured publish task artifacts for verification screenshots and future outputs
 - task-to-material snapshot references for mirrored local files
@@ -81,6 +82,7 @@ go run ./cmd/omnidrive-api
 - task diagnostics now expose structured `issueCodes`, `blockingDimensions`, and summary counters so cloud-side triage does not need to parse Chinese error strings
 - both task diagnostics and blocked queue summaries now also expose `byIssueCode`, which is useful for operator dashboards and bulk remediation hints
 - cloud task center now also supports batch remediation, so one operator action can refresh material snapshots or skill revisions for many blocked tasks at once
+- cloud task center now also supports batch operator actions, so one request can cancel, retry, resume, force-release, or manually resolve many tasks together
 - agent-side blocked queue diagnostics now also expose a `summary` object with ready/blocked counts and per-dimension counts
 - publish task lease claim / renew flow for safer device-side execution
 - agent-side lease release endpoint so local SAU can requeue work or confirm cancellation without waiting for TTL expiry
@@ -101,6 +103,7 @@ go run ./cmd/omnidrive-api
 - local agents can now acknowledge retired-skill cleanup, which suppresses already-handled disabled/deleted items until the cloud-side change happens again
 - local OmniBull can now mirror locally-created publish tasks back into OmniDrive, including material references, so OpenClaw-triggered tasks show up in the cloud task center with readiness diagnostics
 - agent-side publish-task sync now also accepts `skillRevision`, `runAt`, `finishedAt`, and `materialRefs`, which lets one local task stay traceable across OmniDrive, OmniBull, OpenClaw, and the real third-party platform executor
+- local OmniDriveBridge status now exposes bridge task counts by source/status and active lease summaries, which is useful when checking whether OmniDrive <-> OmniBull sync is healthy before touching real platform execution
 - verification screenshot extraction and file URL generation during task sync
 - `needs_verify` tasks are retained for manual handling but no longer re-polled as executable device tasks
 - device/task mismatch during agent sync is rejected with `409`
@@ -114,5 +117,8 @@ go run ./cmd/omnidrive-api
 - AI model listing, AI job create/list/detail
 - AI job workspace, update, cancel, and retry endpoints for future model executors and richer cloud-side operations
 - AI jobs can optionally reference a product skill, and skill deletion is guarded against both publish-task and AI-job dependencies
+- AI jobs can now also target one `OmniBull` device as the later publish handoff node, while generation itself remains cloud-first
+- AI job workspace now includes generated artifacts, linked publish tasks, and a normalized bridge object for the cloud-to-OmniBull handoff
+- completed AI jobs can upload output artifacts, mark those artifacts as mirrored into a target device material root, and create publish tasks directly from those mirrored outputs
 - AI job list supports `jobType/status/skillId/limit` filtering for richer cloud control views
 - billing package list and wallet ledger read

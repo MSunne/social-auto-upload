@@ -1,0 +1,1756 @@
+openapi: 3.0.3
+info:
+  title: OmniDrive Core API
+  version: 0.1.0
+  description: |
+    Swagger-style contract for the current OmniDrive core backend.
+    This file focuses on the core frontend integration surface:
+    auth, overview, history, devices, accounts, materials, skills, and tasks.
+servers:
+  - url: http://127.0.0.1:8410/api/v1
+    description: Local development
+tags:
+  - name: Auth
+  - name: Overview
+  - name: History
+  - name: Devices
+  - name: Accounts
+  - name: Materials
+  - name: Skills
+  - name: Tasks
+security:
+  - bearerAuth: []
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Register cloud user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+  /auth/login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+  /overview/summary:
+    get:
+      tags: [Overview]
+      summary: Dashboard summary
+      responses:
+        '200':
+          description: Overview summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OverviewSummary'
+  /history:
+    get:
+      tags: [History]
+      summary: Merged activity feed
+      parameters:
+        - $ref: '#/components/parameters/KindQuery'
+        - $ref: '#/components/parameters/StatusQuery'
+        - $ref: '#/components/parameters/LimitQuery'
+      responses:
+        '200':
+          description: History list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/HistoryItem'
+  /devices:
+    get:
+      tags: [Devices]
+      summary: List devices
+      responses:
+        '200':
+          description: Device list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Device'
+  /devices/claim:
+    post:
+      tags: [Devices]
+      summary: Claim device
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deviceCode]
+              properties:
+                deviceCode:
+                  type: string
+      responses:
+        '200':
+          description: Claimed device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+  /devices/{deviceId}:
+    get:
+      tags: [Devices]
+      summary: Device detail
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '200':
+          description: Device detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+    patch:
+      tags: [Devices]
+      summary: Update device
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                defaultReasoningModel:
+                  type: string
+                isEnabled:
+                  type: boolean
+      responses:
+        '200':
+          description: Updated device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+  /devices/{deviceId}/workspace:
+    get:
+      tags: [Devices]
+      summary: Device workspace
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '200':
+          description: Device workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceWorkspace'
+  /accounts:
+    get:
+      tags: [Accounts]
+      summary: List mirrored accounts
+      parameters:
+        - name: deviceId
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Account list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PlatformAccount'
+  /accounts/{accountId}:
+    get:
+      tags: [Accounts]
+      summary: Account detail
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      responses:
+        '200':
+          description: Account detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformAccount'
+    delete:
+      tags: [Accounts]
+      summary: Delete mirrored account
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+        '409':
+          description: Usage conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /accounts/{accountId}/workspace:
+    get:
+      tags: [Accounts]
+      summary: Account workspace
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      responses:
+        '200':
+          description: Account workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformAccountWorkspace'
+  /accounts/{accountId}/validate:
+    post:
+      tags: [Accounts]
+      summary: Revalidate account
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      responses:
+        '200':
+          description: Login session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginSession'
+  /accounts/remote-login:
+    post:
+      tags: [Accounts]
+      summary: Create remote login session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deviceId, platform, accountName]
+              properties:
+                deviceId:
+                  type: string
+                platform:
+                  type: string
+                accountName:
+                  type: string
+      responses:
+        '201':
+          description: Login session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginSession'
+  /accounts/login-sessions/{sessionId}:
+    get:
+      tags: [Accounts]
+      summary: Login session detail
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Login session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginSession'
+  /accounts/login-sessions/{sessionId}/actions:
+    post:
+      tags: [Accounts]
+      summary: Create login action
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginActionRequest'
+      responses:
+        '201':
+          description: Enqueued action
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginSessionAction'
+  /materials/roots:
+    get:
+      tags: [Materials]
+      summary: List mirrored material roots
+      parameters:
+        - name: deviceId
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Material roots
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MaterialRoot'
+  /materials/list:
+    get:
+      tags: [Materials]
+      summary: List mirrored directory
+      parameters:
+        - name: deviceId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: root
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: path
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Directory entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MaterialEntry'
+  /materials/file:
+    get:
+      tags: [Materials]
+      summary: Read mirrored file preview
+      parameters:
+        - name: deviceId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: root
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: File preview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaterialEntry'
+  /materials/workspace:
+    get:
+      tags: [Materials]
+      summary: Material workspace
+      parameters:
+        - name: deviceId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: root
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: scope
+          in: query
+          schema:
+            type: string
+            enum: [exact, subtree, auto]
+        - $ref: '#/components/parameters/LimitQuery'
+      responses:
+        '200':
+          description: Material workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaterialWorkspace'
+  /skills:
+    get:
+      tags: [Skills]
+      summary: List skills
+      responses:
+        '200':
+          description: Skill list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProductSkill'
+    post:
+      tags: [Skills]
+      summary: Create skill
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSkillRequest'
+      responses:
+        '201':
+          description: Created skill
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductSkill'
+  /skills/{skillId}:
+    get:
+      tags: [Skills]
+      summary: Skill detail
+      parameters:
+        - $ref: '#/components/parameters/SkillId'
+      responses:
+        '200':
+          description: Skill detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductSkill'
+    patch:
+      tags: [Skills]
+      summary: Update skill
+      parameters:
+        - $ref: '#/components/parameters/SkillId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSkillRequest'
+      responses:
+        '200':
+          description: Updated skill
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductSkill'
+    delete:
+      tags: [Skills]
+      summary: Delete skill
+      parameters:
+        - $ref: '#/components/parameters/SkillId'
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+        '409':
+          description: Usage conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /skills/{skillId}/workspace:
+    get:
+      tags: [Skills]
+      summary: Skill workspace
+      parameters:
+        - $ref: '#/components/parameters/SkillId'
+      responses:
+        '200':
+          description: Skill workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductSkillWorkspace'
+  /skills/{skillId}/impact:
+    get:
+      tags: [Skills]
+      summary: Skill impact on publish tasks
+      parameters:
+        - $ref: '#/components/parameters/SkillId'
+        - name: readiness
+          in: query
+          schema:
+            type: string
+            enum: [ready, blocked]
+        - name: issueCode
+          in: query
+          schema:
+            type: string
+        - $ref: '#/components/parameters/StatusQuery'
+        - $ref: '#/components/parameters/LimitQuery'
+      responses:
+        '200':
+          description: Skill impact workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductSkillImpactWorkspace'
+  /tasks:
+    get:
+      tags: [Tasks]
+      summary: List tasks
+      parameters:
+        - name: deviceId
+          in: query
+          schema:
+            type: string
+        - $ref: '#/components/parameters/StatusQuery'
+        - name: platform
+          in: query
+          schema:
+            type: string
+        - name: accountName
+          in: query
+          schema:
+            type: string
+        - $ref: '#/components/parameters/LimitQuery'
+      responses:
+        '200':
+          description: Task list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PublishTask'
+    post:
+      tags: [Tasks]
+      summary: Create publish task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskRequest'
+      responses:
+        '201':
+          description: Created task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishTask'
+  /tasks/diagnostics:
+    get:
+      tags: [Tasks]
+      summary: Task diagnostics
+      parameters:
+        - name: deviceId
+          in: query
+          schema:
+            type: string
+        - $ref: '#/components/parameters/StatusQuery'
+        - name: platform
+          in: query
+          schema:
+            type: string
+        - name: accountName
+          in: query
+          schema:
+            type: string
+        - $ref: '#/components/parameters/LimitQuery'
+        - name: readiness
+          in: query
+          schema:
+            type: string
+            enum: [ready, blocked]
+        - name: dimension
+          in: query
+          schema:
+            type: string
+            enum: [device, account, skill, materials]
+        - name: issueCode
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Diagnostics result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishTaskDiagnosticResult'
+  /tasks/bulk-repair:
+    post:
+      tags: [Tasks]
+      summary: Batch repair blocked tasks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublishTaskBulkRepairRequest'
+      responses:
+        '200':
+          description: Bulk repair result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishTaskBulkRepairResult'
+  /tasks/bulk-action:
+    post:
+      tags: [Tasks]
+      summary: Batch operator action
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublishTaskBulkActionRequest'
+      responses:
+        '200':
+          description: Bulk action result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishTaskBulkActionResult'
+  /tasks/{taskId}:
+    get:
+      tags: [Tasks]
+      summary: Task detail
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: Task detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishTask'
+    patch:
+      tags: [Tasks]
+      summary: Update task
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTaskRequest'
+      responses:
+        '200':
+          description: Updated task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishTask'
+    delete:
+      tags: [Tasks]
+      summary: Delete task
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+  /tasks/{taskId}/workspace:
+    get:
+      tags: [Tasks]
+      summary: Task workspace
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: Task workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishTaskWorkspace'
+  /tasks/{taskId}/events:
+    get:
+      tags: [Tasks]
+      summary: Task events
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: Task events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PublishTaskEvent'
+  /tasks/{taskId}/artifacts:
+    get:
+      tags: [Tasks]
+      summary: Task artifacts
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: Task artifacts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PublishTaskArtifact'
+  /tasks/{taskId}/materials:
+    get:
+      tags: [Tasks]
+      summary: Task materials
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: Task materials
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PublishTaskMaterialRef'
+  /tasks/{taskId}/refresh-materials:
+    post:
+      tags: [Tasks]
+      summary: Refresh task material snapshot
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: Refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishTaskMaterialRefreshResult'
+        '409':
+          description: Missing material or conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishTaskMaterialRefreshResult'
+  /tasks/{taskId}/refresh-skill:
+    post:
+      tags: [Tasks]
+      summary: Refresh task skill revision
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: Refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishTaskSkillRefreshResult'
+  /tasks/{taskId}/cancel:
+    post:
+      tags: [Tasks]
+      summary: Cancel task
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: Updated task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishTask'
+  /tasks/{taskId}/force-release:
+    post:
+      tags: [Tasks]
+      summary: Force release task lease
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: Updated task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishTask'
+  /tasks/{taskId}/resume:
+    post:
+      tags: [Tasks]
+      summary: Resume needs_verify task
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+      responses:
+        '200':
+          description: Updated task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishTask'
+  /tasks/{taskId}/manual-resolve:
+    post:
+      tags: [Tasks]
+      summary: Manually resolve needs_verify task
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManualResolveTaskRequest'
+      responses:
+        '200':
+          description: Updated task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishTask'
+  /tasks/{taskId}/retry:
+    post:
+      tags: [Tasks]
+      summary: Retry task
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: Updated task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishTask'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      schema:
+        type: string
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      schema:
+        type: string
+    SkillId:
+      name: skillId
+      in: path
+      required: true
+      schema:
+        type: string
+    TaskId:
+      name: taskId
+      in: path
+      required: true
+      schema:
+        type: string
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
+    LimitQuery:
+      name: limit
+      in: query
+      schema:
+        type: integer
+    StatusQuery:
+      name: status
+      in: query
+      schema:
+        type: string
+    KindQuery:
+      name: kind
+      in: query
+      schema:
+        type: string
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+    RegisterRequest:
+      type: object
+      required: [email, name, password]
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        password:
+          type: string
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+    LoginResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        user:
+          $ref: '#/components/schemas/User'
+    User:
+      type: object
+      properties:
+        id: { type: string }
+        email: { type: string, format: email }
+        name: { type: string }
+        isActive: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    DeviceLoad:
+      type: object
+      properties:
+        accountCount: { type: integer }
+        activeAccountCount: { type: integer }
+        materialRootCount: { type: integer }
+        materialEntryCount: { type: integer }
+        pendingTaskCount: { type: integer }
+        runningTaskCount: { type: integer }
+        needsVerifyTaskCount: { type: integer }
+        cancelRequestedTaskCount: { type: integer }
+        failedTaskCount: { type: integer }
+        activeLoginSessionCount: { type: integer }
+        verificationLoginSessionCount: { type: integer }
+    Device:
+      type: object
+      properties:
+        id: { type: string }
+        ownerUserId: { type: string, nullable: true }
+        deviceCode: { type: string }
+        name: { type: string }
+        localIp: { type: string, nullable: true }
+        publicIp: { type: string, nullable: true }
+        defaultReasoningModel: { type: string, nullable: true }
+        isEnabled: { type: boolean }
+        runtimePayload: { type: object, nullable: true }
+        lastSeenAt: { type: string, format: date-time, nullable: true }
+        notes: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        status: { type: string }
+        load:
+          $ref: '#/components/schemas/DeviceLoad'
+    LoginSession:
+      type: object
+      properties:
+        id: { type: string }
+        deviceId: { type: string }
+        userId: { type: string }
+        platform: { type: string }
+        accountName: { type: string }
+        status: { type: string }
+        qrData: { type: string, nullable: true }
+        verificationPayload: { type: object, nullable: true }
+        message: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    LoginActionRequest:
+      type: object
+      required: [actionType]
+      properties:
+        actionType:
+          type: string
+        payload:
+          type: object
+          nullable: true
+    LoginSessionAction:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        actionType: { type: string }
+        payload: { type: object, nullable: true }
+        status: { type: string }
+        createdAt: { type: string, format: date-time }
+        consumedAt: { type: string, format: date-time, nullable: true }
+    PlatformAccountLoad:
+      type: object
+      properties:
+        taskCount: { type: integer }
+        pendingTaskCount: { type: integer }
+        runningTaskCount: { type: integer }
+        needsVerifyTaskCount: { type: integer }
+        failedTaskCount: { type: integer }
+        activeLoginSessionCount: { type: integer }
+        verificationLoginSessionCount: { type: integer }
+    PlatformAccount:
+      type: object
+      properties:
+        id: { type: string }
+        deviceId: { type: string }
+        platform: { type: string }
+        accountName: { type: string }
+        status: { type: string }
+        lastMessage: { type: string, nullable: true }
+        lastAuthenticatedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        load:
+          $ref: '#/components/schemas/PlatformAccountLoad'
+    ProductSkillLoad:
+      type: object
+      properties:
+        assetCount: { type: integer }
+        taskCount: { type: integer }
+        pendingTaskCount: { type: integer }
+        runningTaskCount: { type: integer }
+        needsVerifyTaskCount: { type: integer }
+        failedTaskCount: { type: integer }
+        aiJobCount: { type: integer }
+        activeAiJobCount: { type: integer }
+    ProductSkill:
+      type: object
+      properties:
+        id: { type: string }
+        ownerUserId: { type: string }
+        name: { type: string }
+        description: { type: string }
+        outputType: { type: string }
+        modelName: { type: string }
+        promptTemplate: { type: string, nullable: true }
+        referencePayload: { type: object, nullable: true }
+        isEnabled: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        load:
+          $ref: '#/components/schemas/ProductSkillLoad'
+    ProductSkillAsset:
+      type: object
+      properties:
+        id: { type: string }
+        skillId: { type: string }
+        ownerUserId: { type: string }
+        assetType: { type: string }
+        fileName: { type: string }
+        mimeType: { type: string, nullable: true }
+        storageKey: { type: string, nullable: true }
+        publicUrl: { type: string, nullable: true }
+        sizeBytes: { type: integer, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    DeviceSkillSyncState:
+      type: object
+      properties:
+        id: { type: string }
+        deviceId: { type: string }
+        skillId: { type: string }
+        syncStatus: { type: string }
+        syncedRevision: { type: string, nullable: true }
+        desiredRevision: { type: string, nullable: true }
+        isCurrent: { type: boolean }
+        needsSync: { type: boolean }
+        assetCount: { type: integer }
+        message: { type: string, nullable: true }
+        lastSyncedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    MaterialRoot:
+      type: object
+      properties:
+        id: { type: string }
+        deviceId: { type: string }
+        rootName: { type: string }
+        rootPath: { type: string }
+        isAvailable: { type: boolean }
+        isDirectory: { type: boolean }
+        lastSyncedAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    MaterialEntry:
+      type: object
+      properties:
+        id: { type: string }
+        deviceId: { type: string }
+        rootName: { type: string }
+        rootPath: { type: string }
+        relativePath: { type: string }
+        parentPath: { type: string }
+        name: { type: string }
+        kind: { type: string }
+        absolutePath: { type: string, nullable: true }
+        sizeBytes: { type: integer, nullable: true }
+        modifiedAt: { type: string, nullable: true }
+        extension: { type: string, nullable: true }
+        mimeType: { type: string, nullable: true }
+        isText: { type: boolean }
+        previewText: { type: string, nullable: true }
+        isAvailable: { type: boolean }
+        lastSyncedAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PublishTask:
+      type: object
+      properties:
+        id: { type: string }
+        deviceId: { type: string }
+        accountId: { type: string, nullable: true }
+        skillId: { type: string, nullable: true }
+        skillRevision: { type: string, nullable: true }
+        platform: { type: string }
+        accountName: { type: string }
+        title: { type: string }
+        contentText: { type: string, nullable: true }
+        mediaPayload: { type: object, nullable: true }
+        status: { type: string }
+        message: { type: string, nullable: true }
+        verificationPayload: { type: object, nullable: true }
+        leaseOwnerDeviceId: { type: string, nullable: true }
+        leaseExpiresAt: { type: string, format: date-time, nullable: true }
+        attemptCount: { type: integer }
+        cancelRequestedAt: { type: string, format: date-time, nullable: true }
+        runAt: { type: string, format: date-time, nullable: true }
+        finishedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PublishTaskActionState:
+      type: object
+      properties:
+        canEdit: { type: boolean }
+        canCancel: { type: boolean }
+        canRetry: { type: boolean }
+        canDelete: { type: boolean }
+        canForceRelease: { type: boolean }
+        canResume: { type: boolean }
+        canResolveManual: { type: boolean }
+        canRefreshMaterials: { type: boolean }
+        canRefreshSkill: { type: boolean }
+    PublishTaskReadiness:
+      type: object
+      properties:
+        deviceReady: { type: boolean }
+        accountReady: { type: boolean }
+        skillReady: { type: boolean }
+        skillRevisionMatched: { type: boolean }
+        skillSyncedToDevice: { type: boolean }
+        materialsReady: { type: boolean }
+        totalMaterialCount: { type: integer }
+        availableMaterialCount: { type: integer }
+        missingMaterialCount: { type: integer }
+        driftedMaterialCount: { type: integer }
+        issueCodes:
+          type: array
+          items: { type: string }
+        issues:
+          type: array
+          items: { type: string }
+    PublishTaskRuntimeState:
+      type: object
+      properties:
+        taskId: { type: string }
+        executionPayload: { type: object, nullable: true }
+        lastAgentSyncAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PublishTaskBridgeState:
+      type: object
+      properties:
+        origin:
+          type: string
+          enum: [cloud, local, imported]
+        localSource:
+          type: string
+          nullable: true
+        stage:
+          type: string
+          nullable: true
+        localStatus:
+          type: string
+          nullable: true
+        workerName:
+          type: string
+          nullable: true
+        updatedAt:
+          type: string
+          nullable: true
+        startedAt:
+          type: string
+          nullable: true
+        finishedAt:
+          type: string
+          nullable: true
+        lastAgentSyncAt:
+          type: string
+          format: date-time
+          nullable: true
+        hasActiveLease:
+          type: boolean
+    PublishTaskEvent:
+      type: object
+      properties:
+        id: { type: string }
+        taskId: { type: string }
+        eventType: { type: string }
+        source: { type: string }
+        status: { type: string }
+        message: { type: string, nullable: true }
+        payload: { type: object, nullable: true }
+        createdAt: { type: string, format: date-time }
+    PublishTaskArtifact:
+      type: object
+      properties:
+        id: { type: string }
+        taskId: { type: string }
+        artifactKey: { type: string }
+        artifactType: { type: string }
+        source: { type: string }
+        title: { type: string, nullable: true }
+        fileName: { type: string, nullable: true }
+        mimeType: { type: string, nullable: true }
+        storageKey: { type: string, nullable: true }
+        publicUrl: { type: string, nullable: true }
+        sizeBytes: { type: integer, nullable: true }
+        textContent: { type: string, nullable: true }
+        payload: { type: object, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PublishTaskMaterialRef:
+      type: object
+      properties:
+        id: { type: string }
+        taskId: { type: string }
+        deviceId: { type: string }
+        rootName: { type: string }
+        relativePath: { type: string }
+        role: { type: string }
+        name: { type: string }
+        kind: { type: string }
+        absolutePath: { type: string, nullable: true }
+        sizeBytes: { type: integer, nullable: true }
+        modifiedAt: { type: string, nullable: true }
+        extension: { type: string, nullable: true }
+        mimeType: { type: string, nullable: true }
+        isText: { type: boolean }
+        previewText: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PublishTaskDiagnosticItem:
+      type: object
+      properties:
+        task:
+          $ref: '#/components/schemas/PublishTask'
+        readiness:
+          $ref: '#/components/schemas/PublishTaskReadiness'
+        blockingDimensions:
+          type: array
+          items: { type: string }
+    PublishTaskDiagnosticSummary:
+      type: object
+      properties:
+        totalCount: { type: integer }
+        readyCount: { type: integer }
+        blockedCount: { type: integer }
+        byStatus:
+          type: object
+          additionalProperties:
+            type: integer
+        byDimension:
+          type: object
+          additionalProperties:
+            type: integer
+        byIssueCode:
+          type: object
+          additionalProperties:
+            type: integer
+    PublishTaskDiagnosticResult:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublishTaskDiagnosticItem'
+        summary:
+          $ref: '#/components/schemas/PublishTaskDiagnosticSummary'
+        serverTime:
+          type: string
+          format: date-time
+    CreateSkillRequest:
+      type: object
+      required: [name, description, outputType, modelName]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        outputType: { type: string }
+        modelName: { type: string }
+        promptTemplate: { type: string, nullable: true }
+        referencePayload: { type: object, nullable: true }
+        isEnabled: { type: boolean }
+    UpdateSkillRequest:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        outputType: { type: string }
+        modelName: { type: string }
+        promptTemplate: { type: string, nullable: true }
+        referencePayload: { type: object, nullable: true }
+        isEnabled: { type: boolean }
+    CreateTaskRequest:
+      type: object
+      required: [deviceId, platform, accountName, title]
+      properties:
+        deviceId: { type: string }
+        accountId: { type: string, nullable: true }
+        skillId: { type: string, nullable: true }
+        platform: { type: string }
+        accountName: { type: string }
+        title: { type: string }
+        contentText: { type: string, nullable: true }
+        mediaPayload: { type: object, nullable: true }
+        runAt: { type: string, format: date-time, nullable: true }
+        materialRefs:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskMaterialRefInput'
+    UpdateTaskRequest:
+      type: object
+      properties:
+        title: { type: string }
+        contentText: { type: string, nullable: true }
+        mediaPayload: { type: object, nullable: true }
+        materialRefs:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskMaterialRefInput'
+        status: { type: string }
+        message: { type: string, nullable: true }
+        runAt: { type: string, format: date-time, nullable: true }
+    TaskMaterialRefInput:
+      type: object
+      required: [root, path]
+      properties:
+        root: { type: string }
+        path: { type: string }
+        role: { type: string, nullable: true }
+    ManualResolveTaskRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [success, completed, failed, cancelled]
+        message: { type: string, nullable: true }
+        textEvidence: { type: string, nullable: true }
+        payload: { type: object, nullable: true }
+    PublishTaskMaterialRefreshIssue:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+        rootName: { type: string }
+        relativePath: { type: string }
+        role: { type: string }
+        previousRef:
+          $ref: '#/components/schemas/PublishTaskMaterialRef'
+        currentEntry:
+          $ref: '#/components/schemas/MaterialEntry'
+    PublishTaskMaterialRefreshResult:
+      type: object
+      properties:
+        task:
+          $ref: '#/components/schemas/PublishTask'
+        materials:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublishTaskMaterialRef'
+        readiness:
+          $ref: '#/components/schemas/PublishTaskReadiness'
+        refreshedCount: { type: integer }
+        changedCount: { type: integer }
+        missingCount: { type: integer }
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublishTaskMaterialRefreshIssue'
+    PublishTaskSkillRefreshResult:
+      type: object
+      properties:
+        task:
+          $ref: '#/components/schemas/PublishTask'
+        skill:
+          $ref: '#/components/schemas/ProductSkill'
+        readiness:
+          $ref: '#/components/schemas/PublishTaskReadiness'
+        previousRevision: { type: string, nullable: true }
+        currentRevision: { type: string, nullable: true }
+        revisionChanged: { type: boolean }
+    PublishTaskBulkRepairRequest:
+      type: object
+      properties:
+        taskIds:
+          type: array
+          items: { type: string }
+        operations:
+          type: array
+          items:
+            type: string
+            enum: [refresh_materials, refresh_skill]
+        deviceId: { type: string }
+        status: { type: string }
+        platform: { type: string }
+        accountName: { type: string }
+        skillId: { type: string }
+        readiness:
+          type: string
+          enum: [ready, blocked]
+        dimension:
+          type: string
+          enum: [device, account, skill, materials]
+        issueCode: { type: string }
+        limit: { type: integer }
+    PublishTaskBulkRepairItem:
+      type: object
+      properties:
+        task:
+          $ref: '#/components/schemas/PublishTask'
+        status: { type: string }
+        message: { type: string, nullable: true }
+        appliedOperations:
+          type: array
+          items: { type: string }
+        readinessBefore:
+          $ref: '#/components/schemas/PublishTaskReadiness'
+        readinessAfter:
+          $ref: '#/components/schemas/PublishTaskReadiness'
+        materialRefresh:
+          $ref: '#/components/schemas/PublishTaskMaterialRefreshResult'
+        skillRefresh:
+          $ref: '#/components/schemas/PublishTaskSkillRefreshResult'
+    PublishTaskBulkRepairSummary:
+      type: object
+      properties:
+        selectedCount: { type: integer }
+        processedCount: { type: integer }
+        successCount: { type: integer }
+        skippedCount: { type: integer }
+        failedCount: { type: integer }
+        byStatus:
+          type: object
+          additionalProperties:
+            type: integer
+        byOperation:
+          type: object
+          additionalProperties:
+            type: integer
+    PublishTaskBulkRepairResult:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublishTaskBulkRepairItem'
+        summary:
+          $ref: '#/components/schemas/PublishTaskBulkRepairSummary'
+        serverTime:
+          type: string
+          format: date-time
+    PublishTaskBulkActionRequest:
+      type: object
+      properties:
+        taskIds:
+          type: array
+          items: { type: string }
+        action:
+          type: string
+          enum: [cancel, retry, force_release, resume, manual_resolve]
+        deviceId: { type: string }
+        status: { type: string }
+        platform: { type: string }
+        accountName: { type: string }
+        skillId: { type: string }
+        readiness:
+          type: string
+          enum: [ready, blocked]
+        dimension:
+          type: string
+          enum: [device, account, skill, materials]
+        issueCode: { type: string }
+        limit: { type: integer }
+        message: { type: string, nullable: true }
+        resolveStatus:
+          type: string
+          enum: [success, completed, failed, cancelled]
+        textEvidence: { type: string, nullable: true }
+        payload: { type: object, nullable: true }
+    PublishTaskBulkActionItem:
+      type: object
+      properties:
+        taskBefore:
+          $ref: '#/components/schemas/PublishTask'
+        taskAfter:
+          $ref: '#/components/schemas/PublishTask'
+        status: { type: string }
+        message: { type: string, nullable: true }
+        action: { type: string }
+        artifactCount: { type: integer }
+    PublishTaskBulkActionSummary:
+      type: object
+      properties:
+        selectedCount: { type: integer }
+        processedCount: { type: integer }
+        successCount: { type: integer }
+        skippedCount: { type: integer }
+        failedCount: { type: integer }
+        byStatus:
+          type: object
+          additionalProperties:
+            type: integer
+        byAction:
+          type: object
+          additionalProperties:
+            type: integer
+    PublishTaskBulkActionResult:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublishTaskBulkActionItem'
+        summary:
+          $ref: '#/components/schemas/PublishTaskBulkActionSummary'
+        serverTime:
+          type: string
+          format: date-time
+    PlatformAccountWorkspace:
+      type: object
+      properties:
+        account:
+          $ref: '#/components/schemas/PlatformAccount'
+        recentTasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublishTask'
+        activeLoginSessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/LoginSession'
+    DeviceWorkspace:
+      type: object
+      properties:
+        device:
+          $ref: '#/components/schemas/Device'
+        recentTasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublishTask'
+        activeLoginSessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/LoginSession'
+        recentAccounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlatformAccount'
+        materialRoots:
+          type: array
+          items:
+            $ref: '#/components/schemas/MaterialRoot'
+        skillSyncStates:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeviceSkillSyncState'
+    ProductSkillWorkspace:
+      type: object
+      properties:
+        skill:
+          $ref: '#/components/schemas/ProductSkill'
+        assets:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductSkillAsset'
+        recentTasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublishTask'
+        recentAiJobs:
+          type: array
+          items:
+            type: object
+        deviceSyncs:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeviceSkillSyncState'
+    ProductSkillImpactWorkspace:
+      type: object
+      properties:
+        skill:
+          $ref: '#/components/schemas/ProductSkill'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublishTaskDiagnosticItem'
+        summary:
+          $ref: '#/components/schemas/PublishTaskDiagnosticSummary'
+        serverTime:
+          type: string
+          format: date-time
+    MaterialImpactSummary:
+      type: object
+      properties:
+        taskCount: { type: integer }
+        readyCount: { type: integer }
+        blockedCount: { type: integer }
+        byStatus:
+          type: object
+          additionalProperties:
+            type: integer
+        byDimension:
+          type: object
+          additionalProperties:
+            type: integer
+        byIssueCode:
+          type: object
+          additionalProperties:
+            type: integer
+    MaterialWorkspace:
+      type: object
+      properties:
+        deviceId: { type: string }
+        root:
+          $ref: '#/components/schemas/MaterialRoot'
+        entry:
+          $ref: '#/components/schemas/MaterialEntry'
+        scope: { type: string }
+        referencingTasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublishTaskDiagnosticItem'
+        summary:
+          $ref: '#/components/schemas/MaterialImpactSummary'
+    PublishTaskWorkspace:
+      type: object
+      properties:
+        task:
+          $ref: '#/components/schemas/PublishTask'
+        device:
+          $ref: '#/components/schemas/Device'
+        account:
+          $ref: '#/components/schemas/PlatformAccount'
+        skill:
+          $ref: '#/components/schemas/ProductSkill'
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublishTaskEvent'
+        artifacts:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublishTaskArtifact'
+        materials:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublishTaskMaterialRef'
+        actions:
+          $ref: '#/components/schemas/PublishTaskActionState'
+        readiness:
+          $ref: '#/components/schemas/PublishTaskReadiness'
+        runtime:
+          $ref: '#/components/schemas/PublishTaskRuntimeState'
+        bridge:
+          $ref: '#/components/schemas/PublishTaskBridgeState'
+    OverviewSummary:
+      type: object
+      properties:
+        deviceCount: { type: integer }
+        onlineDeviceCount: { type: integer }
+        accountCount: { type: integer }
+        activeAccountCount: { type: integer }
+        taskCount: { type: integer }
+        pendingTaskCount: { type: integer }
+        runningTaskCount: { type: integer }
+        needsVerifyTaskCount: { type: integer }
+        failedTaskCount: { type: integer }
+        activeLoginSessionCount: { type: integer }
+        materialRootCount: { type: integer }
+        materialEntryCount: { type: integer }
+        queuedAiJobCount: { type: integer }
+        runningAiJobCount: { type: integer }
+        failedAiJobCount: { type: integer }
+        recentTasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublishTask'
+        recentAiJobs:
+          type: array
+          items:
+            type: object
+    HistoryItem:
+      type: object
+      properties:
+        kind: { type: string }
+        source: { type: string, nullable: true }
+        title: { type: string }
+        status: { type: string, nullable: true }
+        message: { type: string, nullable: true }
+        occurredAt: { type: string, format: date-time }
+        payload: { type: object, nullable: true }
