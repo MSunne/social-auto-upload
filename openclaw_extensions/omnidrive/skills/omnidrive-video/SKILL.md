@@ -44,6 +44,8 @@ description: |
 - 如果用户只说“做个视频/生成一个镜头/做条 AI 视频”，但没有指定模型，先简短提示：
   `可以直接使用当前设备绑定的默认视频模型，按默认时长 8 秒生成；如果你不补充参考图和更多细节，我会按主题自由创作。是否继续？`
 - 如果用户想知道默认模型是什么，先调用 `omnidrive_auth` 的 `action=status`，读取 `boundDevice.defaultVideoModel`
+- 如果用户要求“把 OmniDrive 默认视频模型切到某个模型”，先用 `omnidrive_models` 确认模型可用，再用 `omnidrive_device_config` 的 `action=set_defaults` 更新 `defaultVideoModel`
+- 如果当前话题已经明确是在 OmniDrive 做视频场景里，用户只说“换成某个模型”或“当前是什么模型”，默认理解为在问 OmniDrive 默认视频模型
 - 用户确认使用默认方案后，调用 `omnidrive_video` 时优先显式传入 `durationSeconds: 8`；即使省略，工具也会自动回落到默认 8 秒
 - 视频默认建议 `wait=false`，先创建 job，再用 `omnidrive_job_detail` 轮询
 - 如果用户明确要求等待结果，再设置 `wait=true`

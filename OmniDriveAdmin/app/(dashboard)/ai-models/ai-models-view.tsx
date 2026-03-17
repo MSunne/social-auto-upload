@@ -109,12 +109,12 @@ export function AIModelsView() {
                   <td colSpan={6} className="px-6 py-12 text-center text-red-500">加载失败，请重试</td>
                 </tr>
               )}
-              {data && data.data.length === 0 && (
+              {data && data.items.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center text-[var(--color-text-secondary)]">未找到 AI 模型配置</td>
                 </tr>
               )}
-              {data && data.data.map((model) => (
+              {data && data.items.map((model) => (
                 <tr key={model.id} className="hover:bg-[var(--color-bg-secondary)]/50 transition-colors">
                   <td className="px-6 py-4">
                     <div className="font-medium text-[var(--color-text-primary)]">{model.modelName}</div>

@@ -65,11 +65,11 @@ export function PricingView() {
               <Loader2 className="h-6 w-6 animate-spin text-[var(--color-text-secondary)]" />
             </div>
           )}
-          {packagesData && packagesData.data.length === 0 && (
+          {packagesData && packagesData.items.length === 0 && (
             <p className="text-center text-[var(--color-text-secondary)] py-12">暂无套餐配置</p>
           )}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {packagesData && packagesData.data.map(pkg => (
+            {packagesData && packagesData.items.map(pkg => (
               <div key={pkg.id} className={`p-5 rounded-xl border transition-colors ${pkg.isEnabled ? "border-[var(--color-border)] bg-[var(--color-bg-primary)]" : "border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50 opacity-60"}`}>
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex-1 min-w-0">
@@ -143,7 +143,7 @@ export function PricingView() {
                     </td>
                   </tr>
                 )}
-                {rulesData && rulesData.data.map(rule => (
+                {rulesData && rulesData.items.map(rule => (
                   <tr key={rule.id} className={`hover:bg-[var(--color-bg-secondary)]/50 transition-colors ${!rule.isEnabled ? "opacity-50" : ""}`}>
                     <td className="px-6 py-4">
                       <div className="font-medium">{rule.name}</div>

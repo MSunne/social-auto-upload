@@ -14,6 +14,8 @@ type Config struct {
 	DatabaseDSN                   string
 	RedisAddr                     string
 	PublicBaseURL                 string
+	CORSAllowedOrigins            []string
+	LogLevel                      string
 	LocalStorageDir               string
 	S3Endpoint                    string
 	S3Bucket                      string
@@ -39,6 +41,8 @@ type Config struct {
 	AdminName                     string
 	AdminPassword                 string
 	AdminAccessTokenExpireMinutes int
+	DevSeedUsers                  bool
+	DevSeedUserPassword           string
 	AutoCreateSchema              bool
 	BillingManualSupportName      string
 	BillingManualSupportContact   string
@@ -48,6 +52,7 @@ type Config struct {
 
 func Load() Config {
 	_ = godotenv.Load()
+	environment := envOrDefault("OMNIDRIVE_ENV", "development")
 
 	jwtSecret := envOrDefault("OMNIDRIVE_JWT_SECRET", "change-me")
 	accessTokenExpireMinutes := envAsInt("OMNIDRIVE_ACCESS_TOKEN_EXPIRE_MINUTES", 720)
@@ -58,11 +63,13 @@ func Load() Config {
 	adminAccessTokenExpireMinutes := envAsInt("OMNIDRIVE_ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES", accessTokenExpireMinutes)
 
 	return Config{
-		Environment:                   envOrDefault("OMNIDRIVE_ENV", "development"),
+		Environment:                   environment,
 		BindAddr:                      envOrDefault("OMNIDRIVE_BIND_ADDR", ":8410"),
 		DatabaseDSN:                   envOrDefault("OMNIDRIVE_DATABASE_DSN", ""),
 		RedisAddr:                     envOrDefault("OMNIDRIVE_REDIS_ADDR", ""),
 		PublicBaseURL:                 envOrDefault("OMNIDRIVE_PUBLIC_BASE_URL", ""),
+		CORSAllowedOrigins:            envAsCSV("OMNIDRIVE_CORS_ALLOWED_ORIGINS", defaultCORSAllowedOrigins(environment)),
+		LogLevel:                      envOrDefault("OMNIDRIVE_LOG_LEVEL", defaultLogLevel(environment)),
 		LocalStorageDir:               envOrDefault("OMNIDRIVE_LOCAL_STORAGE_DIR", "./data"),
 		S3Endpoint:                    envFirst("", "OMNIDRIVE_S3_ENDPOINT", "S3_ENDPOINT_URL"),
 		S3Bucket:                      envFirst("", "OMNIDRIVE_S3_BUCKET", "S3_BUCKET_NAME"),
@@ -88,6 +95,8 @@ func Load() Config {
 		AdminName:                     envOrDefault("OMNIDRIVE_ADMIN_NAME", "OmniDriveAdmin"),
 		AdminPassword:                 envOrDefault("OMNIDRIVE_ADMIN_PASSWORD", "change-me-admin"),
 		AdminAccessTokenExpireMinutes: adminAccessTokenExpireMinutes,
+		DevSeedUsers:                  envAsBool("OMNIDRIVE_DEV_SEED_USERS", strings.EqualFold(strings.TrimSpace(environment), "development")),
+		DevSeedUserPassword:           envOrDefault("OMNIDRIVE_DEV_SEED_USER_PASSWORD", "demo123456"),
 		AutoCreateSchema:              envAsBool("OMNIDRIVE_AUTO_CREATE_SCHEMA", true),
 		BillingManualSupportName:      envOrDefault("OMNIDRIVE_BILLING_MANUAL_SUPPORT_NAME", "客服充值"),
 		BillingManualSupportContact:   envOrDefault("OMNIDRIVE_BILLING_MANUAL_SUPPORT_CONTACT", ""),
@@ -137,4 +146,41 @@ func envAsBool(key string, fallback bool) bool {
 		return fallback
 	}
 	return parsed
+}
+
+func envAsCSV(key string, fallback []string) []string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		if len(fallback) == 0 {
+			return nil
+		}
+		return append([]string(nil), fallback...)
+	}
+
+	items := make([]string, 0)
+	for _, raw := range strings.Split(value, ",") {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		items = append(items, trimmed)
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	return items
+}
+
+func defaultCORSAllowedOrigins(environment string) []string {
+	if strings.EqualFold(strings.TrimSpace(environment), "development") {
+		return []string{"*"}
+	}
+	return nil
+}
+
+func defaultLogLevel(environment string) string {
+	if strings.EqualFold(strings.TrimSpace(environment), "development") {
+		return "debug"
+	}
+	return "info"
 }

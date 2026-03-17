@@ -414,6 +414,11 @@ func (s *Store) ListAdminUsers(ctx context.Context, filter AdminUserListFilter) 
 		return nil, 0, err
 	}
 
+	paidStatusesArgIndex := argIndex
+	queryArgs := append([]any{}, args...)
+	queryArgs = append(queryArgs, paidRechargeStatuses())
+	argIndex++
+
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 			SELECT
 				u.id,
@@ -436,7 +441,7 @@ func (s *Store) ListAdminUsers(ctx context.Context, filter AdminUserListFilter) 
 		LEFT JOIN billing_wallets bw ON bw.user_id = u.id
 		LEFT JOIN (
 			SELECT user_id, COUNT(*)::BIGINT AS total_recharge_count,
-			       COALESCE(SUM(amount_cents) FILTER (WHERE paid_at IS NOT NULL OR status = ANY($1)), 0)::BIGINT AS total_recharge_amount_cents
+			       COALESCE(SUM(amount_cents) FILTER (WHERE paid_at IS NOT NULL OR status = ANY($%d)), 0)::BIGINT AS total_recharge_amount_cents
 			FROM recharge_orders
 			GROUP BY user_id
 		) ro ON ro.user_id = u.id
@@ -473,7 +478,7 @@ func (s *Store) ListAdminUsers(ctx context.Context, filter AdminUserListFilter) 
 		%s
 		ORDER BY u.created_at DESC
 		LIMIT $%d OFFSET $%d
-	`, whereClause, argIndex, argIndex+1), append([]any{paidRechargeStatuses()}, append(args, pageSize, offset)...)...)
+	`, paidStatusesArgIndex, whereClause, argIndex, argIndex+1), append(queryArgs, pageSize, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -553,7 +558,7 @@ func (s *Store) ListAdminDevices(ctx context.Context, filter AdminDeviceListFilt
 		%s
 		ORDER BY devices.updated_at DESC
 		LIMIT $%d OFFSET $%d
-	`, deviceSelectColumns, deviceLoadColumns, whereClause, argIndex, argIndex+1), append(args, pageSize, offset)...)
+	`, deviceSelectColumnsQualified, deviceLoadColumns, whereClause, argIndex, argIndex+1), append(args, pageSize, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -561,73 +566,11 @@ func (s *Store) ListAdminDevices(ctx context.Context, filter AdminDeviceListFilt
 
 	items := make([]domain.AdminDeviceRow, 0)
 	for rows.Next() {
-		var item domain.AdminDeviceRow
-		var localIP *string
-		var publicIP *string
-		var model *string
-		var notes *string
-		var agentKey *string
-		var runtimePayload []byte
-		var ownerUserID *string
-		var lastSeenAt *time.Time
-		var ownerID *string
-		var ownerEmail *string
-		var ownerName *string
-
-		if scanErr := rows.Scan(
-			&item.Device.ID,
-			&ownerUserID,
-			&item.Device.DeviceCode,
-			&agentKey,
-			&item.Device.Name,
-			&localIP,
-			&publicIP,
-			&model,
-			&item.Device.IsEnabled,
-			&runtimePayload,
-			&lastSeenAt,
-			&notes,
-			&item.Device.CreatedAt,
-			&item.Device.UpdatedAt,
-			&item.Device.Load.AccountCount,
-			&item.Device.Load.ActiveAccountCount,
-			&item.Device.Load.MaterialRootCount,
-			&item.Device.Load.MaterialEntryCount,
-			&item.Device.Load.PendingTaskCount,
-			&item.Device.Load.RunningTaskCount,
-			&item.Device.Load.NeedsVerifyTaskCount,
-			&item.Device.Load.CancelRequestedTaskCount,
-			&item.Device.Load.FailedTaskCount,
-			&item.Device.Load.ActiveLoginSessionCount,
-			&item.Device.Load.VerificationLoginSessionCount,
-			&ownerID,
-			&ownerEmail,
-			&ownerName,
-		); scanErr != nil {
+		item, scanErr := scanAdminDeviceRow(rows.Scan)
+		if scanErr != nil {
 			return nil, 0, scanErr
 		}
-
-		item.Device.OwnerUserID = ownerUserID
-		if agentKey != nil {
-			item.Device.AgentKey = *agentKey
-		}
-		item.Device.LocalIP = localIP
-		item.Device.PublicIP = publicIP
-		item.Device.DefaultReasoningModel = model
-		item.Device.RuntimePayload = bytesOrNil(runtimePayload)
-		item.Device.LastSeenAt = lastSeenAt
-		item.Device.Notes = notes
-		item.Device.Status = computeDeviceStatus(lastSeenAt)
-
-		if ownerID != nil && ownerEmail != nil && ownerName != nil {
-			item.Owner = &domain.AdminUserSummary{
-				ID:    *ownerID,
-				Email: *ownerEmail,
-				Name:  *ownerName,
-			}
-		}
-
-		items = append(items, item)
+		items = append(items, *item)
 	}
 	return items, total, rows.Err()
 }

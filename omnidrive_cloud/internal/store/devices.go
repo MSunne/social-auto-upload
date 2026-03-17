@@ -139,6 +139,13 @@ const deviceSelectColumns = `
 	created_at, updated_at
 `
 
+const deviceSelectColumnsQualified = `
+	devices.id, devices.owner_user_id, devices.device_code, devices.agent_key, devices.name, devices.local_ip, devices.public_ip,
+	devices.default_reasoning_model, devices.default_chat_model, devices.default_image_model, devices.default_video_model,
+	devices.is_enabled, devices.runtime_payload, devices.last_seen_at, devices.notes,
+	devices.created_at, devices.updated_at
+`
+
 const deviceLoadColumns = `
 	COALESCE((SELECT COUNT(*) FROM platform_accounts pa WHERE pa.device_id = devices.id), 0)::BIGINT AS account_count,
 	COALESCE((SELECT COUNT(*) FROM platform_accounts pa WHERE pa.device_id = devices.id AND pa.status = 'active'), 0)::BIGINT AS active_account_count,

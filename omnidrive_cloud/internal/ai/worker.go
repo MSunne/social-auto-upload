@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -15,6 +14,7 @@ import (
 
 	appstate "omnidrive_cloud/internal/app"
 	"omnidrive_cloud/internal/domain"
+	logctx "omnidrive_cloud/internal/logging"
 	"omnidrive_cloud/internal/store"
 )
 
@@ -71,6 +71,13 @@ func (w *Worker) Start(parent context.Context) func() {
 	var wg sync.WaitGroup
 	wg.Add(1)
 
+	w.app.Logger.Info("ai worker started",
+		"poll_interval", w.pollInterval.String(),
+		"video_poll_interval", w.videoPollInterval.String(),
+		"video_timeout", w.videoTimeout.String(),
+		"concurrency", w.concurrency,
+	)
+
 	go func() {
 		defer wg.Done()
 		w.run(ctx)
@@ -79,6 +86,7 @@ func (w *Worker) Start(parent context.Context) func() {
 	return func() {
 		cancel()
 		wg.Wait()
+		w.app.Logger.Info("ai worker stopped")
 	}
 }
 
@@ -99,21 +107,26 @@ func (w *Worker) run(ctx context.Context) {
 }
 
 func (w *Worker) runOnce(ctx context.Context) {
-	recovered, err := w.app.Store.RecoverExpiredExecutableAIJobLeases(ctx)
+	pollCtx := logctx.WithOperation(ctx, "ai_worker_poll")
+
+	recovered, err := w.app.Store.RecoverExpiredExecutableAIJobLeases(pollCtx)
 	if err != nil {
-		log.Printf("omnidrive ai worker: recover expired leases failed: %v", err)
+		w.app.Logger.Error("ai worker failed to recover expired ai job leases", "error", err)
 	} else if len(recovered) > 0 {
-		log.Printf("omnidrive ai worker: recovered %d expired AI job leases", len(recovered))
+		w.app.Logger.Debug("ai worker recovered expired ai job leases", "count", len(recovered))
 	}
 
 	limit := w.concurrency * 4
 	if limit < 8 {
 		limit = 8
 	}
-	jobs, err := w.app.Store.ListExecutableAIJobs(ctx, limit)
+	jobs, err := w.app.Store.ListExecutableAIJobs(pollCtx, limit)
 	if err != nil {
-		log.Printf("omnidrive ai worker: list executable jobs failed: %v", err)
+		w.app.Logger.Error("ai worker failed to list executable ai jobs", "error", err, "limit", limit)
 		return
+	}
+	if len(jobs) > 0 {
+		w.app.Logger.Debug("ai worker discovered executable ai jobs", "count", len(jobs), "limit", limit)
 	}
 
 	for _, job := range jobs {
@@ -143,12 +156,13 @@ func (w *Worker) processJob(ctx context.Context, job domain.AIJob) {
 
 	claimed, err := w.app.Store.ClaimCloudAIJobLease(ctx, job.ID, leaseToken, leaseExpiresAt)
 	if err != nil {
-		log.Printf("omnidrive ai worker: claim job %s failed: %v", job.ID, err)
+		w.app.Logger.Error("ai worker failed to claim ai job lease", "job_id", job.ID, "error", err)
 		return
 	}
 	if claimed == nil {
 		return
 	}
+	w.app.Logger.Debug("ai worker claimed ai job", "job_id", claimed.ID, "job_type", claimed.JobType, "model_name", claimed.ModelName)
 
 	if claimed.LeaseExpiresAt != nil {
 		leaseExpiresAt = *claimed.LeaseExpiresAt
@@ -161,7 +175,7 @@ func (w *Worker) processJob(ctx context.Context, job domain.AIJob) {
 	})
 
 	if _, err := w.syncRunningState(ctx, claimed, leaseToken, "AI 云端执行中", claimed.OutputPayload); err != nil {
-		log.Printf("omnidrive ai worker: update running state for job %s failed: %v", claimed.ID, err)
+		w.app.Logger.Warn("ai worker failed to sync running state", "job_id", claimed.ID, "error", err)
 	}
 
 	var execErr error
@@ -176,13 +190,18 @@ func (w *Worker) processJob(ctx context.Context, job domain.AIJob) {
 		execErr = fmt.Errorf("unsupported ai job type: %s", claimed.JobType)
 	}
 
-	if execErr == nil || ctx.Err() != nil {
+	if execErr == nil {
+		w.app.Logger.Debug("ai worker completed ai job", "job_id", claimed.ID, "job_type", claimed.JobType, "model_name", claimed.ModelName)
+		return
+	}
+	if ctx.Err() != nil {
+		w.app.Logger.Info("ai worker interrupted while processing ai job", "job_id", claimed.ID, "error", ctx.Err())
 		return
 	}
 
 	message := fmt.Sprintf("AI 云端执行失败: %v", execErr)
 	if _, err := w.failJob(ctx, claimed.ID, leaseToken, message, nil); err != nil {
-		log.Printf("omnidrive ai worker: mark job %s failed: %v", claimed.ID, err)
+		w.app.Logger.Error("ai worker failed to mark ai job as failed", "job_id", claimed.ID, "error", err)
 		return
 	}
 	w.recordAuditEvent(ctx, claimed, "cloud_generate_failed", "AI 云端生成失败", "failed", stringPtr(message), map[string]any{
@@ -190,7 +209,7 @@ func (w *Worker) processJob(ctx context.Context, job domain.AIJob) {
 		"modelName": claimed.ModelName,
 		"source":    claimed.Source,
 	})
-	log.Printf("omnidrive ai worker: job %s failed: %v", claimed.ID, execErr)
+	w.app.Logger.Error("ai worker ai job failed", "job_id", claimed.ID, "job_type", claimed.JobType, "model_name", claimed.ModelName, "error", execErr)
 }
 
 func (w *Worker) executeChat(ctx context.Context, job *domain.AIJob, leaseToken string) error {

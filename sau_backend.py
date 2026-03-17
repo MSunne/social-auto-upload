@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import secrets
 import sqlite3
@@ -6,10 +7,11 @@ import threading
 import time
 import uuid
 import socket
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 from pathlib import Path
 from queue import Empty, Queue
 import conf as app_conf
-from flask_cors import CORS
 from myUtils.auth import check_cookie
 from flask import Flask, request, jsonify, Response, render_template, send_from_directory
 from conf import BASE_DIR
@@ -49,6 +51,16 @@ def parse_bool(value):
     return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
+def parse_csv(value, default=None):
+    if value is None:
+        return list(default or [])
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    parts = [item.strip() for item in str(value).split(',')]
+    cleaned = [item for item in parts if item]
+    return cleaned or list(default or [])
+
+
 CLOUD_AGENT_ENABLED = parse_bool(getattr(app_conf, 'CLOUD_AGENT_ENABLED', False))
 CLOUD_DEMO_URL = str(getattr(app_conf, 'CLOUD_DEMO_URL', '')).strip()
 CLOUD_DEVICE_NAME = str(getattr(app_conf, 'CLOUD_DEVICE_NAME', '')).strip() or None
@@ -72,6 +84,34 @@ OMNIBULL_MATERIAL_ROOTS = build_material_roots(
     BASE_DIR,
     getattr(app_conf, 'OMNIBULL_MATERIAL_ROOTS', None),
 )
+OMNIBULL_CORS_ALLOWED_ORIGINS = parse_csv(
+    getattr(app_conf, 'OMNIBULL_CORS_ALLOWED_ORIGINS', '*'),
+    default=['*'],
+)
+OMNIBULL_CORS_ALLOWED_METHODS = parse_csv(
+    getattr(app_conf, 'OMNIBULL_CORS_ALLOWED_METHODS', 'GET,POST,PUT,PATCH,DELETE,OPTIONS'),
+    default=['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+)
+OMNIBULL_CORS_ALLOWED_HEADERS = parse_csv(
+    getattr(
+        app_conf,
+        'OMNIBULL_CORS_ALLOWED_HEADERS',
+        'Authorization,Content-Type,X-Requested-With,X-Omnibull-Key',
+    ),
+    default=['Authorization', 'Content-Type', 'X-Requested-With', 'X-Omnibull-Key'],
+)
+OMNIBULL_CORS_EXPOSE_HEADERS = parse_csv(
+    getattr(
+        app_conf,
+        'OMNIBULL_CORS_EXPOSE_HEADERS',
+        'Content-Disposition,X-Accel-Buffering',
+    ),
+    default=['Content-Disposition', 'X-Accel-Buffering'],
+)
+OMNIBULL_CORS_ALLOW_CREDENTIALS = parse_bool(
+    getattr(app_conf, 'OMNIBULL_CORS_ALLOW_CREDENTIALS', False)
+)
+OMNIBULL_CORS_MAX_AGE = int(getattr(app_conf, 'OMNIBULL_CORS_MAX_AGE', 86400))
 OMNIBULL_GENERATED_ROOT_NAME = str(getattr(app_conf, 'OMNIBULL_GENERATED_ROOT_NAME', 'omnidriveGenerated')).strip() or 'omnidriveGenerated'
 OMNIBULL_GENERATED_ROOT_PATH = Path(BASE_DIR / "omnidriveSync" / "generated").resolve()
 OMNIBULL_GENERATED_ROOT_PATH.mkdir(parents=True, exist_ok=True)
@@ -91,14 +131,54 @@ publish_task_manager = PublishTaskManager(
     material_roots=OMNIBULL_MATERIAL_ROOTS,
 )
 
-#允许所有来源跨域访问
-CORS(app)
-
 # 限制上传文件大小为160MB
 app.config['MAX_CONTENT_LENGTH'] = 160 * 1024 * 1024
 
 # 获取当前目录（假设 index.html 和 assets 在这里）
 current_dir = os.path.dirname(os.path.abspath(__file__))
+
+
+def get_cors_allow_origin(origin):
+    if not origin:
+        return '*'
+    if '*' in OMNIBULL_CORS_ALLOWED_ORIGINS:
+        # When credentials are enabled we must echo the request origin instead of '*'.
+        return origin if OMNIBULL_CORS_ALLOW_CREDENTIALS else '*'
+    if origin in OMNIBULL_CORS_ALLOWED_ORIGINS:
+        return origin
+    return None
+
+
+@app.before_request
+def handle_cors_preflight():
+    if request.method != 'OPTIONS':
+        return None
+
+    response = app.make_default_options_response()
+    return apply_cors_headers(response)
+
+
+@app.after_request
+def apply_cors_headers(response):
+    origin = request.headers.get('Origin')
+    allow_origin = get_cors_allow_origin(origin)
+    if allow_origin:
+        requested_headers = request.headers.get('Access-Control-Request-Headers')
+        allow_headers = requested_headers or ', '.join(OMNIBULL_CORS_ALLOWED_HEADERS)
+        response.headers['Access-Control-Allow-Origin'] = allow_origin
+        vary = response.headers.get('Vary')
+        if vary:
+            if 'Origin' not in vary:
+                response.headers['Vary'] = f'{vary}, Origin'
+        else:
+            response.headers['Vary'] = 'Origin'
+        response.headers['Access-Control-Allow-Methods'] = ', '.join(OMNIBULL_CORS_ALLOWED_METHODS)
+        response.headers['Access-Control-Allow-Headers'] = allow_headers
+        response.headers['Access-Control-Expose-Headers'] = ', '.join(OMNIBULL_CORS_EXPOSE_HEADERS)
+        response.headers['Access-Control-Max-Age'] = str(OMNIBULL_CORS_MAX_AGE)
+        if OMNIBULL_CORS_ALLOW_CREDENTIALS:
+            response.headers['Access-Control-Allow-Credentials'] = 'true'
+    return response
 
 
 def serialize_account_row(row, status=None):
@@ -425,6 +505,34 @@ def get_omnidrive_agent_config():
         "startEligible": blocked_reason is None,
         "blockedReason": blocked_reason,
     }
+
+
+def fetch_omnidrive_device_session():
+    if not OMNIDRIVE_BASE_URL:
+        raise RuntimeError("OMNIDRIVE_BASE_URL 未配置")
+    if not OMNIDRIVE_AGENT_KEY:
+        raise RuntimeError("OMNIDRIVE_AGENT_KEY 未配置")
+
+    endpoint = f"{OMNIDRIVE_BASE_URL.rstrip('/')}/api/v1/agent/device-session/{DEVICE_CODE}"
+    req = urllib_request.Request(
+        endpoint,
+        method='GET',
+        headers={
+            "Accept": "application/json",
+            "X-Agent-Key": OMNIDRIVE_AGENT_KEY,
+        },
+    )
+    try:
+        with urllib_request.urlopen(req, timeout=15) as response:
+            payload = response.read().decode("utf-8")
+            return response.status, json.loads(payload) if payload else {}
+    except urllib_error.HTTPError as exc:
+        payload = exc.read().decode("utf-8")
+        try:
+            parsed = json.loads(payload) if payload else {}
+        except json.JSONDecodeError:
+            parsed = {"error": payload or str(exc)}
+        return exc.code, parsed
 
 
 def ensure_publish_task_manager_started():
@@ -1056,6 +1164,38 @@ def skill_status():
     ensure_cloud_agent_started()
     ensure_omnidrive_agent_started()
     payload = build_skill_status_payload()
+    return jsonify({
+        "code": 200,
+        "msg": "success",
+        "data": payload,
+    }), 200
+
+
+@app.route('/api/skill/omnidrive/session', methods=['GET'])
+def skill_omnidrive_session():
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    try:
+        status_code, payload = fetch_omnidrive_device_session()
+    except Exception as exc:
+        return jsonify({
+            "code": 500,
+            "msg": f"获取 OmniDrive 设备会话失败: {exc}",
+            "data": None,
+        }), 500
+
+    if status_code >= 400:
+        message = ""
+        if isinstance(payload, dict):
+            message = str(payload.get("error") or payload.get("message") or "").strip()
+        return jsonify({
+            "code": status_code,
+            "msg": message or "获取 OmniDrive 设备会话失败",
+            "data": payload if isinstance(payload, dict) else None,
+        }), status_code
+
     return jsonify({
         "code": 200,
         "msg": "success",

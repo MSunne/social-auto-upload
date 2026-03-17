@@ -113,6 +113,21 @@ async function requestLocalOmniBull(api, path, options = {}) {
   }
 }
 
+async function fetchLocalOmniDriveSession(api) {
+  const payload = await requestLocalOmniBull(api, "/api/skill/omnidrive/session", { method: "GET" });
+  const data = payload?.data || payload || {};
+  const accessToken = String(data.accessToken || "").trim();
+  ensure(accessToken, "本地 OmniBull 未返回可用的 OmniDrive accessToken");
+  cachedSession = {
+    accessToken,
+    user: data.user || null,
+    email: data?.user?.email || null,
+    source: "local_agent_session",
+    loggedInAt: nowISO(),
+  };
+  return cachedSession;
+}
+
 function nowISO() {
   return new Date().toISOString();
 }
@@ -209,6 +224,13 @@ async function ensureAccessToken(api, overrides = {}) {
   }
   if (cachedSession?.accessToken) {
     return cachedSession.accessToken;
+  }
+
+  try {
+    const session = await fetchLocalOmniDriveSession(api);
+    return session.accessToken;
+  } catch {
+    // Fallback to configured credentials or access token when local OmniBull bridge is unavailable.
   }
 
   const cfg = resolveConfig(api);
@@ -366,6 +388,38 @@ async function fetchJobWorkspace(api, jobId, overrides = {}) {
   return requestJson(api, `/api/v1/ai/jobs/${encodeURIComponent(jobId)}/workspace`, { method: "GET" }, overrides);
 }
 
+async function updateBoundDevice(api, payload, overrides = {}) {
+  const boundDevice = await resolveBoundOmniBullDevice(api, overrides);
+  const body = {};
+  if (payload.name !== undefined) {
+    body.name = payload.name;
+  }
+  if (payload.defaultReasoningModel !== undefined) {
+    body.defaultReasoningModel = payload.defaultReasoningModel;
+  }
+  if (payload.defaultChatModel !== undefined) {
+    body.defaultChatModel = payload.defaultChatModel;
+  }
+  if (payload.defaultImageModel !== undefined) {
+    body.defaultImageModel = payload.defaultImageModel;
+  }
+  if (payload.defaultVideoModel !== undefined) {
+    body.defaultVideoModel = payload.defaultVideoModel;
+  }
+  if (payload.isEnabled !== undefined) {
+    body.isEnabled = payload.isEnabled;
+  }
+  return requestJson(
+    api,
+    `/api/v1/devices/${encodeURIComponent(boundDevice.id)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    },
+    overrides,
+  );
+}
+
 async function pollWorkspaceUntilFinal(api, jobId, options = {}) {
   const timeoutMs = Number(options.timeoutMs || 0) > 0 ? Number(options.timeoutMs) : 60000;
   const pollIntervalMs = Number(options.pollIntervalMs || 0) > 0 ? Number(options.pollIntervalMs) : 2500;
@@ -388,21 +442,40 @@ async function executeAuth(api, params) {
   const action = String(params.action || "status").trim();
   if (action === "status") {
     const cfg = resolveConfig(api);
+    let authenticated = false;
+    let authSource = cachedSession?.source || null;
     let boundDevice = null;
+    let sessionUser = cachedSession?.user || null;
     try {
+      await ensureAccessToken(api, params || {});
+      authenticated = Boolean(cachedSession?.accessToken || cfg.accessToken);
+      authSource = cachedSession?.source || (cfg.accessToken ? "config_access_token" : null);
+      sessionUser = cachedSession?.user || null;
       boundDevice = await resolveBoundOmniBullDevice(api, params || {});
     } catch {
       boundDevice = null;
     }
+    const headlessAgentSessionActive = authSource === "local_agent_session";
     return toolResult({
-      authenticated: Boolean(cachedSession?.accessToken || cfg.accessToken),
-      hasConfiguredAccessToken: Boolean(cfg.accessToken),
-      hasConfiguredCredentials: Boolean(cfg.email && cfg.password),
+      authenticated,
+      authSource,
+      supportsHeadlessAgentSession: true,
+      headlessAgentSessionActive,
+      manualCredentialsConfigured: Boolean(cfg.accessToken || (cfg.email && cfg.password)),
+      manualCredentialsRequired: !authenticated && !headlessAgentSessionActive,
+      hasLocalDeviceCode: Boolean(cfg.localDeviceCode),
       cachedSession: cachedSession
         ? {
             email: cachedSession.email || null,
             source: cachedSession.source || null,
             loggedInAt: cachedSession.loggedInAt || null,
+          }
+        : null,
+      sessionUser: sessionUser
+        ? {
+            id: sessionUser.id || null,
+            email: sessionUser.email || null,
+            name: sessionUser.name || null,
           }
         : null,
       baseUrl: cfg.baseUrl,
@@ -506,6 +579,63 @@ async function executeModels(api, params) {
     params || {},
   );
   return toolResult(items);
+}
+
+async function executeDeviceConfig(api, params) {
+  const action = String(params.action || "status").trim();
+  if (action === "status") {
+    const boundDevice = await resolveBoundOmniBullDevice(api, params || {});
+    return toolResult({
+      device: {
+        id: boundDevice.id,
+        deviceCode: boundDevice.deviceCode,
+        name: boundDevice.name,
+        isEnabled: boundDevice.isEnabled,
+        defaultReasoningModel: boundDevice.defaultReasoningModel || null,
+        defaultChatModel: boundDevice.defaultChatModel || null,
+        defaultImageModel: boundDevice.defaultImageModel || null,
+        defaultVideoModel: boundDevice.defaultVideoModel || null,
+      },
+    });
+  }
+
+  if (action === "set_defaults") {
+    const hasAnyUpdate =
+      params.defaultReasoningModel !== undefined ||
+      params.defaultChatModel !== undefined ||
+      params.defaultImageModel !== undefined ||
+      params.defaultVideoModel !== undefined;
+    ensure(hasAnyUpdate, "set_defaults 至少需要一个默认模型字段");
+    const updated = await updateBoundDevice(
+      api,
+      {
+        defaultReasoningModel:
+          params.defaultReasoningModel !== undefined ? String(params.defaultReasoningModel || "").trim() : undefined,
+        defaultChatModel:
+          params.defaultChatModel !== undefined ? String(params.defaultChatModel || "").trim() : undefined,
+        defaultImageModel:
+          params.defaultImageModel !== undefined ? String(params.defaultImageModel || "").trim() : undefined,
+        defaultVideoModel:
+          params.defaultVideoModel !== undefined ? String(params.defaultVideoModel || "").trim() : undefined,
+      },
+      params || {},
+    );
+    return toolResult({
+      success: true,
+      device: {
+        id: updated.id,
+        deviceCode: updated.deviceCode,
+        name: updated.name,
+        isEnabled: updated.isEnabled,
+        defaultReasoningModel: updated.defaultReasoningModel || null,
+        defaultChatModel: updated.defaultChatModel || null,
+        defaultImageModel: updated.defaultImageModel || null,
+        defaultVideoModel: updated.defaultVideoModel || null,
+      },
+    });
+  }
+
+  throw new Error(`不支持的 device config action: ${action}`);
 }
 
 async function executeChat(api, params) {
@@ -720,6 +850,26 @@ const plugin = {
       },
       async execute(_id, params) {
         return executeModels(api, params || {});
+      },
+    });
+
+    api.registerTool({
+      name: "omnidrive_device_config",
+      description: "查看或更新当前绑定 OmniBull 设备的默认聊天、作图、视频模型配置。用户在 OmniDrive/OmniBull AI 上下文里说“切换模型”“当前是什么模型”时优先使用这个工具，而不是 OpenClaw 主模型设置。",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          action: { type: "string", enum: ["status", "set_defaults"] },
+          defaultReasoningModel: { type: "string" },
+          defaultChatModel: { type: "string" },
+          defaultImageModel: { type: "string" },
+          defaultVideoModel: { type: "string" },
+          accessToken: { type: "string" },
+        },
+      },
+      async execute(_id, params) {
+        return executeDeviceConfig(api, params || {});
       },
     });
 

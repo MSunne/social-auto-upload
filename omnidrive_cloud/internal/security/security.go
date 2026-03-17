@@ -34,11 +34,18 @@ func (m *TokenManager) VerifyPassword(password string, hash string) error {
 }
 
 func (m *TokenManager) IssueToken(userID string) (string, error) {
+	return m.IssueTokenWithDuration(userID, m.expiration)
+}
+
+func (m *TokenManager) IssueTokenWithDuration(userID string, duration time.Duration) (string, error) {
+	if duration <= 0 {
+		duration = m.expiration
+	}
 	now := time.Now().UTC()
 	claims := jwt.MapClaims{
 		"sub": userID,
 		"iat": now.Unix(),
-		"exp": now.Add(m.expiration).Unix(),
+		"exp": now.Add(duration).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(m.secret)

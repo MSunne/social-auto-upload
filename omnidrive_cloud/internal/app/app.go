@@ -1,6 +1,8 @@
 package app
 
 import (
+	"log/slog"
+
 	"omnidrive_cloud/internal/config"
 	"omnidrive_cloud/internal/database"
 	"omnidrive_cloud/internal/security"
@@ -15,9 +17,14 @@ type App struct {
 	Tokens      *security.TokenManager
 	AdminTokens *security.TokenManager
 	Storage     *storage.Service
+	Logger      *slog.Logger
 }
 
-func New(cfg config.Config, db *database.Database, storageService *storage.Service) *App {
+func New(cfg config.Config, db *database.Database, storageService *storage.Service, logger *slog.Logger) *App {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
 	return &App{
 		Config:      cfg,
 		Database:    db,
@@ -25,5 +32,6 @@ func New(cfg config.Config, db *database.Database, storageService *storage.Servi
 		Tokens:      security.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenExpireMinutes),
 		AdminTokens: security.NewTokenManager(cfg.AdminJWTSecret, cfg.AdminAccessTokenExpireMinutes),
 		Storage:     storageService,
+		Logger:      logger,
 	}
 }

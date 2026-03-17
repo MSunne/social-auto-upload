@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -14,7 +15,7 @@ type Database struct {
 	Pool *pgxpool.Pool
 }
 
-func New(ctx context.Context, cfg config.Config) (*Database, error) {
+func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Database, error) {
 	if cfg.DatabaseDSN == "" {
 		return nil, fmt.Errorf("OMNIDRIVE_DATABASE_DSN is required")
 	}
@@ -26,6 +27,7 @@ func New(ctx context.Context, cfg config.Config) (*Database, error) {
 	poolConfig.MaxConns = 12
 	poolConfig.MinConns = 1
 	poolConfig.MaxConnIdleTime = 5 * time.Minute
+	poolConfig.ConnConfig.Tracer = newQueryTracer(logger)
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {

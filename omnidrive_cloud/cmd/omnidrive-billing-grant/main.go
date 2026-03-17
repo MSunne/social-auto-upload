@@ -10,6 +10,7 @@ import (
 
 	"omnidrive_cloud/internal/config"
 	"omnidrive_cloud/internal/database"
+	"omnidrive_cloud/internal/logging"
 	"omnidrive_cloud/internal/store"
 )
 
@@ -45,10 +46,11 @@ func main() {
 	}
 
 	cfg := config.Load()
+	logger := logging.New(cfg)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	db, err := database.New(ctx, cfg)
+	db, err := database.New(ctx, cfg, logger)
 	if err != nil {
 		log.Fatal(err)
 	}

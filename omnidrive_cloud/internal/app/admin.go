@@ -129,15 +129,19 @@ var systemAdminRoleCatalog = []store.UpsertAdminRoleInput{
 }
 
 func (a *App) EnsureAdminBootstrap(ctx context.Context) error {
+	a.Logger.Debug("ensuring admin bootstrap")
+
 	if err := a.Store.EnsureAdminRBACCatalog(ctx, adminPermissionCatalog, systemAdminRoleCatalog); err != nil {
 		return fmt.Errorf("ensure admin rbac catalog: %w", err)
 	}
+	a.Logger.Debug("admin rbac catalog ensured", "permission_count", len(adminPermissionCatalog), "role_count", len(systemAdminRoleCatalog))
 
 	count, err := a.Store.CountAdminUsers(ctx)
 	if err != nil {
 		return fmt.Errorf("count admin users: %w", err)
 	}
 	if count > 0 {
+		a.Logger.Debug("admin bootstrap skipped because admin users already exist", "admin_count", count)
 		return nil
 	}
 
@@ -158,6 +162,7 @@ func (a *App) EnsureAdminBootstrap(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create bootstrap admin user: %w", err)
 	}
+	a.Logger.Info("bootstrap admin user created", "admin_id", BootstrapAdminID, "email", a.Config.AdminEmail)
 	return nil
 }
 

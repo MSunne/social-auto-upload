@@ -142,6 +142,8 @@ type agentAIJobDeliveryRequest struct {
 	DeliveredAt        *string `json:"deliveredAt"`
 }
 
+const deviceSessionTokenTTL = 60 * time.Minute
+
 func NewAgentHandler(app *appstate.App) *AgentHandler {
 	return &AgentHandler{app: app}
 }
@@ -195,6 +197,71 @@ func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 
 	render.JSON(w, http.StatusOK, map[string]any{
 		"device": device,
+	})
+}
+
+func (h *AgentHandler) IssueDeviceSession(w http.ResponseWriter, r *http.Request) {
+	deviceCode := strings.TrimSpace(chi.URLParam(r, "deviceCode"))
+	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
+	if deviceCode == "" || agentKey == "" {
+		render.Error(w, http.StatusBadRequest, "deviceCode and X-Agent-Key are required")
+		return
+	}
+
+	device, err := h.app.Store.GetDeviceByCode(r.Context(), deviceCode)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device")
+		return
+	}
+	if device == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+	if !agentKeyMatches(device, agentKey) {
+		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+		return
+	}
+	if device.OwnerUserID == nil || strings.TrimSpace(*device.OwnerUserID) == "" {
+		render.Error(w, http.StatusConflict, "Device is not bound to any OmniDrive user")
+		return
+	}
+	if !device.IsEnabled {
+		render.Error(w, http.StatusConflict, "Device is disabled")
+		return
+	}
+
+	user, err := h.app.Store.GetUserByID(r.Context(), strings.TrimSpace(*device.OwnerUserID))
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load bound user")
+		return
+	}
+	if user == nil || !user.IsActive {
+		render.Error(w, http.StatusUnauthorized, "Bound user is unavailable")
+		return
+	}
+
+	token, err := h.app.Tokens.IssueTokenWithDuration(user.ID, deviceSessionTokenTTL)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to issue device session token")
+		return
+	}
+
+	render.JSON(w, http.StatusOK, map[string]any{
+		"accessToken": token,
+		"tokenType":   "bearer",
+		"expiresAt":   time.Now().UTC().Add(deviceSessionTokenTTL),
+		"user":        user,
+		"device": map[string]any{
+			"id":                    device.ID,
+			"deviceCode":            device.DeviceCode,
+			"name":                  device.Name,
+			"isEnabled":             device.IsEnabled,
+			"defaultReasoningModel": device.DefaultReasoningModel,
+			"defaultChatModel":      device.DefaultChatModel,
+			"defaultImageModel":     device.DefaultImageModel,
+			"defaultVideoModel":     device.DefaultVideoModel,
+		},
+		"source": "agent_device_session",
 	})
 }
 

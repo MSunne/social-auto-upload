@@ -105,6 +105,9 @@ func scanAdminDeviceRow(scan scanFn) (*domain.AdminDeviceRow, error) {
 	var localIP *string
 	var publicIP *string
 	var model *string
+	var chatModel *string
+	var imageModel *string
+	var videoModel *string
 	var notes *string
 	var agentKey *string
 	var runtimePayload []byte
@@ -123,6 +126,9 @@ func scanAdminDeviceRow(scan scanFn) (*domain.AdminDeviceRow, error) {
 		&localIP,
 		&publicIP,
 		&model,
+		&chatModel,
+		&imageModel,
+		&videoModel,
 		&item.Device.IsEnabled,
 		&runtimePayload,
 		&lastSeenAt,
@@ -156,6 +162,9 @@ func scanAdminDeviceRow(scan scanFn) (*domain.AdminDeviceRow, error) {
 	item.Device.LocalIP = localIP
 	item.Device.PublicIP = publicIP
 	item.Device.DefaultReasoningModel = model
+	item.Device.DefaultChatModel = chatModel
+	item.Device.DefaultImageModel = imageModel
+	item.Device.DefaultVideoModel = videoModel
 	item.Device.RuntimePayload = bytesOrNil(runtimePayload)
 	item.Device.LastSeenAt = lastSeenAt
 	item.Device.Notes = notes
@@ -594,7 +603,7 @@ func (s *Store) GetAdminDeviceByID(ctx context.Context, deviceID string) (*domai
 		FROM devices
 		LEFT JOIN users u ON u.id = devices.owner_user_id
 		WHERE devices.id = $1
-	`, deviceSelectColumns, deviceLoadColumns), deviceID)
+	`, deviceSelectColumnsQualified, deviceLoadColumns), deviceID)
 
 	item, err := scanAdminDeviceRow(row.Scan)
 	if err != nil {

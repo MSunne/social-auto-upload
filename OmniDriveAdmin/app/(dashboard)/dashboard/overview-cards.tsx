@@ -6,7 +6,6 @@ import {
   BarChart3, 
   Coins, 
   ReceiptText, 
-  ShieldCheck, 
   Users, 
   MonitorSmartphone,
   Wallet

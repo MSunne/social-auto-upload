@@ -2,6 +2,10 @@
 
 这份文档用于明确当前仓库中几个“工程”的边界，避免把 `SAU`、`OmniBull`、`OmniDrive`、`OpenClaw` 混在一起理解。
 
+如果你更关心“这些大模块之间怎么连接”，请同时参考：
+
+- `docs/module_relationships.md`
+
 ## 总体对应关系
 
 - `SAU`
@@ -38,6 +42,10 @@
   - Go 云端后端工程。
 - `omnidrive_frontend`
   - 云端前端工程。
+- `OmniDriveAdmin`
+  - 面向内部运营的管理后台前端之一。
+- `omnidrive_admin_frontend`
+  - 另一套面向内部运营的管理后台前端实现。
 
 ### OpenClaw 集成
 

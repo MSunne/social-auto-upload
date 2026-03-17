@@ -22,17 +22,11 @@ export function UsersView() {
     setSelected(new Set());
   };
 
-  const toggleSelect = (id: string) => {
-    setSelected(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  };
+  const toggleSelect = (id: string) => setSelected(prev => { const n = new Set(prev); if (n.has(id)) { n.delete(id); } else { n.add(id); } return n; });
 
   const toggleSelectAll = () => {
     if (!data) return;
-    const allIds = data.data.map(r => r.user.id);
+    const allIds = data.items.map(r => r.user.id);
     if (selected.size === allIds.length) {
       setSelected(new Set());
     } else {
@@ -112,7 +106,7 @@ export function UsersView() {
                   <input
                     type="checkbox"
                     className="rounded"
-                    checked={data ? selected.size === data.data.length && data.data.length > 0 : false}
+                    checked={data ? selected.size === data.items.length && data.items.length > 0 : false}
                     onChange={toggleSelectAll}
                   />
                 </th>
@@ -138,12 +132,12 @@ export function UsersView() {
                   <td colSpan={7} className="px-6 py-10 text-center text-red-500 text-sm">加载失败，请重试</td>
                 </tr>
               )}
-              {data && data.data.length === 0 && (
+              {data && data.items.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-6 py-12 text-center text-[var(--color-text-secondary)] text-sm">未找到符合条件的用户</td>
                 </tr>
               )}
-              {data && data.data.map(row => (
+              {data && data.items.map(row => (
                 <tr
                   key={row.user.id}
                   className={`hover:bg-[var(--color-bg-secondary)]/50 transition-colors ${selected.has(row.user.id) ? "bg-[var(--color-primary)]/5" : ""}`}

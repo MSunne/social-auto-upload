@@ -80,6 +80,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to create user")
 		return
 	}
+	h.app.Logger.Info("user registered", "user_id", user.ID, "email", user.Email)
 
 	render.JSON(w, http.StatusCreated, user)
 }
@@ -110,6 +111,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to issue token")
 		return
 	}
+	h.app.Logger.Info("user login succeeded", "user_id", userWithPassword.User.ID, "email", userWithPassword.User.Email)
 
 	render.JSON(w, http.StatusOK, map[string]any{
 		"accessToken": token,

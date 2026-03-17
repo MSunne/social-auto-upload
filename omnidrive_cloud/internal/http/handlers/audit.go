@@ -17,7 +17,24 @@ func recordAuditEvent(app *appstate.App, ctx context.Context, input store.Create
 	if input.ID == "" {
 		input.ID = uuid.NewString()
 	}
-	_ = app.Store.CreateAuditEvent(ctx, input)
+	if err := app.Store.CreateAuditEvent(ctx, input); err != nil {
+		app.Logger.Error("failed to record user audit event",
+			"audit_id", input.ID,
+			"resource_type", input.ResourceType,
+			"action", input.Action,
+			"status", input.Status,
+			"error", err,
+		)
+		return
+	}
+	app.Logger.Debug("user audit event recorded",
+		"audit_id", input.ID,
+		"owner_user_id", input.OwnerUserID,
+		"resource_type", input.ResourceType,
+		"resource_id", input.ResourceID,
+		"action", input.Action,
+		"status", input.Status,
+	)
 }
 
 func recordAdminAuditLog(app *appstate.App, ctx context.Context, input store.CreateAdminAuditLogInput) {
@@ -27,7 +44,24 @@ func recordAdminAuditLog(app *appstate.App, ctx context.Context, input store.Cre
 	if input.ID == "" {
 		input.ID = uuid.NewString()
 	}
-	_ = app.Store.CreateAdminAuditLog(ctx, input)
+	if err := app.Store.CreateAdminAuditLog(ctx, input); err != nil {
+		app.Logger.Error("failed to record admin audit log",
+			"audit_id", input.ID,
+			"resource_type", input.ResourceType,
+			"action", input.Action,
+			"status", input.Status,
+			"error", err,
+		)
+		return
+	}
+	app.Logger.Debug("admin audit log recorded",
+		"audit_id", input.ID,
+		"admin_user_id", input.AdminUserID,
+		"resource_type", input.ResourceType,
+		"resource_id", input.ResourceID,
+		"action", input.Action,
+		"status", input.Status,
+	)
 }
 
 func mustJSONBytes(payload any) []byte {

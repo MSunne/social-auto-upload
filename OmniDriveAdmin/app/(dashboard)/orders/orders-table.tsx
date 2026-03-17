@@ -160,7 +160,7 @@ export function OrdersTable() {
                 </tr>
               )}
 
-              {data && data.data.length === 0 && (
+              {data && data.items.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-6 py-12 text-center text-[var(--color-text-secondary)]">
                     未找到匹配的订单记录
@@ -168,7 +168,7 @@ export function OrdersTable() {
                 </tr>
               )}
 
-              {data && data.data.map((row) => (
+              {data && data.items.map((row) => (
                 <tr key={row.order.id} className="hover:bg-[var(--color-bg-secondary)]/50 transition-colors">
                   <td className="px-6 py-4">
                     <div className="font-medium text-[var(--color-text-primary)] truncate max-w-[150px]" title={row.user.name}>{row.user.name}</div>

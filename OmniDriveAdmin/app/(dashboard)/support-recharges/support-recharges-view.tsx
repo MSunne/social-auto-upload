@@ -106,7 +106,7 @@ export function SupportRechargesView() {
                 </tr>
               )}
 
-              {data && data.data.length === 0 && (
+              {data && data.items.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center text-[var(--color-text-secondary)]">
                     {status === "pending_review" ? "太棒了，所有充值审核已处理完毕！" : "当前分类下没有工单记录。"}
@@ -114,7 +114,7 @@ export function SupportRechargesView() {
                 </tr>
               )}
 
-              {data && data.data.map((row) => (
+              {data && data.items.map((row) => (
                 <tr key={row.id} className="hover:bg-[var(--color-bg-secondary)]/50 transition-colors">
                   <td className="px-6 py-4">
                     <div className="font-mono text-xs">{row.orderNo}</div>

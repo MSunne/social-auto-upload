@@ -1,22 +1,33 @@
 package main
 
 import (
-	"log"
+	"errors"
+	"log/slog"
+	"net/http"
+	"os"
 
 	"omnidrive_cloud/internal/config"
+	"omnidrive_cloud/internal/logging"
 	"omnidrive_cloud/internal/server"
 )
 
 func main() {
 	cfg := config.Load()
-	srv, cleanup, err := server.New(cfg)
+	logger := logging.New(cfg)
+	slog.SetDefault(logger)
+
+	srv, cleanup, err := server.New(cfg, logger)
 	if err != nil {
-		log.Fatal(err)
+		logger.Error("failed to initialize omnidrive api", "error", err)
+		os.Exit(1)
 	}
 	defer cleanup()
 
-	log.Printf("omnidrive api listening on %s", cfg.BindAddr)
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatal(err)
+	logger.Info("omnidrive api listening", "bind_addr", cfg.BindAddr)
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Error("omnidrive api stopped with error", "error", err)
+		os.Exit(1)
 	}
+
+	logger.Info("omnidrive api stopped")
 }

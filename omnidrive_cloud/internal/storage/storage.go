@@ -148,6 +148,10 @@ func (s *Service) StorageKeyFromPublicURL(rawURL string) (string, bool) {
 	return "", false
 }
 
+func (s *Service) Mode() string {
+	return string(s.mode)
+}
+
 func newLocalService(cfg config.Config) (*Service, error) {
 	rootDir := cfg.LocalStorageDir
 	if rootDir == "" {

@@ -15,7 +15,9 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.RealIP)
+	r.Use(authmiddleware.RequestLogger(app.Logger))
 	r.Use(chimiddleware.Recoverer)
+	r.Use(authmiddleware.CORS(app.Config))
 
 	healthHandler := handlers.NewHealthHandler(app)
 	authHandler := handlers.NewAuthHandler(app)
@@ -156,6 +158,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 
 		api.Route("/agent", func(agent chi.Router) {
 			agent.Post("/heartbeat", agentHandler.Heartbeat)
+			agent.Get("/device-session/{deviceCode}", agentHandler.IssueDeviceSession)
 			agent.Post("/accounts/sync", agentHandler.SyncAccount)
 			agent.Get("/ai-jobs/{deviceCode}", agentHandler.ListAIJobs)
 			agent.Post("/ai-jobs/sync", agentHandler.SyncAIJob)
