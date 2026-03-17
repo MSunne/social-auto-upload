@@ -1,0 +1,13 @@
+{
+  "id": "57338c22-a2ac-4d76-86f8-3522ae4aa3d4",
+  "skillId": "d4b40d69-fc66-41e5-b52b-41dab675f9d3",
+  "ownerUserId": "60f505bd-3b3d-4643-8db7-e89776d41ec9",
+  "assetType": "reference",
+  "fileName": "skill-reference.txt",
+  "mimeType": "text/plain",
+  "storageKey": "skills/60f505bd-3b3d-4643-8db7-e89776d41ec9/d4b40d69-fc66-41e5-b52b-41dab675f9d3/7cf21785-0081-4d08-a9d3-a1865750c442-skill-reference.txt",
+  "publicUrl": "/api/v1/files/skills/60f505bd-3b3d-4643-8db7-e89776d41ec9/d4b40d69-fc66-41e5-b52b-41dab675f9d3/7cf21785-0081-4d08-a9d3-a1865750c442-skill-reference.txt",
+  "sizeBytes": 63,
+  "createdAt": "2026-03-16T15:13:59.719347+08:00",
+  "updatedAt": "2026-03-16T15:13:59.719347+08:00"
+}

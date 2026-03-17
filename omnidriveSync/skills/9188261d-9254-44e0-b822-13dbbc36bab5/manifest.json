@@ -1,0 +1,58 @@
+{
+  "revision": "2026-03-16T07:13:47.256071Z|1|2026-03-16T07:13:47.256071Z",
+  "skill": {
+    "id": "9188261d-9254-44e0-b822-13dbbc36bab5",
+    "ownerUserId": "60f505bd-3b3d-4643-8db7-e89776d41ec9",
+    "name": "春季海报技能",
+    "description": "用于生成适合春季上新的封面海报和短视频主视觉",
+    "outputType": "image",
+    "modelName": "gemini-3-pro-image-preview",
+    "promptTemplate": "请根据输入文案生成高对比度、适合社媒传播的品牌主视觉。",
+    "referencePayload": {
+      "style": "bright",
+      "campaign": "spring-launch"
+    },
+    "isEnabled": true,
+    "createdAt": "2026-03-16T15:13:47.24998+08:00",
+    "updatedAt": "2026-03-16T15:13:47.256071+08:00",
+    "load": {
+      "assetCount": 1,
+      "taskCount": 1,
+      "pendingTaskCount": 1,
+      "runningTaskCount": 0,
+      "needsVerifyTaskCount": 0,
+      "failedTaskCount": 0,
+      "aiJobCount": 1,
+      "activeAiJobCount": 0
+    }
+  },
+  "assets": [
+    {
+      "id": "d5a2c6fb-9ff7-4b42-a860-42a520fb0096",
+      "skillId": "9188261d-9254-44e0-b822-13dbbc36bab5",
+      "ownerUserId": "60f505bd-3b3d-4643-8db7-e89776d41ec9",
+      "assetType": "reference",
+      "fileName": "skill-reference.txt",
+      "mimeType": "text/plain",
+      "storageKey": "skills/60f505bd-3b3d-4643-8db7-e89776d41ec9/9188261d-9254-44e0-b822-13dbbc36bab5/558b4d55-9711-43d5-a0ef-6db3aa756dd6-skill-reference.txt",
+      "publicUrl": "/api/v1/files/skills/60f505bd-3b3d-4643-8db7-e89776d41ec9/9188261d-9254-44e0-b822-13dbbc36bab5/558b4d55-9711-43d5-a0ef-6db3aa756dd6-skill-reference.txt",
+      "sizeBytes": 63,
+      "createdAt": "2026-03-16T15:13:47.256071+08:00",
+      "updatedAt": "2026-03-16T15:13:47.256071+08:00"
+    }
+  ],
+  "sync": {
+    "id": "38d771d6-2ba1-45ed-b2db-ad603cb60783",
+    "deviceId": "52371fe9-b1d5-4593-80ed-786be702c3a7",
+    "skillId": "9188261d-9254-44e0-b822-13dbbc36bab5",
+    "syncStatus": "failed",
+    "syncedRevision": null,
+    "isCurrent": false,
+    "needsSync": false,
+    "assetCount": 1,
+    "message": "skill-reference.txt: Invalid URL '/api/v1/files/skills/60f505bd-3b3d-4643-8db7-e89776d41ec9/9188261d-9254-44e0-b822-13dbbc36bab5/558b4d55-9711-43d5-a0ef-6db3aa756dd6-skill-reference.txt': No scheme supplied. Perhaps you meant https:///api/v1/files/skills/60f505bd-3b3d-4643-8db7-e89776d41ec9/9188261d-9254-44e0-b822-13dbbc36bab5/558b4d55-9711-43d5-a0ef-6db3aa756dd6-skill-reference.txt?",
+    "lastSyncedAt": "2026-03-17T14:15:23.409273+08:00",
+    "createdAt": "2026-03-17T12:04:48.341953+08:00",
+    "updatedAt": "2026-03-17T14:15:23.413697+08:00"
+  }
+}
