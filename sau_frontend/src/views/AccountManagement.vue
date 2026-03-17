@@ -242,6 +242,10 @@ onMounted(fetchAccounts)
 
 .account-management {
   max-width: 1400px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
 // ── Stats Bar ──
@@ -289,6 +293,15 @@ onMounted(fetchAccounts)
 .table-wrapper {
   padding: 4px;
   overflow: hidden;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+
+  .el-table {
+    flex: 1;
+    min-height: 0;
+  }
 }
 
 // ── Login Progress ──

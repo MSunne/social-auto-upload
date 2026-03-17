@@ -19,17 +19,89 @@ type AuthHandler struct {
 
 type registerRequest struct {
 	Email    string `json:"email"`
+	Phone    string `json:"phone"`
 	Name     string `json:"name"`
 	Password string `json:"password"`
 }
 
 type loginRequest struct {
 	Email    string `json:"email"`
+	Phone    string `json:"phone"`
 	Password string `json:"password"`
 }
 
 func NewAuthHandler(app *appstate.App) *AuthHandler {
 	return &AuthHandler{app: app}
+}
+
+func normalizeUserPhone(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+
+	var digits strings.Builder
+	digits.Grow(len(trimmed))
+	for _, char := range trimmed {
+		if char >= '0' && char <= '9' {
+			digits.WriteRune(char)
+		}
+	}
+
+	normalized := digits.String()
+	if strings.HasPrefix(normalized, "86") && len(normalized) == 13 {
+		normalized = normalized[2:]
+	}
+	if len(normalized) == 11 && strings.HasPrefix(normalized, "1") {
+		return normalized
+	}
+	return ""
+}
+
+func normalizeUserEmail(value string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(value))
+	if trimmed == "" {
+		return ""
+	}
+	if _, err := mail.ParseAddress(trimmed); err != nil {
+		return ""
+	}
+	return trimmed
+}
+
+func resolveAuthIdentifiers(phoneInput string, emailInput string) (string, string, string) {
+	rawPhone := strings.TrimSpace(phoneInput)
+	rawEmail := strings.TrimSpace(emailInput)
+
+	if rawPhone != "" {
+		phone := normalizeUserPhone(rawPhone)
+		if phone == "" {
+			return "", "", "Invalid phone"
+		}
+		if rawEmail != "" {
+			if candidate := normalizeUserPhone(rawEmail); candidate == phone {
+				return phone, "", ""
+			}
+			email := normalizeUserEmail(rawEmail)
+			if email == "" {
+				return "", "", "Invalid email"
+			}
+			return phone, email, ""
+		}
+		return phone, "", ""
+	}
+
+	if rawEmail == "" {
+		return "", "", "Phone or email is required"
+	}
+	if phone := normalizeUserPhone(rawEmail); phone != "" {
+		return phone, "", ""
+	}
+	email := normalizeUserEmail(rawEmail)
+	if email == "" {
+		return "", "", "Invalid phone or email"
+	}
+	return "", email, ""
 }
 
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
@@ -39,29 +111,43 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload.Email = strings.TrimSpace(strings.ToLower(payload.Email))
 	payload.Name = strings.TrimSpace(payload.Name)
-	if _, err := mail.ParseAddress(payload.Email); err != nil {
-		render.Error(w, http.StatusBadRequest, "Invalid email")
+	phone, email, identifierErr := resolveAuthIdentifiers(payload.Phone, payload.Email)
+	if identifierErr != "" {
+		render.Error(w, http.StatusBadRequest, identifierErr)
 		return
 	}
 	if len(payload.Name) == 0 {
 		render.Error(w, http.StatusBadRequest, "Name is required")
 		return
 	}
-	if len(payload.Password) < 8 {
-		render.Error(w, http.StatusBadRequest, "Password must be at least 8 characters")
+	if len(payload.Password) < 6 {
+		render.Error(w, http.StatusBadRequest, "Password must be at least 6 characters")
 		return
 	}
 
-	existing, err := h.app.Store.GetUserByEmail(r.Context(), payload.Email)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to query user")
-		return
+	if phone != "" {
+		existing, err := h.app.Store.GetUserByPhone(r.Context(), phone)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to query user")
+			return
+		}
+		if existing != nil {
+			render.Error(w, http.StatusConflict, "Phone already exists")
+			return
+		}
 	}
-	if existing != nil {
-		render.Error(w, http.StatusConflict, "Email already exists")
-		return
+
+	if email != "" {
+		existing, err := h.app.Store.GetUserByEmail(r.Context(), email)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to query user")
+			return
+		}
+		if existing != nil {
+			render.Error(w, http.StatusConflict, "Email already exists")
+			return
+		}
 	}
 
 	passwordHash, err := h.app.Tokens.HashPassword(payload.Password)
@@ -72,7 +158,8 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.app.Store.CreateUser(r.Context(), store.CreateUserInput{
 		ID:           uuid.NewString(),
-		Email:        payload.Email,
+		Email:        email,
+		Phone:        phone,
 		Name:         payload.Name,
 		PasswordHash: passwordHash,
 	})
@@ -80,7 +167,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to create user")
 		return
 	}
-	h.app.Logger.Info("user registered", "user_id", user.ID, "email", user.Email)
+	h.app.Logger.Info("user registered", "user_id", user.ID, "email", user.Email, "phone", user.Phone)
 
 	render.JSON(w, http.StatusCreated, user)
 }
@@ -92,7 +179,19 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userWithPassword, err := h.app.Store.GetUserByEmail(r.Context(), payload.Email)
+	phone, email, identifierErr := resolveAuthIdentifiers(payload.Phone, payload.Email)
+	if identifierErr != "" {
+		render.Error(w, http.StatusBadRequest, identifierErr)
+		return
+	}
+
+	var userWithPassword *store.UserWithPassword
+	var err error
+	if phone != "" {
+		userWithPassword, err = h.app.Store.GetUserByPhone(r.Context(), phone)
+	} else {
+		userWithPassword, err = h.app.Store.GetUserByEmail(r.Context(), email)
+	}
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to query user")
 		return
@@ -111,7 +210,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to issue token")
 		return
 	}
-	h.app.Logger.Info("user login succeeded", "user_id", userWithPassword.User.ID, "email", userWithPassword.User.Email)
+	h.app.Logger.Info("user login succeeded", "user_id", userWithPassword.User.ID, "email", userWithPassword.User.Email, "phone", userWithPassword.User.Phone)
 
 	render.JSON(w, http.StatusOK, map[string]any{
 		"accessToken": token,

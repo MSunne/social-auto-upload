@@ -10,7 +10,8 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
-    email TEXT NOT NULL UNIQUE,
+    email TEXT UNIQUE,
+    phone TEXT UNIQUE,
     name TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -269,6 +270,8 @@ CREATE TABLE IF NOT EXISTS publish_tasks (
     status TEXT NOT NULL,
     message TEXT,
     notes TEXT,
+    exception_reason TEXT,
+    risk_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
     verification_payload JSONB,
     lease_owner_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
     lease_token TEXT,
@@ -347,6 +350,10 @@ ALTER TABLE publish_tasks ADD COLUMN IF NOT EXISTS attempt_count INT NOT NULL DE
 ALTER TABLE publish_tasks ADD COLUMN IF NOT EXISTS cancel_requested_at TIMESTAMPTZ;
 ALTER TABLE publish_tasks ADD COLUMN IF NOT EXISTS skill_revision TEXT;
 ALTER TABLE publish_tasks ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE publish_tasks ADD COLUMN IF NOT EXISTS exception_reason TEXT;
+ALTER TABLE publish_tasks ADD COLUMN IF NOT EXISTS risk_tags JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS notes TEXT;
 ALTER TABLE platform_accounts ADD COLUMN IF NOT EXISTS notes TEXT;
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS default_chat_model TEXT NOT NULL DEFAULT 'gemini-3.1-pro-preview';
@@ -383,6 +390,8 @@ CREATE TABLE IF NOT EXISTS ai_jobs (
     output_payload JSONB,
     message TEXT,
     notes TEXT,
+    exception_reason TEXT,
+    risk_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
     cost_credits BIGINT NOT NULL DEFAULT 0,
     lease_owner_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
     lease_token TEXT,
@@ -408,6 +417,8 @@ ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS delivery_message TEXT;
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS local_publish_task_id TEXT;
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS exception_reason TEXT;
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS risk_tags JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE TABLE IF NOT EXISTS ai_job_artifacts (
     id TEXT PRIMARY KEY,
@@ -939,6 +950,7 @@ CREATE INDEX IF NOT EXISTS idx_distribution_settlement_items_batch_id ON distrib
 CREATE INDEX IF NOT EXISTS idx_distribution_settlement_items_promoter_user_id ON distribution_settlement_items(promoter_user_id);
 CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_promoter_user_id ON withdrawal_requests(promoter_user_id);
 CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_status ON withdrawal_requests(status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_admin_users_email ON admin_users(email);
 CREATE INDEX IF NOT EXISTS idx_admin_user_roles_admin_user_id ON admin_user_roles(admin_user_id);
 CREATE INDEX IF NOT EXISTS idx_admin_user_roles_role_id ON admin_user_roles(role_id);

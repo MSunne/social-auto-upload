@@ -98,8 +98,8 @@ export function AdminsView() {
                 </td></tr>
               )}
               {error && <tr><td colSpan={5} className="px-6 py-10 text-center text-red-500 text-sm">加载失败，请重试</td></tr>}
-              {data && data.data.length === 0 && <tr><td colSpan={5} className="px-6 py-12 text-center text-[var(--color-text-secondary)] text-sm">暂无符合条件的账号</td></tr>}
-              {data && data.data.map(admin => (
+              {data && data.items.length === 0 && <tr><td colSpan={5} className="px-6 py-12 text-center text-[var(--color-text-secondary)] text-sm">暂无符合条件的账号</td></tr>}
+              {data && data.items.map(admin => (
                 <tr key={admin.id} className="hover:bg-[var(--color-bg-secondary)]/50 transition-colors">
                   <td className="px-5 py-3.5">
                     <div className="flex items-center gap-3">

@@ -160,6 +160,8 @@ type AdminPublishTaskRow struct {
 	Account            *AdminAccountSummary   `json:"account,omitempty"`
 	Skill              *AdminSkillSummary     `json:"skill,omitempty"`
 	Notes              *string                `json:"notes,omitempty"`
+	ExceptionReason    *string                `json:"exceptionReason,omitempty"`
+	RiskTags           []string               `json:"riskTags"`
 	Readiness          PublishTaskReadiness   `json:"readiness"`
 	BlockingDimensions []string               `json:"blockingDimensions,omitempty"`
 	Bridge             PublishTaskBridgeState `json:"bridge"`
@@ -185,6 +187,8 @@ type AdminAIJobRow struct {
 	Skill                 *AdminSkillSummary   `json:"skill,omitempty"`
 	Model                 *AdminAIModelSummary `json:"model,omitempty"`
 	Notes                 *string              `json:"notes,omitempty"`
+	ExceptionReason       *string              `json:"exceptionReason,omitempty"`
+	RiskTags              []string             `json:"riskTags"`
 	Bridge                AIJobBridgeState     `json:"bridge"`
 	Actions               AIJobActionState     `json:"actions"`
 	ArtifactCount         int64                `json:"artifactCount"`

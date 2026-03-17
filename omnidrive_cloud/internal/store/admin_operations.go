@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -60,6 +61,17 @@ func stringOrEmpty(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
+func decodeAdminStringList(raw []byte) []string {
+	if len(raw) == 0 {
+		return []string{}
+	}
+	var items []string
+	if err := json.Unmarshal(raw, &items); err != nil || items == nil {
+		return []string{}
+	}
+	return items
+}
+
 const adminPlatformAccountSelectColumns = `
 	pa.id, pa.device_id, pa.platform, pa.account_name, pa.status, pa.last_message,
 	pa.last_authenticated_at, pa.notes, pa.created_at, pa.updated_at
@@ -68,7 +80,7 @@ const adminPlatformAccountSelectColumns = `
 const adminAIJobSelectColumns = `
 	aj.id, aj.owner_user_id, aj.device_id, aj.skill_id, aj.source, aj.local_task_id,
 	aj.job_type, aj.model_name, aj.prompt, aj.status, aj.input_payload, aj.output_payload,
-	aj.message, aj.notes, aj.cost_credits, aj.lease_owner_device_id, aj.lease_token,
+	aj.message, aj.notes, aj.exception_reason, aj.risk_tags, aj.cost_credits, aj.lease_owner_device_id, aj.lease_token,
 	aj.lease_expires_at, aj.delivery_status, aj.delivery_message, aj.local_publish_task_id,
 	aj.created_at, aj.updated_at, aj.delivered_at, aj.finished_at
 `
@@ -244,6 +256,8 @@ func scanAdminPublishTaskRow(scan scanFn) (*domain.AdminPublishTaskRow, error) {
 	var mediaPayload []byte
 	var message *string
 	var notes *string
+	var exceptionReason *string
+	var riskTagsPayload []byte
 	var verificationPayload []byte
 	var accountID *string
 	var skillID *string
@@ -282,6 +296,8 @@ func scanAdminPublishTaskRow(scan scanFn) (*domain.AdminPublishTaskRow, error) {
 		&item.Task.Status,
 		&message,
 		&notes,
+		&exceptionReason,
+		&riskTagsPayload,
 		&verificationPayload,
 		&leaseOwnerDeviceID,
 		&leaseToken,
@@ -323,6 +339,8 @@ func scanAdminPublishTaskRow(scan scanFn) (*domain.AdminPublishTaskRow, error) {
 	item.Task.MediaPayload = bytesOrNil(mediaPayload)
 	item.Task.Message = message
 	item.Notes = notes
+	item.ExceptionReason = exceptionReason
+	item.RiskTags = decodeAdminStringList(riskTagsPayload)
 	item.Task.VerificationPayload = bytesOrNil(verificationPayload)
 	item.Task.LeaseOwnerDeviceID = leaseOwnerDeviceID
 	item.Task.LeaseToken = leaseToken
@@ -387,6 +405,8 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 	var outputPayload []byte
 	var message *string
 	var notes *string
+	var exceptionReason *string
+	var riskTagsPayload []byte
 	var leaseOwnerDeviceID *string
 	var leaseToken *string
 	var leaseExpiresAt *time.Time
@@ -427,6 +447,8 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 		&outputPayload,
 		&message,
 		&notes,
+		&exceptionReason,
+		&riskTagsPayload,
 		&item.Job.CostCredits,
 		&leaseOwnerDeviceID,
 		&leaseToken,
@@ -470,6 +492,8 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 	item.Job.OutputPayload = bytesOrNil(outputPayload)
 	item.Job.Message = message
 	item.Notes = notes
+	item.ExceptionReason = exceptionReason
+	item.RiskTags = decodeAdminStringList(riskTagsPayload)
 	item.Job.LeaseOwnerDeviceID = leaseOwnerDeviceID
 	item.Job.LeaseToken = leaseToken
 	item.Job.LeaseExpiresAt = leaseExpiresAt
@@ -530,7 +554,7 @@ func (s *Store) GetAdminUserByID(ctx context.Context, userID string) (*domain.Ad
 	row := s.pool.QueryRow(ctx, `
 			SELECT
 				u.id,
-				u.email,
+				COALESCE(u.email, ''),
 				u.name,
 				u.is_active,
 				u.notes,
@@ -734,7 +758,7 @@ func (s *Store) ListAdminTasks(ctx context.Context, filter AdminTaskListFilter) 
 	argIndex := 1
 
 	if query := strings.TrimSpace(filter.Query); query != "" {
-		whereParts = append(whereParts, fmt.Sprintf("(pt.id ILIKE $%[1]d OR pt.title ILIKE $%[1]d OR pt.platform ILIKE $%[1]d OR pt.account_name ILIKE $%[1]d OR COALESCE(pt.message, '') ILIKE $%[1]d OR COALESCE(pt.notes, '') ILIKE $%[1]d OR d.name ILIKE $%[1]d OR d.device_code ILIKE $%[1]d OR COALESCE(u.email, '') ILIKE $%[1]d OR COALESCE(u.name, '') ILIKE $%[1]d)", argIndex))
+		whereParts = append(whereParts, fmt.Sprintf("(pt.id ILIKE $%[1]d OR pt.title ILIKE $%[1]d OR pt.platform ILIKE $%[1]d OR pt.account_name ILIKE $%[1]d OR COALESCE(pt.message, '') ILIKE $%[1]d OR COALESCE(pt.notes, '') ILIKE $%[1]d OR COALESCE(pt.exception_reason, '') ILIKE $%[1]d OR COALESCE(pt.risk_tags::text, '') ILIKE $%[1]d OR d.name ILIKE $%[1]d OR d.device_code ILIKE $%[1]d OR COALESCE(u.email, '') ILIKE $%[1]d OR COALESCE(u.name, '') ILIKE $%[1]d)", argIndex))
 		args = append(args, ilikePattern(query))
 		argIndex++
 	}
@@ -805,7 +829,7 @@ func (s *Store) ListAdminTasks(ctx context.Context, filter AdminTaskListFilter) 
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT
 			pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
-			pt.title, pt.content_text, pt.media_payload, pt.status, pt.message, pt.notes,
+			pt.title, pt.content_text, pt.media_payload, pt.status, pt.message, pt.notes, pt.exception_reason, pt.risk_tags,
 			pt.verification_payload, pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at,
 			pt.attempt_count, pt.cancel_requested_at, pt.run_at, pt.finished_at, pt.created_at, pt.updated_at,
 			u.id, u.email, u.name,
@@ -840,7 +864,7 @@ func (s *Store) GetAdminTaskByID(ctx context.Context, taskID string) (*domain.Ad
 	row := s.pool.QueryRow(ctx, `
 		SELECT
 			pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
-			pt.title, pt.content_text, pt.media_payload, pt.status, pt.message, pt.notes,
+			pt.title, pt.content_text, pt.media_payload, pt.status, pt.message, pt.notes, pt.exception_reason, pt.risk_tags,
 			pt.verification_payload, pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at,
 			pt.attempt_count, pt.cancel_requested_at, pt.run_at, pt.finished_at, pt.created_at, pt.updated_at,
 			u.id, u.email, u.name,
@@ -877,7 +901,7 @@ func (s *Store) ListAdminAIJobs(ctx context.Context, filter AdminAIJobListFilter
 	argIndex := 1
 
 	if query := strings.TrimSpace(filter.Query); query != "" {
-		whereParts = append(whereParts, fmt.Sprintf("(aj.id ILIKE $%[1]d OR aj.job_type ILIKE $%[1]d OR aj.model_name ILIKE $%[1]d OR COALESCE(aj.prompt, '') ILIKE $%[1]d OR COALESCE(aj.message, '') ILIKE $%[1]d OR COALESCE(aj.notes, '') ILIKE $%[1]d OR COALESCE(u.email, '') ILIKE $%[1]d OR COALESCE(u.name, '') ILIKE $%[1]d OR COALESCE(d.name, '') ILIKE $%[1]d OR COALESCE(d.device_code, '') ILIKE $%[1]d)", argIndex))
+		whereParts = append(whereParts, fmt.Sprintf("(aj.id ILIKE $%[1]d OR aj.job_type ILIKE $%[1]d OR aj.model_name ILIKE $%[1]d OR COALESCE(aj.prompt, '') ILIKE $%[1]d OR COALESCE(aj.message, '') ILIKE $%[1]d OR COALESCE(aj.notes, '') ILIKE $%[1]d OR COALESCE(aj.exception_reason, '') ILIKE $%[1]d OR COALESCE(aj.risk_tags::text, '') ILIKE $%[1]d OR COALESCE(u.email, '') ILIKE $%[1]d OR COALESCE(u.name, '') ILIKE $%[1]d OR COALESCE(d.name, '') ILIKE $%[1]d OR COALESCE(d.device_code, '') ILIKE $%[1]d)", argIndex))
 		args = append(args, ilikePattern(query))
 		argIndex++
 	}

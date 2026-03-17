@@ -132,6 +132,34 @@ class OmniDriveBridge:
         snapshot.update(self._build_status_snapshot())
         return snapshot
 
+    def list_cached_skills(self, include_assets=False):
+        if not self._skill_cache_dir.exists():
+            return []
+
+        items = []
+        for manifest_path in sorted(self._skill_cache_dir.glob("*/manifest.json")):
+            manifest = self._load_cached_skill_manifest(manifest_path)
+            if not manifest:
+                continue
+            items.append(
+                self._build_cached_skill_snapshot(
+                    manifest,
+                    manifest_path,
+                    include_assets=include_assets,
+                )
+            )
+        return items
+
+    def get_cached_skill(self, skill_id):
+        skill_id = str(skill_id or "").strip()
+        if not skill_id:
+            return None
+        manifest_path = self._skill_cache_dir / skill_id / "manifest.json"
+        manifest = self._load_cached_skill_manifest(manifest_path)
+        if not manifest:
+            return None
+        return self._build_cached_skill_snapshot(manifest, manifest_path, include_assets=True)
+
     def _update_state(self, **kwargs):
         with self._state_lock:
             self._state.update(kwargs)
@@ -354,25 +382,56 @@ class OmniDriveBridge:
                 assets_dir = manifest_dir / "assets"
                 assets_dir.mkdir(parents=True, exist_ok=True)
 
-                with open(manifest_dir / "manifest.json", "w", encoding="utf-8") as manifest_file:
-                    json.dump(item, manifest_file, ensure_ascii=False, indent=2)
-
                 download_errors = []
+                used_file_names = set()
+                expected_paths = set()
+                enriched_assets = []
                 for asset in item.get("assets") or []:
-                    public_url = str(asset.get("publicUrl") or "").strip()
-                    file_name = str(asset.get("fileName") or asset.get("id") or "asset.bin").strip()
+                    asset_payload = dict(asset or {})
+                    public_url = self._normalize_cloud_public_url(asset_payload.get("publicUrl"))
+                    if public_url:
+                        asset_payload["publicUrl"] = public_url
+                    file_name = self._allocate_skill_asset_file_name(asset_payload, used_file_names)
                     target_path = assets_dir / file_name
                     metadata_path = assets_dir / f"{file_name}.json"
+                    expected_paths.add(target_path.name)
+                    expected_paths.add(metadata_path.name)
+                    asset_payload["localFileName"] = file_name
+                    asset_payload["localPath"] = str(target_path)
+                    asset_payload["metadataPath"] = str(metadata_path)
+                    asset_payload["downloadStatus"] = "skipped"
+                    asset_payload["downloadError"] = None
                     with open(metadata_path, "w", encoding="utf-8") as metadata_file:
-                        json.dump(asset, metadata_file, ensure_ascii=False, indent=2)
+                        json.dump(asset_payload, metadata_file, ensure_ascii=False, indent=2)
                     if public_url:
                         try:
                             response = self._session.get(public_url, timeout=self.http_timeout)
                             response.raise_for_status()
                             with open(target_path, "wb") as asset_file:
                                 asset_file.write(response.content)
+                            asset_payload["downloadStatus"] = "success"
                         except Exception as exc:
-                            download_errors.append(f"{file_name}: {exc}")
+                            target_path.unlink(missing_ok=True)
+                            error_message = f"{file_name}: {exc}"
+                            asset_payload["downloadStatus"] = "failed"
+                            asset_payload["downloadError"] = str(exc)
+                            download_errors.append(error_message)
+                    else:
+                        target_path.unlink(missing_ok=True)
+                    with open(metadata_path, "w", encoding="utf-8") as metadata_file:
+                        json.dump(asset_payload, metadata_file, ensure_ascii=False, indent=2)
+                    enriched_assets.append(asset_payload)
+
+                self._cleanup_skill_asset_dir(assets_dir, expected_paths)
+                manifest_payload = dict(item)
+                manifest_payload["assets"] = enriched_assets
+                manifest_payload["cache"] = {
+                    "manifestPath": str(manifest_dir / "manifest.json"),
+                    "assetsDir": str(assets_dir),
+                    "syncedAt": self._iso_now(),
+                }
+                with open(manifest_dir / "manifest.json", "w", encoding="utf-8") as manifest_file:
+                    json.dump(manifest_payload, manifest_file, ensure_ascii=False, indent=2)
 
                 sync_items.append(
                     {
@@ -444,8 +503,10 @@ class OmniDriveBridge:
         )
 
     def _import_remote_publish_tasks(self):
-        queue = self._request("GET", f"/api/v1/agent/publish-tasks/{self.device_code}") or []
+        queue_payload = self._request("GET", f"/api/v1/agent/publish-tasks/{self.device_code}") or []
+        queue = self._normalize_publish_task_queue(queue_payload)
         imported = 0
+        last_error = None
 
         inflight = self._count_inflight_omnidrive_tasks()
         available_slots = max(0, self.publish_task_manager.worker_count - inflight)
@@ -463,22 +524,34 @@ class OmniDriveBridge:
             if self.publish_task_manager.get_task(task_id):
                 continue
 
-            package = self._request(
-                "GET",
-                f"/api/v1/agent/publish-tasks/{task_id}/package",
-                params={"deviceCode": self.device_code},
-            )
+            try:
+                package = self._request(
+                    "GET",
+                    f"/api/v1/agent/publish-tasks/{task_id}/package",
+                    params={"deviceCode": self.device_code},
+                )
+            except Exception as exc:
+                last_error = f"OmniDrive 任务包获取失败 {task_id}: {self._format_remote_error(exc)}"
+                self._update_state(lastError=last_error)
+                continue
             if not package:
                 continue
 
-            claim_data = self._request(
-                "POST",
-                f"/api/v1/agent/publish-tasks/{task_id}/claim",
-                payload={"deviceCode": self.device_code},
-            )
+            try:
+                claim_data = self._request(
+                    "POST",
+                    f"/api/v1/agent/publish-tasks/{task_id}/claim",
+                    payload={"deviceCode": self.device_code},
+                )
+            except Exception as exc:
+                last_error = f"OmniDrive 任务认领失败 {task_id}: {self._format_remote_error(exc)}"
+                self._update_state(lastError=last_error)
+                continue
             lease_token = str((claim_data or {}).get("leaseToken") or "").strip()
             lease_expires_at = (claim_data or {}).get("leaseExpiresAt")
             if not lease_token:
+                last_error = f"OmniDrive 任务认领未返回租约 {task_id}"
+                self._update_state(lastError=last_error)
                 continue
 
             try:
@@ -488,6 +561,8 @@ class OmniDriveBridge:
                 self._sync_imported_task_runtime(local_spec)
                 imported += 1
             except Exception as exc:
+                last_error = f"OmniDrive 任务导入失败 {task_id}: {exc}"
+                self._update_state(lastError=last_error)
                 self._sync_remote_import_failure(package, lease_token, str(exc))
                 self._delete_lease(task_id)
 
@@ -495,6 +570,8 @@ class OmniDriveBridge:
             importedCloudTasks=imported,
             lastPublishPollAt=self._now_string(),
         )
+        if last_error:
+            self._update_state(lastError=last_error)
 
     def _sync_imported_task_runtime(self, local_spec):
         task_uuid = local_spec["taskUuid"]
@@ -527,13 +604,20 @@ class OmniDriveBridge:
     def _sync_local_publish_tasks(self):
         tasks = self.publish_task_manager.list_tasks(limit=500, sources=SYNCABLE_LOCAL_SOURCES)
         mirrored = 0
+        last_error = None
         for task in tasks:
             if not self._should_sync_local_task(task):
                 continue
             payload = self._build_sync_task_payload(task)
             if not payload:
                 continue
-            self._request("POST", "/api/v1/agent/publish-tasks/sync", payload=payload)
+            try:
+                self._request("POST", "/api/v1/agent/publish-tasks/sync", payload=payload)
+            except Exception as exc:
+                if self._handle_sync_local_publish_task_error(task, exc):
+                    continue
+                last_error = f"OmniDrive 本地任务同步失败 {task.get('taskUuid')}: {self._format_remote_error(exc)}"
+                continue
             if task["status"] in FINAL_LOCAL_STATUSES:
                 self._finalize_lease_record(task["taskUuid"], task.get("status"), task.get("updatedAt"))
             else:
@@ -546,6 +630,25 @@ class OmniDriveBridge:
             mirroredTasks=mirrored,
             lastPublishSyncAt=self._now_string(),
         )
+        if last_error:
+            self._update_state(lastError=last_error)
+
+    def _handle_sync_local_publish_task_error(self, task, exc):
+        response = getattr(exc, "response", None)
+        status_code = getattr(response, "status_code", None)
+        if status_code != 409:
+            return False
+
+        if str(task.get("status") or "").strip() not in FINAL_LOCAL_STATUSES:
+            return False
+
+        message = self._extract_remote_error_message(response)
+        if message != "Publish task belongs to a different device":
+            return False
+
+        self._finalize_lease_record(task["taskUuid"], task.get("status"), task.get("updatedAt"))
+        self._clear_lease_token(task["taskUuid"])
+        return True
 
     def _sync_local_ai_tasks(self):
         if not self.ai_task_manager:
@@ -1408,6 +1511,154 @@ class OmniDriveBridge:
         if not self._skill_cache_dir.exists():
             return 0
         return sum(1 for item in self._skill_cache_dir.iterdir() if item.is_dir())
+
+    @staticmethod
+    def _load_cached_skill_manifest(manifest_path):
+        path = Path(manifest_path)
+        if not path.exists() or not path.is_file():
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as manifest_file:
+                return json.load(manifest_file)
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    def _build_cached_skill_snapshot(self, manifest, manifest_path, include_assets=False):
+        skill = manifest.get("skill") or {}
+        sync = manifest.get("sync") or {}
+        assets = manifest.get("assets") or []
+        revision = str(manifest.get("revision") or "").strip()
+        synced_revision = str(sync.get("syncedRevision") or "").strip() or None
+        desired_revision = str(sync.get("desiredRevision") or revision or "").strip() or None
+        sync_status = str(sync.get("syncStatus") or "").strip() or None
+        is_current = sync.get("isCurrent")
+        if is_current is None:
+            is_current = bool(synced_revision and desired_revision and synced_revision == desired_revision)
+        needs_sync = sync.get("needsSync")
+        if needs_sync is None:
+            needs_sync = bool(desired_revision and synced_revision and desired_revision != synced_revision)
+
+        asset_items = [self._build_cached_skill_asset_snapshot(asset) for asset in assets]
+        item = {
+            "skillId": str(skill.get("id") or manifest_path.parent.name).strip(),
+            "revision": revision or None,
+            "name": str(skill.get("name") or "").strip() or None,
+            "description": skill.get("description"),
+            "outputType": str(skill.get("outputType") or "").strip() or None,
+            "isEnabled": bool(skill.get("isEnabled", True)),
+            "manifestPath": str(manifest_path),
+            "assetsDir": str(manifest_path.parent / "assets"),
+            "assetCount": len(asset_items),
+            "assetTypes": sorted({str(asset.get("assetType") or "").strip() for asset in assets if str(asset.get("assetType") or "").strip()}),
+            "syncStatus": sync_status,
+            "syncedRevision": synced_revision,
+            "desiredRevision": desired_revision,
+            "isCurrent": is_current,
+            "needsSync": needs_sync,
+            "lastSyncedAt": sync.get("lastSyncedAt") or (manifest.get("cache") or {}).get("syncedAt"),
+            "syncMessage": sync.get("message"),
+        }
+        if include_assets:
+            item["assets"] = asset_items
+            item["manifest"] = manifest
+        return item
+
+    @staticmethod
+    def _build_cached_skill_asset_snapshot(asset):
+        local_path = str(asset.get("localPath") or "").strip()
+        metadata_path = str(asset.get("metadataPath") or "").strip()
+        return {
+            "id": asset.get("id"),
+            "assetType": asset.get("assetType"),
+            "fileName": asset.get("fileName"),
+            "mimeType": asset.get("mimeType"),
+            "publicUrl": asset.get("publicUrl"),
+            "sizeBytes": asset.get("sizeBytes"),
+            "localFileName": asset.get("localFileName"),
+            "localPath": local_path or None,
+            "metadataPath": metadata_path or None,
+            "downloadStatus": asset.get("downloadStatus"),
+            "downloadError": asset.get("downloadError"),
+            "exists": Path(local_path).exists() if local_path else False,
+            "metadataExists": Path(metadata_path).exists() if metadata_path else False,
+        }
+
+    def _normalize_cloud_public_url(self, public_url):
+        value = str(public_url or "").strip()
+        if not value:
+            return ""
+        if value.startswith("/"):
+            return f"{self.cloud_base_url}{value}"
+        return value
+
+    @staticmethod
+    def _allocate_skill_asset_file_name(asset, used_names):
+        original_name = str(asset.get("fileName") or asset.get("id") or "asset.bin").strip() or "asset.bin"
+        candidate = original_name
+        asset_id = str(asset.get("id") or "").strip()
+        if candidate in used_names and asset_id:
+            suffix = Path(original_name).suffix
+            stem = Path(original_name).stem or "asset"
+            candidate = f"{stem}-{asset_id[:8]}{suffix}"
+        sequence = 2
+        while candidate in used_names:
+            suffix = Path(original_name).suffix
+            stem = Path(original_name).stem or "asset"
+            candidate = f"{stem}-{sequence}{suffix}"
+            sequence += 1
+        used_names.add(candidate)
+        return candidate
+
+    @staticmethod
+    def _cleanup_skill_asset_dir(assets_dir, expected_names):
+        path = Path(assets_dir)
+        if not path.exists():
+            return
+        for item in path.iterdir():
+            if item.is_dir():
+                shutil.rmtree(item, ignore_errors=True)
+                continue
+            if item.name in expected_names:
+                continue
+            item.unlink(missing_ok=True)
+
+    @staticmethod
+    def _normalize_publish_task_queue(payload):
+        if isinstance(payload, dict):
+            items = payload.get("readyItems")
+            if isinstance(items, list):
+                return items
+            return []
+        if isinstance(payload, list):
+            return payload
+        return []
+
+    @staticmethod
+    def _format_remote_error(exc):
+        response = getattr(exc, "response", None)
+        if response is None:
+            return str(exc)
+        message = OmniDriveBridge._extract_remote_error_message(response)
+        if message:
+            return f"{response.status_code} {message}"
+        text = str(getattr(response, "text", "") or "").strip()
+        if text:
+            return f"{response.status_code} {text[:300]}"
+        return f"{response.status_code} {exc}"
+
+    @staticmethod
+    def _extract_remote_error_message(response):
+        if response is None:
+            return ""
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict):
+            message = str(payload.get("error") or payload.get("message") or "").strip()
+            if message:
+                return message
+        return ""
 
     def _artifact_file_to_data_url(self, artifact_path):
         absolute_path = self._resolve_artifact_path(artifact_path)

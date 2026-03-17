@@ -13,8 +13,9 @@ ADMIN_API_BASE = f"{BASE_URL}/api/admin/v1"
 
 DEBUG_USER = {
     "email": os.environ.get("OMNIDRIVE_DEBUG_EMAIL", "debug-omnidrive@example.com"),
+    "phone": os.environ.get("OMNIDRIVE_DEBUG_PHONE", "18888888888"),
     "name": os.environ.get("OMNIDRIVE_DEBUG_NAME", "Debug OmniDrive"),
-    "password": os.environ.get("OMNIDRIVE_DEBUG_PASSWORD", "Debug123456!"),
+    "password": os.environ.get("OMNIDRIVE_DEBUG_PASSWORD", "123456"),
 }
 
 ADMIN_USER = {
@@ -101,7 +102,7 @@ def ensure_debug_user():
         if "409" not in str(exc):
             raise
     login = api("POST", "/auth/login", json_payload={
-        "email": DEBUG_USER["email"],
+        "phone": DEBUG_USER.get("phone") or DEBUG_USER["email"],
         "password": DEBUG_USER["password"],
     })
     return login["accessToken"], login["user"]

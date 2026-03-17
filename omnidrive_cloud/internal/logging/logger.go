@@ -14,10 +14,18 @@ func New(cfg config.Config) *slog.Logger {
 		environment = "development"
 	}
 
-	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+	handlerOptions := &slog.HandlerOptions{
 		Level:     parseLevel(cfg.LogLevel),
 		AddSource: strings.EqualFold(environment, "development"),
-	})
+	}
+
+	var handler slog.Handler
+	switch strings.ToLower(strings.TrimSpace(cfg.LogFormat)) {
+	case "text":
+		handler = slog.NewTextHandler(os.Stdout, handlerOptions)
+	default:
+		handler = slog.NewJSONHandler(os.Stdout, handlerOptions)
+	}
 
 	return slog.New(handler).With(
 		"service", "omnidrive-api",

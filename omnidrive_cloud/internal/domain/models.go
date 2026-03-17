@@ -8,6 +8,7 @@ import (
 type User struct {
 	ID        string    `json:"id"`
 	Email     string    `json:"email"`
+	Phone     string    `json:"phone,omitempty"`
 	Name      string    `json:"name"`
 	IsActive  bool      `json:"isActive"`
 	CreatedAt time.Time `json:"createdAt"`

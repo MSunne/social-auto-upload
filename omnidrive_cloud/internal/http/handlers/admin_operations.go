@@ -33,11 +33,15 @@ type adminUpdateMediaAccountRequest struct {
 }
 
 type adminUpdatePublishTaskRequest struct {
-	Notes *string `json:"notes"`
+	Notes           *string   `json:"notes"`
+	ExceptionReason *string   `json:"exceptionReason"`
+	RiskTags        *[]string `json:"riskTags"`
 }
 
 type adminUpdateAIJobRequest struct {
-	Notes *string `json:"notes"`
+	Notes           *string   `json:"notes"`
+	ExceptionReason *string   `json:"exceptionReason"`
+	RiskTags        *[]string `json:"riskTags"`
 }
 
 type adminBatchActionPublishTasksRequest struct {
@@ -77,6 +81,26 @@ func limitSlice[T any](items []T, limit int) []T {
 }
 
 func uniqueTrimmedIDs(values []string) []string {
+	seen := map[string]struct{}{}
+	items := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		items = append(items, trimmed)
+	}
+	return items
+}
+
+func normalizeTrimmedStrings(values []string) []string {
+	if len(values) == 0 {
+		return []string{}
+	}
 	seen := map[string]struct{}{}
 	items := make([]string, 0, len(values))
 	for _, value := range values {
@@ -1642,14 +1666,22 @@ func (h *AdminConsoleHandler) UpdatePublishTask(w http.ResponseWriter, r *http.R
 		render.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if payload.Notes == nil {
+	if payload.Notes == nil && payload.ExceptionReason == nil && payload.RiskTags == nil {
 		render.Error(w, http.StatusBadRequest, "at least one field must be provided")
 		return
 	}
+	var riskTags []string
+	if payload.RiskTags != nil {
+		riskTags = normalizeTrimmedStrings(*payload.RiskTags)
+	}
 
 	record, err := h.app.Store.UpdateAdminPublishTaskTarget(r.Context(), taskID, store.UpdateAdminPublishTaskTargetInput{
-		Notes:        normalizeTrimmedString(payload.Notes),
-		NotesTouched: payload.Notes != nil,
+		Notes:                  normalizeTrimmedString(payload.Notes),
+		NotesTouched:           payload.Notes != nil,
+		ExceptionReason:        normalizeTrimmedString(payload.ExceptionReason),
+		ExceptionReasonTouched: payload.ExceptionReason != nil,
+		RiskTags:               riskTags,
+		RiskTagsTouched:        payload.RiskTags != nil,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to update publish task")
@@ -1665,17 +1697,21 @@ func (h *AdminConsoleHandler) UpdatePublishTask(w http.ResponseWriter, r *http.R
 			ResourceType: "publish_task",
 			ResourceID:   &record.Task.ID,
 			Action:       "admin_update",
-			Title:        "运营后台更新发布任务备注",
+			Title:        "运营后台更新发布任务风控归档",
 			Source:       "admin_console",
 			Status:       "success",
-			Message:      auditStringPtr("发布任务内部备注已由运营后台更新"),
+			Message:      auditStringPtr("发布任务风控归档已由运营后台更新"),
 			Payload: mustJSONBytes(map[string]any{
-				"notes": normalizeTrimmedString(payload.Notes),
+				"notes":           normalizeTrimmedString(payload.Notes),
+				"exceptionReason": normalizeTrimmedString(payload.ExceptionReason),
+				"riskTags":        riskTags,
 			}),
 		})
 	}
-	h.recordAdminAction(r.Context(), "publish_task", &record.Task.ID, "update", "更新发布任务备注", "success", auditStringPtr("发布任务内部备注已更新"), mustJSONBytes(map[string]any{
-		"notes": normalizeTrimmedString(payload.Notes),
+	h.recordAdminAction(r.Context(), "publish_task", &record.Task.ID, "update", "更新发布任务风控归档", "success", auditStringPtr("发布任务风控归档已更新"), mustJSONBytes(map[string]any{
+		"notes":           normalizeTrimmedString(payload.Notes),
+		"exceptionReason": normalizeTrimmedString(payload.ExceptionReason),
+		"riskTags":        riskTags,
 	}))
 
 	render.JSON(w, http.StatusOK, record)
@@ -2275,14 +2311,22 @@ func (h *AdminConsoleHandler) UpdateAIJob(w http.ResponseWriter, r *http.Request
 		render.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if payload.Notes == nil {
+	if payload.Notes == nil && payload.ExceptionReason == nil && payload.RiskTags == nil {
 		render.Error(w, http.StatusBadRequest, "at least one field must be provided")
 		return
 	}
+	var riskTags []string
+	if payload.RiskTags != nil {
+		riskTags = normalizeTrimmedStrings(*payload.RiskTags)
+	}
 
 	record, err := h.app.Store.UpdateAdminAIJobTarget(r.Context(), jobID, store.UpdateAdminAIJobTargetInput{
-		Notes:        normalizeTrimmedString(payload.Notes),
-		NotesTouched: payload.Notes != nil,
+		Notes:                  normalizeTrimmedString(payload.Notes),
+		NotesTouched:           payload.Notes != nil,
+		ExceptionReason:        normalizeTrimmedString(payload.ExceptionReason),
+		ExceptionReasonTouched: payload.ExceptionReason != nil,
+		RiskTags:               riskTags,
+		RiskTagsTouched:        payload.RiskTags != nil,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to update AI job")
@@ -2298,16 +2342,20 @@ func (h *AdminConsoleHandler) UpdateAIJob(w http.ResponseWriter, r *http.Request
 		ResourceType: "ai_job",
 		ResourceID:   &record.Job.ID,
 		Action:       "admin_update",
-		Title:        "运营后台更新 AI 任务备注",
+		Title:        "运营后台更新 AI 任务风控归档",
 		Source:       "admin_console",
 		Status:       "success",
-		Message:      auditStringPtr("AI 任务内部备注已由运营后台更新"),
+		Message:      auditStringPtr("AI 任务风控归档已由运营后台更新"),
 		Payload: mustJSONBytes(map[string]any{
-			"notes": normalizeTrimmedString(payload.Notes),
+			"notes":           normalizeTrimmedString(payload.Notes),
+			"exceptionReason": normalizeTrimmedString(payload.ExceptionReason),
+			"riskTags":        riskTags,
 		}),
 	})
-	h.recordAdminAction(r.Context(), "ai_job", &record.Job.ID, "update", "更新 AI 任务备注", "success", auditStringPtr("AI 任务内部备注已更新"), mustJSONBytes(map[string]any{
-		"notes": normalizeTrimmedString(payload.Notes),
+	h.recordAdminAction(r.Context(), "ai_job", &record.Job.ID, "update", "更新 AI 任务风控归档", "success", auditStringPtr("AI 任务风控归档已更新"), mustJSONBytes(map[string]any{
+		"notes":           normalizeTrimmedString(payload.Notes),
+		"exceptionReason": normalizeTrimmedString(payload.ExceptionReason),
+		"riskTags":        riskTags,
 	}))
 
 	render.JSON(w, http.StatusOK, record)

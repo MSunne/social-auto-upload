@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -28,13 +29,21 @@ type UpdateAdminMediaAccountTargetInput struct {
 }
 
 type UpdateAdminPublishTaskTargetInput struct {
-	Notes        *string
-	NotesTouched bool
+	Notes                  *string
+	NotesTouched           bool
+	ExceptionReason        *string
+	ExceptionReasonTouched bool
+	RiskTags               []string
+	RiskTagsTouched        bool
 }
 
 type UpdateAdminAIJobTargetInput struct {
-	Notes        *string
-	NotesTouched bool
+	Notes                  *string
+	NotesTouched           bool
+	ExceptionReason        *string
+	ExceptionReasonTouched bool
+	RiskTags               []string
+	RiskTagsTouched        bool
 }
 
 func trimOptionalStringPointer(value *string) *string {
@@ -134,6 +143,18 @@ func (s *Store) UpdateAdminPublishTaskTarget(ctx context.Context, taskID string,
 	if input.Notes != nil {
 		notesValue = strings.TrimSpace(*input.Notes)
 	}
+	exceptionReasonValue := ""
+	if input.ExceptionReason != nil {
+		exceptionReasonValue = strings.TrimSpace(*input.ExceptionReason)
+	}
+	riskTags := normalizeTextValues(input.RiskTags)
+	if input.RiskTagsTouched && riskTags == nil {
+		riskTags = []string{}
+	}
+	riskTagsPayload, err := json.Marshal(riskTags)
+	if err != nil {
+		return nil, err
+	}
 
 	commandTag, err := s.pool.Exec(ctx, `
 		UPDATE publish_tasks
@@ -142,9 +163,17 @@ func (s *Store) UpdateAdminPublishTaskTarget(ctx context.Context, taskID string,
 				WHEN $2 THEN NULLIF($3, '')
 				ELSE notes
 			END,
+			exception_reason = CASE
+				WHEN $4 THEN NULLIF($5, '')
+				ELSE exception_reason
+			END,
+			risk_tags = CASE
+				WHEN $6 THEN COALESCE($7::jsonb, '[]'::jsonb)
+				ELSE risk_tags
+			END,
 			updated_at = NOW()
 		WHERE id = $1
-	`, strings.TrimSpace(taskID), input.NotesTouched, notesValue)
+	`, strings.TrimSpace(taskID), input.NotesTouched, notesValue, input.ExceptionReasonTouched, exceptionReasonValue, input.RiskTagsTouched, riskTagsPayload)
 	if err != nil {
 		return nil, err
 	}
@@ -159,6 +188,18 @@ func (s *Store) UpdateAdminAIJobTarget(ctx context.Context, jobID string, input 
 	if input.Notes != nil {
 		notesValue = strings.TrimSpace(*input.Notes)
 	}
+	exceptionReasonValue := ""
+	if input.ExceptionReason != nil {
+		exceptionReasonValue = strings.TrimSpace(*input.ExceptionReason)
+	}
+	riskTags := normalizeTextValues(input.RiskTags)
+	if input.RiskTagsTouched && riskTags == nil {
+		riskTags = []string{}
+	}
+	riskTagsPayload, err := json.Marshal(riskTags)
+	if err != nil {
+		return nil, err
+	}
 
 	commandTag, err := s.pool.Exec(ctx, `
 		UPDATE ai_jobs
@@ -167,9 +208,17 @@ func (s *Store) UpdateAdminAIJobTarget(ctx context.Context, jobID string, input 
 				WHEN $2 THEN NULLIF($3, '')
 				ELSE notes
 			END,
+			exception_reason = CASE
+				WHEN $4 THEN NULLIF($5, '')
+				ELSE exception_reason
+			END,
+			risk_tags = CASE
+				WHEN $6 THEN COALESCE($7::jsonb, '[]'::jsonb)
+				ELSE risk_tags
+			END,
 			updated_at = NOW()
 		WHERE id = $1
-	`, strings.TrimSpace(jobID), input.NotesTouched, notesValue)
+	`, strings.TrimSpace(jobID), input.NotesTouched, notesValue, input.ExceptionReasonTouched, exceptionReasonValue, input.RiskTagsTouched, riskTagsPayload)
 	if err != nil {
 		return nil, err
 	}

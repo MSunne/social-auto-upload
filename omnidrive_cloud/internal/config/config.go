@@ -16,6 +16,7 @@ type Config struct {
 	PublicBaseURL                 string
 	CORSAllowedOrigins            []string
 	LogLevel                      string
+	LogFormat                     string
 	LocalStorageDir               string
 	S3Endpoint                    string
 	S3Bucket                      string
@@ -70,6 +71,7 @@ func Load() Config {
 		PublicBaseURL:                 envOrDefault("OMNIDRIVE_PUBLIC_BASE_URL", ""),
 		CORSAllowedOrigins:            envAsCSV("OMNIDRIVE_CORS_ALLOWED_ORIGINS", defaultCORSAllowedOrigins(environment)),
 		LogLevel:                      envOrDefault("OMNIDRIVE_LOG_LEVEL", defaultLogLevel(environment)),
+		LogFormat:                     envOrDefault("OMNIDRIVE_LOG_FORMAT", defaultLogFormat(environment)),
 		LocalStorageDir:               envOrDefault("OMNIDRIVE_LOCAL_STORAGE_DIR", "./data"),
 		S3Endpoint:                    envFirst("", "OMNIDRIVE_S3_ENDPOINT", "S3_ENDPOINT_URL"),
 		S3Bucket:                      envFirst("", "OMNIDRIVE_S3_BUCKET", "S3_BUCKET_NAME"),
@@ -183,4 +185,9 @@ func defaultLogLevel(environment string) string {
 		return "debug"
 	}
 	return "info"
+}
+
+func defaultLogFormat(environment string) string {
+	_ = environment
+	return "json"
 }

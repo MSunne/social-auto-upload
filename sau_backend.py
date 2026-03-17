@@ -1203,6 +1203,44 @@ def skill_omnidrive_session():
     }), 200
 
 
+@app.route('/api/skill/omnidrive/skills', methods=['GET'])
+def skill_omnidrive_skills():
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    ensure_omnidrive_agent_started()
+    include_assets = str(request.args.get('includeAssets') or '').strip().lower() in {'1', 'true', 'yes'}
+    skills = omnidrive_agent.list_cached_skills(include_assets=include_assets) if omnidrive_agent else []
+    return jsonify({
+        "code": 200,
+        "msg": "success",
+        "data": skills,
+    }), 200
+
+
+@app.route('/api/skill/omnidrive/skills/<skill_id>', methods=['GET'])
+def skill_omnidrive_skill_detail(skill_id):
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    ensure_omnidrive_agent_started()
+    detail = omnidrive_agent.get_cached_skill(skill_id) if omnidrive_agent else None
+    if not detail:
+        return jsonify({
+            "code": 404,
+            "msg": "本地未找到已同步的 OmniDrive 技能包",
+            "data": None,
+        }), 404
+
+    return jsonify({
+        "code": 200,
+        "msg": "success",
+        "data": detail,
+    }), 200
+
+
 @app.route('/api/skill/accounts', methods=['GET'])
 async def skill_accounts():
     auth_error = ensure_skill_api_authorized()

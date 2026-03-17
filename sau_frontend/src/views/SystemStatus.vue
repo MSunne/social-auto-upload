@@ -83,7 +83,7 @@ const fetchAll = async () => {
     const results = await Promise.allSettled([
       systemApi.getSkillStatus(),
       systemApi.getCloudAgentStatus(),
-      systemApi.getOmnidriveAgentStatus(),
+      systemApi.getOmniDriveAgentStatus(),
       publishApi.getPublishTasks(),
     ])
 

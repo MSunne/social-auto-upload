@@ -132,7 +132,7 @@ export function Sidebar() {
                 {user?.name ?? "未登录"}
               </p>
               <p className="truncate text-xs text-text-muted">
-                {user?.email ?? ""}
+                {user?.phone ?? user?.email ?? ""}
               </p>
             </div>
           </div>

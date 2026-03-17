@@ -16,7 +16,7 @@ func (s *Store) GetAdminOrderByID(ctx context.Context, orderID string) (*domain.
 			ro.id, ro.order_no, ro.user_id, ro.package_id, ro.package_snapshot, ro.channel, ro.status, ro.subject, ro.body,
 			ro.currency, ro.amount_cents, ro.credit_amount, ro.manual_bonus_credit_amount, ro.payment_payload, ro.customer_service_payload,
 			ro.provider_transaction_id, ro.provider_status, ro.expires_at, ro.paid_at, ro.closed_at, ro.created_at, ro.updated_at,
-			u.id, u.email, u.name
+			u.id, COALESCE(u.email, ''), u.name
 		FROM recharge_orders ro
 		LEFT JOIN users u ON u.id = ro.user_id
 		WHERE ro.id = $1

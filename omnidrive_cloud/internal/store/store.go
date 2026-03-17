@@ -68,6 +68,7 @@ type UserWithPassword struct {
 type CreateUserInput struct {
 	ID           string
 	Email        string
+	Phone        string
 	Name         string
 	PasswordHash string
 }

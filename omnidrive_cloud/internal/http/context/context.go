@@ -47,7 +47,11 @@ func CurrentRequestMetadata(ctx context.Context) *RequestMetadata {
 func SetRequestUser(ctx context.Context, user *domain.User) {
 	if metadata := CurrentRequestMetadata(ctx); metadata != nil && user != nil {
 		metadata.UserID = user.ID
-		metadata.UserEmail = user.Email
+		if user.Email != "" {
+			metadata.UserEmail = user.Email
+		} else {
+			metadata.UserEmail = user.Phone
+		}
 	}
 }
 

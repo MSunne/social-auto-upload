@@ -124,11 +124,22 @@ onMounted(() => {
 
 #app {
   min-height: 100vh;
+  height: 100vh;
   background: transparent; // body::before handles animated BG
 }
 
+// Outermost container: sidebar + right area
 .el-container {
   height: 100vh;
+
+  // Inner container (header + main): must stretch to fill remaining width
+  > .el-container {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+    height: 100vh;
+  }
 }
 
 // ── Sidebar — Deep Glass ──
@@ -292,6 +303,8 @@ onMounted(() => {
   background: transparent;
   padding: 24px;
   overflow-y: auto;
+  flex: 1;
+  min-height: 0; // allow flex child to shrink below content size
 }
 
 // ── Transitions ──

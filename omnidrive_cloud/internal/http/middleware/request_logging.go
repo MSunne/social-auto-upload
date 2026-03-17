@@ -80,11 +80,13 @@ func logRequest(logger *slog.Logger, r *http.Request, ww *responseCaptureWriter,
 	if userAgent := strings.TrimSpace(r.UserAgent()); userAgent != "" {
 		attrs = append(attrs, "user_agent", userAgent)
 	}
+	responseBodyPreview := ""
 	if debugEnabled || status >= http.StatusBadRequest {
 		if requestBody := previewRequestBody(r); requestBody != "" {
 			attrs = append(attrs, "request_body", requestBody)
 		}
 		if responseBody := ww.preview(); responseBody != "" {
+			responseBodyPreview = responseBody
 			attrs = append(attrs, "response_body", responseBody)
 		}
 		if requestContentType := strings.TrimSpace(r.Header.Get("Content-Type")); requestContentType != "" {
@@ -95,14 +97,41 @@ func logRequest(logger *slog.Logger, r *http.Request, ww *responseCaptureWriter,
 		}
 	}
 
-	switch {
-	case status >= http.StatusInternalServerError:
+	switch requestLogLevel(status, r.URL.Path, routePattern(r), responseBodyPreview) {
+	case slog.LevelError:
 		logger.Error("http request completed", attrs...)
-	case status >= http.StatusBadRequest:
+	case slog.LevelWarn:
 		logger.Warn("http request completed", attrs...)
 	default:
 		logger.Debug("http request completed", attrs...)
 	}
+}
+
+func requestLogLevel(status int, path string, route string, responseBody string) slog.Level {
+	switch {
+	case shouldDowngradeAgentPublishSyncConflict(status, path, route, responseBody):
+		return slog.LevelDebug
+	case status >= http.StatusInternalServerError:
+		return slog.LevelError
+	case status >= http.StatusBadRequest:
+		return slog.LevelWarn
+	default:
+		return slog.LevelDebug
+	}
+}
+
+func shouldDowngradeAgentPublishSyncConflict(status int, path string, route string, responseBody string) bool {
+	if status != http.StatusConflict {
+		return false
+	}
+	target := strings.TrimSpace(route)
+	if target == "" {
+		target = strings.TrimSpace(path)
+	}
+	if target != "/api/v1/agent/publish-tasks/sync" {
+		return false
+	}
+	return strings.Contains(responseBody, "Publish task belongs to a different device")
 }
 
 type bodyCaptureReadCloser struct {

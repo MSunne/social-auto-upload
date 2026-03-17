@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Server,
   Plus,
@@ -15,6 +15,8 @@ import {
   Pencil,
   BookOpen,
   Search,
+  X,
+  Server as ServerIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { listDevices, claimDevice } from "@/lib/services";
@@ -97,34 +99,47 @@ export default function NodesPage() {
   });
 
   const [page, setPage] = useState(1);
-  const [deviceCode, setDeviceCode] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [claiming, setClaiming] = useState(false);
   const [error, setError] = useState("");
   const [toggleState, setToggleState] = useState<Record<string, boolean>>({});
 
-  /* pagination math */
-  const totalPages = Math.max(1, Math.ceil(devices.length / PAGE_SIZE));
-  const pagedDevices = devices.slice(
+  // Modal State
+  const [isClaimModalOpen, setIsClaimModalOpen] = useState(false);
+  const [claimInputCode, setClaimInputCode] = useState("");
+
+  /* filtering and pagination math */
+  const filteredDevices = devices.filter(
+    (d) =>
+      d.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (d.localIp && d.localIp.includes(searchQuery)) ||
+      (d.deviceCode && d.deviceCode.includes(searchQuery))
+  );
+
+  const totalPages = Math.max(1, Math.ceil(filteredDevices.length / PAGE_SIZE));
+  const pagedDevices = filteredDevices.slice(
     (page - 1) * PAGE_SIZE,
     page * PAGE_SIZE,
   );
-  const startIdx = (page - 1) * PAGE_SIZE + 1;
-  const endIdx = Math.min(page * PAGE_SIZE, devices.length);
+  const startIdx = filteredDevices.length === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const endIdx = Math.min(page * PAGE_SIZE, filteredDevices.length);
 
   /* stats */
   const onlineCount = devices.filter((d) => d.status === "online").length;
   const enabledCount = devices.filter((d) => d.isEnabled).length;
 
-  async function handleClaim() {
-    if (!deviceCode.trim()) return;
+  async function handleClaimSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!claimInputCode.trim()) return;
     setClaiming(true);
     setError("");
     try {
-      await claimDevice(deviceCode.trim());
-      setDeviceCode("");
+      await claimDevice(claimInputCode.trim());
+      setIsClaimModalOpen(false);
+      setClaimInputCode("");
       refetch();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "认领失败");
+      setError(err instanceof Error ? err.message : "认领失败，请检查全平台授权");
     } finally {
       setClaiming(false);
     }
@@ -158,14 +173,21 @@ export default function NodesPage() {
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
           <input
-            value={deviceCode}
-            onChange={(e) => setDeviceCode(e.target.value)}
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setPage(1);
+            }}
             placeholder="搜索设备名称、编码或 IP 地址..."
             className="w-full rounded-xl border border-border bg-surface pl-9 pr-3 py-2.5 text-sm text-text-primary placeholder-text-muted outline-none transition-all focus:border-accent/50 focus:ring-2 focus:ring-accent/20 focus:shadow-[0_0_12px_rgba(177,73,255,0.1)]"
           />
         </div>
         <button
-          onClick={handleClaim}
+          onClick={() => {
+            setError("");
+            setClaimInputCode("");
+            setIsClaimModalOpen(true);
+          }}
           disabled={claiming}
           className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-accent to-cyan px-4 py-2.5 text-sm font-semibold text-background transition-all hover:shadow-lg hover:shadow-accent/25 disabled:opacity-50"
         >
@@ -234,7 +256,7 @@ export default function NodesPage() {
               <p className="text-xs text-text-muted">总节点链路</p>
               <div className="flex items-baseline gap-1">
                 <span className="text-2xl font-bold text-text-primary">
-                  {devices.length > 0 ? (devices.length * 104).toLocaleString() : "0"}
+                  {filteredDevices.length > 0 ? (filteredDevices.length * 104).toLocaleString() : "0"}
                 </span>
                 <span className="text-sm font-medium text-text-secondary">活跃</span>
               </div>
@@ -244,7 +266,7 @@ export default function NodesPage() {
       </div>
 
       {/* ───── Main Table ───── */}
-      {devices.length > 0 ? (
+      {filteredDevices.length > 0 || devices.length > 0 ? (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -373,7 +395,7 @@ export default function NodesPage() {
             <p className="text-sm text-text-muted">
               显示 {startIdx} 到 {endIdx} / 共{" "}
               <span className="font-semibold text-text-secondary">
-                {devices.length}
+                {filteredDevices.length}
               </span>{" "}
               个节点
             </p>
@@ -430,6 +452,101 @@ export default function NodesPage() {
           description="在 OmniBull 所在的 Linux 主机启动 Agent 后，输入设备编码进行认领。"
         />
       )}
+
+      {/* ───── Claim Device Modal ───── */}
+      <AnimatePresence>
+        {isClaimModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className="fixed inset-0 bg-black/60 backdrop-blur-md"
+              onClick={() => !claiming && setIsClaimModalOpen(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="relative z-10 w-full max-w-md overflow-hidden rounded-3xl border border-white/10 bg-[#0A0A14]/95 shadow-[0_0_60px_rgba(0,245,212,0.15)] backdrop-blur-xl"
+            >
+              {/* Header */}
+              <div className="relative border-b border-white/5 bg-gradient-to-r from-cyan/10 to-transparent px-6 py-5">
+                <div className="absolute inset-0 bg-noise opacity-[0.03] mix-blend-overlay pointer-events-none" />
+                <div className="relative z-10 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-cyan to-blue-500 shadow-lg shadow-cyan/20">
+                      <ServerIcon className="h-5 w-5 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-black tracking-wide text-white">
+                        认领新设备节点
+                      </h3>
+                      <p className="text-xs font-medium text-text-muted/80">
+                        绑定 OmniBull 终端到当前账户
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => !claiming && setIsClaimModalOpen(false)}
+                    className="rounded-full bg-white/5 p-2 text-text-muted transition-all hover:rotate-90 hover:bg-red-500/20 hover:text-red-400"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Body */}
+              <form onSubmit={handleClaimSubmit} className="p-6">
+                <div className="mb-5 space-y-4">
+                  <div>
+                    <label className="mb-1.5 block text-xs font-bold uppercase tracking-widest text-text-muted">
+                      设备认领凭证 (Device Code)
+                    </label>
+                    <input
+                      type="text"
+                      autoFocus
+                      required
+                      placeholder="例如: 8A9B2C3D"
+                      value={claimInputCode}
+                      onChange={(e) => setClaimInputCode(e.target.value)}
+                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3.5 text-sm font-medium text-white placeholder-text-muted/50 transition-all focus:border-cyan/50 focus:bg-white/10 focus:outline-none focus:ring-4 focus:ring-cyan/10 uppercase"
+                    />
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-white/5">
+                  <button
+                    type="button"
+                    onClick={() => setIsClaimModalOpen(false)}
+                    disabled={claiming}
+                    className="rounded-full px-5 py-2.5 text-sm font-bold text-text-muted transition-all hover:bg-white/10 hover:text-white"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={claiming || !claimInputCode.trim()}
+                    className={`relative flex items-center justify-center overflow-hidden rounded-full px-8 py-2.5 text-sm font-black shadow-xl transition-all duration-300 ${
+                      claiming || !claimInputCode.trim()
+                        ? "bg-white/10 text-white/30 cursor-not-allowed"
+                        : "bg-gradient-to-r from-cyan to-blue-500 text-white hover:scale-[1.03] hover:shadow-[0_0_30px_rgba(0,245,212,0.4)]"
+                    }`}
+                  >
+                    <span className="relative z-10 drop-shadow-sm">
+                      {claiming ? "认领中..." : "确认认领"}
+                    </span>
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </>
   );
 }

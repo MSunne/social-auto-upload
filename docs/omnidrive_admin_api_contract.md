@@ -629,6 +629,8 @@ Item shape:
     "isEnabled": true
   },
   "notes": "等待平台申诉结果，先不要自动重试",
+  "exceptionReason": "平台风控待复核",
+  "riskTags": ["manual_review", "platform_risk"],
   "readiness": {
     "deviceReady": true,
     "accountReady": true,
@@ -681,14 +683,19 @@ Request:
 
 ```json
 {
-  "notes": "需要运营人工跟进素材合规"
+  "notes": "需要运营人工跟进素材合规",
+  "exceptionReason": "素材疑似违规",
+  "riskTags": ["manual_review", "content_risk"]
 }
 ```
 
 Notes:
 
 - `notes` is optional
-- sending `""` clears the stored notes
+- `exceptionReason` is optional
+- `riskTags` is optional
+- sending `""` clears the stored `notes` or `exceptionReason`
+- sending `[]` clears the stored `riskTags`
 
 Response:
 
@@ -854,6 +861,8 @@ Item shape:
     "isEnabled": true
   },
   "notes": "需要确认回传素材是否已镜像到 Omnibull",
+  "exceptionReason": "导入链路异常",
+  "riskTags": ["delivery_risk", "manual_review"],
   "bridge": {
     "source": "omnidrive_cloud",
     "deliveryStage": "generating",
@@ -899,14 +908,19 @@ Request:
 
 ```json
 {
-  "notes": "优先人工跟进导入链路"
+  "notes": "优先人工跟进导入链路",
+  "exceptionReason": "镜像导入失败",
+  "riskTags": ["delivery_risk"]
 }
 ```
 
 Notes:
 
 - `notes` is optional
-- sending `""` clears the stored notes
+- `exceptionReason` is optional
+- `riskTags` is optional
+- sending `""` clears the stored `notes` or `exceptionReason`
+- sending `[]` clears the stored `riskTags`
 
 Response:
 

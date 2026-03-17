@@ -422,7 +422,7 @@ func (s *Store) ListAdminUsers(ctx context.Context, filter AdminUserListFilter) 
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 			SELECT
 				u.id,
-				u.email,
+				COALESCE(u.email, ''),
 				u.name,
 				u.is_active,
 				u.notes,
@@ -600,6 +600,9 @@ func (s *Store) ListAdminOrders(ctx context.Context, filter AdminOrderListFilter
 	}
 
 	whereClause := "WHERE " + strings.Join(whereParts, " AND ")
+	paidStatusesArgIndex := argIndex
+	summaryArgs := append([]any{}, args...)
+	summaryArgs = append(summaryArgs, paidRechargeStatuses())
 
 	var summary domain.AdminOrderListSummary
 	if err := s.pool.QueryRow(ctx, fmt.Sprintf(`
@@ -608,7 +611,7 @@ func (s *Store) ListAdminOrders(ctx context.Context, filter AdminOrderListFilter
 			COALESCE(SUM(ro.amount_cents), 0)::BIGINT,
 			COALESCE(SUM(ro.credit_amount), 0)::BIGINT,
 			COALESCE(SUM(ro.manual_bonus_credit_amount), 0)::BIGINT,
-			COUNT(*) FILTER (WHERE ro.paid_at IS NOT NULL OR ro.status = ANY($1))::BIGINT,
+			COUNT(*) FILTER (WHERE ro.paid_at IS NOT NULL OR ro.status = ANY($%d))::BIGINT,
 			COUNT(*) FILTER (WHERE ro.status = 'awaiting_manual_review')::BIGINT,
 			COUNT(*) FILTER (WHERE ro.status = 'pending_payment')::BIGINT,
 			COUNT(*) FILTER (WHERE ro.status = 'processing')::BIGINT,
@@ -617,7 +620,7 @@ func (s *Store) ListAdminOrders(ctx context.Context, filter AdminOrderListFilter
 		FROM recharge_orders ro
 		LEFT JOIN users u ON u.id = ro.user_id
 		%s
-	`, whereClause), append([]any{paidRechargeStatuses()}, args...)...).Scan(
+	`, paidStatusesArgIndex, whereClause), summaryArgs...).Scan(
 		&summary.TotalOrderCount,
 		&summary.TotalAmountCents,
 		&summary.TotalCreditAmount,
@@ -637,7 +640,7 @@ func (s *Store) ListAdminOrders(ctx context.Context, filter AdminOrderListFilter
 			ro.id, ro.order_no, ro.user_id, ro.package_id, ro.package_snapshot, ro.channel, ro.status, ro.subject, ro.body,
 			ro.currency, ro.amount_cents, ro.credit_amount, ro.manual_bonus_credit_amount, ro.payment_payload, ro.customer_service_payload,
 			ro.provider_transaction_id, ro.provider_status, ro.expires_at, ro.paid_at, ro.closed_at, ro.created_at, ro.updated_at,
-			u.id, u.email, u.name
+			u.id, COALESCE(u.email, ''), u.name
 		FROM recharge_orders ro
 		LEFT JOIN users u ON u.id = ro.user_id
 		%s
