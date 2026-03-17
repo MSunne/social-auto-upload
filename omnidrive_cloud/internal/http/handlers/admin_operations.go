@@ -533,6 +533,62 @@ func (h *AdminConsoleHandler) createAdminMediaAccountValidationSession(ctx conte
 	return session, nil, nil
 }
 
+func (h *AdminConsoleHandler) createAdminRemoteLoginSession(ctx context.Context, record *domain.AdminDeviceRow, platform string, accountName string) (*domain.LoginSession, *string, error) {
+	if record == nil {
+		return nil, auditStringPtr("Device not found"), nil
+	}
+	if record.Owner == nil || strings.TrimSpace(record.Owner.ID) == "" {
+		return nil, auditStringPtr("Device has no owner context"), nil
+	}
+	if !record.Device.IsEnabled {
+		return nil, auditStringPtr("Device is disabled"), nil
+	}
+
+	platform = strings.TrimSpace(platform)
+	accountName = strings.TrimSpace(accountName)
+	if platform == "" || accountName == "" {
+		return nil, auditStringPtr("Platform and account name are required"), nil
+	}
+
+	message := "等待本地 OmniBull 拉起登录流程"
+	session, err := h.app.Store.CreateLoginSession(ctx, store.CreateLoginSessionInput{
+		ID:          uuid.NewString(),
+		DeviceID:    record.Device.ID,
+		UserID:      record.Owner.ID,
+		Platform:    platform,
+		AccountName: accountName,
+		Status:      "pending",
+		Message:     &message,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	recordAuditEvent(h.app, ctx, store.CreateAuditEventInput{
+		OwnerUserID:  record.Owner.ID,
+		ResourceType: "login_session",
+		ResourceID:   &session.ID,
+		Action:       "admin_remote_login",
+		Title:        "运营后台发起远程账号登录",
+		Source:       platform,
+		Status:       session.Status,
+		Message:      session.Message,
+		Payload: mustJSONBytes(map[string]any{
+			"deviceId":    record.Device.ID,
+			"deviceCode":  record.Device.DeviceCode,
+			"accountName": accountName,
+		}),
+	})
+	h.recordAdminAction(ctx, "device", &record.Device.ID, "remote_login", "发起远程账号登录", "success", auditStringPtr("已创建远程登录会话"), mustJSONBytes(map[string]any{
+		"loginSessionId": session.ID,
+		"deviceId":       record.Device.ID,
+		"deviceCode":     record.Device.DeviceCode,
+		"platform":       platform,
+		"accountName":    accountName,
+	}))
+	return session, nil, nil
+}
+
 func (h *AdminConsoleHandler) deleteAdminMediaAccount(ctx context.Context, record *domain.AdminMediaAccountRow) (bool, *string, int64, int64, error) {
 	if record == nil {
 		return false, auditStringPtr("Media account not found"), 0, 0, nil
@@ -1425,6 +1481,65 @@ func (h *AdminConsoleHandler) ValidateMediaAccount(w http.ResponseWriter, r *htt
 	}
 
 	render.JSON(w, http.StatusCreated, session)
+}
+
+func (h *AdminConsoleHandler) CreateRemoteLogin(w http.ResponseWriter, r *http.Request) {
+	var payload createRemoteLoginRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	payload.DeviceID = strings.TrimSpace(payload.DeviceID)
+	payload.Platform = strings.TrimSpace(payload.Platform)
+	payload.AccountName = strings.TrimSpace(payload.AccountName)
+	if payload.DeviceID == "" || payload.Platform == "" || payload.AccountName == "" {
+		render.Error(w, http.StatusBadRequest, "deviceId, platform, and accountName are required")
+		return
+	}
+
+	record, err := h.app.Store.GetAdminDeviceByID(r.Context(), payload.DeviceID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device")
+		return
+	}
+	if record == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+	h.decorateAdminDeviceRow(record)
+
+	session, message, err := h.createAdminRemoteLoginSession(r.Context(), record, payload.Platform, payload.AccountName)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to create remote login session")
+		return
+	}
+	if session == nil {
+		render.Error(w, http.StatusConflict, trimmedStringValue(message))
+		return
+	}
+
+	render.JSON(w, http.StatusCreated, session)
+}
+
+func (h *AdminConsoleHandler) GetLoginSession(w http.ResponseWriter, r *http.Request) {
+	sessionID := strings.TrimSpace(chi.URLParam(r, "sessionId"))
+	if sessionID == "" {
+		render.Error(w, http.StatusBadRequest, "sessionId is required")
+		return
+	}
+
+	session, err := h.app.Store.GetLoginSessionByID(r.Context(), sessionID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load login session")
+		return
+	}
+	if session == nil {
+		render.Error(w, http.StatusNotFound, "Login session not found")
+		return
+	}
+
+	render.JSON(w, http.StatusOK, session)
 }
 
 func (h *AdminConsoleHandler) DeleteMediaAccount(w http.ResponseWriter, r *http.Request) {

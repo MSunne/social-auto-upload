@@ -9,6 +9,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
+from queue import Empty, Queue
 
 import requests
 
@@ -17,17 +18,59 @@ from utils.device_meta import get_local_ip
 from utils.materials import list_material_directory, list_material_roots, read_material_file
 
 
-PLATFORM_TYPE_BY_NAME = {
-    "小红书": 1,
-    "视频号": 2,
-    "抖音": 3,
-    "快手": 4,
+LOGIN_PLATFORM_CONFIG = {
+    "xiaohongshu": {
+        "type": 1,
+        "label": "小红书",
+        "aliases": ("xiaohongshu", "小红书"),
+    },
+    "wechat_channel": {
+        "type": 2,
+        "label": "视频号",
+        "aliases": ("wechat_channel", "视频号", "wechat"),
+    },
+    "douyin": {
+        "type": 3,
+        "label": "抖音",
+        "aliases": ("douyin", "抖音"),
+    },
+    "kuaishou": {
+        "type": 4,
+        "label": "快手",
+        "aliases": ("kuaishou", "快手"),
+    },
 }
 
-PLATFORM_NAME_BY_TYPE = {value: key for key, value in PLATFORM_TYPE_BY_NAME.items()}
+PLATFORM_TYPE_BY_NAME = {
+    config["label"]: config["type"]
+    for config in LOGIN_PLATFORM_CONFIG.values()
+}
+
+PLATFORM_NAME_BY_TYPE = {
+    config["type"]: config["label"]
+    for config in LOGIN_PLATFORM_CONFIG.values()
+}
+
+LOGIN_PLATFORM_ALIAS_MAP = {}
+for platform_slug, config in LOGIN_PLATFORM_CONFIG.items():
+    normalized_aliases = {
+        str(alias or "").strip().lower()
+        for alias in config.get("aliases") or ()
+        if str(alias or "").strip()
+    }
+    normalized_aliases.add(platform_slug)
+    normalized_aliases.add(str(config.get("label") or "").strip().lower())
+    for alias in normalized_aliases:
+        LOGIN_PLATFORM_ALIAS_MAP[alias] = {
+            "slug": platform_slug,
+            "type": int(config["type"]),
+            "label": str(config["label"]).strip(),
+        }
+
 SYNCABLE_LOCAL_SOURCES = ("local_api", "openclaw_skill", "omnidrive_agent", "omnidrive_ai")
 SYNCABLE_LOCAL_AI_SOURCES = ("local_ui", "openclaw_skill")
 FINAL_LOCAL_STATUSES = {"success", "failed", "needs_verify", "cancelled"}
+FINAL_LOGIN_STATUSES = {"success", "failed", "cancelled"}
 
 
 class OmniDriveBridge:
@@ -36,6 +79,7 @@ class OmniDriveBridge:
         db_path,
         cloud_base_url,
         agent_key,
+        run_login_fn,
         publish_task_manager,
         ai_task_manager,
         material_roots,
@@ -56,6 +100,7 @@ class OmniDriveBridge:
         self.db_path = Path(db_path)
         self.cloud_base_url = str(cloud_base_url or "").rstrip("/")
         self.agent_key = str(agent_key or "").strip()
+        self.run_login_fn = run_login_fn
         self.publish_task_manager = publish_task_manager
         self.ai_task_manager = ai_task_manager
         self.material_roots = material_roots or {}
@@ -79,6 +124,8 @@ class OmniDriveBridge:
         self._stop_event = threading.Event()
         self._session = requests.Session()
         self._state_lock = threading.Lock()
+        self._login_worker_lock = threading.Lock()
+        self._active_login_worker = None
         self._state = {
             "running": False,
             "deviceName": self.device_name,
@@ -93,6 +140,8 @@ class OmniDriveBridge:
             "lastLeaseRenewAt": None,
             "lastAISyncAt": None,
             "lastAIPollAt": None,
+            "lastLoginPollAt": None,
+            "lastLoginEventAt": None,
             "lastError": None,
             "localIp": get_local_ip(),
             "syncedRoots": 0,
@@ -104,6 +153,8 @@ class OmniDriveBridge:
             "importedCloudTasks": 0,
             "mirroredAITasks": 0,
             "importedAIResults": 0,
+            "activeLoginSessionCount": 0,
+            "activeLoginSessions": [],
         }
 
         self._workspace_dir = Path(BASE_DIR / "omnidriveSync")
@@ -175,6 +226,7 @@ class OmniDriveBridge:
         last_lease_renew = 0.0
         last_ai_sync = 0.0
         last_ai_poll = 0.0
+        last_login_poll = 0.0
 
         while not self._stop_event.is_set():
             try:
@@ -207,6 +259,10 @@ class OmniDriveBridge:
                 if now - last_ai_poll >= self.poll_interval:
                     self._import_remote_ai_jobs()
                     last_ai_poll = now
+                self._sync_active_login_session()
+                if now - last_login_poll >= self.poll_interval:
+                    self._poll_remote_login_tasks()
+                    last_login_poll = now
             except Exception as exc:
                 self._update_state(lastError=str(exc))
 
@@ -501,6 +557,333 @@ class OmniDriveBridge:
             retiredSkillAcks=len(ack_items),
             lastSkillSyncAt=self._now_string(),
         )
+
+    def _poll_remote_login_tasks(self):
+        queue_payload = self._request("GET", f"/api/v1/agent/login-tasks/{self.device_code}") or []
+        sessions = self._normalize_login_session_queue(queue_payload)
+        self._update_state(
+            lastLoginPollAt=self._now_string(),
+            activeLoginSessionCount=len(sessions),
+            activeLoginSessions=[
+                self._build_login_session_snapshot(item)
+                for item in sessions[:10]
+            ],
+        )
+
+        if self._get_active_login_worker():
+            return
+
+        for session in sessions:
+            if self._start_login_session(session):
+                break
+
+    def _normalize_login_session_queue(self, payload):
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            items = payload.get("items")
+            if isinstance(items, list):
+                return items
+        return []
+
+    def _build_login_session_snapshot(self, session):
+        platform = str(session.get("platform") or "").strip()
+        normalized = self._resolve_login_platform(platform)
+        return {
+            "sessionId": str(session.get("id") or "").strip() or None,
+            "platform": platform or None,
+            "platformLabel": normalized["label"] if normalized else platform or None,
+            "accountName": str(session.get("accountName") or "").strip() or None,
+            "status": str(session.get("status") or "").strip() or None,
+            "message": self._trim_message(session.get("message")),
+            "updatedAt": session.get("updatedAt"),
+        }
+
+    def _resolve_login_platform(self, platform):
+        alias = str(platform or "").strip().lower()
+        if not alias:
+            return None
+        return LOGIN_PLATFORM_ALIAS_MAP.get(alias)
+
+    def _get_active_login_worker(self):
+        with self._login_worker_lock:
+            return self._active_login_worker
+
+    def _set_active_login_worker(self, worker):
+        with self._login_worker_lock:
+            self._active_login_worker = worker
+
+    def _clear_active_login_worker(self, session_id=None):
+        with self._login_worker_lock:
+            if session_id and self._active_login_worker:
+                active_id = str(self._active_login_worker.get("sessionId") or "").strip()
+                if active_id and active_id != session_id:
+                    return
+            self._active_login_worker = None
+
+    def _start_login_session(self, session):
+        session_id = str(session.get("id") or "").strip()
+        platform = str(session.get("platform") or "").strip()
+        account_name = str(session.get("accountName") or "").strip()
+        if not session_id or not platform or not account_name:
+            return False
+
+        platform_config = self._resolve_login_platform(platform)
+        if not platform_config:
+            self._post_login_event(
+                session_id,
+                status="failed",
+                message=f"本地 SAU 暂不支持 {platform} 登录",
+            )
+            return False
+        if not callable(self.run_login_fn):
+            self._post_login_event(
+                session_id,
+                status="failed",
+                message="本地 SAU 未配置登录执行器，无法拉起账号登录",
+            )
+            return False
+
+        status_queue = Queue()
+        command_queue = Queue()
+        worker = {
+            "sessionId": session_id,
+            "platform": platform,
+            "platformSlug": platform_config["slug"],
+            "platformLabel": platform_config["label"],
+            "accountName": account_name,
+            "statusQueue": status_queue,
+            "commandQueue": command_queue,
+            "lastStatus": str(session.get("status") or "pending").strip() or "pending",
+            "lastMessage": self._trim_message(session.get("message")),
+            "lastQRData": None,
+            "lastVerificationSignature": None,
+            "lastVerificationPayload": None,
+            "startedAt": self._iso_now(),
+        }
+
+        thread = threading.Thread(
+            target=self.run_login_fn,
+            args=(str(platform_config["type"]), account_name, status_queue, command_queue),
+            daemon=True,
+        )
+        worker["thread"] = thread
+        self._set_active_login_worker(worker)
+
+        try:
+            thread.start()
+        except Exception as exc:
+            self._clear_active_login_worker(session_id)
+            self._post_login_event(
+                session_id,
+                status="failed",
+                message=f"本地 SAU 拉起登录窗口失败: {exc}",
+            )
+            return False
+
+        self._post_login_event(
+            session_id,
+            status="running",
+            message=f"本地 SAU 已拉起 {platform_config['label']} 登录窗口",
+        )
+        return True
+
+    def _sync_active_login_session(self):
+        worker = self._get_active_login_worker()
+        if not worker:
+            return
+
+        session_id = str(worker.get("sessionId") or "").strip()
+        if not session_id:
+            self._clear_active_login_worker()
+            return
+
+        self._consume_login_actions(worker)
+        self._drain_login_status_queue(worker)
+
+        thread = worker.get("thread")
+        is_alive = bool(thread and thread.is_alive())
+        try:
+            queue_empty = worker["statusQueue"].empty()
+        except Exception:
+            queue_empty = True
+
+        if not is_alive and queue_empty and worker.get("lastStatus") not in FINAL_LOGIN_STATUSES:
+            self._post_login_event(
+                session_id,
+                status="failed",
+                message="本地登录线程已结束，但没有返回成功状态",
+            )
+
+        if not is_alive and queue_empty and worker.get("lastStatus") in FINAL_LOGIN_STATUSES:
+            self._clear_active_login_worker(session_id)
+
+    def _consume_login_actions(self, worker):
+        session_id = str(worker.get("sessionId") or "").strip()
+        if not session_id:
+            return
+
+        actions = self._request("GET", f"/api/v1/agent/login-sessions/{session_id}/actions") or []
+        if not isinstance(actions, list):
+            return
+
+        command_queue = worker.get("commandQueue")
+        if command_queue is None:
+            return
+
+        for action in actions:
+            action_type = str(action.get("actionType") or "").strip()
+            if not action_type:
+                continue
+            command_queue.put(
+                {
+                    "actionType": action_type,
+                    "payload": action.get("payload") or {},
+                }
+            )
+
+    def _drain_login_status_queue(self, worker):
+        status_queue = worker.get("statusQueue")
+        if status_queue is None:
+            return
+
+        while True:
+            try:
+                event = status_queue.get_nowait()
+            except Empty:
+                break
+
+            self._handle_login_status_event(worker, event)
+
+    def _handle_login_status_event(self, worker, event):
+        session_id = str(worker.get("sessionId") or "").strip()
+        platform_label = str(worker.get("platformLabel") or worker.get("platform") or "账号").strip()
+        if not session_id:
+            return
+
+        if isinstance(event, dict):
+            event_type = str(event.get("type") or "").strip()
+            payload = event.get("payload") or {}
+            if event_type == "verification_required":
+                signature = self._derive_login_verification_signature(payload)
+                if signature and signature == worker.get("lastVerificationSignature"):
+                    return
+                worker["lastVerificationSignature"] = signature
+                worker["lastVerificationPayload"] = payload
+                self._post_login_event(
+                    session_id,
+                    status="verification_required",
+                    message=self._trim_message(payload.get("message")) or f"{platform_label} 登录需要额外验证",
+                    verification_payload=payload,
+                )
+                return
+            if event_type == "log":
+                message = self._trim_message(payload.get("message"))
+                if not message or message == worker.get("lastMessage"):
+                    return
+                self._post_login_event(
+                    session_id,
+                    status=worker.get("lastStatus") if worker.get("lastStatus") in {"running", "verification_required"} else "running",
+                    message=message,
+                )
+                return
+            return
+
+        message = str(event or "").strip()
+        if not message:
+            return
+
+        if message == "200":
+            self._post_login_event(
+                session_id,
+                status="success",
+                message=f"{platform_label} 账号登录成功，本地 SAU 已保存最新 Cookie",
+            )
+            return
+
+        if message == "500":
+            self._post_login_event(
+                session_id,
+                status="failed",
+                message=f"{platform_label} 账号登录失败，请检查本地 SAU 日志",
+            )
+            return
+
+        if message.startswith("data:image"):
+            if message == worker.get("lastQRData"):
+                return
+            worker["lastQRData"] = message
+            self._post_login_event(
+                session_id,
+                status="running",
+                message=f"{platform_label} 登录二维码已生成，请在本地浏览器完成扫码",
+                qr_data=message,
+            )
+            return
+
+        if message != worker.get("lastMessage"):
+            self._post_login_event(
+                session_id,
+                status=worker.get("lastStatus") if worker.get("lastStatus") in {"running", "verification_required"} else "running",
+                message=message,
+            )
+
+    def _derive_login_verification_signature(self, payload):
+        if not isinstance(payload, dict):
+            return None
+        signature = str(payload.get("signature") or "").strip()
+        if signature:
+            return signature
+        title = str(payload.get("title") or "").strip()
+        message = str(payload.get("message") or "").strip()
+        options = payload.get("options") if isinstance(payload.get("options"), list) else []
+        hints = payload.get("inputHints") if isinstance(payload.get("inputHints"), list) else []
+        return "|".join(
+            [
+                title,
+                message,
+                "/".join(str(item).strip() for item in options if str(item).strip()),
+                "/".join(str(item).strip() for item in hints if str(item).strip()),
+            ]
+        )
+
+    def _post_login_event(self, session_id, *, status, message=None, qr_data=None, verification_payload=None):
+        worker = self._get_active_login_worker()
+        if worker and str(worker.get("sessionId") or "").strip() == session_id:
+            if qr_data is None and str(status or "").strip() in {"running", "verification_required"}:
+                qr_data = worker.get("lastQRData")
+            if verification_payload is None and str(status or "").strip() == "verification_required":
+                verification_payload = worker.get("lastVerificationPayload")
+        payload = {
+            "status": str(status or "").strip(),
+            "message": self._trim_message(message),
+            "qrData": qr_data,
+            "verificationPayload": verification_payload,
+        }
+        updated = self._request(
+            "POST",
+            f"/api/v1/agent/login-sessions/{session_id}/event",
+            payload=payload,
+        ) or {}
+        self._update_state(
+            lastLoginEventAt=self._now_string(),
+            lastError=None,
+        )
+
+        if worker and str(worker.get("sessionId") or "").strip() == session_id:
+            worker["lastStatus"] = payload["status"]
+            worker["lastMessage"] = payload["message"]
+            if qr_data:
+                worker["lastQRData"] = qr_data
+            if verification_payload is not None:
+                worker["lastVerificationPayload"] = verification_payload
+
+        return updated
+
+    @staticmethod
+    def _trim_message(value):
+        text = str(value or "").strip()
+        return text or None
 
     def _import_remote_publish_tasks(self):
         queue_payload = self._request("GET", f"/api/v1/agent/publish-tasks/{self.device_code}") or []
@@ -1456,6 +1839,7 @@ class OmniDriveBridge:
             binding for binding in self._list_leases()
             if str(binding.get("lease_token") or "").strip()
         ]
+        login_worker = self._get_active_login_worker()
         return {
             "publishTasks": by_status,
             "publishTasksBySource": by_source,
@@ -1463,6 +1847,9 @@ class OmniDriveBridge:
             "materialRoots": len(self.material_roots),
             "activeLeaseCount": len(active_leases),
             "activeLeaseTaskIds": [binding.get("task_uuid") for binding in active_leases[:20]],
+            "activeLoginSessionId": login_worker.get("sessionId") if login_worker else None,
+            "activeLoginPlatform": login_worker.get("platform") if login_worker else None,
+            "activeLoginAccountName": login_worker.get("accountName") if login_worker else None,
         }
 
     def _build_status_snapshot(self):
@@ -1496,6 +1883,20 @@ class OmniDriveBridge:
                 }
             )
 
+        login_worker = self._get_active_login_worker()
+        login_snapshot = None
+        if login_worker:
+            login_snapshot = {
+                "sessionId": login_worker.get("sessionId"),
+                "platform": login_worker.get("platform"),
+                "platformLabel": login_worker.get("platformLabel"),
+                "accountName": login_worker.get("accountName"),
+                "status": login_worker.get("lastStatus"),
+                "message": login_worker.get("lastMessage"),
+                "startedAt": login_worker.get("startedAt"),
+                "isAlive": bool(login_worker.get("thread") and login_worker["thread"].is_alive()),
+            }
+
         return {
             "bridgeTaskCountsBySource": by_source,
             "bridgeTaskCountsByStatus": by_status,
@@ -1505,6 +1906,7 @@ class OmniDriveBridge:
             "importedCloudQueueCount": imported_queue,
             "mirroredLocalTaskCount": local_origin,
             "skillCacheCount": self._count_cached_skills(),
+            "activeLoginWorker": login_snapshot,
         }
 
     def _count_cached_skills(self):

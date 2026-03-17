@@ -576,6 +576,7 @@ def ensure_omnidrive_agent_started():
                 db_path=Path(BASE_DIR / "db" / "database.db"),
                 cloud_base_url=OMNIDRIVE_BASE_URL,
                 agent_key=OMNIDRIVE_AGENT_KEY,
+                run_login_fn=run_async_function,
                 publish_task_manager=publish_task_manager,
                 ai_task_manager=omnidrive_ai_task_manager,
                 material_roots=OMNIBULL_MATERIAL_ROOTS,
