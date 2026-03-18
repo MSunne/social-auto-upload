@@ -12,6 +12,7 @@ from myUtils.auth import check_cookie
 from utils.base_social_media import set_init_script
 from conf import BASE_DIR
 from utils.browser_hook import get_browser_options
+from utils.log import login_logger
 
 VERIFICATION_TITLE_TEXTS = [
     "身份验证",
@@ -47,6 +48,27 @@ VERIFICATION_SUBMIT_TEXTS = [
     "登录",
     "验证",
     "完成",
+]
+
+QR_EXPIRED_TEXTS = [
+    "二维码已过期",
+    "二维码已失效",
+    "二维码失效",
+    "登录二维码已过期",
+    "登录二维码已失效",
+    "扫码已过期",
+    "扫码已失效",
+    "请点击刷新",
+]
+
+QR_REFRESH_TEXTS = [
+    "点击刷新",
+    "刷新二维码",
+    "重新获取二维码",
+    "重新获取",
+    "重新加载",
+    "点击重试",
+    "刷新",
 ]
 
 
@@ -117,6 +139,34 @@ async def locator_to_data_url(locator):
     return "data:image/png;base64," + base64.b64encode(image_bytes).decode("utf-8")
 
 
+async def locator_to_data_url_if_visible(locator):
+    if locator is None:
+        return None
+    try:
+        count = await locator.count()
+        if not count:
+            return None
+        candidate = locator.first
+        if not await candidate.is_visible():
+            return None
+        image_bytes = await candidate.screenshot(type="png")
+        return "data:image/png;base64," + base64.b64encode(image_bytes).decode("utf-8")
+    except Exception:
+        return None
+
+
+async def is_locator_visible(locator):
+    if locator is None:
+        return False
+    try:
+        count = await locator.count()
+        if not count:
+            return False
+        return await locator.first.is_visible()
+    except Exception:
+        return False
+
+
 async def page_to_data_url(page, locator=None):
     if locator is not None:
         try:
@@ -133,6 +183,20 @@ async def page_to_data_url(page, locator=None):
 async def find_first_visible_text(page, texts):
     for text in texts:
         locator = page.get_by_text(text, exact=True)
+        count = await locator.count()
+        for index in range(count):
+            candidate = locator.nth(index)
+            try:
+                if await candidate.is_visible():
+                    return text, candidate
+            except Exception:
+                continue
+    return None, None
+
+
+async def find_first_visible_containing_text(target, texts):
+    for text in texts:
+        locator = target.get_by_text(text)
         count = await locator.count()
         for index in range(count):
             candidate = locator.nth(index)
@@ -294,6 +358,17 @@ async def click_visible_option(page, text):
     return False
 
 
+async def click_visible_partial_option(target, texts):
+    _, candidate = await find_first_visible_containing_text(target, texts)
+    if candidate is None:
+        return False
+    try:
+        await candidate.click(force=True, timeout=2000)
+        return True
+    except Exception:
+        return False
+
+
 async def find_first_editable_input(page):
     focused_input = await find_focused_editable_input(page)
     if focused_input is not None:
@@ -348,7 +423,58 @@ def push_structured_status(status_queue, command_queue, event_type, payload):
         })
 
 
-async def apply_remote_action(page, action, status_queue=None, command_queue=None):
+async def detect_login_qr_state(page, qr_locator=None, qr_action_root=None):
+    qr_data = await locator_to_data_url_if_visible(qr_locator)
+    expired_text = None
+    for target in [target for target in (qr_action_root, page) if target is not None]:
+        expired_text, _ = await find_first_visible_containing_text(target, QR_EXPIRED_TEXTS)
+        if expired_text:
+            break
+    return {
+        "qrData": qr_data,
+        "isExpired": bool(expired_text),
+        "expiredText": expired_text,
+    }
+
+
+async def sync_login_qr_state(status_queue, command_queue, page, qr_locator=None, qr_action_root=None, tracker=None):
+    if tracker is None:
+        tracker = {}
+
+    qr_state = await detect_login_qr_state(page, qr_locator=qr_locator, qr_action_root=qr_action_root)
+    qr_data = qr_state.get("qrData")
+    if qr_data and qr_data != tracker.get("lastQrData"):
+        tracker["lastQrData"] = qr_data
+        tracker["isExpired"] = False
+        push_structured_status(
+            status_queue,
+            command_queue,
+            "qr_updated",
+            {
+                "message": "本地登录二维码已更新，请使用最新二维码扫码。",
+                "qrData": qr_data,
+            },
+        )
+
+    is_expired = bool(qr_state.get("isExpired"))
+    if is_expired and not tracker.get("isExpired"):
+        tracker["isExpired"] = True
+        push_structured_status(
+            status_queue,
+            command_queue,
+            "qr_expired",
+            {
+                "message": "本地登录二维码已过期，请刷新二维码。",
+                "qrData": qr_data or tracker.get("lastQrData"),
+            },
+        )
+    elif not is_expired and tracker.get("isExpired") and qr_data:
+        tracker["isExpired"] = False
+
+    return qr_state
+
+
+async def apply_remote_action(page, action, status_queue=None, command_queue=None, qr_action_root=None):
     if not action:
         return False
 
@@ -434,10 +560,24 @@ async def apply_remote_action(page, action, status_queue=None, command_queue=Non
         )
         return True
 
+    if action_type == "refresh_qr":
+        targets = [target for target in (qr_action_root, page) if target is not None]
+        for target in targets:
+            refreshed = await click_visible_partial_option(target, QR_REFRESH_TEXTS)
+            if refreshed:
+                push_structured_status(
+                    status_queue,
+                    command_queue,
+                    "log",
+                    {"message": "远端已请求本地 SAU 刷新二维码"},
+                )
+                return True
+        return False
+
     return False
 
 
-async def drain_remote_actions(page, command_queue, status_queue=None):
+async def drain_remote_actions(page, command_queue, status_queue=None, qr_action_root=None):
     if command_queue is None:
         return False
 
@@ -447,36 +587,119 @@ async def drain_remote_actions(page, command_queue, status_queue=None):
             action = command_queue.get_nowait()
         except Empty:
             break
-        handled = await apply_remote_action(page, action, status_queue, command_queue) or handled
+        handled = await apply_remote_action(page, action, status_queue, command_queue, qr_action_root=qr_action_root) or handled
 
     return handled
 
 
-async def wait_for_login_result(page, original_url, url_changed_event, status_queue, command_queue=None, timeout=200):
+async def wait_for_login_result(page, original_url, url_changed_event, status_queue, command_queue=None, timeout=200, qr_locator=None, qr_action_root=None, initial_qr_data=None):
     deadline = asyncio.get_running_loop().time() + timeout
     last_signature = None
+    qr_tracker = {"lastQrData": initial_qr_data, "isExpired": False}
+    qr_hidden_since = None
 
     while asyncio.get_running_loop().time() < deadline:
-        if page.url != original_url:
+        if page.is_closed():
+            login_logger.info("login page closed after qr flow original_url={}", original_url)
             return True
+        if url_changed_event.is_set() or page.url != original_url:
+            login_logger.info("login navigation detected original_url={} current_url={}", original_url, page.url)
+            return True
+
+        qr_state = await sync_login_qr_state(
+            status_queue,
+            command_queue,
+            page,
+            qr_locator=qr_locator,
+            qr_action_root=qr_action_root,
+            tracker=qr_tracker,
+        )
+        qr_visible = await is_locator_visible(qr_locator)
+        if qr_locator is not None and not qr_visible and not qr_state.get("isExpired"):
+            if qr_hidden_since is None:
+                qr_hidden_since = asyncio.get_running_loop().time()
+            elif asyncio.get_running_loop().time() - qr_hidden_since >= 1.5:
+                login_logger.info("login qr disappeared and stayed hidden original_url={} current_url={}", original_url, page.url)
+                return True
+        else:
+            qr_hidden_since = None
 
         challenge = await detect_verification_challenge(page)
         if challenge:
             if challenge["signature"] != last_signature:
                 push_structured_status(status_queue, command_queue, "verification_required", challenge["payload"])
                 last_signature = challenge["signature"]
-            handled = await drain_remote_actions(page, command_queue, status_queue)
+            handled = await drain_remote_actions(page, command_queue, status_queue, qr_action_root=qr_action_root)
             if handled:
                 last_signature = None
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.5)
                 continue
         else:
             last_signature = None
-            await drain_remote_actions(page, command_queue, status_queue)
+            handled = await drain_remote_actions(page, command_queue, status_queue, qr_action_root=qr_action_root)
+            if handled:
+                await asyncio.sleep(0.5)
+                continue
 
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.5)
 
     return False
+
+
+async def persist_login_state_with_retry(context, account_type, account_name, platform_label, verify_timeout=30, verify_interval=2):
+    uuid_v1 = uuid.uuid1()
+    file_name = f"{uuid_v1}.json"
+    cookies_dir = Path(BASE_DIR / "cookiesFile")
+    cookies_dir.mkdir(exist_ok=True)
+    cookie_path = cookies_dir / file_name
+    await asyncio.sleep(1.5)
+
+    deadline = asyncio.get_running_loop().time() + max(verify_timeout, verify_interval)
+    attempt = 0
+    last_error = None
+
+    while asyncio.get_running_loop().time() < deadline:
+        attempt += 1
+        try:
+            await context.storage_state(path=cookie_path)
+            if await check_cookie(account_type, file_name):
+                save_login_account(account_type, account_name, file_name, 1)
+                login_logger.info(
+                    "{} login cookie saved account_name={} cookie_file={} attempts={}",
+                    platform_label,
+                    account_name,
+                    file_name,
+                    attempt,
+                )
+                return file_name
+            last_error = "cookie_invalid"
+            login_logger.warning(
+                "{} login detected but cookie not ready account_name={} attempt={}",
+                platform_label,
+                account_name,
+                attempt,
+            )
+        except Exception as exc:
+            last_error = str(exc)
+            login_logger.warning(
+                "{} login cookie verify error account_name={} attempt={} error={}",
+                platform_label,
+                account_name,
+                attempt,
+                exc,
+            )
+
+        await asyncio.sleep(verify_interval)
+
+    cookie_path.unlink(missing_ok=True)
+    login_logger.error(
+        "{} login cookie verify failed account_name={} attempts={} last_error={}",
+        platform_label,
+        account_name,
+        attempt,
+        last_error,
+    )
+    return None
 
 # 抖音登录
 async def douyin_cookie_gen(id,status_queue, command_queue=None):
@@ -498,7 +721,7 @@ async def douyin_cookie_gen(id,status_queue, command_queue=None):
         original_url = page.url
         img_locator = page.get_by_role("img", name="二维码")
         qr_data = await locator_to_data_url(img_locator)
-        print("✅ 二维码已生成")
+        login_logger.info("douyin qr generated account_name={}", id)
         status_queue.put(qr_data)
         # 监听页面的 'framenavigated' 事件，只关注主框架的变化
         page.on('framenavigated',
@@ -511,25 +734,22 @@ async def douyin_cookie_gen(id,status_queue, command_queue=None):
                 status_queue,
                 command_queue,
                 timeout=200,
+                qr_locator=img_locator,
+                qr_action_root=page,
+                initial_qr_data=qr_data,
             )
             if not login_success:
                 raise asyncio.TimeoutError
-            print("监听页面跳转成功")
+            login_logger.info("douyin login navigation detected account_name={}", id)
         except asyncio.TimeoutError:
-            print("监听页面跳转超时")
+            login_logger.warning("douyin login timed out account_name={}", id)
             await page.close()
             await context.close()
             await browser.close()
             status_queue.put("500")
             return None
-        uuid_v1 = uuid.uuid1()
-        print(f"UUID v1: {uuid_v1}")
-        # 确保cookiesFile目录存在
-        cookies_dir = Path(BASE_DIR / "cookiesFile")
-        cookies_dir.mkdir(exist_ok=True)
-        await context.storage_state(path=cookies_dir / f"{uuid_v1}.json")
-        result = await check_cookie(3, f"{uuid_v1}.json")
-        if not result:
+        saved_file = await persist_login_state_with_retry(context, 3, id, "douyin")
+        if not saved_file:
             status_queue.put("500")
             await page.close()
             await context.close()
@@ -538,8 +758,6 @@ async def douyin_cookie_gen(id,status_queue, command_queue=None):
         await page.close()
         await context.close()
         await browser.close()
-        save_login_account(3, id, f"{uuid_v1}.json", 1)
-        print("✅ 用户状态已记录")
         status_queue.put("200")
 
 
@@ -573,7 +791,7 @@ async def get_tencent_cookie(id,status_queue, command_queue=None):
         img_locator = iframe_locator.get_by_role("img").first
 
         qr_data = await locator_to_data_url(img_locator)
-        print("✅ 二维码已生成")
+        login_logger.info("tencent qr generated account_name={}", id)
         status_queue.put(qr_data)
 
         try:
@@ -584,25 +802,22 @@ async def get_tencent_cookie(id,status_queue, command_queue=None):
                 status_queue,
                 command_queue,
                 timeout=200,
+                qr_locator=img_locator,
+                qr_action_root=iframe_locator,
+                initial_qr_data=qr_data,
             )
             if not login_success:
                 raise asyncio.TimeoutError
-            print("监听页面跳转成功")
+            login_logger.info("tencent login navigation detected account_name={}", id)
         except asyncio.TimeoutError:
             status_queue.put("500")
-            print("监听页面跳转超时")
+            login_logger.warning("tencent login timed out account_name={}", id)
             await page.close()
             await context.close()
             await browser.close()
             return None
-        uuid_v1 = uuid.uuid1()
-        print(f"UUID v1: {uuid_v1}")
-        # 确保cookiesFile目录存在
-        cookies_dir = Path(BASE_DIR / "cookiesFile")
-        cookies_dir.mkdir(exist_ok=True)
-        await context.storage_state(path=cookies_dir / f"{uuid_v1}.json")
-        result = await check_cookie(2,f"{uuid_v1}.json")
-        if not result:
+        saved_file = await persist_login_state_with_retry(context, 2, id, "tencent")
+        if not saved_file:
             status_queue.put("500")
             await page.close()
             await context.close()
@@ -611,8 +826,6 @@ async def get_tencent_cookie(id,status_queue, command_queue=None):
         await page.close()
         await context.close()
         await browser.close()
-        save_login_account(2, id, f"{uuid_v1}.json", 1)
-        print("✅ 用户状态已记录")
         status_queue.put("200")
 
 # 快手登录
@@ -638,7 +851,7 @@ async def get_ks_cookie(id,status_queue, command_queue=None):
         img_locator = page.get_by_role("img", name="qrcode")
         qr_data = await locator_to_data_url(img_locator)
         original_url = page.url
-        print("✅ 二维码已生成")
+        login_logger.info("kuaishou qr generated account_name={}", id)
         status_queue.put(qr_data)
         # 监听页面的 'framenavigated' 事件，只关注主框架的变化
         page.on('framenavigated',
@@ -652,25 +865,22 @@ async def get_ks_cookie(id,status_queue, command_queue=None):
                 status_queue,
                 command_queue,
                 timeout=200,
+                qr_locator=img_locator,
+                qr_action_root=page,
+                initial_qr_data=qr_data,
             )
             if not login_success:
                 raise asyncio.TimeoutError
-            print("监听页面跳转成功")
+            login_logger.info("kuaishou login navigation detected account_name={}", id)
         except asyncio.TimeoutError:
             status_queue.put("500")
-            print("监听页面跳转超时")
+            login_logger.warning("kuaishou login timed out account_name={}", id)
             await page.close()
             await context.close()
             await browser.close()
             return None
-        uuid_v1 = uuid.uuid1()
-        print(f"UUID v1: {uuid_v1}")
-        # 确保cookiesFile目录存在
-        cookies_dir = Path(BASE_DIR / "cookiesFile")
-        cookies_dir.mkdir(exist_ok=True)
-        await context.storage_state(path=cookies_dir / f"{uuid_v1}.json")
-        result = await check_cookie(4, f"{uuid_v1}.json")
-        if not result:
+        saved_file = await persist_login_state_with_retry(context, 4, id, "kuaishou")
+        if not saved_file:
             status_queue.put("500")
             await page.close()
             await context.close()
@@ -679,8 +889,6 @@ async def get_ks_cookie(id,status_queue, command_queue=None):
         await page.close()
         await context.close()
         await browser.close()
-        save_login_account(4, id, f"{uuid_v1}.json", 1)
-        print("✅ 用户状态已记录")
         status_queue.put("200")
 
 # 小红书登录
@@ -706,7 +914,7 @@ async def xiaohongshu_cookie_gen(id,status_queue, command_queue=None):
         img_locator = page.get_by_role("img").nth(2)
         qr_data = await locator_to_data_url(img_locator)
         original_url = page.url
-        print("✅ 二维码已生成")
+        login_logger.info("xiaohongshu qr generated account_name={}", id)
         status_queue.put(qr_data)
         # 监听页面的 'framenavigated' 事件，只关注主框架的变化
         page.on('framenavigated',
@@ -720,25 +928,22 @@ async def xiaohongshu_cookie_gen(id,status_queue, command_queue=None):
                 status_queue,
                 command_queue,
                 timeout=200,
+                qr_locator=img_locator,
+                qr_action_root=page,
+                initial_qr_data=qr_data,
             )
             if not login_success:
                 raise asyncio.TimeoutError
-            print("监听页面跳转成功")
+            login_logger.info("xiaohongshu login navigation detected account_name={}", id)
         except asyncio.TimeoutError:
             status_queue.put("500")
-            print("监听页面跳转超时")
+            login_logger.warning("xiaohongshu login timed out account_name={}", id)
             await page.close()
             await context.close()
             await browser.close()
             return None
-        uuid_v1 = uuid.uuid1()
-        print(f"UUID v1: {uuid_v1}")
-        # 确保cookiesFile目录存在
-        cookies_dir = Path(BASE_DIR / "cookiesFile")
-        cookies_dir.mkdir(exist_ok=True)
-        await context.storage_state(path=cookies_dir / f"{uuid_v1}.json")
-        result = await check_cookie(1, f"{uuid_v1}.json")
-        if not result:
+        saved_file = await persist_login_state_with_retry(context, 1, id, "xiaohongshu")
+        if not saved_file:
             status_queue.put("500")
             await page.close()
             await context.close()
@@ -747,8 +952,6 @@ async def xiaohongshu_cookie_gen(id,status_queue, command_queue=None):
         await page.close()
         await context.close()
         await browser.close()
-        save_login_account(1, id, f"{uuid_v1}.json", 1)
-        print("✅ 用户状态已记录")
         status_queue.put("200")
 
 # a = asyncio.run(xiaohongshu_cookie_gen(4,None))

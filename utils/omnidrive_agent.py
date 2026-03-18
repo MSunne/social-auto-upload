@@ -15,6 +15,7 @@ import requests
 
 from conf import BASE_DIR
 from utils.device_meta import get_local_ip
+from utils.log import agent_logger, log_throttled
 from utils.materials import list_material_directory, list_material_roots, read_material_file
 
 
@@ -176,6 +177,17 @@ class OmniDriveBridge:
             self._init_db()
             self._thread = threading.Thread(target=self._loop, daemon=True)
             self._thread.start()
+            agent_logger.info(
+                "omnidrive bridge started device_code={} device_name={} poll_interval={} heartbeat_interval={} account_sync_interval={} material_sync_interval={} skill_sync_interval={} publish_sync_interval={}",
+                self.device_code,
+                self.device_name,
+                self.poll_interval,
+                self.heartbeat_interval,
+                self.account_sync_interval,
+                self.material_sync_interval,
+                self.skill_sync_interval,
+                self.publish_sync_interval,
+            )
 
     def status(self):
         with self._state_lock:
@@ -265,6 +277,15 @@ class OmniDriveBridge:
                     last_login_poll = now
             except Exception as exc:
                 self._update_state(lastError=str(exc))
+                log_throttled(
+                    agent_logger,
+                    "ERROR",
+                    f"omnidrive_agent.loop_error:{self.device_code}",
+                    30,
+                    "omnidrive bridge loop failed device_code={} error={}",
+                    self.device_code,
+                    exc,
+                )
 
             self._stop_event.wait(1)
 
@@ -308,6 +329,15 @@ class OmniDriveBridge:
             lastError=None,
             localIp=get_local_ip(),
         )
+        log_throttled(
+            agent_logger,
+            "DEBUG",
+            f"omnidrive_agent.heartbeat:{self.device_code}",
+            max(self.heartbeat_interval * 4, 120),
+            "omnidrive bridge heartbeat ok device_code={} local_ip={}",
+            self.device_code,
+            get_local_ip(),
+        )
         return data
 
     def _sync_accounts(self):
@@ -332,6 +362,17 @@ class OmniDriveBridge:
             mirroredAccounts=mirrored,
             lastAccountSyncAt=self._now_string(),
         )
+        if mirrored:
+            agent_logger.debug("omnidrive bridge synced accounts count={} device_code={}", mirrored, self.device_code)
+        else:
+            log_throttled(
+                agent_logger,
+                "DEBUG",
+                f"omnidrive_agent.accounts_idle:{self.device_code}",
+                max(self.account_sync_interval * 2, 120),
+                "omnidrive bridge account sync idle device_code={}",
+                self.device_code,
+            )
 
     def _sync_materials(self):
         roots = list_material_roots(self.material_roots)
@@ -357,6 +398,22 @@ class OmniDriveBridge:
             syncedFiles=synced_files,
             lastMaterialSyncAt=self._now_string(),
         )
+        if roots or synced_files:
+            agent_logger.debug(
+                "omnidrive bridge synced materials roots={} files={} device_code={}",
+                len(roots),
+                synced_files,
+                self.device_code,
+            )
+        else:
+            log_throttled(
+                agent_logger,
+                "DEBUG",
+                f"omnidrive_agent.materials_idle:{self.device_code}",
+                max(self.material_sync_interval * 2, 180),
+                "omnidrive bridge material sync idle device_code={}",
+                self.device_code,
+            )
 
     def _sync_material_directory_tree(self, root_name, relative_path, synced_files):
         if synced_files >= self.max_material_files:
@@ -557,6 +614,23 @@ class OmniDriveBridge:
             retiredSkillAcks=len(ack_items),
             lastSkillSyncAt=self._now_string(),
         )
+        if sync_items or ack_items:
+            agent_logger.debug(
+                "omnidrive bridge synced skills success_count={} sync_items={} retired_ack_count={} device_code={}",
+                synced_count,
+                len(sync_items),
+                len(ack_items),
+                self.device_code,
+            )
+        else:
+            log_throttled(
+                agent_logger,
+                "DEBUG",
+                f"omnidrive_agent.skills_idle:{self.device_code}",
+                max(self.skill_sync_interval * 2, 120),
+                "omnidrive bridge skill sync idle device_code={}",
+                self.device_code,
+            )
 
     def _poll_remote_login_tasks(self):
         queue_payload = self._request("GET", f"/api/v1/agent/login-tasks/{self.device_code}") or []
@@ -569,6 +643,21 @@ class OmniDriveBridge:
                 for item in sessions[:10]
             ],
         )
+        if sessions:
+            agent_logger.debug(
+                "omnidrive bridge polled remote login sessions count={} device_code={}",
+                len(sessions),
+                self.device_code,
+            )
+        else:
+            log_throttled(
+                agent_logger,
+                "DEBUG",
+                f"omnidrive_agent.login_idle:{self.device_code}",
+                max(self.poll_interval * 20, 60),
+                "omnidrive bridge login queue idle device_code={}",
+                self.device_code,
+            )
 
         if self._get_active_login_worker():
             return
@@ -659,6 +748,7 @@ class OmniDriveBridge:
             "lastQRData": None,
             "lastVerificationSignature": None,
             "lastVerificationPayload": None,
+            "pendingStatusEvents": [],
             "startedAt": self._iso_now(),
         }
 
@@ -681,6 +771,12 @@ class OmniDriveBridge:
             )
             return False
 
+        agent_logger.info(
+            "omnidrive bridge login session started session_id={} platform={} account_name={}",
+            session_id,
+            platform_config["label"],
+            account_name,
+        )
         self._post_login_event(
             session_id,
             status="running",
@@ -747,13 +843,27 @@ class OmniDriveBridge:
         if status_queue is None:
             return
 
+        pending_events = list(worker.get("pendingStatusEvents") or [])
+        if pending_events:
+            worker["pendingStatusEvents"] = []
+            for event in pending_events:
+                try:
+                    self._handle_login_status_event(worker, event)
+                except Exception as exc:
+                    worker.setdefault("pendingStatusEvents", []).insert(0, event)
+                    raise RuntimeError(f"retry login status event failed: {exc}") from exc
+
         while True:
             try:
                 event = status_queue.get_nowait()
             except Empty:
                 break
 
-            self._handle_login_status_event(worker, event)
+            try:
+                self._handle_login_status_event(worker, event)
+            except Exception as exc:
+                worker.setdefault("pendingStatusEvents", []).append(event)
+                raise RuntimeError(f"process login status event failed: {exc}") from exc
 
     def _handle_login_status_event(self, worker, event):
         session_id = str(worker.get("sessionId") or "").strip()
@@ -764,6 +874,30 @@ class OmniDriveBridge:
         if isinstance(event, dict):
             event_type = str(event.get("type") or "").strip()
             payload = event.get("payload") or {}
+            if event_type == "qr_updated":
+                qr_data = payload.get("qrData")
+                message = self._trim_message(payload.get("message")) or f"{platform_label} 登录二维码已更新"
+                if qr_data == worker.get("lastQRData") and message == worker.get("lastMessage"):
+                    return
+                self._post_login_event(
+                    session_id,
+                    status="running",
+                    message=message,
+                    qr_data=qr_data or worker.get("lastQRData"),
+                )
+                return
+            if event_type == "qr_expired":
+                qr_data = payload.get("qrData") or worker.get("lastQRData")
+                message = self._trim_message(payload.get("message")) or f"{platform_label} 登录二维码已过期，请刷新二维码"
+                if message == worker.get("lastMessage") and qr_data == worker.get("lastQRData"):
+                    return
+                self._post_login_event(
+                    session_id,
+                    status="running",
+                    message=message,
+                    qr_data=qr_data,
+                )
+                return
             if event_type == "verification_required":
                 signature = self._derive_login_verification_signature(payload)
                 if signature and signature == worker.get("lastVerificationSignature"):
@@ -799,6 +933,15 @@ class OmniDriveBridge:
                 status="success",
                 message=f"{platform_label} 账号登录成功，本地 SAU 已保存最新 Cookie",
             )
+            try:
+                self._sync_accounts()
+            except Exception as exc:
+                agent_logger.warning(
+                    "omnidrive bridge immediate account sync failed session_id={} account_name={} error={}",
+                    session_id,
+                    worker.get("accountName"),
+                    exc,
+                )
             return
 
         if message == "500":
@@ -865,6 +1008,13 @@ class OmniDriveBridge:
             f"/api/v1/agent/login-sessions/{session_id}/event",
             payload=payload,
         ) or {}
+        agent_logger.debug(
+            "omnidrive bridge login event pushed session_id={} status={} has_qr={} has_verification={}",
+            session_id,
+            payload["status"],
+            bool(qr_data),
+            verification_payload is not None,
+        )
         self._update_state(
             lastLoginEventAt=self._now_string(),
             lastError=None,
@@ -953,8 +1103,32 @@ class OmniDriveBridge:
             importedCloudTasks=imported,
             lastPublishPollAt=self._now_string(),
         )
+        if imported:
+            agent_logger.info(
+                "omnidrive bridge imported remote publish tasks count={} device_code={}",
+                imported,
+                self.device_code,
+            )
+        else:
+            log_throttled(
+                agent_logger,
+                "DEBUG",
+                f"omnidrive_agent.publish_poll_idle:{self.device_code}",
+                max(self.poll_interval * 20, 60),
+                "omnidrive bridge publish queue idle device_code={}",
+                self.device_code,
+            )
         if last_error:
             self._update_state(lastError=last_error)
+            log_throttled(
+                agent_logger,
+                "WARNING",
+                f"omnidrive_agent.publish_import_error:{self.device_code}",
+                30,
+                "omnidrive bridge remote publish import error device_code={} error={}",
+                self.device_code,
+                last_error,
+            )
 
     def _sync_imported_task_runtime(self, local_spec):
         task_uuid = local_spec["taskUuid"]
@@ -1013,8 +1187,32 @@ class OmniDriveBridge:
             mirroredTasks=mirrored,
             lastPublishSyncAt=self._now_string(),
         )
+        if mirrored:
+            agent_logger.debug(
+                "omnidrive bridge synced local publish tasks count={} device_code={}",
+                mirrored,
+                self.device_code,
+            )
+        else:
+            log_throttled(
+                agent_logger,
+                "DEBUG",
+                f"omnidrive_agent.publish_sync_idle:{self.device_code}",
+                max(self.publish_sync_interval * 20, 60),
+                "omnidrive bridge local publish sync idle device_code={}",
+                self.device_code,
+            )
         if last_error:
             self._update_state(lastError=last_error)
+            log_throttled(
+                agent_logger,
+                "WARNING",
+                f"omnidrive_agent.publish_sync_error:{self.device_code}",
+                30,
+                "omnidrive bridge local publish sync error device_code={} error={}",
+                self.device_code,
+                last_error,
+            )
 
     def _handle_sync_local_publish_task_error(self, task, exc):
         response = getattr(exc, "response", None)
@@ -1054,6 +1252,21 @@ class OmniDriveBridge:
             mirroredAITasks=mirrored,
             lastAISyncAt=self._now_string(),
         )
+        if mirrored:
+            agent_logger.debug(
+                "omnidrive bridge synced local ai tasks count={} device_code={}",
+                mirrored,
+                self.device_code,
+            )
+        else:
+            log_throttled(
+                agent_logger,
+                "DEBUG",
+                f"omnidrive_agent.ai_sync_idle:{self.device_code}",
+                max(self.publish_sync_interval * 20, 60),
+                "omnidrive bridge local ai sync idle device_code={}",
+                self.device_code,
+            )
         return mirrored
 
     def _import_remote_ai_jobs(self):
@@ -1154,6 +1367,21 @@ class OmniDriveBridge:
             importedAIResults=imported,
             lastAIPollAt=self._now_string(),
         )
+        if imported:
+            agent_logger.info(
+                "omnidrive bridge imported remote ai results count={} device_code={}",
+                imported,
+                self.device_code,
+            )
+        else:
+            log_throttled(
+                agent_logger,
+                "DEBUG",
+                f"omnidrive_agent.ai_poll_idle:{self.device_code}",
+                max(self.poll_interval * 20, 60),
+                "omnidrive bridge remote ai queue idle device_code={}",
+                self.device_code,
+            )
         return imported
 
     def _sync_local_ai_publish_state(self):
@@ -1244,6 +1472,21 @@ class OmniDriveBridge:
             lastLeaseRenewAt=self._now_string(),
             lastError=None,
         )
+        if renewed:
+            agent_logger.debug(
+                "omnidrive bridge renewed active leases count={} device_code={}",
+                renewed,
+                self.device_code,
+            )
+        else:
+            log_throttled(
+                agent_logger,
+                "DEBUG",
+                f"omnidrive_agent.lease_idle:{self.device_code}",
+                max(self.publish_sync_interval * 20, 60),
+                "omnidrive bridge lease renew idle device_code={}",
+                self.device_code,
+            )
         return renewed
 
     def _build_local_task_spec(self, package):

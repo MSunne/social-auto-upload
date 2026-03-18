@@ -30,6 +30,15 @@ from utils.materials import (
 from utils.omnidrive_agent import OmniDriveBridge
 from utils.omnidrive_ai_task_manager import OmniDriveAITaskManager
 from utils.publish_task_manager import PublishTaskManager
+from utils.log import (
+    agent_logger,
+    ai_logger,
+    app_logger,
+    login_logger,
+    log_throttled,
+    request_logger,
+    task_logger,
+)
 
 active_queues = {}
 app = Flask(__name__)
@@ -39,6 +48,17 @@ PLATFORM_LABELS = {
     '3': '抖音',
     '4': '快手'
 }
+NOISY_REQUEST_INTERVALS = {
+    '/cloudAgentStatus': 20,
+    '/omnidriveAgentStatus': 20,
+    '/api/skill/status': 15,
+    '/favicon.ico': 300,
+    '/vite.svg': 300,
+}
+NOISY_REQUEST_PREFIX_INTERVALS = {
+    '/assets/': 300,
+}
+REQUEST_LOG_BODY_LIMIT = 500
 
 
 def parse_bool(value):
@@ -59,6 +79,67 @@ def parse_csv(value, default=None):
     parts = [item.strip() for item in str(value).split(',')]
     cleaned = [item for item in parts if item]
     return cleaned or list(default or [])
+
+
+def _redact_for_log(value):
+    sensitive_keys = {
+        'password',
+        'token',
+        'agentKey',
+        'authorization',
+        'accessToken',
+        'writerToken',
+        'viewerToken',
+        'qrData',
+    }
+    if isinstance(value, dict):
+        sanitized = {}
+        for key, item in value.items():
+            if str(key).strip() in sensitive_keys:
+                sanitized[key] = '[REDACTED]'
+            else:
+                sanitized[key] = _redact_for_log(item)
+        return sanitized
+    if isinstance(value, list):
+        return [_redact_for_log(item) for item in value]
+    return value
+
+
+def _compact_log_value(value, limit=REQUEST_LOG_BODY_LIMIT):
+    if value in (None, '', [], {}):
+        return None
+    try:
+        if isinstance(value, (dict, list, tuple)):
+            text = json.dumps(_redact_for_log(value), ensure_ascii=False, default=str)
+        else:
+            text = str(value)
+    except Exception:
+        text = repr(value)
+    text = text.strip()
+    if len(text) > limit:
+        return text[:limit] + '...(truncated)'
+    return text
+
+
+def _request_log_interval(path):
+    if path in NOISY_REQUEST_INTERVALS:
+        return NOISY_REQUEST_INTERVALS[path]
+    for prefix, interval in NOISY_REQUEST_PREFIX_INTERVALS.items():
+        if path.startswith(prefix):
+            return interval
+    return 0
+
+
+def _request_payload_summary():
+    if request.method in {'GET', 'HEAD', 'OPTIONS'}:
+        return None
+
+    payload = get_request_payload()
+    files = list(request.files.keys()) if request.files else []
+    if files:
+        payload = dict(payload)
+        payload['_files'] = files
+    return _compact_log_value(payload)
 
 
 CLOUD_AGENT_ENABLED = parse_bool(getattr(app_conf, 'CLOUD_AGENT_ENABLED', False))
@@ -411,16 +492,19 @@ def build_skill_status_payload():
 
 def relay_remote_login_status(status_queue, bridge):
     try:
+        login_logger.debug("remote login relay started session_id={}", bridge.session_id)
         bridge.push_log("本地浏览器已启动，等待二维码...")
 
         while True:
             msg = status_queue.get(timeout=240)
 
             if msg == "200":
+                login_logger.info("remote login relay success session_id={}", bridge.session_id)
                 bridge.push_login_success()
                 break
 
             if msg == "500":
+                login_logger.warning("remote login relay failed session_id={}", bridge.session_id)
                 bridge.push_login_failed()
                 break
 
@@ -429,11 +513,13 @@ def relay_remote_login_status(status_queue, bridge):
                 payload = msg.get("payload") or {}
 
                 if event_type == "qr_ready" and payload.get("qrData"):
+                    login_logger.info("remote login relay qr ready session_id={}", bridge.session_id)
                     bridge.push_qr(payload["qrData"])
                     bridge.push_log(payload.get("message") or "二维码已就绪，请在远端页面扫码")
                     continue
 
                 if event_type == "verification_required":
+                    login_logger.warning("remote login relay verification required session_id={}", bridge.session_id)
                     bridge.push_verification(payload)
                     if payload.get("message"):
                         bridge.push_log(payload["message"])
@@ -444,14 +530,17 @@ def relay_remote_login_status(status_queue, bridge):
                     continue
 
             if isinstance(msg, str) and msg:
+                login_logger.info("remote login relay qr text forwarded session_id={}", bridge.session_id)
                 bridge.push_qr(msg)
                 bridge.push_log("二维码已就绪，请在远端页面扫码")
     except Empty:
+        login_logger.warning("remote login relay timed out session_id={}", bridge.session_id)
         try:
             bridge.push_login_failed("本地登录超时，未等到扫码完成")
         except Exception:
             pass
     except Exception as exc:
+        login_logger.exception("remote login relay failed session_id={} error={}", bridge.session_id, exc)
         try:
             bridge.push_login_failed(f"远端同步失败: {exc}")
         except Exception:
@@ -536,10 +625,14 @@ def fetch_omnidrive_device_session():
 
 
 def ensure_publish_task_manager_started():
+    if not publish_task_manager._started:
+        task_logger.debug("ensuring publish task manager started")
     publish_task_manager.start()
 
 
 def ensure_omnidrive_ai_task_manager_started():
+    if not omnidrive_ai_task_manager._started:
+        ai_logger.debug("ensuring omnidrive ai task manager started")
     omnidrive_ai_task_manager.start()
 
 
@@ -551,6 +644,13 @@ def ensure_cloud_agent_started():
 
     with cloud_agent_lock:
         if cloud_agent is None:
+            agent_logger.info(
+                "starting cloud agent device_code={} cloud_url={} poll_interval={} heartbeat_interval={}",
+                DEVICE_CODE,
+                CLOUD_DEMO_URL,
+                CLOUD_AGENT_POLL_INTERVAL,
+                CLOUD_AGENT_HEARTBEAT_INTERVAL,
+            )
             cloud_agent = CloudAgent(
                 cloud_base_url=CLOUD_DEMO_URL,
                 agent_key=CLOUD_AGENT_KEY,
@@ -572,6 +672,13 @@ def ensure_omnidrive_agent_started():
 
     with omnidrive_agent_lock:
         if omnidrive_agent is None:
+            agent_logger.info(
+                "starting omnidrive bridge device_code={} cloud_url={} poll_interval={} heartbeat_interval={}",
+                DEVICE_CODE,
+                OMNIDRIVE_BASE_URL,
+                OMNIDRIVE_AGENT_POLL_INTERVAL,
+                OMNIDRIVE_AGENT_HEARTBEAT_INTERVAL,
+            )
             omnidrive_agent = OmniDriveBridge(
                 db_path=Path(BASE_DIR / "db" / "database.db"),
                 cloud_base_url=OMNIDRIVE_BASE_URL,
@@ -605,6 +712,66 @@ def should_boot_background_services():
             return werkzeug_run_main
         return True
     return True
+
+
+@app.before_request
+def start_request_log_context():
+    request.environ['_sau_started_at'] = time.perf_counter()
+    request.environ['_sau_request_id'] = uuid.uuid4().hex[:12]
+
+
+@app.after_request
+def log_request_summary(response):
+    started_at = request.environ.get('_sau_started_at')
+    duration_ms = 0
+    if started_at is not None:
+        duration_ms = int((time.perf_counter() - started_at) * 1000)
+
+    path = request.path
+    request_id = request.environ.get('_sau_request_id')
+    request_summary = _request_payload_summary()
+    response_summary = None
+    if response.status_code >= 400:
+        try:
+            response_summary = _compact_log_value(response.get_data(as_text=True))
+        except Exception:
+            response_summary = None
+
+    log_message = (
+        "http request completed request_id={} method={} path={} status={} duration_ms={} remote_addr={} payload={} response={}"
+    )
+    interval = _request_log_interval(path)
+    level = "ERROR" if response.status_code >= 500 else "WARNING" if response.status_code >= 400 else "DEBUG"
+    if interval:
+        log_throttled(
+            request_logger,
+            level,
+            f"http:{request.method}:{path}:{response.status_code}",
+            interval,
+            log_message,
+            request_id,
+            request.method,
+            path,
+            response.status_code,
+            duration_ms,
+            request.remote_addr,
+            request_summary,
+            response_summary,
+        )
+    else:
+        request_logger.log(
+            level,
+            log_message,
+            request_id,
+            request.method,
+            path,
+            response.status_code,
+            duration_ms,
+            request.remote_addr,
+            request_summary,
+            response_summary,
+        )
+    return response
 
 
 @app.before_request

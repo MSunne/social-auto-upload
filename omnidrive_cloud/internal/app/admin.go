@@ -144,13 +144,13 @@ func (a *App) EnsureAdminBootstrap(ctx context.Context) error {
 	}
 	a.Logger.Debug("admin rbac catalog ensured", "permission_count", len(adminPermissionCatalog), "role_count", len(systemAdminRoleCatalog))
 
-	count, err := a.Store.CountAdminUsers(ctx)
-	if err != nil {
-		return fmt.Errorf("count admin users: %w", err)
+	adminAccount := strings.ToLower(strings.TrimSpace(a.Config.AdminEmail))
+	if adminAccount == "" {
+		return fmt.Errorf("bootstrap admin account is empty")
 	}
-	if count > 0 {
-		a.Logger.Debug("admin bootstrap skipped because admin users already exist", "admin_count", count)
-		return nil
+	adminName := strings.TrimSpace(a.Config.AdminName)
+	if adminName == "" {
+		adminName = "Super Admin"
 	}
 
 	passwordHash, err := a.AdminTokens.HashPassword(a.Config.AdminPassword)
@@ -158,10 +158,51 @@ func (a *App) EnsureAdminBootstrap(ctx context.Context) error {
 		return fmt.Errorf("hash bootstrap admin password: %w", err)
 	}
 
+	active := true
+
+	existingBootstrap, err := a.Store.GetAdminIdentityByID(ctx, BootstrapAdminID)
+	if err != nil {
+		return fmt.Errorf("get bootstrap admin by id: %w", err)
+	}
+	if existingBootstrap != nil {
+		_, err = a.Store.UpdateAdminUser(ctx, existingBootstrap.ID, store.UpdateAdminUserInput{
+			Email:          stringPtr(adminAccount),
+			Name:           stringPtr(adminName),
+			PasswordHash:   &passwordHash,
+			IsActive:       &active,
+			RoleIDs:        []string{SuperAdminRoleID},
+			RoleIDsTouched: true,
+		})
+		if err != nil {
+			return fmt.Errorf("update bootstrap admin user: %w", err)
+		}
+		a.Logger.Info("bootstrap admin user ensured", "admin_id", existingBootstrap.ID, "account", adminAccount)
+		return nil
+	}
+
+	existingAccount, err := a.Store.GetAdminUserByAccount(ctx, adminAccount)
+	if err != nil {
+		return fmt.Errorf("get bootstrap admin by account: %w", err)
+	}
+	if existingAccount != nil {
+		_, err = a.Store.UpdateAdminUser(ctx, existingAccount.Admin.ID, store.UpdateAdminUserInput{
+			Name:           stringPtr(adminName),
+			PasswordHash:   &passwordHash,
+			IsActive:       &active,
+			RoleIDs:        []string{SuperAdminRoleID},
+			RoleIDsTouched: true,
+		})
+		if err != nil {
+			return fmt.Errorf("update bootstrap admin account: %w", err)
+		}
+		a.Logger.Info("bootstrap admin account ensured", "admin_id", existingAccount.Admin.ID, "account", adminAccount)
+		return nil
+	}
+
 	_, err = a.Store.CreateAdminUser(ctx, store.CreateAdminUserInput{
 		ID:           BootstrapAdminID,
-		Email:        a.Config.AdminEmail,
-		Name:         a.Config.AdminName,
+		Email:        adminAccount,
+		Name:         adminName,
 		PasswordHash: passwordHash,
 		IsActive:     true,
 		AuthMode:     "bootstrap_seed",
@@ -170,7 +211,7 @@ func (a *App) EnsureAdminBootstrap(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create bootstrap admin user: %w", err)
 	}
-	a.Logger.Info("bootstrap admin user created", "admin_id", BootstrapAdminID, "email", a.Config.AdminEmail)
+	a.Logger.Info("bootstrap admin user created", "admin_id", BootstrapAdminID, "account", adminAccount)
 	return nil
 }
 

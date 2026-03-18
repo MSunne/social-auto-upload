@@ -3,6 +3,8 @@ import time
 
 import requests
 
+from utils.log import agent_logger, log_throttled
+
 
 class CloudLoginBridge:
     def __init__(self, cloud_base_url, platform, account_name, device_name=None, timeout=10):
@@ -106,7 +108,31 @@ class CloudLoginBridge:
                 action = self.fetch_next_action()
                 if action:
                     command_queue.put(action)
+                    agent_logger.debug(
+                        "cloud qr bridge received remote action session_id={} action_type={}",
+                        self.session_id,
+                        action.get("actionType"),
+                    )
+                else:
+                    log_throttled(
+                        agent_logger,
+                        "DEBUG",
+                        f"cloud_qr_bridge.idle:{self.session_id}",
+                        max(interval * 20, 30),
+                        "cloud qr bridge idle session_id={} interval={}",
+                        self.session_id,
+                        interval,
+                    )
             except Exception:
+                log_throttled(
+                    agent_logger,
+                    "WARNING",
+                    f"cloud_qr_bridge.error:{self.session_id}",
+                    max(interval * 10, 10),
+                    "cloud qr bridge poll failed session_id={} interval={}",
+                    self.session_id,
+                    interval,
+                )
                 time.sleep(max(interval, 1.0))
                 continue
 

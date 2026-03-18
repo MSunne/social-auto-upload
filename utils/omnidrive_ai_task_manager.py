@@ -5,6 +5,8 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+from utils.log import ai_logger
+
 
 FINAL_AI_TASK_STATUSES = {"success", "failed", "cancelled", "needs_verify"}
 
@@ -21,6 +23,7 @@ class OmniDriveAITaskManager:
                 return
             self.init_db()
             self._started = True
+            ai_logger.info("omnidrive ai task manager started db_path={}", self.db_path)
 
     def init_db(self):
         with self._connect() as conn:
@@ -116,6 +119,14 @@ class OmniDriveAITaskManager:
             )
             conn.commit()
 
+        ai_logger.info(
+            "ai task created task_uuid={} source={} job_type={} model_name={} skill_id={}",
+            task["taskUuid"],
+            task["source"],
+            task["jobType"],
+            task["modelName"],
+            task["skillId"],
+        )
         return self.get_task(task["taskUuid"])
 
     def list_tasks(self, limit=100, status=None, source=None):
@@ -198,6 +209,13 @@ class OmniDriveAITaskManager:
                 (cloud_job_id, cloud_status, local_status, message, finished_at, task_uuid),
             )
             conn.commit()
+        ai_logger.debug(
+            "ai task cloud binding updated task_uuid={} cloud_job_id={} cloud_status={} local_status={}",
+            task_uuid,
+            cloud_job_id,
+            cloud_status,
+            local_status,
+        )
         return self.get_task(task_uuid)
 
     def mark_cloud_state(self, task_uuid, cloud_status, message=None):
@@ -222,6 +240,12 @@ class OmniDriveAITaskManager:
                 (cloud_status, next_status, message, finished_at, task_uuid),
             )
             conn.commit()
+        ai_logger.debug(
+            "ai task cloud state updated task_uuid={} cloud_status={} local_status={}",
+            task_uuid,
+            cloud_status,
+            next_status,
+        )
         return self.get_task(task_uuid)
 
     def mark_result_imported(self, task_uuid, artifact_refs, linked_publish_task_uuid=None, message=None):
@@ -249,6 +273,12 @@ class OmniDriveAITaskManager:
                 ),
             )
             conn.commit()
+        ai_logger.info(
+            "ai task result imported task_uuid={} artifact_count={} linked_publish_task_uuid={}",
+            task_uuid,
+            len(artifact_refs or []),
+            linked_publish_task_uuid,
+        )
         return self.get_task(task_uuid)
 
     def sync_linked_publish_status(self, task_uuid, publish_status, message=None):
@@ -280,6 +310,12 @@ class OmniDriveAITaskManager:
                 (next_status, message, finished_at, task_uuid),
             )
             conn.commit()
+        ai_logger.debug(
+            "ai task linked publish status synced task_uuid={} publish_status={} local_status={}",
+            task_uuid,
+            publish_status,
+            next_status,
+        )
         return self.get_task(task_uuid)
 
     def summary(self):

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -1540,6 +1541,82 @@ func (h *AdminConsoleHandler) GetLoginSession(w http.ResponseWriter, r *http.Req
 	}
 
 	render.JSON(w, http.StatusOK, session)
+}
+
+func (h *AdminConsoleHandler) CreateLoginSessionAction(w http.ResponseWriter, r *http.Request) {
+	sessionID := strings.TrimSpace(chi.URLParam(r, "sessionId"))
+	if sessionID == "" {
+		render.Error(w, http.StatusBadRequest, "sessionId is required")
+		return
+	}
+
+	session, err := h.app.Store.GetLoginSessionByID(r.Context(), sessionID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load login session")
+		return
+	}
+	if session == nil {
+		render.Error(w, http.StatusNotFound, "Login session not found")
+		return
+	}
+
+	var payload createLoginActionRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	payload.ActionType = strings.TrimSpace(payload.ActionType)
+	if payload.ActionType == "" {
+		render.Error(w, http.StatusBadRequest, "actionType is required")
+		return
+	}
+
+	var payloadBytes []byte
+	if payload.Payload != nil {
+		payloadBytes, err = json.Marshal(payload.Payload)
+		if err != nil {
+			render.Error(w, http.StatusBadRequest, "payload must be valid json")
+			return
+		}
+	}
+
+	action, err := h.app.Store.CreateLoginAction(r.Context(), store.CreateLoginActionInput{
+		ID:         uuid.NewString(),
+		SessionID:  session.ID,
+		ActionType: payload.ActionType,
+		Payload:    payloadBytes,
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to create login action")
+		return
+	}
+
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  session.UserID,
+		ResourceType: "login_session_action",
+		ResourceID:   &action.ID,
+		Action:       payload.ActionType,
+		Title:        "运营后台提交登录会话动作",
+		Source:       session.Platform,
+		Status:       action.Status,
+		Message:      auditStringPtr("登录会话动作已由运营后台下发到本地 SAU"),
+		Payload: mustJSONBytes(map[string]any{
+			"sessionId":     session.ID,
+			"platform":      session.Platform,
+			"accountName":   session.AccountName,
+			"actionType":    payload.ActionType,
+			"actionPayload": payload.Payload,
+		}),
+	})
+	h.recordAdminAction(r.Context(), "login_session", &session.ID, payload.ActionType, "提交登录会话动作", "success", auditStringPtr("登录会话动作已下发"), mustJSONBytes(map[string]any{
+		"actionId":      action.ID,
+		"actionType":    payload.ActionType,
+		"platform":      session.Platform,
+		"accountName":   session.AccountName,
+		"actionPayload": payload.Payload,
+	}))
+
+	render.JSON(w, http.StatusCreated, action)
 }
 
 func (h *AdminConsoleHandler) DeleteMediaAccount(w http.ResponseWriter, r *http.Request) {

@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"net/http"
-	"net/mail"
 	"strings"
 	"time"
 
@@ -19,6 +18,8 @@ type AdminAuthHandler struct {
 }
 
 type adminLoginRequest struct {
+	Account  string `json:"account"`
+	Username string `json:"username"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
 }
@@ -34,13 +35,13 @@ func (h *AdminAuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	email := strings.TrimSpace(strings.ToLower(payload.Email))
-	if _, err := mail.ParseAddress(email); err != nil {
-		render.Error(w, http.StatusBadRequest, "Invalid admin email")
+	account := normalizeAdminAccount(firstNonEmptyAdminValue(payload.Account, payload.Username, payload.Email))
+	if account == "" {
+		render.Error(w, http.StatusBadRequest, "Admin account is required")
 		return
 	}
 
-	adminWithPassword, err := h.app.Store.GetAdminUserByEmail(r.Context(), email)
+	adminWithPassword, err := h.app.Store.GetAdminUserByAccount(r.Context(), account)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to query admin user")
 		return
@@ -95,6 +96,7 @@ func (h *AdminAuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Status:       "success",
 		Message:      auditStringPtr("管理员登录成功"),
 		Payload: mustJSONBytes(map[string]any{
+			"account":   admin.Email,
 			"authMode":  admin.AuthMode,
 			"roleIds":   admin.RoleIDs,
 			"sessionId": sessionID,

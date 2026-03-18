@@ -7,6 +7,7 @@ import requests
 
 from utils.cloud_qr_bridge import CloudLoginBridge
 from utils.device_meta import get_device_code, get_local_ip
+from utils.log import agent_logger, log_throttled
 
 
 class CloudAgent:
@@ -56,6 +57,13 @@ class CloudAgent:
             self._stop.clear()
             self._thread = threading.Thread(target=self._loop, daemon=True)
             self._thread.start()
+            agent_logger.info(
+                "cloud agent started device_code={} device_name={} poll_interval={} heartbeat_interval={}",
+                self.device_code,
+                self.device_name,
+                self.poll_interval,
+                self.heartbeat_interval,
+            )
 
     def status(self):
         with self._state_lock:
@@ -88,6 +96,12 @@ class CloudAgent:
                     task = self._claim_task()
                     if task:
                         self._busy.set()
+                        agent_logger.info(
+                            "cloud agent claimed login task task_id={} platform={} account_name={}",
+                            task.get("taskId"),
+                            task.get("platform"),
+                            task.get("accountName"),
+                        )
                         self._update_state(
                             busy=True,
                             currentTask={
@@ -98,8 +112,27 @@ class CloudAgent:
                             lastTaskAt=time.strftime("%Y-%m-%d %H:%M:%S")
                         )
                         threading.Thread(target=self._execute_task, args=(task,), daemon=True).start()
+                    else:
+                        log_throttled(
+                            agent_logger,
+                            "DEBUG",
+                            f"cloud_agent.idle:{self.device_code}",
+                            max(self.poll_interval * 12, 60),
+                            "cloud agent idle device_code={} poll_interval={}",
+                            self.device_code,
+                            self.poll_interval,
+                        )
             except Exception as exc:
                 self._update_state(lastError=str(exc))
+                log_throttled(
+                    agent_logger,
+                    "ERROR",
+                    f"cloud_agent.loop_error:{self.device_code}",
+                    30,
+                    "cloud agent loop failed device_code={} error={}",
+                    self.device_code,
+                    exc,
+                )
 
             time.sleep(self.poll_interval)
 
@@ -119,6 +152,15 @@ class CloudAgent:
             localIp=get_local_ip(),
             lastError=None,
         )
+        log_throttled(
+            agent_logger,
+            "DEBUG",
+            f"cloud_agent.heartbeat:{self.device_code}",
+            max(self.heartbeat_interval * 4, 120),
+            "cloud agent heartbeat ok device_code={} local_ip={}",
+            self.device_code,
+            get_local_ip(),
+        )
 
     def _claim_task(self):
         response = requests.post(
@@ -136,6 +178,13 @@ class CloudAgent:
         bridge = None
         action_stop_event = threading.Event()
         try:
+            agent_logger.info(
+                "cloud agent login task started task_id={} session_id={} platform={} account_name={}",
+                task.get("taskId"),
+                task.get("sessionId"),
+                task.get("platform"),
+                task.get("accountName"),
+            )
             bridge = CloudLoginBridge(
                 self.cloud_base_url,
                 task["platform"],
@@ -162,6 +211,11 @@ class CloudAgent:
                 daemon=True
             ).start()
             self.relay_fn(status_queue, bridge)
+            agent_logger.info(
+                "cloud agent login task finished task_id={} session_id={}",
+                task.get("taskId"),
+                task.get("sessionId"),
+            )
         except Exception as exc:
             if bridge is not None:
                 try:
@@ -169,6 +223,12 @@ class CloudAgent:
                 except Exception:
                     pass
             self._update_state(lastError=str(exc))
+            agent_logger.exception(
+                "cloud agent login task failed task_id={} session_id={} error={}",
+                task.get("taskId"),
+                task.get("sessionId"),
+                exc,
+            )
         finally:
             action_stop_event.set()
             self._busy.clear()

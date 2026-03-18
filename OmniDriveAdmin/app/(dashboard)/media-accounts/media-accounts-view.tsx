@@ -137,6 +137,7 @@ export function MediaAccountsView() {
   const [addDeviceId, setAddDeviceId] = useState("");
   const [activeSession, setActiveSession] = useState<LoginSession | null>(null);
   const [activeSessionMeta, setActiveSessionMeta] = useState<SessionMeta | null>(null);
+  const [sessionActionLoading, setSessionActionLoading] = useState<string | null>(null);
 
   const { data, isLoading, error, refetch } = useMediaAccounts({
     page,
@@ -173,6 +174,7 @@ export function MediaAccountsView() {
         setActionLoadingKey((current) => (current === activeSessionMeta?.sourceKey ? null : current));
 
         if (SESSION_FINAL_STATUSES.has(session.status)) {
+          setSessionActionLoading(null);
           const tone = getSessionStatusTone(session.status);
           setNotice({
             tone,
@@ -196,7 +198,7 @@ export function MediaAccountsView() {
     void pollSession();
     const intervalId = window.setInterval(() => {
       void pollSession();
-    }, 2000);
+    }, 1000);
 
     return () => {
       cancelled = true;
@@ -257,6 +259,38 @@ export function MediaAccountsView() {
         tone: "error",
         text: formatErrorMessage(bulkError, "删除失败，请重试。"),
       });
+    }
+  };
+
+  const handleRefreshQRCode = async () => {
+    if (!activeSession || SESSION_FINAL_STATUSES.has(activeSession.status)) {
+      return;
+    }
+
+    setSessionActionLoading("refresh_qr");
+    try {
+      await adminApi.post(`${adminPaths.loginSessions}/${activeSession.id}/actions`, {
+        actionType: "refresh_qr",
+      });
+      setNotice({
+        tone: "info",
+        text: "已请求本地 SAU 刷新二维码，新的二维码会在几秒内同步回来。",
+      });
+      setActiveSession((current) => (
+        current
+          ? {
+              ...current,
+              message: "已下发刷新二维码请求，等待本地 SAU 返回最新二维码。",
+            }
+          : current
+      ));
+    } catch (refreshError) {
+      setNotice({
+        tone: "error",
+        text: formatErrorMessage(refreshError, "刷新二维码失败，请稍后重试。"),
+      });
+    } finally {
+      setSessionActionLoading(null);
     }
   };
 
@@ -402,18 +436,32 @@ export function MediaAccountsView() {
                 </p>
               )}
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveSession(null);
-                setActiveSessionMeta(null);
-                setActionLoadingKey(null);
-              }}
-              className="rounded-lg p-2 text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)] transition-colors"
-              aria-label="关闭登录会话面板"
-            >
-              <X className="h-4 w-4" />
-            </button>
+            <div className="flex items-center gap-2">
+              {!SESSION_FINAL_STATUSES.has(activeSession.status) && (
+                <button
+                  type="button"
+                  onClick={() => void handleRefreshQRCode()}
+                  disabled={sessionActionLoading === "refresh_qr"}
+                  className="inline-flex items-center gap-2 rounded-lg border border-[var(--color-primary)]/30 px-3 py-2 text-xs text-[var(--color-primary)] hover:bg-[var(--color-primary)]/10 transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${sessionActionLoading === "refresh_qr" ? "animate-spin" : ""}`} />
+                  刷新二维码
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveSession(null);
+                  setActiveSessionMeta(null);
+                  setActionLoadingKey(null);
+                  setSessionActionLoading(null);
+                }}
+                className="rounded-lg p-2 text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)] transition-colors"
+                aria-label="关闭登录会话面板"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
           </div>
 
           {(activeSession.qrData || activeSession.verificationPayload?.screenshotData) && (

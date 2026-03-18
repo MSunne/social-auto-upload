@@ -80,7 +80,7 @@ func (s *Store) CountActiveAdminsByRole(ctx context.Context, roleID string) (int
 	return count, nil
 }
 
-func (s *Store) GetAdminUserByEmail(ctx context.Context, email string) (*AdminUserWithPassword, error) {
+func (s *Store) GetAdminUserByAccount(ctx context.Context, account string) (*AdminUserWithPassword, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
 			au.id,
@@ -101,7 +101,7 @@ func (s *Store) GetAdminUserByEmail(ctx context.Context, email string) (*AdminUs
 		LEFT JOIN admin_role_permissions arp ON arp.role_id = ar.id
 		WHERE au.email = $1
 		GROUP BY au.id
-	`, strings.ToLower(strings.TrimSpace(email)))
+	`, strings.ToLower(strings.TrimSpace(account)))
 
 	var result AdminUserWithPassword
 	var roleIDs []string
@@ -132,6 +132,10 @@ func (s *Store) GetAdminUserByEmail(ctx context.Context, email string) (*AdminUs
 	result.Admin.Role = adminPrimaryRole(result.Admin.Roles)
 	result.Admin.Permissions = normalizeAdminStringList(permissions)
 	return &result, nil
+}
+
+func (s *Store) GetAdminUserByEmail(ctx context.Context, email string) (*AdminUserWithPassword, error) {
+	return s.GetAdminUserByAccount(ctx, email)
 }
 
 func (s *Store) GetAdminIdentityByID(ctx context.Context, adminID string) (*domain.AdminIdentity, error) {

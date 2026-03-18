@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import { useAuth } from "@/lib/hooks/useAuth";
-import { Loader2, Lock, Mail, ArrowRight } from "lucide-react";
+import { Loader2, Lock, User, ArrowRight } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
+  const [account, setAccount] = useState("");
   const [password, setPassword] = useState("");
   const [errorBuf, setErrorBuf] = useState("");
   const { login, isLoading } = useAuth();
@@ -16,13 +16,13 @@ export default function LoginPage() {
     e.preventDefault();
     setErrorBuf("");
     
-    if (!email || !password) {
-      setErrorBuf("请输入邮箱和密码");
+    if (!account || !password) {
+      setErrorBuf("请输入账号和密码");
       return;
     }
 
     try {
-      const user = await login(email, password);
+      const user = await login(account, password);
       if (user) {
         router.push("/dashboard"); // Redirect to main dashboard
       } else {
@@ -65,16 +65,16 @@ export default function LoginPage() {
 
             <div>
               <label className="block text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-1.5">
-                管理员邮箱 Address
+                管理员账号
               </label>
               <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-secondary)]" />
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-secondary)]" />
                 <input 
-                  type="email" 
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
+                  type="text" 
+                  value={account}
+                  onChange={e => setAccount(e.target.value)}
                   disabled={isLoading}
-                  placeholder="admin@example.com"
+                  placeholder="admin"
                   className="w-full pl-9 pr-4 py-2.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)] transition-all font-medium disabled:opacity-50" 
                 />
               </div>
@@ -82,7 +82,7 @@ export default function LoginPage() {
 
             <div>
               <label className="block text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-1.5 flex justify-between">
-                安全密码 Password
+                安全密码
               </label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-secondary)]" />

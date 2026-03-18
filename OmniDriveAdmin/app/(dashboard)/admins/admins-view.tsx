@@ -61,7 +61,7 @@ export function AdminsView() {
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center bg-[var(--color-bg-secondary)] p-4 rounded-xl border border-[var(--color-border)]">
         <form onSubmit={handleSearch} className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-text-secondary)]" />
-          <input type="text" placeholder="搜索花名 / 邮箱..." value={searchInput} onChange={e => setSearchInput(e.target.value)}
+          <input type="text" placeholder="搜索账号 / 花名..." value={searchInput} onChange={e => setSearchInput(e.target.value)}
             className="w-full pl-9 pr-4 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-sm focus:outline-none focus:border-[var(--color-primary)]" />
         </form>
         <div className="flex gap-2">

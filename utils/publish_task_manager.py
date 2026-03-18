@@ -14,6 +14,7 @@ from uploader.ks_uploader.main import KSVideo
 from uploader.tencent_uploader.main import TencentVideo
 from utils.constant import TencentZoneTypes
 from utils.files_times import generate_schedule_time_next_day
+from utils.log import log_throttled, task_logger
 from utils.materials import resolve_material_reference
 from utils.publish_verification import PublishManualVerificationRequired
 
@@ -71,6 +72,12 @@ class PublishTaskManager:
             cleanup_worker.start()
             self._workers.append(cleanup_worker)
             self._started = True
+            task_logger.info(
+                "publish task manager started worker_count={} retention_days={} db_path={}",
+                self.worker_count,
+                self.retention_days,
+                self.db_path,
+            )
 
     def init_db(self):
         with self._connect() as conn:
@@ -156,6 +163,12 @@ class PublishTaskManager:
         for task in inserted:
             self._sync_task(task["taskUuid"])
 
+        if inserted:
+            task_logger.info(
+                "publish tasks enqueued count={} sources={}",
+                len(inserted),
+                ",".join(sorted({str(task.get("source") or "local_api") for task in inserted})),
+            )
         return inserted
 
     def list_tasks(self, limit=100, status=None, source=None, sources=None):
@@ -378,6 +391,7 @@ class PublishTaskManager:
         return {row["filePath"]: dict(row) for row in rows}
 
     def _worker_loop(self, worker_name):
+        task_logger.debug("publish worker started worker_name={}", worker_name)
         while not self._stop_event.is_set():
             task = self._claim_next_ready_task(worker_name)
             if not task:
@@ -405,7 +419,14 @@ class PublishTaskManager:
                 ''',
                 [*FINISHED_STATUSES, cutoff],
             )
+            deleted_count = cursor.rowcount
             conn.commit()
+        if deleted_count:
+            task_logger.debug(
+                "publish task cleanup deleted_count={} retention_days={}",
+                deleted_count,
+                self.retention_days,
+            )
 
     def _claim_next_ready_task(self, worker_name):
         ready_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -452,11 +473,25 @@ class PublishTaskManager:
 
         task = self.get_task(row["task_uuid"])
         self._sync_task(row["task_uuid"])
+        task_logger.debug(
+            "publish task claimed task_uuid={} worker_name={} platform={} account_name={}",
+            row["task_uuid"],
+            worker_name,
+            row["platform_name"],
+            row["account_name"],
+        )
         return task
 
     def _run_task(self, task):
         payload = task["payload"] or {}
         task_uuid = task["taskUuid"]
+        task_logger.info(
+            "publish task started task_uuid={} platform={} account_name={} title={}",
+            task_uuid,
+            payload.get("platformName"),
+            payload.get("accountName"),
+            payload.get("title"),
+        )
         try:
             self._execute_payload(payload)
             self._update_task(
@@ -465,6 +500,7 @@ class PublishTaskManager:
                 message="发布任务执行成功",
                 finished=True,
             )
+            task_logger.info("publish task succeeded task_uuid={}", task_uuid)
         except PublishManualVerificationRequired as exc:
             verification_payload = dict(exc.payload or {})
             artifact_path = self._save_artifact(task_uuid, verification_payload.get("screenshotData"))
@@ -478,6 +514,11 @@ class PublishTaskManager:
                 artifact_path=artifact_path,
                 finished=True,
             )
+            task_logger.warning(
+                "publish task needs manual verification task_uuid={} artifact_path={}",
+                task_uuid,
+                artifact_path,
+            )
         except Exception as exc:
             self._update_task(
                 task_uuid,
@@ -485,6 +526,7 @@ class PublishTaskManager:
                 message=f"发布任务执行失败: {exc}",
                 finished=True,
             )
+            task_logger.exception("publish task failed task_uuid={} error={}", task_uuid, exc)
 
     def _execute_payload(self, payload):
         platform_type = int(payload["platformType"])
@@ -553,7 +595,16 @@ class PublishTaskManager:
 
         try:
             self.sync_client.sync_publish_task(task)
-        except Exception:
+        except Exception as exc:
+            log_throttled(
+                task_logger,
+                "WARNING",
+                f"publish_task.sync_error:{task_uuid}",
+                60,
+                "publish task sync failed task_uuid={} error={}",
+                task_uuid,
+                exc,
+            )
             return
 
     def _serialize_row(self, row):

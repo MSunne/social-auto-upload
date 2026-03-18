@@ -14,7 +14,7 @@ interface AdminDrawerProps {
 
 export function AdminDrawer({ isOpen, onClose, admin, roles }: AdminDrawerProps) {
   const [formData, setFormData] = useState({
-    email: "",
+    account: "",
     name: "",
     password: "",
     isActive: true,
@@ -24,22 +24,20 @@ export function AdminDrawer({ isOpen, onClose, admin, roles }: AdminDrawerProps)
   const createAdmin = useCreateAdmin();
   const updateAdmin = useUpdateAdmin();
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (isOpen) {
       if (admin) {
         // eslint-disable-next-line react-hooks/set-state-in-effect
         setFormData({
-          email: admin.email,
+          account: admin.email,
           name: admin.name,
           password: "", 
           isActive: admin.isActive,
           roleIds: admin.roleIds || [],
         });
       } else {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
         setFormData({
-          email: "",
+          account: "",
           name: "",
           password: "",
           isActive: true,
@@ -59,7 +57,7 @@ export function AdminDrawer({ isOpen, onClose, admin, roles }: AdminDrawerProps)
       if (admin) {
         // Edit mode
         const payload: Record<string, unknown> = { id: admin.id, name: formData.name, isActive: formData.isActive, roleIds: formData.roleIds };
-        if (formData.email !== admin.email) payload.email = formData.email;
+        if (formData.account !== admin.email) payload.account = formData.account;
         if (formData.password) payload.password = formData.password;
         await updateAdmin.mutateAsync(payload as Parameters<typeof updateAdmin.mutateAsync>[0]);
       } else {
@@ -108,10 +106,10 @@ export function AdminDrawer({ isOpen, onClose, admin, roles }: AdminDrawerProps)
         <div className="flex-1 overflow-y-auto p-6">
           <form id="admin-form" onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="block text-sm font-medium mb-1.5">邮箱账号</label>
-              <input type="email" required value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })}
+              <label className="block text-sm font-medium mb-1.5">登录账号</label>
+              <input type="text" required value={formData.account} onChange={e => setFormData({ ...formData, account: e.target.value })}
                 className="w-full px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors"
-                placeholder="admin@example.com" />
+                placeholder="如: admin" />
             </div>
 
             <div>
@@ -123,9 +121,9 @@ export function AdminDrawer({ isOpen, onClose, admin, roles }: AdminDrawerProps)
 
             <div>
               <label className="block text-sm font-medium mb-1.5">{admin ? "重置密码 (可选)" : "初始密码"}</label>
-              <input type="text" minLength={8} required={!admin} value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })}
+              <input type="text" minLength={6} required={!admin} value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })}
                 className="w-full px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors"
-                placeholder={admin ? "留空则不修改密码" : "至少 8 位数字/字母"} />
+                placeholder={admin ? "留空则不修改密码" : "至少 6 位数字/字母"} />
             </div>
 
             <div>

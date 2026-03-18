@@ -72,3 +72,16 @@ func renderAdminList[T any](w http.ResponseWriter, page adminPageQuery, total in
 		Filters:    filters,
 	})
 }
+
+func normalizeAdminAccount(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func firstNonEmptyAdminValue(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}

@@ -228,6 +228,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 			private.With(authmiddleware.RequireAdminPermission("task.operate")).Post("/accounts/{accountId}/validate", adminConsoleHandler.ValidateMediaAccount)
 			private.With(authmiddleware.RequireAdminPermission("task.operate")).Delete("/accounts/{accountId}", adminConsoleHandler.DeleteMediaAccount)
 			private.With(authmiddleware.RequireAdminPermission("task.read")).Get("/login-sessions/{sessionId}", adminConsoleHandler.GetLoginSession)
+			private.With(authmiddleware.RequireAdminPermission("task.operate")).Post("/login-sessions/{sessionId}/actions", adminConsoleHandler.CreateLoginSessionAction)
 			private.With(authmiddleware.RequireAdminPermission("task.read")).Get("/publish-tasks", adminConsoleHandler.ListPublishTasks)
 			private.With(authmiddleware.RequireAdminPermission("task.operate")).Post("/publish-tasks/bulk-action", adminConsoleHandler.BulkActionPublishTasks)
 			private.With(authmiddleware.RequireAdminPermission("task.read")).Get("/publish-tasks/{taskId}", adminConsoleHandler.DetailPublishTask)

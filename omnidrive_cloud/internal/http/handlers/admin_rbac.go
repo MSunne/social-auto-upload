@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/mail"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -23,6 +22,7 @@ type AdminRBACHandler struct {
 }
 
 type createAdminRequest struct {
+	Account  string   `json:"account"`
 	Email    string   `json:"email"`
 	Name     string   `json:"name"`
 	Password string   `json:"password"`
@@ -31,6 +31,7 @@ type createAdminRequest struct {
 }
 
 type updateAdminRequest struct {
+	Account  *string   `json:"account"`
 	Email    *string   `json:"email"`
 	Name     *string   `json:"name"`
 	Password *string   `json:"password"`
@@ -105,9 +106,9 @@ func (h *AdminRBACHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	email := strings.TrimSpace(strings.ToLower(payload.Email))
-	if _, err := mail.ParseAddress(email); err != nil {
-		render.Error(w, http.StatusBadRequest, "Invalid admin email")
+	account := normalizeAdminAccount(firstNonEmptyAdminValue(payload.Account, payload.Email))
+	if account == "" {
+		render.Error(w, http.StatusBadRequest, "Admin account is required")
 		return
 	}
 
@@ -116,8 +117,8 @@ func (h *AdminRBACHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusBadRequest, "Admin name is required")
 		return
 	}
-	if len(payload.Password) < 8 {
-		render.Error(w, http.StatusBadRequest, "Password must be at least 8 characters")
+	if len(payload.Password) < 6 {
+		render.Error(w, http.StatusBadRequest, "Password must be at least 6 characters")
 		return
 	}
 
@@ -134,7 +135,7 @@ func (h *AdminRBACHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 
 	admin, err := h.app.Store.CreateAdminUser(r.Context(), store.CreateAdminUserInput{
 		ID:           uuid.NewString(),
-		Email:        email,
+		Email:        account,
 		Name:         name,
 		PasswordHash: passwordHash,
 		IsActive:     isActive,
@@ -144,7 +145,7 @@ func (h *AdminRBACHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case isAdminUniqueViolation(err):
-			render.Error(w, http.StatusConflict, "Admin email already exists")
+			render.Error(w, http.StatusConflict, "Admin account already exists")
 		case isAdminInputError(err):
 			render.Error(w, http.StatusBadRequest, err.Error())
 		default:
@@ -167,7 +168,7 @@ func (h *AdminRBACHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 			Status:       "success",
 			Message:      auditStringPtr("管理员账号已创建"),
 			Payload: mustJSONBytes(map[string]any{
-				"email":    admin.Email,
+				"account":  admin.Email,
 				"roleIds":  admin.RoleIDs,
 				"isActive": admin.IsActive,
 			}),
@@ -206,10 +207,14 @@ func (h *AdminRBACHandler) UpdateAdmin(w http.ResponseWriter, r *http.Request) {
 		IsActive: payload.IsActive,
 	}
 
-	if payload.Email != nil {
-		trimmed := strings.TrimSpace(strings.ToLower(*payload.Email))
-		if _, err := mail.ParseAddress(trimmed); err != nil {
-			render.Error(w, http.StatusBadRequest, "Invalid admin email")
+	accountInput := payload.Account
+	if accountInput == nil {
+		accountInput = payload.Email
+	}
+	if accountInput != nil {
+		trimmed := normalizeAdminAccount(*accountInput)
+		if trimmed == "" {
+			render.Error(w, http.StatusBadRequest, "Admin account is required")
 			return
 		}
 		updateInput.Email = &trimmed
@@ -223,8 +228,8 @@ func (h *AdminRBACHandler) UpdateAdmin(w http.ResponseWriter, r *http.Request) {
 		updateInput.Name = &trimmed
 	}
 	if payload.Password != nil {
-		if len(*payload.Password) < 8 {
-			render.Error(w, http.StatusBadRequest, "Password must be at least 8 characters")
+		if len(*payload.Password) < 6 {
+			render.Error(w, http.StatusBadRequest, "Password must be at least 6 characters")
 			return
 		}
 		passwordHash, err := h.app.AdminTokens.HashPassword(*payload.Password)
@@ -248,7 +253,7 @@ func (h *AdminRBACHandler) UpdateAdmin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case isAdminUniqueViolation(err):
-			render.Error(w, http.StatusConflict, "Admin email already exists")
+			render.Error(w, http.StatusConflict, "Admin account already exists")
 		case isAdminInputError(err):
 			render.Error(w, http.StatusBadRequest, err.Error())
 		default:
