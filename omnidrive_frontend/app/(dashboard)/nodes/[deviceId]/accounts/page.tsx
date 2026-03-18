@@ -1,7 +1,7 @@
 "use client";
 
 import { use, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
@@ -16,10 +16,11 @@ import {
   ChevronRight,
   ExternalLink,
   Plus,
+  Loader2,
 } from "lucide-react";
 import Link from "next/link";
-import { getDevice, listAccounts, listSkills, listTasks } from "@/lib/services";
-import type { Device, Account, Skill, Task } from "@/lib/types";
+import { getDevice, listAccounts, listSkills, listTasks, deleteAccount, validateAccount } from "@/lib/services";
+import type { Device, Account, Skill, Task, LoginSession } from "@/lib/types";
 import { StatusBadge } from "@/components/ui/common";
 import { AddTaskModal } from "@/components/ui/add-task-modal";
 import { AddAccountModal } from "@/components/ui/add-account-modal";
@@ -43,6 +44,7 @@ export default function DeviceAccountsPage({
   params: Promise<{ deviceId: string }>;
 }) {
   const { deviceId } = use(params);
+  const queryClient = useQueryClient();
 
   const { data: device } = useQuery<Device>({
     queryKey: ["device", deviceId],
@@ -71,6 +73,37 @@ export default function DeviceAccountsPage({
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   const [selectedAccountName, setSelectedAccountName] = useState<string>("");
+  const [validationSession, setValidationSession] = useState<LoginSession | null>(null);
+
+  const [isDeleting, setIsDeleting] = useState<string | null>(null);
+  const [isValidating, setIsValidating] = useState<string | null>(null);
+
+  const handleDelete = async (accountId: string) => {
+    if (!confirm("确认解绑并删除此账号？此操作不可逆。")) return;
+    try {
+      setIsDeleting(accountId);
+      await deleteAccount(accountId);
+      queryClient.invalidateQueries({ queryKey: ["accounts", deviceId] });
+      queryClient.invalidateQueries({ queryKey: ["device", deviceId] });
+    } catch (err: any) {
+      alert(err.message || "删除失败");
+    } finally {
+      setIsDeleting(null);
+    }
+  };
+
+  const handleValidate = async (accountId: string) => {
+    try {
+      setIsValidating(accountId);
+      const session = await validateAccount(accountId);
+      setValidationSession(session);
+      setIsAccountModalOpen(true);
+    } catch (err: any) {
+      alert(err.message || "发起重新认证失败");
+    } finally {
+      setIsValidating(null);
+    }
+  };
 
   /* Computed stats */
   const uniquePlatforms = new Set(accounts.map((a) => a.platform));
@@ -357,26 +390,32 @@ export default function DeviceAccountsPage({
                         <div className="flex items-center justify-center gap-2">
                           {acc.status === "invalid" ? (
                             <button
-                              className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-400 cursor-pointer transition-all hover:border-amber-400/60 hover:bg-amber-500/20 hover:shadow-[0_0_10px_rgba(245,158,11,0.25)] hover:-translate-y-px"
+                              onClick={() => handleValidate(acc.id)}
+                              disabled={isValidating === acc.id}
+                              className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-400 cursor-pointer transition-all hover:border-amber-400/60 hover:bg-amber-500/20 hover:shadow-[0_0_10px_rgba(245,158,11,0.25)] hover:-translate-y-px disabled:opacity-50"
                               title="重新认证 (账号已失效)"
                             >
-                              <KeyRound className="h-3 w-3" />
+                              {isValidating === acc.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <KeyRound className="h-3 w-3" />}
                               重新认证
                             </button>
                           ) : (
                             <button
-                              className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-400 cursor-pointer transition-all hover:border-emerald-400/60 hover:bg-emerald-500/20 hover:shadow-[0_0_10px_rgba(16,185,129,0.25)] hover:-translate-y-px"
+                              onClick={() => handleValidate(acc.id)}
+                              disabled={isValidating === acc.id}
+                              className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-400 cursor-pointer transition-all hover:border-emerald-400/60 hover:bg-emerald-500/20 hover:shadow-[0_0_10px_rgba(16,185,129,0.25)] hover:-translate-y-px disabled:opacity-50"
                               title="登录状态有效"
                             >
-                              <BadgeCheck className="h-3 w-3" />
-                              已认证
+                              {isValidating === acc.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <BadgeCheck className="h-3 w-3" />}
+                              重新认证
                             </button>
                           )}
                           <button
-                            className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-surface px-3 py-1.5 text-xs font-semibold text-text-muted transition-all hover:border-danger/50 hover:text-danger hover:bg-danger/10 hover:shadow-[0_0_8px_rgba(239,68,68,0.15)]"
+                            onClick={() => handleDelete(acc.id)}
+                            disabled={isDeleting === acc.id}
+                            className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-surface px-3 py-1.5 text-xs font-semibold text-text-muted cursor-pointer transition-all hover:border-danger/50 hover:text-danger hover:bg-danger/10 hover:shadow-[0_0_8px_rgba(239,68,68,0.15)] disabled:opacity-50"
                             title="删除账号关联"
                           >
-                            <Trash2 className="h-3 w-3" />
+                            {isDeleting === acc.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
                             解绑删除
                           </button>
                         </div>
@@ -432,8 +471,12 @@ export default function DeviceAccountsPage({
       {/* Add Account Modal */}
       <AddAccountModal
         isOpen={isAccountModalOpen}
-        onClose={() => setIsAccountModalOpen(false)}
+        onClose={() => {
+          setIsAccountModalOpen(false);
+          setValidationSession(null);
+        }}
         deviceId={deviceId}
+        initialSession={validationSession}
       />
     </>
   );

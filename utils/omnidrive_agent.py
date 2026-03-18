@@ -72,6 +72,9 @@ SYNCABLE_LOCAL_SOURCES = ("local_api", "openclaw_skill", "omnidrive_agent", "omn
 SYNCABLE_LOCAL_AI_SOURCES = ("local_ui", "openclaw_skill")
 FINAL_LOCAL_STATUSES = {"success", "failed", "needs_verify", "cancelled"}
 FINAL_LOGIN_STATUSES = {"success", "failed", "cancelled"}
+LOGIN_PENDING_STALE_SECONDS = 90
+LOGIN_RUNNING_STALE_SECONDS = 60
+LOGIN_VERIFICATION_STALE_SECONDS = 180
 
 
 class OmniDriveBridge:
@@ -127,6 +130,8 @@ class OmniDriveBridge:
         self._state_lock = threading.Lock()
         self._login_worker_lock = threading.Lock()
         self._active_login_worker = None
+        self._agent_started_at_epoch = time.time()
+        self._login_startup_cleanup_done = False
         self._state = {
             "running": False,
             "deviceName": self.device_name,
@@ -175,6 +180,8 @@ class OmniDriveBridge:
                 return
             self._stop_event.clear()
             self._init_db()
+            self._agent_started_at_epoch = time.time()
+            self._login_startup_cleanup_done = False
             self._thread = threading.Thread(target=self._loop, daemon=True)
             self._thread.start()
             agent_logger.info(
@@ -635,6 +642,16 @@ class OmniDriveBridge:
     def _poll_remote_login_tasks(self):
         queue_payload = self._request("GET", f"/api/v1/agent/login-tasks/{self.device_code}") or []
         sessions = self._normalize_login_session_queue(queue_payload)
+        sessions = self._cleanup_remote_login_sessions(sessions)
+        active_remote_sessions = []
+        pending_sessions = []
+        for session in sessions:
+            status = str(session.get("status") or "").strip().lower()
+            if status in {"running", "verification_required"}:
+                active_remote_sessions.append(session)
+            elif status in {"", "pending"}:
+                pending_sessions.append(session)
+
         self._update_state(
             lastLoginPollAt=self._now_string(),
             activeLoginSessionCount=len(sessions),
@@ -662,7 +679,30 @@ class OmniDriveBridge:
         if self._get_active_login_worker():
             return
 
-        for session in sessions:
+        if active_remote_sessions:
+            first_session = active_remote_sessions[0]
+            log_throttled(
+                agent_logger,
+                "WARNING",
+                f"omnidrive_agent.login_resume_blocked:{self.device_code}",
+                max(self.poll_interval * 4, 20),
+                "omnidrive bridge detected remote login session waiting in cloud and will not auto-restart stale session_id={} status={} device_code={}",
+                str(first_session.get("id") or "").strip(),
+                str(first_session.get("status") or "").strip(),
+                self.device_code,
+            )
+
+        seen_targets = set()
+        deduplicated_pending_sessions = []
+        for session in reversed(pending_sessions):
+            target_key = self._build_login_target_key(session)
+            if target_key and target_key in seen_targets:
+                continue
+            if target_key:
+                seen_targets.add(target_key)
+            deduplicated_pending_sessions.append(session)
+
+        for session in deduplicated_pending_sessions:
             if self._start_login_session(session):
                 break
 
@@ -687,6 +727,201 @@ class OmniDriveBridge:
             "message": self._trim_message(session.get("message")),
             "updatedAt": session.get("updatedAt"),
         }
+
+    @staticmethod
+    def _build_login_target_key(session):
+        platform = str(session.get("platform") or "").strip().lower()
+        account_name = str(session.get("accountName") or "").strip().lower()
+        if not platform or not account_name:
+            return None
+        return f"{platform}:{account_name}"
+
+    @staticmethod
+    def _build_login_target_key_from_worker(worker):
+        if not isinstance(worker, dict):
+            return None
+        platform = str(worker.get("platform") or worker.get("platformSlug") or "").strip().lower()
+        account_name = str(worker.get("accountName") or "").strip().lower()
+        if not platform or not account_name:
+            return None
+        return f"{platform}:{account_name}"
+
+    def _cleanup_remote_login_sessions(self, sessions):
+        if not sessions:
+            return []
+
+        active_worker = self._get_active_login_worker()
+        active_session_id = ""
+        active_target_key = None
+        if active_worker:
+            active_session_id = str(active_worker.get("sessionId") or "").strip()
+            active_target_key = self._build_login_target_key_from_worker(active_worker)
+
+        latest_session_id_by_target = {}
+        ordered_sessions = sorted(
+            sessions,
+            key=self._login_session_sort_key,
+            reverse=True,
+        )
+        for session in ordered_sessions:
+            session_id = str(session.get("id") or "").strip()
+            if not session_id:
+                continue
+            target_key = self._build_login_target_key(session)
+            if not target_key or target_key in latest_session_id_by_target:
+                continue
+            latest_session_id_by_target[target_key] = session_id
+
+        if active_target_key and active_session_id:
+            latest_session_id_by_target[active_target_key] = active_session_id
+
+        cancelled_session_ids = set()
+        kept_sessions = []
+        for session in sessions:
+            session_id = str(session.get("id") or "").strip()
+            if not session_id:
+                continue
+            if session_id == active_session_id:
+                kept_sessions.append(session)
+                continue
+
+            target_key = self._build_login_target_key(session)
+            status = str(session.get("status") or "").strip().lower()
+
+            startup_cleanup_message = self._get_startup_orphan_login_session_message(session)
+            if startup_cleanup_message:
+                if self._cancel_remote_login_session(
+                    session,
+                    status="cancelled",
+                    message=startup_cleanup_message,
+                ):
+                    cancelled_session_ids.add(session_id)
+                continue
+
+            if active_target_key and target_key and target_key == active_target_key:
+                if self._cancel_remote_login_session(
+                    session,
+                    status="cancelled",
+                    message="本地 SAU 已清理同账号的重复登录会话，请继续当前登录窗口或重新发起登录。",
+                ):
+                    cancelled_session_ids.add(session_id)
+                continue
+
+            latest_session_id = latest_session_id_by_target.get(target_key) if target_key else None
+            if target_key and latest_session_id and latest_session_id != session_id and status in {"pending", "running", "verification_required"}:
+                if self._cancel_remote_login_session(
+                    session,
+                    status="cancelled",
+                    message="本地 SAU 已清理被更新登录请求覆盖的旧会话，请使用最新登录窗口继续操作。",
+                ):
+                    cancelled_session_ids.add(session_id)
+                continue
+
+            stale_message = self._get_stale_login_session_message(session)
+            if stale_message:
+                if self._cancel_remote_login_session(
+                    session,
+                    status="cancelled",
+                    message=stale_message,
+                ):
+                    cancelled_session_ids.add(session_id)
+                continue
+
+            kept_sessions.append(session)
+
+        if cancelled_session_ids:
+            agent_logger.info(
+                "omnidrive bridge cleaned stale login sessions count={} device_code={}",
+                len(cancelled_session_ids),
+                self.device_code,
+            )
+        self._login_startup_cleanup_done = True
+        return kept_sessions
+
+    def _cancel_remote_login_session(self, session, *, status, message):
+        session_id = str(session.get("id") or "").strip()
+        if not session_id:
+            return False
+        try:
+            self._post_login_event(
+                session_id,
+                status=status,
+                message=message,
+            )
+            agent_logger.warning(
+                "omnidrive bridge cancelled stale login session session_id={} login_status={} platform={} account_name={} device_code={}",
+                session_id,
+                str(session.get("status") or "").strip(),
+                str(session.get("platform") or "").strip(),
+                str(session.get("accountName") or "").strip(),
+                self.device_code,
+            )
+            return True
+        except Exception as exc:
+            agent_logger.warning(
+                "omnidrive bridge failed to cancel stale login session session_id={} error={}",
+                session_id,
+                exc,
+            )
+            return False
+
+    def _get_stale_login_session_message(self, session):
+        status = str(session.get("status") or "").strip().lower()
+        age_seconds = self._get_login_session_age_seconds(session)
+        if age_seconds is None:
+            return None
+        if status in {"", "pending"} and age_seconds >= LOGIN_PENDING_STALE_SECONDS:
+            return "本地 SAU 已清理陈旧的待登录会话，请在 OmniDrive 重新发起账号登录。"
+        if status == "running" and age_seconds >= LOGIN_RUNNING_STALE_SECONDS:
+            return "本地 SAU 已清理失去本地执行窗口的陈旧登录会话，请重新发起账号登录。"
+        if status == "verification_required" and age_seconds >= LOGIN_VERIFICATION_STALE_SECONDS:
+            return "本地 SAU 已清理失去本地验证窗口的陈旧二次认证会话，请重新发起账号登录。"
+        return None
+
+    def _get_startup_orphan_login_session_message(self, session):
+        if self._login_startup_cleanup_done:
+            return None
+        status = str(session.get("status") or "").strip().lower()
+        if status not in {"", "pending", "running", "verification_required"}:
+            return None
+        parsed = self._parse_remote_datetime(session.get("updatedAt") or session.get("createdAt"))
+        if parsed is None:
+            return None
+        startup_cutoff = self._agent_started_at_epoch - max(float(self.poll_interval), 5.0)
+        if parsed.timestamp() >= startup_cutoff:
+            return None
+        if status == "verification_required":
+            return "本地 SAU 重启后已清理上次遗留的二次认证会话，请在 OmniDrive 重新发起账号登录。"
+        if status == "running":
+            return "本地 SAU 重启后已清理上次遗留的登录会话，请在 OmniDrive 重新发起账号登录。"
+        return "本地 SAU 重启后已清理上次遗留的待登录会话，请在 OmniDrive 重新发起账号登录。"
+
+    def _get_login_session_age_seconds(self, session):
+        reference = session.get("updatedAt") or session.get("createdAt")
+        parsed = self._parse_remote_datetime(reference)
+        if parsed is None:
+            return None
+        return max(0.0, time.time() - parsed.timestamp())
+
+    def _login_session_sort_key(self, session):
+        parsed = self._parse_remote_datetime(session.get("updatedAt") or session.get("createdAt"))
+        return parsed.timestamp() if parsed is not None else 0.0
+
+    @staticmethod
+    def _parse_remote_datetime(value):
+        if value in (None, "", 0, "0"):
+            return None
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            try:
+                parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        try:
+            return parsed.astimezone()
+        except ValueError:
+            return parsed
 
     def _resolve_login_platform(self, platform):
         alias = str(platform or "").strip().lower()
@@ -949,6 +1184,14 @@ class OmniDriveBridge:
                 session_id,
                 status="failed",
                 message=f"{platform_label} 账号登录失败，请检查本地 SAU 日志",
+            )
+            return
+
+        if message == "CANCELLED":
+            self._post_login_event(
+                session_id,
+                status="cancelled",
+                message=f"{platform_label} 登录会话已取消，本地 SAU 已停止当前登录流程",
             )
             return
 

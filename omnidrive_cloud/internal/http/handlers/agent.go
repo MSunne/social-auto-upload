@@ -400,6 +400,10 @@ func (h *AgentHandler) PushLoginEvent(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusBadRequest, "status is required")
 		return
 	}
+	if strings.TrimSpace(session.Status) == "cancelled" && payload.Status != "cancelled" {
+		render.JSON(w, http.StatusOK, session)
+		return
+	}
 
 	var verificationPayload []byte
 	if payload.VerificationPayload != nil {

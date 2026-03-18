@@ -138,6 +138,7 @@ export function MediaAccountsView() {
   const [activeSession, setActiveSession] = useState<LoginSession | null>(null);
   const [activeSessionMeta, setActiveSessionMeta] = useState<SessionMeta | null>(null);
   const [sessionActionLoading, setSessionActionLoading] = useState<string | null>(null);
+  const [verificationInput, setVerificationInput] = useState("");
 
   const { data, isLoading, error, refetch } = useMediaAccounts({
     page,
@@ -156,6 +157,10 @@ export function MediaAccountsView() {
   const selectedDevice = availableDevices.find((row) => row.device.id === effectiveAddDeviceId) || null;
   const isSessionFinal = activeSession ? SESSION_FINAL_STATUSES.has(activeSession.status) : false;
   const activeSessionSourceKey = !isSessionFinal ? activeSessionMeta?.sourceKey : null;
+  const verificationPayload = activeSession?.verificationPayload;
+  const verificationOptions = verificationPayload?.options ?? [];
+  const verificationHints = verificationPayload?.inputHints ?? [];
+  const canAssistTextInput = Boolean(verificationPayload?.supportsTextInput || verificationHints.length);
 
   useEffect(() => {
     if (!activeSession?.id || SESSION_FINAL_STATUSES.has(activeSession.status)) {
@@ -236,6 +241,7 @@ export function MediaAccountsView() {
     setActiveSession(session);
     setActiveSessionMeta(meta);
     setActionLoadingKey(meta.sourceKey);
+    setVerificationInput("");
     setNotice({
       tone: "info",
       text: openingText,
@@ -292,6 +298,138 @@ export function MediaAccountsView() {
     } finally {
       setSessionActionLoading(null);
     }
+  };
+
+  const runSessionAction = async ({
+    actionType,
+    payload,
+    loadingKey,
+    successText,
+    nextMessage,
+    clearVerificationInput = false,
+  }: {
+    actionType: string;
+    payload?: Record<string, unknown>;
+    loadingKey: string;
+    successText: string;
+    nextMessage: string;
+    clearVerificationInput?: boolean;
+  }) => {
+    if (!activeSession || SESSION_FINAL_STATUSES.has(activeSession.status)) {
+      return;
+    }
+
+    setSessionActionLoading(loadingKey);
+    try {
+      await adminApi.post(`${adminPaths.loginSessions}/${activeSession.id}/actions`, {
+        actionType,
+        payload,
+      });
+      setNotice({
+        tone: "info",
+        text: successText,
+      });
+      setActiveSession((current) => (
+        current
+          ? {
+              ...current,
+              message: nextMessage,
+            }
+          : current
+      ));
+      if (clearVerificationInput) {
+        setVerificationInput("");
+      }
+    } catch (actionError) {
+      setNotice({
+        tone: "error",
+        text: formatErrorMessage(actionError, "发送验证操作失败，请稍后重试。"),
+      });
+    } finally {
+      setSessionActionLoading(null);
+    }
+  };
+
+  const handleSelectVerificationOption = async (optionText: string) => {
+    const trimmedText = optionText.trim();
+    if (!trimmedText) {
+      return;
+    }
+
+    await runSessionAction({
+      actionType: "select_option",
+      payload: { text: trimmedText },
+      loadingKey: `select_option:${trimmedText}`,
+      successText: `已将“${trimmedText}”发送到本地 SAU，请等待验证页面更新。`,
+      nextMessage: `已下发验证方式“${trimmedText}”，等待本地 SAU 执行。`,
+    });
+  };
+
+  const handleSendVerificationInput = async (actionType: "fill_text" | "fill_text_and_submit") => {
+    const text = verificationInput.trim();
+    if (!text) {
+      setNotice({ tone: "error", text: "请先输入验证码、短信验证码或登录密码。" });
+      return;
+    }
+
+    const isSubmitAction = actionType === "fill_text_and_submit";
+    await runSessionAction({
+      actionType,
+      payload: { text },
+      loadingKey: actionType,
+      successText: isSubmitAction ? "已发送验证码并请求本地 SAU 提交验证。" : "已将输入内容发送到本地 SAU 验证输入框。",
+      nextMessage: isSubmitAction ? "已将验证码发送到本地浏览器并尝试提交，请稍候查看验证状态。" : "已将输入内容发送到本地浏览器，请确认验证页面变化。",
+      clearVerificationInput: isSubmitAction,
+    });
+  };
+
+  const handlePressVerificationEnter = async () => {
+    await runSessionAction({
+      actionType: "press_key",
+      payload: { key: "Enter" },
+      loadingKey: "press_key:Enter",
+      successText: "已向本地 SAU 发送回车操作。",
+      nextMessage: "已向本地浏览器发送回车，请等待验证页面同步最新状态。",
+    });
+  };
+
+  const handleCloseActiveSession = async () => {
+    if (!activeSession) {
+      return;
+    }
+
+    if (SESSION_FINAL_STATUSES.has(activeSession.status)) {
+      setActiveSession(null);
+      setActiveSessionMeta(null);
+      setActionLoadingKey(null);
+      setSessionActionLoading(null);
+      setVerificationInput("");
+      return;
+    }
+
+    setSessionActionLoading("cancel_session");
+    try {
+      await adminApi.post(`${adminPaths.loginSessions}/${activeSession.id}/actions`, {
+        actionType: "cancel_session",
+      });
+      setNotice({
+        tone: "info",
+        text: "已取消当前登录会话，本地 SAU 将停止当前登录流程。",
+      });
+    } catch (closeError) {
+      setNotice({
+        tone: "error",
+        text: formatErrorMessage(closeError, "取消登录会话失败，请稍后重试。"),
+      });
+      return;
+    } finally {
+      setSessionActionLoading(null);
+    }
+
+    setActiveSession(null);
+    setActiveSessionMeta(null);
+    setActionLoadingKey(null);
+    setVerificationInput("");
   };
 
   const handleValidate = async (accountId: string) => {
@@ -450,12 +588,7 @@ export function MediaAccountsView() {
               )}
               <button
                 type="button"
-                onClick={() => {
-                  setActiveSession(null);
-                  setActiveSessionMeta(null);
-                  setActionLoadingKey(null);
-                  setSessionActionLoading(null);
-                }}
+                onClick={() => void handleCloseActiveSession()}
                 className="rounded-lg p-2 text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)] transition-colors"
                 aria-label="关闭登录会话面板"
               >
@@ -499,6 +632,110 @@ export function MediaAccountsView() {
                   />
                 </div>
               )}
+            </div>
+          )}
+
+          {verificationPayload && (
+            <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+              <div className="flex items-start gap-3">
+                <div className="rounded-full bg-amber-500/12 p-2 text-amber-300">
+                  <ShieldCheck className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">
+                    {verificationPayload.title || "需要额外验证"}
+                  </h4>
+                  <p className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">
+                    {verificationPayload.message || "本地 SAU 已检测到额外验证，请先选择认证方式，再视情况输入验证码或密码。"}
+                  </p>
+                </div>
+              </div>
+
+              {verificationOptions.length > 0 && (
+                <div className="mt-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-secondary)]">
+                    认证方式
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {verificationOptions.map((optionText) => {
+                      const loadingKey = `select_option:${optionText}`;
+                      const isLoadingOption = sessionActionLoading === loadingKey;
+                      return (
+                        <button
+                          key={optionText}
+                          type="button"
+                          onClick={() => void handleSelectVerificationOption(optionText)}
+                          disabled={Boolean(sessionActionLoading) || isSessionFinal}
+                          className="inline-flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200 hover:bg-amber-500/15 transition-colors disabled:opacity-50"
+                        >
+                          {isLoadingOption && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                          <span>{optionText}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-4 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-secondary)]">
+                    验证输入
+                  </p>
+                  {verificationHints.length > 0 && (
+                    <span className="text-xs text-[var(--color-text-secondary)]">
+                      已识别输入框：{verificationHints.join(" / ")}
+                    </span>
+                  )}
+                </div>
+
+                <input
+                  type="text"
+                  value={verificationInput}
+                  onChange={(event) => setVerificationInput(event.target.value)}
+                  placeholder="输入验证码、短信验证码或登录密码"
+                  disabled={!canAssistTextInput || Boolean(sessionActionLoading) || isSessionFinal}
+                  className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-2.5 text-sm focus:outline-none focus:border-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+                />
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleSendVerificationInput("fill_text")}
+                    disabled={!canAssistTextInput || Boolean(sessionActionLoading) || isSessionFinal}
+                    className="inline-flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)] transition-colors disabled:opacity-50"
+                  >
+                    {sessionActionLoading === "fill_text" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    发送到本地验证框
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleSendVerificationInput("fill_text_and_submit")}
+                    disabled={!canAssistTextInput || Boolean(sessionActionLoading) || isSessionFinal}
+                    className="inline-flex items-center gap-2 rounded-lg border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/12 px-3 py-2 text-sm text-[var(--color-primary)] hover:bg-[var(--color-primary)]/18 transition-colors disabled:opacity-50"
+                  >
+                    {sessionActionLoading === "fill_text_and_submit" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    发送验证码并提交
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handlePressVerificationEnter()}
+                    disabled={Boolean(sessionActionLoading) || isSessionFinal}
+                    className="inline-flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)] transition-colors disabled:opacity-50"
+                  >
+                    {sessionActionLoading === "press_key:Enter" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    发送回车
+                  </button>
+                </div>
+
+                <p className="text-xs leading-5 text-[var(--color-text-secondary)]">
+                  {canAssistTextInput
+                    ? verificationHints.length > 0
+                      ? `请先选中认证方式，再根据输入框提示补充信息：${verificationHints.join(" / ")}`
+                      : "本地 SAU 已检测到可输入内容的验证界面，你可以直接把验证码或密码发到本地浏览器。"
+                    : "当前验证界面暂未识别到输入框，若页面切换到输入步骤，输入提示会自动同步回来。"}
+                </p>
+              </div>
             </div>
           )}
         </div>

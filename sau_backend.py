@@ -294,6 +294,14 @@ async def validate_account_rows(conn, rows):
         validated_rows.append(serialize_account_row(row, status))
         if row['status'] != status:
             updates.append((status, row['id']))
+        if not is_valid:
+            try:
+                cookie_path = Path(BASE_DIR / "cookiesFile" / row['filePath'])
+                if cookie_path.exists():
+                    cookie_path.unlink()
+                    print(f"🗑️ 已清理失效的 cookie 文件 [{row['id']}]: {cookie_path.name}")
+            except Exception as e:
+                print(f"⚠️ 清理失效的 cookie 文件失败: {e}")
 
     if updates:
         cursor = conn.cursor()
@@ -1971,6 +1979,31 @@ def download_cookie():
 # 包装函数：在线程中运行异步函数
 def run_async_function(type,id,status_queue,command_queue=None):
     try:
+        # First, attempt local fast-path validation if an existing cookie is present
+        try:
+            with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM user_info WHERE userName = ? AND type = ?", (id, type))
+                row = cursor.fetchone()
+                
+                if row:
+                    from myUtils.auth import check_cookie
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    is_valid = loop.run_until_complete(check_cookie(int(type), row['filePath']))
+                    loop.close()
+                    
+                    if is_valid:
+                        print(f"✅ {id} 本地 Cookie 验证成功！直接进入等效登录完成状态。")
+                        if status_queue is not None:
+                            status_queue.put("200")
+                        return
+                    else:
+                        print(f"⚠️ {id} 本地 Cookie 验证失效或需二次认证，进入扫码登录流程...")
+        except Exception as precheck_exc:
+            print(f"预先检查本地 Cookie 失效: {precheck_exc}")
+
         match type:
             case '1':
                 loop = asyncio.new_event_loop()

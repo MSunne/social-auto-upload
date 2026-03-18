@@ -62,8 +62,8 @@
         <el-table-column prop="name" label="账号名" min-width="160" />
         <el-table-column label="Cookie" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.cookieStatus === 'valid' ? 'success' : 'danger'" size="small" effect="dark">
-              {{ row.cookieStatus === 'valid' ? '有效' : '无效' }}
+            <el-tag :type="row.status === '正常' ? 'success' : 'danger'" size="small" effect="dark">
+              {{ row.status === '正常' ? '有效' : '无效' }}
             </el-tag>
           </template>
         </el-table-column>
@@ -165,8 +165,10 @@ const validateOne = async (id) => {
   const acc = accountStore.accounts.find(a => a.id === id)
   if (acc) acc._validating = true
   try {
-    await accountApi.validateAccount(id)
-    ElMessage.success('验证成功')
+    const res = await accountApi.validateAccount(id)
+    const row = Array.isArray(res?.data) ? res.data : null
+    const isValid = row?.[4] === 1
+    ElMessage[isValid ? 'success' : 'warning'](isValid ? '验证成功' : '账号状态异常，需要重新登录')
     fetchAccounts()
   } catch { ElMessage.error('验证失败') }
   if (acc) acc._validating = false

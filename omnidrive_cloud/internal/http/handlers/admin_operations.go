@@ -496,6 +496,14 @@ func (h *AdminConsoleHandler) createAdminMediaAccountValidationSession(ctx conte
 		return nil, auditStringPtr("Device is disabled"), nil
 	}
 
+	existingSession, err := findReusableLoginSession(ctx, h.app.Store, record.Owner.ID, record.Account.DeviceID, record.Account.Platform, record.Account.AccountName)
+	if err != nil {
+		return nil, nil, err
+	}
+	if existingSession != nil {
+		return existingSession, nil, nil
+	}
+
 	message := "等待本地 OmniBull 重新验证账号"
 	session, err := h.app.Store.CreateLoginSession(ctx, store.CreateLoginSessionInput{
 		ID:          uuid.NewString(),
@@ -549,6 +557,14 @@ func (h *AdminConsoleHandler) createAdminRemoteLoginSession(ctx context.Context,
 	accountName = strings.TrimSpace(accountName)
 	if platform == "" || accountName == "" {
 		return nil, auditStringPtr("Platform and account name are required"), nil
+	}
+
+	existingSession, err := findReusableLoginSession(ctx, h.app.Store, record.Owner.ID, record.Device.ID, platform, accountName)
+	if err != nil {
+		return nil, nil, err
+	}
+	if existingSession != nil {
+		return existingSession, nil, nil
 	}
 
 	message := "等待本地 OmniBull 拉起登录流程"
@@ -1615,6 +1631,17 @@ func (h *AdminConsoleHandler) CreateLoginSessionAction(w http.ResponseWriter, r 
 		"accountName":   session.AccountName,
 		"actionPayload": payload.Payload,
 	}))
+
+	if isLoginCancelAction(payload.ActionType) {
+		cancelMessage := "登录会话已取消，等待本地 SAU 停止当前登录流程"
+		if _, err := h.app.Store.UpdateLoginSessionEvent(r.Context(), session.ID, store.LoginEventInput{
+			Status:  "cancelled",
+			Message: &cancelMessage,
+		}); err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to cancel login session")
+			return
+		}
+	}
 
 	render.JSON(w, http.StatusCreated, action)
 }

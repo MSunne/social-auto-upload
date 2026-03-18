@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -30,8 +32,45 @@ type createLoginActionRequest struct {
 	Payload    interface{} `json:"payload"`
 }
 
+func isLoginCancelAction(actionType string) bool {
+	switch strings.TrimSpace(actionType) {
+	case "cancel_session", "cancel_login":
+		return true
+	default:
+		return false
+	}
+}
+
 func NewAccountHandler(app *appstate.App) *AccountHandler {
 	return &AccountHandler{app: app}
+}
+
+func findReusableLoginSession(ctx context.Context, store *store.Store, ownerUserID string, deviceID string, platform string, accountName string) (*domain.LoginSession, error) {
+	ownerUserID = strings.TrimSpace(ownerUserID)
+	deviceID = strings.TrimSpace(deviceID)
+	platform = strings.TrimSpace(platform)
+	accountName = strings.TrimSpace(accountName)
+	if ownerUserID == "" || deviceID == "" || platform == "" || accountName == "" {
+		return nil, nil
+	}
+
+	sessions, err := store.ListLoginSessionsByAccountTarget(ctx, ownerUserID, deviceID, platform, accountName, 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(sessions) == 0 {
+		return nil, nil
+	}
+	session := &sessions[0]
+	status := strings.TrimSpace(session.Status)
+	age := time.Since(session.UpdatedAt)
+	switch status {
+	case "pending", "running":
+		if age <= 2*time.Minute {
+			return session, nil
+		}
+	}
+	return nil, nil
 }
 
 func (h *AccountHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -167,6 +206,16 @@ func (h *AccountHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	existingSession, err := findReusableLoginSession(r.Context(), h.app.Store, user.ID, account.DeviceID, account.Platform, account.AccountName)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to inspect active validation session")
+		return
+	}
+	if existingSession != nil {
+		render.JSON(w, http.StatusOK, existingSession)
+		return
+	}
+
 	message := "等待本地 OmniBull 重新验证账号"
 	session, err := h.app.Store.CreateLoginSession(r.Context(), store.CreateLoginSessionInput{
 		ID:          uuid.NewString(),
@@ -227,6 +276,16 @@ func (h *AccountHandler) CreateRemoteLogin(w http.ResponseWriter, r *http.Reques
 	}
 	if !device.IsEnabled {
 		render.Error(w, http.StatusConflict, "Device is disabled")
+		return
+	}
+
+	existingSession, err := findReusableLoginSession(r.Context(), h.app.Store, user.ID, payload.DeviceID, payload.Platform, payload.AccountName)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to inspect active login session")
+		return
+	}
+	if existingSession != nil {
+		render.JSON(w, http.StatusOK, existingSession)
 		return
 	}
 
@@ -341,6 +400,17 @@ func (h *AccountHandler) CreateLoginAction(w http.ResponseWriter, r *http.Reques
 		Message:      auditStringPtr("用户在云端提交了验证动作"),
 		Payload:      payloadBytes,
 	})
+
+	if isLoginCancelAction(payload.ActionType) {
+		cancelMessage := "登录会话已取消，等待本地 SAU 停止当前登录流程"
+		if _, err := h.app.Store.UpdateLoginSessionEvent(r.Context(), sessionID, store.LoginEventInput{
+			Status:  "cancelled",
+			Message: &cancelMessage,
+		}); err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to cancel login session")
+			return
+		}
+	}
 
 	render.JSON(w, http.StatusCreated, action)
 }
