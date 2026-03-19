@@ -524,6 +524,17 @@ export default function VideoCreationPage() {
   const selectedPreviewItem = selectedPreviewItems[previewIndex] || selectedPreviewItems[0] || null;
   const progress = buildVideoProgress(currentJob || selectedJob);
   const generating = submitting || Boolean(currentJob && !isTerminalJob(currentJob));
+  const submitDisabledReason = useMemo(() => {
+    if (!prompt.trim()) {
+      return "请先输入视频描述";
+    }
+    if (!activeModel) {
+      return modelsLoading ? "正在加载视频模型..." : "暂无可用视频模型";
+    }
+    return "";
+  }, [activeModel, modelsLoading, prompt]);
+  const submitButtonDisabled = Boolean(submitDisabledReason) || generating;
+  const submitHelperText = submitDisabledReason || "提交到真实后端并同步到到易视频引擎";
 
   useEffect(() => {
     if (!selectedModel && videoModels.length > 0) {
@@ -942,29 +953,27 @@ export default function VideoCreationPage() {
           transition={{ delay: 0.25 }}
           type="button"
           onClick={handleGenerate}
-          disabled={!prompt.trim() || !activeModel || generating}
-          className="group relative mt-2 w-full shrink-0 overflow-hidden rounded-2xl bg-gradient-to-r from-accent via-pink to-cyan py-5 text-sm font-bold transition-all hover:scale-[1.02] hover:shadow-[0_0_40px_rgba(177,73,255,0.5),0_0_80px_rgba(0,245,212,0.25)] active:scale-[0.98] disabled:opacity-40"
+          disabled={submitButtonDisabled}
+          className="group relative mt-2 h-16 w-full shrink-0 overflow-hidden rounded-2xl bg-gradient-to-r from-accent via-pink to-cyan text-sm font-bold transition-all hover:scale-[1.02] hover:shadow-[0_0_40px_rgba(177,73,255,0.5),0_0_80px_rgba(0,245,212,0.25)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
         >
           <div className="absolute inset-[1px] rounded-2xl bg-background/60 backdrop-blur-xl" />
-          <div className="relative z-10">
+          <div className="relative z-10 flex h-full items-center justify-center">
             {generating ? (
               <div className="flex items-center justify-center gap-2 text-white">
                 <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                 <span className="tracking-wider">视频合成中...</span>
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center gap-1 text-white">
-                <div className="flex items-center gap-2">
-                  <Wand2 className="h-5 w-5 drop-shadow-[0_0_6px_rgba(255,255,255,0.6)]" />
-                  <span className="tracking-[0.15em] text-[15px] drop-shadow-[0_0_8px_rgba(255,255,255,0.4)]">
-                    启动视频制作
-                  </span>
-                </div>
-                <span className="text-[10px] text-white/70">提交到真实后端并同步到到易视频引擎</span>
+              <div className="flex items-center gap-2 text-white">
+                <Wand2 className="h-5 w-5 drop-shadow-[0_0_6px_rgba(255,255,255,0.6)]" />
+                <span className="tracking-[0.15em] text-[15px] drop-shadow-[0_0_8px_rgba(255,255,255,0.4)]">
+                  {submitDisabledReason || "启动视频制作"}
+                </span>
               </div>
             )}
           </div>
         </motion.button>
+        <p className="mt-2 text-center text-[10px] text-text-muted">{generating ? progress.hint : submitHelperText}</p>
       </div>
 
       <div

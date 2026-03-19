@@ -7,8 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	stddraw "image/draw"
+	_ "image/gif"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"io/fs"
+	"math"
 	"mime"
 	"mime/multipart"
 	"net"
@@ -19,6 +25,9 @@ import (
 	"time"
 
 	"omnidrive_cloud/internal/config"
+
+	xdraw "golang.org/x/image/draw"
+	_ "golang.org/x/image/webp"
 )
 
 type APIYIProvider struct {
@@ -357,12 +366,15 @@ func (p *APIYIProvider) buildVideoSubmissionBody(ctx context.Context, req VideoR
 
 	_ = writer.WriteField("model", req.Model)
 	_ = writer.WriteField("prompt", req.Prompt)
+	targetWidth := 0
+	targetHeight := 0
 	if isSoraVideoModel(req.Model) {
 		if seconds := normalizeSoraVideoSeconds(req.DurationSeconds); seconds != "" {
 			_ = writer.WriteField("seconds", seconds)
 		}
 		if size := normalizeSoraVideoSize(req.Resolution, req.AspectRatio); size != "" {
 			_ = writer.WriteField("size", size)
+			targetWidth, targetHeight, _ = parseResolutionDimensions(size)
 		}
 	}
 
@@ -370,6 +382,12 @@ func (p *APIYIProvider) buildVideoSubmissionBody(ctx context.Context, req VideoR
 		data, mimeType, fileName, err := p.resolveMediaInput(ctx, media)
 		if err != nil {
 			return nil, "", err
+		}
+		if isSoraVideoModel(req.Model) {
+			data, mimeType, fileName, err = prepareSoraReferenceImage(data, mimeType, fileName, targetWidth, targetHeight)
+			if err != nil {
+				return nil, "", err
+			}
 		}
 		part, err := writer.CreateFormFile("input_reference", fileName)
 		if err != nil {
@@ -850,6 +868,134 @@ func normalizeRemoteVideoStatus(value string) string {
 	default:
 		return strings.TrimSpace(strings.ToLower(value))
 	}
+}
+
+func prepareSoraReferenceImage(data []byte, mimeType string, fileName string, targetWidth int, targetHeight int) ([]byte, string, string, error) {
+	if len(data) == 0 {
+		return nil, "", "", fmt.Errorf("sora reference image is empty")
+	}
+
+	decoded, format, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, "", "", fmt.Errorf("failed to decode sora reference image: %w", err)
+	}
+
+	resolvedMime := canonicalSoraImageMimeType(mimeType)
+	if resolvedMime == "" {
+		resolvedMime = canonicalSoraImageMimeType(mime.TypeByExtension(strings.ToLower(filepath.Ext(fileName))))
+	}
+	if resolvedMime == "" {
+		resolvedMime = canonicalSoraImageMimeType("image/" + strings.ToLower(strings.TrimSpace(format)))
+	}
+
+	needsResize := targetWidth > 0 && targetHeight > 0 && (decoded.Bounds().Dx() != targetWidth || decoded.Bounds().Dy() != targetHeight)
+	if resolvedMime == "" {
+		resolvedMime = "image/png"
+	}
+
+	if !needsResize && isSoraCompatibleImageMimeType(resolvedMime) {
+		return data, resolvedMime, ensureMediaFileName(fileName, resolvedMime), nil
+	}
+
+	if targetWidth > 0 && targetHeight > 0 {
+		decoded = resizeImageToFill(decoded, targetWidth, targetHeight)
+	}
+
+	encoded, resolvedMime, resolvedName, err := encodeSoraReferenceImage(decoded, resolvedMime, fileName)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return encoded, resolvedMime, resolvedName, nil
+}
+
+func resizeImageToFill(src image.Image, targetWidth int, targetHeight int) image.Image {
+	if src == nil || targetWidth <= 0 || targetHeight <= 0 {
+		return src
+	}
+	srcWidth := src.Bounds().Dx()
+	srcHeight := src.Bounds().Dy()
+	if srcWidth <= 0 || srcHeight <= 0 {
+		return src
+	}
+	if srcWidth == targetWidth && srcHeight == targetHeight {
+		return src
+	}
+
+	scale := math.Max(float64(targetWidth)/float64(srcWidth), float64(targetHeight)/float64(srcHeight))
+	scaledWidth := int(math.Ceil(float64(srcWidth) * scale))
+	scaledHeight := int(math.Ceil(float64(srcHeight) * scale))
+	if scaledWidth < targetWidth {
+		scaledWidth = targetWidth
+	}
+	if scaledHeight < targetHeight {
+		scaledHeight = targetHeight
+	}
+
+	scaled := image.NewNRGBA(image.Rect(0, 0, scaledWidth, scaledHeight))
+	xdraw.CatmullRom.Scale(scaled, scaled.Bounds(), src, src.Bounds(), xdraw.Over, nil)
+
+	dst := image.NewNRGBA(image.Rect(0, 0, targetWidth, targetHeight))
+	offset := image.Point{
+		X: (scaledWidth - targetWidth) / 2,
+		Y: (scaledHeight - targetHeight) / 2,
+	}
+	stddraw.Draw(dst, dst.Bounds(), scaled, offset, stddraw.Src)
+	return dst
+}
+
+func encodeSoraReferenceImage(img image.Image, mimeType string, fileName string) ([]byte, string, string, error) {
+	resolvedMime := canonicalSoraImageMimeType(mimeType)
+	if resolvedMime == "" {
+		resolvedMime = "image/png"
+	}
+
+	var buffer bytes.Buffer
+	switch resolvedMime {
+	case "image/jpeg":
+		if err := jpeg.Encode(&buffer, img, &jpeg.Options{Quality: 92}); err != nil {
+			return nil, "", "", err
+		}
+	default:
+		resolvedMime = "image/png"
+		if err := png.Encode(&buffer, img); err != nil {
+			return nil, "", "", err
+		}
+	}
+
+	return buffer.Bytes(), resolvedMime, ensureMediaFileName(fileName, resolvedMime), nil
+}
+
+func isSoraCompatibleImageMimeType(value string) bool {
+	switch canonicalSoraImageMimeType(value) {
+	case "image/png", "image/jpeg":
+		return true
+	default:
+		return false
+	}
+}
+
+func canonicalSoraImageMimeType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "image/png":
+		return "image/png"
+	case "image/jpg", "image/jpeg":
+		return "image/jpeg"
+	default:
+		return ""
+	}
+}
+
+func ensureMediaFileName(fileName string, mimeType string) string {
+	fileName = strings.TrimSpace(fileName)
+	extension := extensionForMIME(mimeType, ".bin")
+	if fileName == "" {
+		return "input-reference" + extension
+	}
+	base := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+	if base == "" {
+		base = "input-reference"
+	}
+	return base + extension
 }
 
 func fileNameFromResponse(contentDisposition string, fallback string) string {

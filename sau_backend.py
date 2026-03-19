@@ -8,6 +8,7 @@ import time
 import uuid
 import socket
 from urllib import error as urllib_error
+from urllib.parse import urlencode
 from urllib import request as urllib_request
 from pathlib import Path
 from queue import Empty, Queue
@@ -59,6 +60,8 @@ NOISY_REQUEST_PREFIX_INTERVALS = {
     '/assets/': 300,
 }
 REQUEST_LOG_BODY_LIMIT = 500
+OMNIDRIVE_OPENAI_PROXY_BASE_PATH = "/openai/v1"
+OMNIDRIVE_OPENAI_PROXY_FINAL_JOB_STATUSES = {"success", "completed", "failed", "cancelled", "needs_verify"}
 
 
 def parse_bool(value):
@@ -630,6 +633,312 @@ def fetch_omnidrive_device_session():
         except json.JSONDecodeError:
             parsed = {"error": payload or str(exc)}
         return exc.code, parsed
+
+
+def omnidrive_cloud_json_request(method, path, access_token=None, payload=None, timeout=60, query=None):
+    if not OMNIDRIVE_BASE_URL:
+        raise RuntimeError("OMNIDRIVE_BASE_URL 未配置")
+
+    endpoint = f"{OMNIDRIVE_BASE_URL.rstrip('/')}{path}"
+    if query:
+        cleaned = {key: value for key, value in (query or {}).items() if value not in (None, "")}
+        if cleaned:
+            endpoint = f"{endpoint}?{urlencode(cleaned)}"
+
+    headers = {
+        "Accept": "application/json",
+    }
+    data = None
+    if access_token:
+        headers["Authorization"] = f"Bearer {access_token}"
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(payload).encode("utf-8")
+
+    req = urllib_request.Request(
+        endpoint,
+        method=method,
+        headers=headers,
+        data=data,
+    )
+    try:
+        with urllib_request.urlopen(req, timeout=timeout) as response:
+            raw_payload = response.read().decode("utf-8")
+            return response.status, json.loads(raw_payload) if raw_payload else {}
+    except urllib_error.HTTPError as exc:
+        raw_payload = exc.read().decode("utf-8")
+        try:
+            parsed = json.loads(raw_payload) if raw_payload else {}
+        except json.JSONDecodeError:
+            parsed = {"error": raw_payload or str(exc)}
+        return exc.code, parsed
+
+
+def get_omnidrive_device_session_data():
+    status_code, payload = fetch_omnidrive_device_session()
+    if status_code >= 400:
+        message = ""
+        if isinstance(payload, dict):
+            message = str(payload.get("error") or payload.get("message") or payload.get("msg") or "").strip()
+        raise RuntimeError(message or "获取 OmniDrive 设备会话失败")
+
+    if not isinstance(payload, dict):
+        raise RuntimeError("OmniDrive 设备会话响应格式无效")
+
+    access_token = str(payload.get("accessToken") or "").strip()
+    if not access_token:
+        raise RuntimeError("OmniDrive 设备会话缺少 accessToken")
+
+    device = payload.get("device") if isinstance(payload.get("device"), dict) else {}
+    device_id = str(device.get("id") or "").strip()
+    if not device_id:
+        raise RuntimeError("OmniDrive 设备会话缺少设备信息")
+
+    return {
+        "accessToken": access_token,
+        "device": device,
+        "user": payload.get("user") if isinstance(payload.get("user"), dict) else {},
+        "source": str(payload.get("source") or "").strip() or "agent_device_session",
+        "expiresAt": payload.get("expiresAt"),
+    }
+
+
+def _flatten_openai_message_content(content):
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("type") or "").strip() != "text":
+                continue
+            text = item.get("text")
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+        return "\n".join(parts).strip()
+    return ""
+
+
+def _extract_last_openai_user_prompt(messages):
+    for item in reversed(messages or []):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("role") or "").strip() != "user":
+            continue
+        text = _flatten_openai_message_content(item.get("content"))
+        if text:
+            return text
+    return ""
+
+
+def _extract_workspace_text(workspace):
+    if not isinstance(workspace, dict):
+        return ""
+
+    job = workspace.get("job") if isinstance(workspace.get("job"), dict) else {}
+    output_payload = job.get("outputPayload") if isinstance(job.get("outputPayload"), dict) else {}
+    text = output_payload.get("text")
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+
+    for artifact in workspace.get("artifacts") or []:
+        if not isinstance(artifact, dict):
+            continue
+        if str(artifact.get("artifactType") or "").strip() != "text":
+            continue
+        text_content = artifact.get("textContent")
+        if isinstance(text_content, str) and text_content.strip():
+            return text_content.strip()
+
+    return ""
+
+
+def _normalize_openai_model_name(raw_model_name, fallback_model_name):
+    model_name = str(raw_model_name or "").strip()
+    if not model_name:
+        return str(fallback_model_name or "").strip()
+    if "/" in model_name:
+        return model_name.split("/", 1)[1].strip()
+    if model_name in {"default-chat", "default", "omnidrive-default-chat"}:
+        return str(fallback_model_name or "").strip()
+    return model_name
+
+
+def _openai_error_response(message, status_code=400, error_type="invalid_request_error"):
+    return jsonify({
+        "error": {
+            "message": str(message or "request failed"),
+            "type": error_type,
+        }
+    }), status_code
+
+
+def _build_openai_usage():
+    return {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
+
+
+def _build_openai_chat_completion_response(job_id, model_name, text):
+    created = int(time.time())
+    response_id = f"chatcmpl-{job_id}"
+    return {
+        "id": response_id,
+        "object": "chat.completion",
+        "created": created,
+        "model": model_name,
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": text,
+                },
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": _build_openai_usage(),
+    }
+
+
+def _build_openai_chat_stream_chunks(job_id, model_name, text):
+    created = int(time.time())
+    response_id = f"chatcmpl-{job_id}"
+    return [
+        {
+            "id": response_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model_name,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"role": "assistant"},
+                    "finish_reason": None,
+                }
+            ],
+        },
+        {
+            "id": response_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model_name,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": text},
+                    "finish_reason": None,
+                }
+            ],
+        },
+        {
+            "id": response_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model_name,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "stop",
+                }
+            ],
+        },
+    ]
+
+
+def create_omnidrive_openai_chat_completion(openai_payload):
+    session = get_omnidrive_device_session_data()
+    access_token = session["accessToken"]
+    device = session["device"]
+    device_id = str(device.get("id") or "").strip()
+    default_model_name = str(device.get("defaultChatModel") or "").strip() or "gemini-3.1-pro-preview"
+    model_name = _normalize_openai_model_name(openai_payload.get("model"), default_model_name)
+
+    messages = openai_payload.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise ValueError("messages 不能为空")
+
+    prompt = _extract_last_openai_user_prompt(messages)
+    if not prompt:
+        raise ValueError("messages 中缺少可用的 user 文本内容")
+
+    request_payload = {
+        "source": "openclaw_main_chat",
+        "jobType": "chat",
+        "modelName": model_name,
+        "prompt": prompt,
+        "deviceId": device_id,
+        "inputPayload": {
+            "messages": messages,
+        },
+    }
+    if openai_payload.get("temperature") is not None:
+        request_payload["inputPayload"]["temperature"] = openai_payload.get("temperature")
+    if openai_payload.get("max_tokens") is not None:
+        request_payload["inputPayload"]["maxTokens"] = openai_payload.get("max_tokens")
+
+    status_code, create_payload = omnidrive_cloud_json_request(
+        "POST",
+        "/api/v1/ai/jobs",
+        access_token=access_token,
+        payload=request_payload,
+        timeout=60,
+    )
+    if status_code >= 400:
+        message = ""
+        if isinstance(create_payload, dict):
+            message = str(create_payload.get("error") or create_payload.get("message") or "").strip()
+        raise RuntimeError(message or "创建 OmniDrive chat 任务失败")
+
+    if not isinstance(create_payload, dict):
+        raise RuntimeError("OmniDrive chat 任务响应格式无效")
+    job_id = str(create_payload.get("id") or "").strip()
+    if not job_id:
+        raise RuntimeError("OmniDrive chat 任务缺少 job id")
+
+    workspace = {}
+    started_at = time.time()
+    while True:
+        status_code, workspace = omnidrive_cloud_json_request(
+            "GET",
+            f"/api/v1/ai/jobs/{job_id}/workspace",
+            access_token=access_token,
+            timeout=60,
+        )
+        if status_code >= 400:
+            message = ""
+            if isinstance(workspace, dict):
+                message = str(workspace.get("error") or workspace.get("message") or "").strip()
+            raise RuntimeError(message or "查询 OmniDrive chat 任务失败")
+
+        job = workspace.get("job") if isinstance(workspace.get("job"), dict) else {}
+        status = str(job.get("status") or "").strip()
+        if status in OMNIDRIVE_OPENAI_PROXY_FINAL_JOB_STATUSES:
+            break
+        if time.time() - started_at >= 120:
+            break
+        time.sleep(2.5)
+
+    job = workspace.get("job") if isinstance(workspace.get("job"), dict) else {}
+    final_status = str(job.get("status") or "").strip()
+    if final_status not in {"success", "completed"}:
+        message = str(job.get("message") or "").strip() or "OmniDrive chat 任务未成功完成"
+        raise RuntimeError(message)
+
+    text = _extract_workspace_text(workspace)
+    if not text:
+        raise RuntimeError("OmniDrive chat 返回结果为空")
+
+    effective_model_name = str(job.get("modelName") or model_name).strip() or model_name
+    return {
+        "jobId": job_id,
+        "modelName": effective_model_name,
+        "text": text,
+    }
 
 
 def ensure_publish_task_manager_started():
@@ -1377,6 +1686,99 @@ def skill_omnidrive_session():
         "msg": "success",
         "data": payload,
     }), 200
+
+
+@app.route(f'{OMNIDRIVE_OPENAI_PROXY_BASE_PATH}/models', methods=['GET'])
+def omnidrive_openai_models():
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    try:
+        session = get_omnidrive_device_session_data()
+        status_code, payload = omnidrive_cloud_json_request(
+            "GET",
+            "/api/v1/ai/models",
+            access_token=session["accessToken"],
+            query={"category": "chat"},
+            timeout=30,
+        )
+    except Exception as exc:
+        return _openai_error_response(str(exc), status_code=500, error_type="server_error")
+
+    if status_code >= 400:
+        message = ""
+        if isinstance(payload, dict):
+            message = str(payload.get("error") or payload.get("message") or "").strip()
+        return _openai_error_response(message or "列出 OmniDrive 模型失败", status_code=status_code, error_type="server_error")
+
+    model_items = []
+    model_items.append(
+        {
+            "id": "default-chat",
+            "object": "model",
+            "created": 0,
+            "owned_by": "omnidrive",
+        }
+    )
+    for item in payload or []:
+        if not isinstance(item, dict):
+            continue
+        model_id = str(item.get("name") or item.get("id") or "").strip()
+        if not model_id:
+            continue
+        model_items.append(
+            {
+                "id": model_id,
+                "object": "model",
+                "created": 0,
+                "owned_by": "omnidrive",
+            }
+        )
+
+    return jsonify({
+        "object": "list",
+        "data": model_items,
+    }), 200
+
+
+@app.route(f'{OMNIDRIVE_OPENAI_PROXY_BASE_PATH}/chat/completions', methods=['POST'])
+def omnidrive_openai_chat_completions():
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        completion = create_omnidrive_openai_chat_completion(payload)
+    except ValueError as exc:
+        return _openai_error_response(str(exc), status_code=400)
+    except RuntimeError as exc:
+        return _openai_error_response(str(exc), status_code=502, error_type="server_error")
+    except Exception as exc:
+        return _openai_error_response(str(exc), status_code=500, error_type="server_error")
+
+    if parse_bool(payload.get("stream")):
+        chunks = _build_openai_chat_stream_chunks(
+            completion["jobId"],
+            completion["modelName"],
+            completion["text"],
+        )
+
+        def event_stream():
+            for chunk in chunks:
+                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return Response(event_stream(), mimetype="text/event-stream")
+
+    return jsonify(
+        _build_openai_chat_completion_response(
+            completion["jobId"],
+            completion["modelName"],
+            completion["text"],
+        )
+    ), 200
 
 
 @app.route('/api/skill/omnidrive/skills', methods=['GET'])

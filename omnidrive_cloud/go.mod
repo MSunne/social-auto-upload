@@ -10,6 +10,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/minio/minio-go/v7 v7.0.88
 	golang.org/x/crypto v0.43.0
+	golang.org/x/image v0.30.0
 )
 
 require (

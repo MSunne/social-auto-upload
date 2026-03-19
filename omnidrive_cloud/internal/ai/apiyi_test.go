@@ -1,9 +1,13 @@
 package ai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"mime"
 	"net/http"
@@ -100,7 +104,7 @@ func TestSubmitVideoUsesSoraBearerAuthAndOfficialFields(t *testing.T) {
 		AspectRatio:     "16:9",
 		DurationSeconds: &duration,
 		ReferenceImages: []MediaInput{{
-			Data:     []byte("image-bytes"),
+			Data:     mustPNGData(t, 1280, 720),
 			MIMEType: "image/png",
 			FileName: "product.png",
 		}},
@@ -157,7 +161,7 @@ func TestSubmitVideoPassesConfiguredSoraDurationThrough(t *testing.T) {
 		AspectRatio:     "16:9",
 		DurationSeconds: &duration,
 		ReferenceImages: []MediaInput{{
-			Data:     []byte("image-bytes"),
+			Data:     mustPNGData(t, 1792, 1024),
 			MIMEType: "image/png",
 			FileName: "product.png",
 		}},
@@ -168,6 +172,69 @@ func TestSubmitVideoPassesConfiguredSoraDurationThrough(t *testing.T) {
 
 	if capturedSeconds != "15" {
 		t.Fatalf("unexpected seconds field %q", capturedSeconds)
+	}
+}
+
+func TestSubmitVideoResizesSoraReferenceImageToRequestedSize(t *testing.T) {
+	var capturedWidth int
+	var capturedHeight int
+	var capturedMime string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(8 << 20); err != nil {
+			t.Fatalf("ParseMultipartForm returned error: %v", err)
+		}
+		capturedMime = r.FormValue("input_reference_mime_type")
+		file, _, err := r.FormFile("input_reference")
+		if err != nil {
+			t.Fatalf("FormFile returned error: %v", err)
+		}
+		defer file.Close()
+
+		config, _, err := image.DecodeConfig(file)
+		if err != nil {
+			t.Fatalf("DecodeConfig returned error: %v", err)
+		}
+		capturedWidth = config.Width
+		capturedHeight = config.Height
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"video_resized","model":"sora-2","status":"queued","created_at":1712697600}`))
+	}))
+	defer server.Close()
+
+	provider, err := NewAPIYIProvider(config.Config{
+		APIYIBaseURL: server.URL,
+		APIYIApiKey:  "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewAPIYIProvider returned error: %v", err)
+	}
+
+	duration := 8
+	_, err = provider.SubmitVideo(context.Background(), VideoRequest{
+		Model:           "sora-2",
+		BaseURL:         server.URL,
+		APIKey:          "sk-sora",
+		Prompt:          "让这个珠宝首图动起来",
+		Resolution:      "1280x720",
+		AspectRatio:     "16:9",
+		DurationSeconds: &duration,
+		ReferenceImages: []MediaInput{{
+			Data:     mustPNGData(t, 640, 360),
+			MIMEType: "image/png",
+			FileName: "product.png",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("SubmitVideo returned error: %v", err)
+	}
+
+	if capturedWidth != 1280 || capturedHeight != 720 {
+		t.Fatalf("unexpected resized image dimensions %dx%d", capturedWidth, capturedHeight)
+	}
+	if capturedMime != "image/png" {
+		t.Fatalf("unexpected input_reference_mime_type %q", capturedMime)
 	}
 }
 
@@ -404,4 +471,115 @@ func TestVeoFLMultipartDoesNotSendUnsupportedFields(t *testing.T) {
 	if len(formValues["input_reference"]) != 1 {
 		t.Fatalf("expected one input_reference, got %#v", formValues["input_reference"])
 	}
+}
+
+func TestVeoFLMultipartSendsTwoInputReferencesInOrder(t *testing.T) {
+	firstFrame := mustPNGData(t, 320, 320)
+	lastFrame := mustPNGData(t, 480, 480)
+	var inputReferences [][]byte
+	var formValues map[string][]string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reader, err := r.MultipartReader()
+		if err != nil {
+			t.Fatalf("MultipartReader returned error: %v", err)
+		}
+		formValues = map[string][]string{}
+		for {
+			part, err := reader.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatalf("NextPart returned error: %v", err)
+			}
+			data, err := io.ReadAll(part)
+			if err != nil {
+				t.Fatalf("ReadAll returned error: %v", err)
+			}
+			if part.FormName() == "input_reference" {
+				inputReferences = append(inputReferences, append([]byte(nil), data...))
+				continue
+			}
+			formValues[part.FormName()] = append(formValues[part.FormName()], string(data))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"video_fl_multi","model":"veo-3.1-fast-fl","status":"queued","created":1762181811}`))
+	}))
+	defer server.Close()
+
+	provider, err := NewAPIYIProvider(config.Config{
+		APIYIBaseURL: server.URL,
+		APIYIApiKey:  "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewAPIYIProvider returned error: %v", err)
+	}
+
+	duration := 8
+	_, err = provider.SubmitVideo(context.Background(), VideoRequest{
+		Model:           "veo-3.1-fast-fl",
+		BaseURL:         server.URL,
+		APIKey:          "sk-veo",
+		Prompt:          "从白天过渡到夜晚，镜头保持不动",
+		AspectRatio:     "16:9",
+		Resolution:      "1280x720",
+		DurationSeconds: &duration,
+		ReferenceImages: []MediaInput{
+			{
+				Data:     firstFrame,
+				MIMEType: "image/png",
+				FileName: "first.png",
+			},
+			{
+				Data:     lastFrame,
+				MIMEType: "image/png",
+				FileName: "last.png",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SubmitVideo returned error: %v", err)
+	}
+
+	if len(inputReferences) != 2 {
+		t.Fatalf("expected 2 input_reference parts, got %d", len(inputReferences))
+	}
+	if !bytes.Equal(inputReferences[0], firstFrame) {
+		t.Fatalf("first input_reference was not submitted in original order")
+	}
+	if !bytes.Equal(inputReferences[1], lastFrame) {
+		t.Fatalf("second input_reference was not submitted in original order")
+	}
+	if _, ok := formValues["seconds"]; ok {
+		t.Fatalf("veo fl request should not contain seconds: %#v", formValues)
+	}
+	if _, ok := formValues["size"]; ok {
+		t.Fatalf("veo fl request should not contain size: %#v", formValues)
+	}
+	if _, ok := formValues["input_reference_mime_type"]; ok {
+		t.Fatalf("veo fl request should not contain input_reference_mime_type: %#v", formValues)
+	}
+}
+
+func mustPNGData(t *testing.T, width int, height int) []byte {
+	t.Helper()
+
+	canvas := image.NewNRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			canvas.Set(x, y, color.NRGBA{
+				R: uint8((x * 255) / max(1, width)),
+				G: uint8((y * 255) / max(1, height)),
+				B: 180,
+				A: 255,
+			})
+		}
+	}
+
+	var buffer bytes.Buffer
+	if err := png.Encode(&buffer, canvas); err != nil {
+		t.Fatalf("png.Encode returned error: %v", err)
+	}
+	return buffer.Bytes()
 }
