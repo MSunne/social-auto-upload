@@ -428,7 +428,7 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 			return renewErr
 		}
 
-		status, err := w.provider.GetVideo(ctx, state.RemoteVideoID, state.BaseURL, apiKey)
+		status, err := w.provider.GetVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey)
 		if err != nil {
 			return err
 		}
@@ -444,7 +444,7 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 
 		switch state.RemoteStatus {
 		case "completed":
-			artifact, err := w.provider.DownloadVideo(ctx, state.RemoteVideoID, state.BaseURL, apiKey)
+			artifact, err := w.provider.DownloadVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey)
 			if err != nil {
 				return err
 			}

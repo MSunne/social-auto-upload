@@ -6,6 +6,8 @@ const DEFAULT_CHAT_MODEL = "gemini-3.1-pro-preview";
 const DEFAULT_IMAGE_MODEL = "gemini-3-pro-image-preview";
 const DEFAULT_VIDEO_MODEL = "veo-3.1-fast-fl";
 const DEFAULT_VIDEO_DURATION_SECONDS = 8;
+const OPENCLAW_SKILL_CHAT_SOURCE = "openclaw_skill";
+const OPENCLAW_MAIN_CHAT_SOURCE = "openclaw_main_chat";
 const FINAL_AI_JOB_STATUSES = new Set(["success", "completed", "failed", "cancelled", "needs_verify"]);
 
 let cachedSession = null;
@@ -58,6 +60,73 @@ function toolResult(data) {
       },
     ],
   };
+}
+
+function summarizeBoundDevice(boundDevice) {
+  if (!boundDevice) {
+    return null;
+  }
+  return {
+    id: boundDevice.id,
+    deviceCode: boundDevice.deviceCode,
+    name: boundDevice.name,
+    isEnabled: boundDevice.isEnabled,
+    defaultReasoningModel: boundDevice.defaultReasoningModel || null,
+    defaultChatModel: boundDevice.defaultChatModel || null,
+    defaultImageModel: boundDevice.defaultImageModel || null,
+    defaultVideoModel: boundDevice.defaultVideoModel || null,
+  };
+}
+
+function summarizeSessionUser(user) {
+  if (!user) {
+    return null;
+  }
+  return {
+    id: user.id || null,
+    email: user.email || null,
+    name: user.name || null,
+  };
+}
+
+function summarizeCachedSession(session) {
+  if (!session) {
+    return null;
+  }
+  return {
+    email: session.email || null,
+    source: session.source || null,
+    loggedInAt: session.loggedInAt || null,
+  };
+}
+
+function extractGatewayParams(request) {
+  if (!request || typeof request !== "object") {
+    return {};
+  }
+  const candidate =
+    request.params ||
+    request.payload ||
+    request.input ||
+    request.arguments ||
+    {};
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+    return {};
+  }
+  return candidate;
+}
+
+function buildGatewayError(methodName, error) {
+  return {
+    ok: false,
+    gatewayMethod: methodName,
+    error: String(error?.message || error || "unknown error"),
+  };
+}
+
+function normalizeChatSource(source, fallbackSource) {
+  const value = String(source || "").trim();
+  return value || fallbackSource;
 }
 
 function buildQuery(params) {
@@ -438,60 +507,60 @@ async function pollWorkspaceUntilFinal(api, jobId, options = {}) {
   }
 }
 
+async function buildAuthStatusPayload(api, params = {}) {
+  const cfg = resolveConfig(api);
+  let authenticated = false;
+  let authSource = cachedSession?.source || null;
+  let boundDevice = null;
+  let sessionUser = cachedSession?.user || null;
+
+  try {
+    await ensureAccessToken(api, params || {});
+    authenticated = Boolean(cachedSession?.accessToken || cfg.accessToken);
+    authSource = cachedSession?.source || (cfg.accessToken ? "config_access_token" : null);
+    sessionUser = cachedSession?.user || null;
+    boundDevice = await resolveBoundOmniBullDevice(api, params || {});
+  } catch {
+    boundDevice = null;
+  }
+
+  const headlessAgentSessionActive = authSource === "local_agent_session";
+  let gatewayBlockedReason = null;
+  if (!authenticated) {
+    gatewayBlockedReason = "OmniDrive 会话不可用";
+  } else if (!boundDevice) {
+    gatewayBlockedReason = "当前 OpenClaw 所在 OmniBull 未绑定或未启用";
+  }
+
+  return {
+    authenticated,
+    authSource,
+    supportsHeadlessAgentSession: true,
+    headlessAgentSessionActive,
+    manualCredentialsConfigured: Boolean(cfg.accessToken || (cfg.email && cfg.password)),
+    manualCredentialsRequired: !authenticated && !headlessAgentSessionActive,
+    hasLocalDeviceCode: Boolean(cfg.localDeviceCode),
+    cachedSession: summarizeCachedSession(cachedSession),
+    sessionUser: summarizeSessionUser(sessionUser),
+    baseUrl: cfg.baseUrl,
+    localOmniBullBaseUrl: cfg.localOmniBullBaseUrl,
+    boundDevice: summarizeBoundDevice(boundDevice),
+    recommendedMainChatRoute: {
+      mode: "gateway",
+      gatewayMethod: "omnidrive.chat",
+      statusMethod: "omnidrive.status",
+      ready: Boolean(authenticated && boundDevice),
+      blockedReason: gatewayBlockedReason,
+      requestSource: OPENCLAW_MAIN_CHAT_SOURCE,
+      modelSource: boundDevice?.defaultChatModel ? "bound_device.defaultChatModel" : "plugin_default_fallback",
+    },
+  };
+}
+
 async function executeAuth(api, params) {
   const action = String(params.action || "status").trim();
   if (action === "status") {
-    const cfg = resolveConfig(api);
-    let authenticated = false;
-    let authSource = cachedSession?.source || null;
-    let boundDevice = null;
-    let sessionUser = cachedSession?.user || null;
-    try {
-      await ensureAccessToken(api, params || {});
-      authenticated = Boolean(cachedSession?.accessToken || cfg.accessToken);
-      authSource = cachedSession?.source || (cfg.accessToken ? "config_access_token" : null);
-      sessionUser = cachedSession?.user || null;
-      boundDevice = await resolveBoundOmniBullDevice(api, params || {});
-    } catch {
-      boundDevice = null;
-    }
-    const headlessAgentSessionActive = authSource === "local_agent_session";
-    return toolResult({
-      authenticated,
-      authSource,
-      supportsHeadlessAgentSession: true,
-      headlessAgentSessionActive,
-      manualCredentialsConfigured: Boolean(cfg.accessToken || (cfg.email && cfg.password)),
-      manualCredentialsRequired: !authenticated && !headlessAgentSessionActive,
-      hasLocalDeviceCode: Boolean(cfg.localDeviceCode),
-      cachedSession: cachedSession
-        ? {
-            email: cachedSession.email || null,
-            source: cachedSession.source || null,
-            loggedInAt: cachedSession.loggedInAt || null,
-          }
-        : null,
-      sessionUser: sessionUser
-        ? {
-            id: sessionUser.id || null,
-            email: sessionUser.email || null,
-            name: sessionUser.name || null,
-          }
-        : null,
-      baseUrl: cfg.baseUrl,
-      localOmniBullBaseUrl: cfg.localOmniBullBaseUrl,
-      boundDevice: boundDevice
-        ? {
-            id: boundDevice.id,
-            deviceCode: boundDevice.deviceCode,
-            name: boundDevice.name,
-            isEnabled: boundDevice.isEnabled,
-            defaultChatModel: boundDevice.defaultChatModel || null,
-            defaultImageModel: boundDevice.defaultImageModel || null,
-            defaultVideoModel: boundDevice.defaultVideoModel || null,
-          }
-        : null,
-    });
+    return toolResult(await buildAuthStatusPayload(api, params || {}));
   }
   if (action === "logout") {
     clearCachedSession();
@@ -530,16 +599,7 @@ async function executeAuth(api, params) {
       accessTokenPreview: `${session.accessToken.slice(0, 10)}...`,
       user,
       source: session.source,
-      boundDevice: boundDevice
-        ? {
-            id: boundDevice.id,
-            deviceCode: boundDevice.deviceCode,
-            name: boundDevice.name,
-            defaultChatModel: boundDevice.defaultChatModel || null,
-            defaultImageModel: boundDevice.defaultImageModel || null,
-            defaultVideoModel: boundDevice.defaultVideoModel || null,
-          }
-        : null,
+      boundDevice: summarizeBoundDevice(boundDevice),
     });
   }
   if (action === "me") {
@@ -555,16 +615,7 @@ async function executeAuth(api, params) {
     }
     return toolResult({
       user,
-      boundDevice: boundDevice
-        ? {
-            id: boundDevice.id,
-            deviceCode: boundDevice.deviceCode,
-            name: boundDevice.name,
-            defaultChatModel: boundDevice.defaultChatModel || null,
-            defaultImageModel: boundDevice.defaultImageModel || null,
-            defaultVideoModel: boundDevice.defaultVideoModel || null,
-          }
-        : null,
+      boundDevice: summarizeBoundDevice(boundDevice),
     });
   }
   throw new Error(`不支持的 auth action: ${action}`);
@@ -638,18 +689,19 @@ async function executeDeviceConfig(api, params) {
   throw new Error(`不支持的 device config action: ${action}`);
 }
 
-async function executeChat(api, params) {
+async function runChat(api, params, options = {}) {
   const cfg = resolveConfig(api);
   const prompt = typeof params.prompt === "string" ? params.prompt.trim() : "";
   const messages = Array.isArray(params.messages) ? params.messages : null;
   ensure(prompt || (messages && messages.length > 0), "chat 需要 prompt 或 messages");
   const boundDevice = await resolveBoundOmniBullDevice(api, params || {});
+  const requestSource = normalizeChatSource(options.source || params.source, OPENCLAW_SKILL_CHAT_SOURCE);
   if (params.deviceId && String(params.deviceId).trim() !== String(boundDevice.id || "").trim()) {
     throw new Error("OpenClaw OmniDrive chat 只能使用当前本机已绑定的 OmniBull 设备");
   }
 
   const payload = {
-    source: "openclaw_skill",
+    source: requestSource,
     jobType: "chat",
     modelName: String(params.modelName || boundDevice.defaultChatModel || cfg.defaultChatModel || DEFAULT_CHAT_MODEL).trim(),
     prompt: prompt || undefined,
@@ -666,14 +718,34 @@ async function executeChat(api, params) {
   const job = await createAIJob(api, payload, params || {});
   const wait = params.wait !== false;
   if (!wait) {
-    return toolResult({ job, nextStep: "使用 omnidrive_job_detail 查询结果" });
+    return {
+      source: "omnidrive",
+      gatewayMethod: "omnidrive.chat",
+      requestSource,
+      waited: false,
+      device: summarizeBoundDevice(boundDevice),
+      effectiveModelName: job?.modelName || payload.modelName,
+      job,
+      nextStep: "使用 omnidrive_job_detail 查询结果",
+    };
   }
 
   const workspace = await pollWorkspaceUntilFinal(api, job.id, params || {});
-  return toolResult({
+  return {
+    source: "omnidrive",
+    gatewayMethod: "omnidrive.chat",
+    requestSource,
+    waited: true,
+    device: summarizeBoundDevice(boundDevice),
+    effectiveModelName: workspace?.job?.modelName || job?.modelName || payload.modelName,
     job,
     workspace: summarizeWorkspace(workspace),
-  });
+    text: extractOutputText(workspace),
+  };
+}
+
+async function executeChat(api, params) {
+  return toolResult(await runChat(api, params, { source: OPENCLAW_SKILL_CHAT_SOURCE }));
 }
 
 async function executeImage(api, params) {
@@ -818,6 +890,44 @@ const plugin = {
   name: "OmniDrive",
   description: "OmniDrive cloud auth and AI tools for OpenClaw",
   register(api) {
+    api.registerGatewayMethod("omnidrive.status", async (request = {}) => {
+      const params = extractGatewayParams(request);
+      try {
+        const payload = await buildAuthStatusPayload(api, params);
+        if (typeof request.respond === "function") {
+          request.respond(true, payload);
+          return;
+        }
+        return payload;
+      } catch (error) {
+        const failure = buildGatewayError("omnidrive.status", error);
+        if (typeof request.respond === "function") {
+          request.respond(false, failure);
+          return;
+        }
+        return failure;
+      }
+    });
+
+    api.registerGatewayMethod("omnidrive.chat", async (request = {}) => {
+      const params = extractGatewayParams(request);
+      try {
+        const payload = await runChat(api, params, { source: OPENCLAW_MAIN_CHAT_SOURCE });
+        if (typeof request.respond === "function") {
+          request.respond(true, payload);
+          return;
+        }
+        return payload;
+      } catch (error) {
+        const failure = buildGatewayError("omnidrive.chat", error);
+        if (typeof request.respond === "function") {
+          request.respond(false, failure);
+          return;
+        }
+        return failure;
+      }
+    });
+
     api.registerTool({
       name: "omnidrive_auth",
       description: "登录 OmniDrive 云端账户，查询当前登录状态，或读取当前用户信息。",

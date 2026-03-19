@@ -338,20 +338,21 @@ type AdminSupportRechargeDetail struct {
 }
 
 type AdminAuditRow struct {
-	ID           string            `json:"id"`
-	OwnerUserID  string            `json:"ownerUserId"`
-	OwnerUser    *AdminUserSummary `json:"ownerUser,omitempty"`
-	ActorType    string            `json:"actorType,omitempty"`
-	Admin        *AdminSummary     `json:"admin,omitempty"`
-	ResourceType string            `json:"resourceType"`
-	ResourceID   *string           `json:"resourceId,omitempty"`
-	Action       string            `json:"action"`
-	Title        string            `json:"title"`
-	Source       string            `json:"source"`
-	Status       string            `json:"status"`
-	Message      *string           `json:"message,omitempty"`
-	Payload      []byte            `json:"payload,omitempty"`
-	CreatedAt    time.Time         `json:"createdAt"`
+	ID            string            `json:"id"`
+	OwnerUserID   string            `json:"ownerUserId"`
+	OwnerUser     *AdminUserSummary `json:"ownerUser,omitempty"`
+	ActorType     string            `json:"actorType,omitempty"`
+	Admin         *AdminSummary     `json:"admin,omitempty"`
+	ResourceType  string            `json:"resourceType"`
+	ResourceID    *string           `json:"resourceId,omitempty"`
+	Action        string            `json:"action"`
+	Title         string            `json:"title"`
+	Source        string            `json:"source"`
+	Status        string            `json:"status"`
+	CurrentStatus *string           `json:"currentStatus,omitempty"`
+	Message       *string           `json:"message,omitempty"`
+	Payload       []byte            `json:"payload,omitempty"`
+	CreatedAt     time.Time         `json:"createdAt"`
 }
 
 type AdminDashboardMetrics struct {

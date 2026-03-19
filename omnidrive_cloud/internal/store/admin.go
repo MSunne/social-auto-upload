@@ -116,6 +116,40 @@ const adminAuditEntriesBaseQuery = `
 	)
 `
 
+const adminAuditEntriesSelectColumns = `
+			entries.id,
+			entries.actor_type,
+			entries.owner_user_id,
+			entries.owner_email,
+			entries.owner_name,
+			entries.admin_id,
+			entries.admin_email,
+			entries.admin_name,
+			entries.resource_type,
+			entries.resource_id,
+			entries.action,
+			entries.title,
+			entries.source,
+			entries.status,
+			entries.message,
+			entries.payload,
+			entries.created_at,
+			CASE
+				WHEN entries.resource_type = 'ai_job' THEN ai.status
+				WHEN entries.resource_type = 'publish_task' THEN pt.status
+				ELSE NULL
+			END AS current_status
+`
+
+const adminAuditEntriesStatusJoins = `
+		LEFT JOIN ai_jobs ai
+			ON entries.resource_type = 'ai_job'
+		   AND entries.resource_id = ai.id
+		LEFT JOIN publish_tasks pt
+			ON entries.resource_type = 'publish_task'
+		   AND entries.resource_id = pt.id
+`
+
 func scanAdminAuditRows(rows pgx.Rows) ([]domain.AdminAuditRow, error) {
 	defer rows.Close()
 
@@ -130,6 +164,7 @@ func scanAdminAuditRows(rows pgx.Rows) ([]domain.AdminAuditRow, error) {
 		var adminID *string
 		var adminEmail *string
 		var adminName *string
+		var currentStatus *string
 		if scanErr := rows.Scan(
 			&item.ID,
 			&actorType,
@@ -148,6 +183,7 @@ func scanAdminAuditRows(rows pgx.Rows) ([]domain.AdminAuditRow, error) {
 			&item.Message,
 			&payload,
 			&item.CreatedAt,
+			&currentStatus,
 		); scanErr != nil {
 			return nil, scanErr
 		}
@@ -155,6 +191,7 @@ func scanAdminAuditRows(rows pgx.Rows) ([]domain.AdminAuditRow, error) {
 		if ownerID != nil {
 			item.OwnerUserID = *ownerID
 		}
+		item.CurrentStatus = currentStatus
 		item.Payload = bytesOrNil(payload)
 		if ownerID != nil && ownerEmail != nil && ownerName != nil {
 			item.OwnerUser = &domain.AdminUserSummary{
@@ -181,24 +218,9 @@ func (s *Store) ListRecentAdminAuditsByUserID(ctx context.Context, userID string
 	}
 	rows, err := s.pool.Query(ctx, adminAuditEntriesBaseQuery+`
 		SELECT
-			entries.id,
-			entries.actor_type,
-			entries.owner_user_id,
-			entries.owner_email,
-			entries.owner_name,
-			entries.admin_id,
-			entries.admin_email,
-			entries.admin_name,
-			entries.resource_type,
-			entries.resource_id,
-			entries.action,
-			entries.title,
-			entries.source,
-			entries.status,
-			entries.message,
-			entries.payload,
-			entries.created_at
+`+adminAuditEntriesSelectColumns+`
 		FROM entries
+`+adminAuditEntriesStatusJoins+`
 		WHERE entries.owner_user_id = $1
 		   OR (entries.resource_type = 'user' AND entries.resource_id = $1)
 		ORDER BY entries.created_at DESC
@@ -216,24 +238,9 @@ func (s *Store) ListRecentAdminAuditsByMediaAccountID(ctx context.Context, accou
 	}
 	rows, err := s.pool.Query(ctx, adminAuditEntriesBaseQuery+`
 		SELECT
-			entries.id,
-			entries.actor_type,
-			entries.owner_user_id,
-			entries.owner_email,
-			entries.owner_name,
-			entries.admin_id,
-			entries.admin_email,
-			entries.admin_name,
-			entries.resource_type,
-			entries.resource_id,
-			entries.action,
-			entries.title,
-			entries.source,
-			entries.status,
-			entries.message,
-			entries.payload,
-			entries.created_at
+`+adminAuditEntriesSelectColumns+`
 		FROM entries
+`+adminAuditEntriesStatusJoins+`
 		WHERE (
 			entries.resource_type IN ('account', 'media_account')
 			AND entries.resource_id = $1
@@ -256,24 +263,9 @@ func (s *Store) ListRecentAdminAuditsByPublishTaskID(ctx context.Context, taskID
 	}
 	rows, err := s.pool.Query(ctx, adminAuditEntriesBaseQuery+`
 		SELECT
-			entries.id,
-			entries.actor_type,
-			entries.owner_user_id,
-			entries.owner_email,
-			entries.owner_name,
-			entries.admin_id,
-			entries.admin_email,
-			entries.admin_name,
-			entries.resource_type,
-			entries.resource_id,
-			entries.action,
-			entries.title,
-			entries.source,
-			entries.status,
-			entries.message,
-			entries.payload,
-			entries.created_at
+`+adminAuditEntriesSelectColumns+`
 		FROM entries
+`+adminAuditEntriesStatusJoins+`
 		WHERE entries.resource_type = 'publish_task'
 		  AND entries.resource_id = $1
 		ORDER BY entries.created_at DESC
@@ -291,24 +283,9 @@ func (s *Store) ListRecentAdminAuditsByAIJobID(ctx context.Context, jobID string
 	}
 	rows, err := s.pool.Query(ctx, adminAuditEntriesBaseQuery+`
 		SELECT
-			entries.id,
-			entries.actor_type,
-			entries.owner_user_id,
-			entries.owner_email,
-			entries.owner_name,
-			entries.admin_id,
-			entries.admin_email,
-			entries.admin_name,
-			entries.resource_type,
-			entries.resource_id,
-			entries.action,
-			entries.title,
-			entries.source,
-			entries.status,
-			entries.message,
-			entries.payload,
-			entries.created_at
+`+adminAuditEntriesSelectColumns+`
 		FROM entries
+`+adminAuditEntriesStatusJoins+`
 		WHERE entries.resource_type = 'ai_job'
 		  AND entries.resource_id = $1
 		ORDER BY entries.created_at DESC
@@ -864,28 +841,13 @@ func (s *Store) ListAdminAudits(ctx context.Context, filter AdminAuditListFilter
 
 	rows, err := s.pool.Query(ctx, baseQuery+fmt.Sprintf(`
 		SELECT
-			entries.id,
-			entries.actor_type,
-			entries.owner_user_id,
-			entries.owner_email,
-			entries.owner_name,
-			entries.admin_id,
-			entries.admin_email,
-			entries.admin_name,
-			entries.resource_type,
-			entries.resource_id,
-			entries.action,
-			entries.title,
-			entries.source,
-			entries.status,
-			entries.message,
-			entries.payload,
-			entries.created_at
+%s
 		FROM entries
+%s
 		%s
 		ORDER BY entries.created_at DESC
 		LIMIT $%d OFFSET $%d
-	`, whereClause, argIndex, argIndex+1), append(args, pageSize, offset)...)
+	`, adminAuditEntriesSelectColumns, adminAuditEntriesStatusJoins, whereClause, argIndex, argIndex+1), append(args, pageSize, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}

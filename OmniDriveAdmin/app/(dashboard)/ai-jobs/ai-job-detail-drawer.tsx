@@ -1,10 +1,9 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import {
   AlertTriangle,
   Clock3,
-  Cpu,
   ExternalLink,
   FileJson,
   Loader2,
@@ -123,6 +122,92 @@ function pickLogIcon(stage: string) {
   }
 }
 
+function buildFallbackExecutionLogs(data: AdminAIJobWorkspace): AdminExecutionLog[] {
+  const entries: AdminExecutionLog[] = [];
+  const job = data.record.job;
+
+  entries.push({
+    id: "fallback-created",
+    stage: "job",
+    status: "created",
+    title: "AI 作业已创建",
+    message: `来源 ${job.source || "system"}${job.runAt ? ` · 计划执行 ${formatFullDateTime(job.runAt)}` : ""}`,
+    source: "system",
+    timestamp: job.createdAt,
+    payload: job.inputPayload,
+  });
+
+  if (job.status && (job.updatedAt !== job.createdAt || job.message || job.outputPayload)) {
+    entries.push({
+      id: "fallback-lifecycle",
+      stage: "generation",
+      status: job.status,
+      title: STATUS_LABEL[job.status] ? `作业状态：${STATUS_LABEL[job.status]}` : "作业状态更新",
+      message: job.message || job.deliveryMessage,
+      source: "ai_worker",
+      timestamp: job.finishedAt || job.updatedAt,
+      payload: job.outputPayload,
+    });
+  }
+
+  (data.artifacts ?? []).forEach((artifact) => {
+    entries.push({
+      id: `fallback-artifact-${artifact.id}`,
+      stage: "artifact",
+      status: "stored",
+      title: "生成产物已落库",
+      message: pickArtifactLabel(artifact),
+      source: artifact.source || "artifact_store",
+      timestamp: artifact.createdAt,
+      payload: artifact.payload,
+    });
+  });
+
+  (data.publishTasks ?? []).forEach((task) => {
+    entries.push({
+      id: `fallback-task-${task.id}`,
+      stage: "publish",
+      status: task.status,
+      title: "已关联发布任务",
+      message: `${task.platform} / ${task.accountName}${task.message ? ` · ${task.message}` : ""}`,
+      source: "omnibull",
+      timestamp: task.createdAt,
+      payload: task.mediaPayload,
+    });
+  });
+
+  (data.billingUsageEvents ?? []).forEach((item) => {
+    entries.push({
+      id: `fallback-billing-${item.id}`,
+      stage: "billing",
+      status: item.billStatus,
+      title: `计费：${item.meterName || item.meterCode}`,
+      message: item.billMessage || `数量 ${item.usageQuantity}`,
+      source: "billing",
+      timestamp: item.createdAt,
+      payload: item.payload,
+    });
+  });
+
+  (data.recentAudits ?? []).forEach((audit) => {
+    entries.push({
+      id: `fallback-audit-${audit.id}`,
+      stage: "audit",
+      status: audit.status,
+      title: audit.title,
+      message: audit.message,
+      source: audit.source,
+      timestamp: audit.createdAt,
+    });
+  });
+
+  return entries.sort((left, right) => {
+    const leftTime = new Date(left.timestamp).getTime();
+    const rightTime = new Date(right.timestamp).getTime();
+    return leftTime - rightTime;
+  });
+}
+
 export function AIJobDetailDrawer({ jobId, onClose }: AIJobDetailDrawerProps) {
   const { data, isLoading, error, refetch, isFetching } = useAdminAIJobWorkspace(jobId);
 
@@ -203,6 +288,14 @@ function DrawerBody({
 }) {
   const job = data.record.job;
   const mainMessage = job.message || job.deliveryMessage;
+  const executionLogs =
+    data.executionLogs && data.executionLogs.length > 0
+      ? data.executionLogs
+      : buildFallbackExecutionLogs(data);
+  const recentAudits = data.recentAudits ?? [];
+  const artifacts = data.artifacts ?? [];
+  const publishTasks = data.publishTasks ?? [];
+  const billingUsageEvents = data.billingUsageEvents ?? [];
 
   return (
     <div className="space-y-5">
@@ -223,10 +316,10 @@ function DrawerBody({
             subtitle="按时间顺序还原作业创建、调度、模型执行、产物落库、计费和发布衔接。"
           >
             <div className="space-y-3">
-              {data.executionLogs.length === 0 ? (
+              {executionLogs.length === 0 ? (
                 <EmptyState label="当前还没有可展示的执行日志。" />
               ) : (
-                data.executionLogs.map((log) => <ExecutionLogItem key={log.id} log={log} />)
+                executionLogs.map((log) => <ExecutionLogItem key={log.id} log={log} />)
               )}
             </div>
           </CompactPanel>
@@ -241,10 +334,10 @@ function DrawerBody({
             </div>
           </CompactPanel>
 
-          {data.recentAudits.length > 0 ? (
+          {recentAudits.length > 0 ? (
             <CompactPanel title="管理员操作" subtitle="这里展示后台对当前作业做过的人工干预与审计记录。">
               <div className="space-y-3">
-                {data.recentAudits.map((audit) => (
+                {recentAudits.map((audit) => (
                   <div
                     key={audit.id}
                     className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel-muted)] px-4 py-3"
@@ -289,15 +382,15 @@ function DrawerBody({
           </CompactPanel>
 
           <CompactPanel title="生成产物">
-            <ArtifactList artifacts={data.artifacts} />
+            <ArtifactList artifacts={artifacts} />
           </CompactPanel>
 
           <CompactPanel title="关联发布任务">
-            <PublishTaskList tasks={data.publishTasks} />
+            <PublishTaskList tasks={publishTasks} />
           </CompactPanel>
 
           <CompactPanel title="计费记录">
-            <BillingList items={data.billingUsageEvents} />
+            <BillingList items={billingUsageEvents} />
           </CompactPanel>
         </div>
       </div>
@@ -312,7 +405,7 @@ function CompactPanel({
 }: {
   title: string;
   subtitle?: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/55 p-4">
@@ -497,7 +590,7 @@ function InfoRow({
   value,
 }: {
   label: string;
-  value: React.ReactNode;
+  value: ReactNode;
 }) {
   return (
     <div className="flex items-start justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-panel-muted)] px-3 py-2.5">

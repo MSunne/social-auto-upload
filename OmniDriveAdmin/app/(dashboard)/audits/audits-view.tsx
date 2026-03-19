@@ -15,10 +15,22 @@ const RESOURCE_TYPES = [
   { value: "admin", label: "管理员", icon: Settings },
 ];
 
-const getStatusBadge = (status: string) => {
-  if (status === "success") return <span className="text-xs text-green-400 font-medium">● 成功</span>;
-  if (status === "failed") return <span className="text-xs text-red-400 font-medium">● 失败</span>;
-  return <span className="text-xs text-[var(--color-text-secondary)]">● {status}</span>;
+const STATUS_META: Record<string, { label: string; className: string }> = {
+  pending: { label: "待处理", className: "text-amber-300" },
+  queued: { label: "排队中", className: "text-amber-300" },
+  running: { label: "执行中", className: "text-sky-300" },
+  cancel_requested: { label: "取消中", className: "text-amber-300" },
+  cancelled: { label: "已取消", className: "text-slate-300" },
+  needs_verify: { label: "待验证", className: "text-orange-300" },
+  success: { label: "成功", className: "text-green-400 font-medium" },
+  completed: { label: "已完成", className: "text-green-400 font-medium" },
+  failed: { label: "失败", className: "text-red-400 font-medium" },
+};
+
+const getStatusBadge = (status: string, prefix?: string) => {
+  const meta = STATUS_META[status] || { label: status || "未知", className: "text-[var(--color-text-secondary)]" };
+  const content = prefix ? `${prefix}：${meta.label}` : meta.label;
+  return <span className={`text-xs ${meta.className}`}>● {content}</span>;
 };
 
 const getActorBadge = (row: { actorType?: string; admin?: { name: string } }) => {
@@ -95,7 +107,7 @@ export function AuditsView() {
                 <th className="px-5 py-3.5 font-medium">执行方</th>
                 <th className="px-5 py-3.5 font-medium">资源</th>
                 <th className="px-5 py-3.5 font-medium">来源</th>
-                <th className="px-5 py-3.5 font-medium">结果</th>
+                <th className="px-5 py-3.5 font-medium">结果 / 当前状态</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
@@ -140,7 +152,14 @@ export function AuditsView() {
                       {row.source}
                     </span>
                   </td>
-                  <td className="px-5 py-3.5">{getStatusBadge(row.status)}</td>
+                  <td className="px-5 py-3.5">
+                    <div className="space-y-1">
+                      <div>{getStatusBadge(row.status, "事件")}</div>
+                      {row.currentStatus && row.currentStatus !== row.status ? (
+                        <div>{getStatusBadge(row.currentStatus, "当前")}</div>
+                      ) : null}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

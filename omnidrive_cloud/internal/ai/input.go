@@ -258,6 +258,9 @@ func normalizeVideoModel(model string, aspectRatio string, hasReference bool) st
 	if result == "" {
 		result = "veo-3.1-fast"
 	}
+	if !strings.HasPrefix(strings.ToLower(result), "veo-") {
+		return result
+	}
 	isLandscape := aspectRatio == "16:9" || strings.Contains(strings.ToLower(result), "landscape")
 	if isLandscape && !strings.Contains(strings.ToLower(result), "landscape") {
 		switch {

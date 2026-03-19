@@ -92,6 +92,38 @@ func TestBuildVideoRequestRemovesFLWithoutReferenceImages(t *testing.T) {
 	}
 }
 
+func TestBuildVideoRequestKeepsSoraModelNameFromBackendConfig(t *testing.T) {
+	job := &domain.AIJob{
+		ModelName: "sora-2",
+		Prompt:    stringPtrForTest("生成珠宝广告视频"),
+		InputPayload: mustJSONForTest(map[string]any{
+			"aspectRatio": "16:9",
+			"referenceImages": []any{
+				map[string]any{
+					"url":      "https://example.com/product.png",
+					"fileName": "product.png",
+					"mimeType": "image/png",
+				},
+			},
+			"durationSeconds": 10,
+		}),
+	}
+
+	req, err := BuildVideoRequest(job)
+	if err != nil {
+		t.Fatalf("BuildVideoRequest returned error: %v", err)
+	}
+	if req.Model != "sora-2" {
+		t.Fatalf("unexpected model %q", req.Model)
+	}
+	if len(req.ReferenceImages) != 1 {
+		t.Fatalf("expected one reference image, got %d", len(req.ReferenceImages))
+	}
+	if req.DurationSeconds == nil || *req.DurationSeconds != 10 {
+		t.Fatalf("expected durationSeconds 10, got %#v", req.DurationSeconds)
+	}
+}
+
 func mustJSONForTest(value any) []byte {
 	data, err := json.Marshal(value)
 	if err != nil {

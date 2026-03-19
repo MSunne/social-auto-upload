@@ -13,6 +13,6 @@
   "localFileName": "红宝石套链产品图.jpg",
   "localPath": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/b89e4815-d931-4a96-8981-bf01a9099b80/assets/红宝石套链产品图.jpg",
   "metadataPath": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/b89e4815-d931-4a96-8981-bf01a9099b80/assets/红宝石套链产品图.jpg.json",
-  "downloadStatus": "success",
-  "downloadError": null
+  "downloadStatus": "failed",
+  "downloadError": "404 Client Error: Not Found for url: http://127.0.0.1:8410/api/v1/files/skills/854c1e12-896f-4c43-a332-4fb6fb023402/b89e4815-d931-4a96-8981-bf01a9099b80/56da1ef0-5afe-43bb-8de4-d29bcb352c04-%E7%BA%A2%E5%AE%9D%E7%9F%B3%E5%A5%97%E9%93%BE%E4%BA%A7%E5%93%81%E5%9B%BE.jpg"
 }
