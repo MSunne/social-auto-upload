@@ -14,6 +14,7 @@ import (
 	"omnidrive_cloud/internal/database"
 	apphttp "omnidrive_cloud/internal/http"
 	"omnidrive_cloud/internal/storage"
+	"omnidrive_cloud/internal/workflow"
 )
 
 func New(cfg config.Config, logger *slog.Logger) (*http.Server, func(), error) {
@@ -63,7 +64,7 @@ func New(cfg config.Config, logger *slog.Logger) (*http.Server, func(), error) {
 		Handler: apphttp.NewRouter(app),
 	}
 
-	cleanupFns := make([]func(), 0, 2)
+	cleanupFns := make([]func(), 0, 3)
 	if cfg.AIWorkerEnabled {
 		worker, err := ai.NewWorker(app)
 		if err != nil {
@@ -75,6 +76,14 @@ func New(cfg config.Config, logger *slog.Logger) (*http.Server, func(), error) {
 	} else {
 		logger.Info("ai worker disabled")
 	}
+
+	skillScheduler, err := workflow.NewSkillScheduler(app)
+	if err != nil {
+		db.Close()
+		return nil, nil, fmt.Errorf("init skill scheduler: %w", err)
+	}
+	stopSkillScheduler := skillScheduler.Start(context.Background())
+	cleanupFns = append(cleanupFns, stopSkillScheduler)
 
 	cleanup := func() {
 		logger.Info("shutting down omnidrive api")

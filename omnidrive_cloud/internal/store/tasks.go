@@ -90,6 +90,11 @@ func (s *Store) ListPublishTasksByOwner(ctx context.Context, ownerUserID string,
 		args = append(args, deviceID)
 		argIndex++
 	}
+	if accountID := strings.TrimSpace(filter.AccountID); accountID != "" {
+		query += fmt.Sprintf(" AND pt.account_id = $%d", argIndex)
+		args = append(args, accountID)
+		argIndex++
+	}
 	if status := strings.TrimSpace(filter.Status); status != "" {
 		query += fmt.Sprintf(" AND pt.status = $%d", argIndex)
 		args = append(args, status)

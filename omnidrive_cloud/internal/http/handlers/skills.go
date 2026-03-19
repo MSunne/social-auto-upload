@@ -26,23 +26,31 @@ type SkillHandler struct {
 }
 
 type createSkillRequest struct {
-	Name             string      `json:"name"`
-	Description      string      `json:"description"`
-	OutputType       string      `json:"outputType"`
-	ModelName        string      `json:"modelName"`
-	PromptTemplate   *string     `json:"promptTemplate"`
-	ReferencePayload interface{} `json:"referencePayload"`
-	IsEnabled        *bool       `json:"isEnabled"`
+	Name              string      `json:"name"`
+	Description       string      `json:"description"`
+	OutputType        string      `json:"outputType"`
+	ModelName         string      `json:"modelName"`
+	PromptTemplate    *string     `json:"promptTemplate"`
+	ReferencePayload  interface{} `json:"referencePayload"`
+	DeviceID          *string     `json:"deviceId"`
+	ExecutionTime     *string     `json:"executionTime"`
+	RepeatDaily       *bool       `json:"repeatDaily"`
+	StoryboardEnabled *bool       `json:"storyboardEnabled"`
+	IsEnabled         *bool       `json:"isEnabled"`
 }
 
 type updateSkillRequest struct {
-	Name             *string     `json:"name"`
-	Description      *string     `json:"description"`
-	OutputType       *string     `json:"outputType"`
-	ModelName        *string     `json:"modelName"`
-	PromptTemplate   *string     `json:"promptTemplate"`
-	ReferencePayload interface{} `json:"referencePayload"`
-	IsEnabled        *bool       `json:"isEnabled"`
+	Name              *string     `json:"name"`
+	Description       *string     `json:"description"`
+	OutputType        *string     `json:"outputType"`
+	ModelName         *string     `json:"modelName"`
+	PromptTemplate    *string     `json:"promptTemplate"`
+	ReferencePayload  interface{} `json:"referencePayload"`
+	DeviceID          *string     `json:"deviceId"`
+	ExecutionTime     *string     `json:"executionTime"`
+	RepeatDaily       *bool       `json:"repeatDaily"`
+	StoryboardEnabled *bool       `json:"storyboardEnabled"`
+	IsEnabled         *bool       `json:"isEnabled"`
 }
 
 type createSkillAssetRequest struct {
@@ -58,12 +66,56 @@ func NewSkillHandler(app *appstate.App) *SkillHandler {
 	return &SkillHandler{app: app}
 }
 
+func parseSkillExecutionTime(raw string, now time.Time) (*time.Time, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return nil, nil
+	}
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return &parsed, nil
+	}
+
+	localNow := now.In(time.Local)
+	for _, layout := range []string{"15:04:05", "15:04"} {
+		parsed, err := time.Parse(layout, value)
+		if err != nil {
+			continue
+		}
+		next := time.Date(
+			localNow.Year(),
+			localNow.Month(),
+			localNow.Day(),
+			parsed.Hour(),
+			parsed.Minute(),
+			parsed.Second(),
+			0,
+			localNow.Location(),
+		)
+		if !next.After(localNow) {
+			next = next.Add(24 * time.Hour)
+		}
+		nextUTC := next.UTC()
+		return &nextUTC, nil
+	}
+
+	return nil, fmt.Errorf("executionTime must be RFC3339 or HH:MM[:SS]")
+}
+
 func (h *SkillHandler) List(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	items, err := h.app.Store.ListSkillsByOwner(r.Context(), user.ID)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load skills")
 		return
+	}
+	if deviceID := strings.TrimSpace(r.URL.Query().Get("deviceId")); deviceID != "" {
+		filtered := make([]domain.ProductSkill, 0, len(items))
+		for _, item := range items {
+			if item.DeviceID != nil && strings.TrimSpace(*item.DeviceID) == deviceID {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
 	}
 	render.JSON(w, http.StatusOK, items)
 }
@@ -244,6 +296,36 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusBadRequest, "name, description, outputType, and modelName are required")
 		return
 	}
+	var deviceID *string
+	if payload.DeviceID != nil && strings.TrimSpace(*payload.DeviceID) != "" {
+		trimmed := strings.TrimSpace(*payload.DeviceID)
+		device, err := h.app.Store.GetOwnedDevice(r.Context(), trimmed, user.ID)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to validate device")
+			return
+		}
+		if device == nil {
+			render.Error(w, http.StatusNotFound, "Device not found")
+			return
+		}
+		deviceID = &trimmed
+	}
+	var executionTime *time.Time
+	var nextRunAt *time.Time
+	if payload.ExecutionTime != nil && strings.TrimSpace(*payload.ExecutionTime) != "" {
+		parsed, err := parseSkillExecutionTime(strings.TrimSpace(*payload.ExecutionTime), time.Now())
+		if err != nil {
+			render.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		executionTime = parsed
+		nextRunAt = parsed
+	}
+	repeatDaily := payload.RepeatDaily != nil && *payload.RepeatDaily
+	storyboardEnabled := true
+	if payload.StoryboardEnabled != nil {
+		storyboardEnabled = *payload.StoryboardEnabled
+	}
 
 	var referenceBytes []byte
 	var err error
@@ -261,15 +343,20 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	skill, err := h.app.Store.CreateSkill(r.Context(), store.CreateSkillInput{
-		ID:               uuid.NewString(),
-		OwnerUserID:      user.ID,
-		Name:             payload.Name,
-		Description:      payload.Description,
-		OutputType:       payload.OutputType,
-		ModelName:        payload.ModelName,
-		PromptTemplate:   payload.PromptTemplate,
-		ReferencePayload: referenceBytes,
-		IsEnabled:        isEnabled,
+		ID:                uuid.NewString(),
+		OwnerUserID:       user.ID,
+		DeviceID:          deviceID,
+		Name:              payload.Name,
+		Description:       payload.Description,
+		OutputType:        payload.OutputType,
+		ModelName:         payload.ModelName,
+		PromptTemplate:    payload.PromptTemplate,
+		ReferencePayload:  referenceBytes,
+		ExecutionTime:     executionTime,
+		RepeatDaily:       repeatDaily,
+		StoryboardEnabled: storyboardEnabled,
+		NextRunAt:         nextRunAt,
+		IsEnabled:         isEnabled,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to create skill")
@@ -292,6 +379,7 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Payload: mustJSONBytes(map[string]any{
 			"name":      skill.Name,
 			"modelName": skill.ModelName,
+			"deviceId":  skill.DeviceID,
 		}),
 	})
 
@@ -322,16 +410,55 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var deviceID *string
+	deviceTouched := payload.DeviceID != nil
+	if deviceTouched {
+		trimmed := strings.TrimSpace(*payload.DeviceID)
+		if trimmed != "" {
+			device, err := h.app.Store.GetOwnedDevice(r.Context(), trimmed, user.ID)
+			if err != nil {
+				render.Error(w, http.StatusInternalServerError, "Failed to validate device")
+				return
+			}
+			if device == nil {
+				render.Error(w, http.StatusNotFound, "Device not found")
+				return
+			}
+			deviceID = &trimmed
+		}
+	}
+	var executionTime *time.Time
+	executionTouched := payload.ExecutionTime != nil
+	if executionTouched && strings.TrimSpace(*payload.ExecutionTime) != "" {
+		parsed, err := parseSkillExecutionTime(strings.TrimSpace(*payload.ExecutionTime), time.Now())
+		if err != nil {
+			render.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		executionTime = parsed
+	}
+	var nextRunAt *time.Time
+	if executionTouched {
+		nextRunAt = executionTime
+	}
 
 	skill, err := h.app.Store.UpdateSkill(r.Context(), skillID, user.ID, store.UpdateSkillInput{
-		Name:             payload.Name,
-		Description:      payload.Description,
-		OutputType:       payload.OutputType,
-		ModelName:        payload.ModelName,
-		PromptTemplate:   payload.PromptTemplate,
-		ReferencePayload: referenceBytes,
-		ReferenceTouched: referenceTouched,
-		IsEnabled:        payload.IsEnabled,
+		Name:              payload.Name,
+		Description:       payload.Description,
+		OutputType:        payload.OutputType,
+		ModelName:         payload.ModelName,
+		PromptTemplate:    payload.PromptTemplate,
+		ReferencePayload:  referenceBytes,
+		ReferenceTouched:  referenceTouched,
+		DeviceID:          deviceID,
+		DeviceTouched:     deviceTouched,
+		ExecutionTime:     executionTime,
+		ExecutionTouched:  executionTouched,
+		RepeatDaily:       payload.RepeatDaily,
+		StoryboardEnabled: payload.StoryboardEnabled,
+		NextRunAt:         nextRunAt,
+		NextRunTouched:    executionTouched,
+		IsEnabled:         payload.IsEnabled,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to update skill")
@@ -356,9 +483,10 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Status:       "success",
 		Message:      auditStringPtr("产品技能已更新"),
 		Payload: mustJSONBytes(map[string]any{
-			"name":      payload.Name,
-			"modelName": payload.ModelName,
-			"isEnabled": payload.IsEnabled,
+			"name":              payload.Name,
+			"modelName":         payload.ModelName,
+			"storyboardEnabled": payload.StoryboardEnabled,
+			"isEnabled":         payload.IsEnabled,
 		}),
 	})
 
@@ -645,6 +773,55 @@ func (h *SkillHandler) UploadAsset(w http.ResponseWriter, r *http.Request) {
 	})
 
 	render.JSON(w, http.StatusCreated, asset)
+}
+
+func (h *SkillHandler) DeleteAsset(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	skillID := strings.TrimSpace(chi.URLParam(r, "skillId"))
+	assetID := strings.TrimSpace(chi.URLParam(r, "assetId"))
+	if skillID == "" || assetID == "" {
+		render.Error(w, http.StatusBadRequest, "skillId and assetId are required")
+		return
+	}
+
+	skill, err := h.app.Store.GetOwnedSkillByID(r.Context(), skillID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load skill")
+		return
+	}
+	if skill == nil {
+		render.Error(w, http.StatusNotFound, "Skill not found")
+		return
+	}
+
+	asset, err := h.app.Store.DeleteSkillAsset(r.Context(), skillID, assetID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to delete skill asset")
+		return
+	}
+	if asset == nil {
+		render.Error(w, http.StatusNotFound, "Skill asset not found")
+		return
+	}
+
+	cleanupSkillAssetFiles(h.app, r.Context(), []domain.ProductSkillAsset{*asset})
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "skill_asset",
+		ResourceID:   &asset.ID,
+		Action:       "delete",
+		Title:        "删除技能资产",
+		Source:       asset.AssetType,
+		Status:       "success",
+		Message:      auditStringPtr("技能资产已删除"),
+		Payload: mustJSONBytes(map[string]any{
+			"skillId":   skillID,
+			"fileName":  asset.FileName,
+			"publicUrl": asset.PublicURL,
+		}),
+	})
+
+	render.JSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
 
 func sanitizeUploadFilename(fileName string) string {

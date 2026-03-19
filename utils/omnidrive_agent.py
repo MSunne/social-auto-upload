@@ -1480,6 +1480,9 @@ class OmniDriveBridge:
         tasks = self.ai_task_manager.list_tasks_for_cloud_sync(limit=200)
         mirrored = 0
         for task in tasks:
+            source = str(task.get("source") or "").strip() or "local_ui"
+            if source not in SYNCABLE_LOCAL_AI_SOURCES:
+                continue
             payload = self._build_sync_ai_task_payload(task)
             if not payload:
                 continue
@@ -1512,6 +1515,44 @@ class OmniDriveBridge:
             )
         return mirrored
 
+    def _import_missing_remote_ai_task(self, job):
+        if not self.ai_task_manager:
+            return None
+
+        local_task_id = str(job.get("localTaskId") or "").strip()
+        cloud_job_id = str(job.get("id") or "").strip()
+        if not local_task_id or not cloud_job_id:
+            return None
+
+        payload = job.get("inputPayload") or {}
+        if not isinstance(payload, dict):
+            payload = {}
+
+        imported = self.ai_task_manager.import_remote_task(
+            {
+                "taskUuid": local_task_id,
+                "source": str(job.get("source") or "omnidrive_cloud").strip() or "omnidrive_cloud",
+                "jobType": str(job.get("jobType") or "").strip(),
+                "modelName": str(job.get("modelName") or "").strip(),
+                "skillId": str(job.get("skillId") or "").strip() or None,
+                "prompt": str(job.get("prompt") or "").strip(),
+                "status": self._local_ai_status_from_remote_job(job),
+                "cloudStatus": str(job.get("status") or "").strip() or "queued",
+                "message": job.get("deliveryMessage") or job.get("message"),
+                "payload": payload,
+                "cloudJobId": cloud_job_id,
+                "linkedPublishTaskUuid": str(job.get("localPublishTaskId") or "").strip() or None,
+                "artifactRefs": [],
+            }
+        )
+        agent_logger.info(
+            "omnidrive bridge imported remote ai task record task_uuid={} cloud_job_id={} status={}",
+            local_task_id,
+            cloud_job_id,
+            imported.get("status") if imported else None,
+        )
+        return imported
+
     def _import_remote_ai_jobs(self):
         if not self.ai_task_manager:
             return 0
@@ -1532,7 +1573,9 @@ class OmniDriveBridge:
 
             local_task = self.ai_task_manager.get_task(local_task_id)
             if not local_task:
-                continue
+                local_task = self._import_missing_remote_ai_task(job)
+                if not local_task:
+                    continue
 
             self.ai_task_manager.update_cloud_binding(
                 local_task_id,
@@ -1918,6 +1961,10 @@ class OmniDriveBridge:
                     "absolutePath": payload.get("thumbnailAbsolutePath"),
                 },
             )
+        if payload.get("omnidriveAICloudJobId"):
+            media_payload.setdefault("aiJobId", payload.get("omnidriveAICloudJobId"))
+        if payload.get("omnidriveAITaskUuid"):
+            media_payload.setdefault("aiTaskUuid", payload.get("omnidriveAITaskUuid"))
         return media_payload
 
     def _build_remote_artifacts(self, task, verification_payload):
@@ -2217,11 +2264,8 @@ class OmniDriveBridge:
     def _enqueue_publish_from_ai_task(self, local_task, artifact_refs):
         payload = local_task.get("payload") or {}
         publish_payload = dict(payload.get("publishPayload") or {})
-        platform_type = int(publish_payload.get("platformType") or publish_payload.get("type") or 0)
-        platform_name = PLATFORM_NAME_BY_TYPE.get(platform_type)
-        account_file_path = str(publish_payload.get("accountFilePath") or "").strip()
-        account_name = str(publish_payload.get("accountName") or "").strip()
-        if not platform_type or not platform_name or not account_file_path or not account_name:
+        targets = self._resolve_ai_publish_targets(publish_payload)
+        if not targets:
             return None
 
         primary_file = next((item for item in artifact_refs if item.get("role") != "thumbnail"), None)
@@ -2231,59 +2275,198 @@ class OmniDriveBridge:
         title = str(publish_payload.get("title") or local_task.get("prompt") or "AI 生成内容").strip() or "AI 生成内容"
         run_at = self._normalize_datetime(publish_payload.get("runAt") or payload.get("runAt"))
         status = "scheduled" if self._is_future_datetime(run_at) else "pending"
-        publish_date = self._normalize_datetime(publish_payload.get("publishDate") or 0)
-        local_publish_task_uuid = str(uuid.uuid4())
-        local_spec = {
-            "taskUuid": local_publish_task_uuid,
-            "source": "omnidrive_ai",
+        publish_date = self._normalize_datetime(
+            publish_payload.get("publishDate") or publish_payload.get("requestedRun") or 0
+        )
+
+        material_refs = [
+            {"root": item["root"], "path": item["path"], "role": item.get("role") or "media"}
+            for item in artifact_refs
+        ]
+        specs = []
+        for target in targets:
+            local_publish_task_uuid = str(uuid.uuid4())
+            local_spec = {
+                "taskUuid": local_publish_task_uuid,
+                "source": "omnidrive_ai",
+                "platformType": target["platformType"],
+                "platformName": target["platformName"],
+                "accountName": target["accountName"],
+                "accountFilePath": target["accountFilePath"],
+                "fileName": primary_file["name"],
+                "filePath": f"{primary_file['root']}:{primary_file['path']}",
+                "title": title,
+                "runAt": run_at,
+                "platformPublishAt": publish_date,
+                "status": status,
+                "message": "等待 AI 产物发布" if status == "pending" else "等待 AI 产物定时发布",
+                "payload": {
+                    "platformType": target["platformType"],
+                    "platformName": target["platformName"],
+                    "title": title,
+                    "tags": publish_payload.get("tags") or [],
+                    "filePath": f"{primary_file['root']}:{primary_file['path']}",
+                    "accountFilePath": target["accountFilePath"],
+                    "accountName": target["accountName"],
+                    "publishDate": publish_date or 0,
+                    "category": publish_payload.get("category"),
+                    "fileSourceMode": "material",
+                    "materialRoot": primary_file["root"],
+                    "materialPath": primary_file["path"],
+                    "sourceAbsolutePath": primary_file["absolutePath"],
+                    "productLink": publish_payload.get("productLink") or "",
+                    "productTitle": publish_payload.get("productTitle") or "",
+                    "isDraft": bool(publish_payload.get("isDraft", False)),
+                    "contentText": publish_payload.get("contentText"),
+                    "omnidriveAICloudJobId": local_task.get("cloudJobId"),
+                    "omnidriveAITaskUuid": local_task.get("taskUuid"),
+                    "omnidriveMaterialRefs": material_refs,
+                },
+            }
+            if thumbnail_ref:
+                local_spec["payload"].update(
+                    {
+                        "thumbnailSourceMode": "material",
+                        "thumbnailRoot": thumbnail_ref["root"],
+                        "thumbnailPath": thumbnail_ref["path"],
+                        "thumbnailAbsolutePath": thumbnail_ref["absolutePath"],
+                    }
+                )
+            specs.append(local_spec)
+
+        if not specs:
+            return None
+
+        self.publish_task_manager.enqueue_specs(specs)
+        return specs[0]["taskUuid"]
+
+    @staticmethod
+    def _local_ai_status_from_remote_job(job):
+        job_status = str(job.get("status") or "").strip()
+        delivery_status = str(job.get("deliveryStatus") or "").strip()
+        if delivery_status in {"publish_queued", "publishing", "success", "needs_verify", "failed", "cancelled"}:
+            return {
+                "publish_queued": "publish_pending",
+                "publishing": "publishing",
+                "success": "success",
+                "needs_verify": "needs_verify",
+                "failed": "failed",
+                "cancelled": "cancelled",
+            }[delivery_status]
+        if job_status == "scheduled":
+            return "scheduled"
+        if job_status in {"queued", "pending"}:
+            return "queued_cloud"
+        if job_status == "running":
+            return "generating"
+        if job_status in {"success", "completed"}:
+            return "output_ready"
+        if job_status == "failed":
+            return "failed"
+        if job_status == "cancelled":
+            return "cancelled"
+        return "queued_cloud"
+
+    def _resolve_ai_publish_targets(self, publish_payload):
+        targets = []
+        seen = set()
+        raw_targets = publish_payload.get("targets") or []
+        if isinstance(raw_targets, dict):
+            raw_targets = [raw_targets]
+
+        if isinstance(raw_targets, list):
+            for item in raw_targets:
+                if not isinstance(item, dict):
+                    continue
+                resolved = self._resolve_ai_publish_target(
+                    platform_value=item.get("platform") or item.get("platformName"),
+                    platform_type_value=item.get("platformType") or item.get("type"),
+                    account_name=item.get("accountName"),
+                    account_file_path=item.get("accountFilePath"),
+                )
+                if not resolved:
+                    continue
+                key = (
+                    resolved["platformType"],
+                    resolved["platformName"],
+                    resolved["accountName"],
+                    resolved["accountFilePath"],
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                targets.append(resolved)
+
+        if targets:
+            return targets
+
+        resolved = self._resolve_ai_publish_target(
+            platform_value=publish_payload.get("platform") or publish_payload.get("platformName"),
+            platform_type_value=publish_payload.get("platformType") or publish_payload.get("type"),
+            account_name=publish_payload.get("accountName"),
+            account_file_path=publish_payload.get("accountFilePath"),
+        )
+        return [resolved] if resolved else []
+
+    def _resolve_ai_publish_target(
+        self,
+        *,
+        platform_value=None,
+        platform_type_value=None,
+        account_name=None,
+        account_file_path=None,
+    ):
+        account_name = str(account_name or "").strip()
+        if not account_name:
+            return None
+
+        platform_type = 0
+        platform_name = ""
+        if platform_type_value not in (None, ""):
+            try:
+                platform_type = int(platform_type_value)
+            except (TypeError, ValueError):
+                platform_type = 0
+            platform_name = PLATFORM_NAME_BY_TYPE.get(platform_type) or ""
+
+        raw_platform = str(platform_value or "").strip()
+        if raw_platform and not platform_name:
+            if raw_platform.isdigit():
+                platform_type = int(raw_platform)
+                platform_name = PLATFORM_NAME_BY_TYPE.get(platform_type) or ""
+            else:
+                target = LOGIN_PLATFORM_ALIAS_MAP.get(raw_platform.lower())
+                if target:
+                    platform_type = int(target["type"])
+                    platform_name = str(target["label"]).strip()
+
+        if not platform_type or not platform_name:
+            agent_logger.warning(
+                "omnidrive bridge skipped ai publish target due to unsupported platform platform={} account_name={}",
+                platform_value,
+                account_name,
+            )
+            return None
+
+        account_file_path = str(account_file_path or "").strip()
+        if not account_file_path:
+            try:
+                account_file_path = self._resolve_local_account_file_path(platform_name, account_name)
+            except Exception as exc:
+                agent_logger.warning(
+                    "omnidrive bridge skipped ai publish target because local account was not found platform={} account_name={} error={}",
+                    platform_name,
+                    account_name,
+                    exc,
+                )
+                return None
+
+        return {
             "platformType": platform_type,
             "platformName": platform_name,
             "accountName": account_name,
             "accountFilePath": account_file_path,
-            "fileName": primary_file["name"],
-            "filePath": f"{primary_file['root']}:{primary_file['path']}",
-            "title": title,
-            "runAt": run_at,
-            "platformPublishAt": publish_date,
-            "status": status,
-            "message": "等待 AI 产物发布" if status == "pending" else "等待 AI 产物定时发布",
-            "payload": {
-                "platformType": platform_type,
-                "platformName": platform_name,
-                "title": title,
-                "tags": publish_payload.get("tags") or [],
-                "filePath": f"{primary_file['root']}:{primary_file['path']}",
-                "accountFilePath": account_file_path,
-                "accountName": account_name,
-                "publishDate": publish_date or 0,
-                "category": publish_payload.get("category"),
-                "fileSourceMode": "material",
-                "materialRoot": primary_file["root"],
-                "materialPath": primary_file["path"],
-                "sourceAbsolutePath": primary_file["absolutePath"],
-                "productLink": publish_payload.get("productLink") or "",
-                "productTitle": publish_payload.get("productTitle") or "",
-                "isDraft": bool(publish_payload.get("isDraft", False)),
-                "contentText": publish_payload.get("contentText"),
-                "omnidriveAICloudJobId": local_task.get("cloudJobId"),
-                "omnidriveAITaskUuid": local_task.get("taskUuid"),
-                "omnidriveMaterialRefs": [
-                    {"root": item["root"], "path": item["path"], "role": item.get("role") or "media"}
-                    for item in artifact_refs
-                ],
-            },
         }
-        if thumbnail_ref:
-            local_spec["payload"].update(
-                {
-                    "thumbnailSourceMode": "material",
-                    "thumbnailRoot": thumbnail_ref["root"],
-                    "thumbnailPath": thumbnail_ref["path"],
-                    "thumbnailAbsolutePath": thumbnail_ref["absolutePath"],
-                }
-            )
-        self.publish_task_manager.enqueue_specs([local_spec])
-        return local_publish_task_uuid
 
     @staticmethod
     def _map_publish_status_to_local_ai_status(publish_status):

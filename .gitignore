@@ -177,9 +177,11 @@ cookies
 
 # Frontend
 .vite/
+.next/
 dist/
 node_modules/
 package-lock.json
+*.tsbuildinfo
 
 # database
 db/database.db

@@ -76,14 +76,40 @@ func NewAIHandler(app *appstate.App) *AIHandler {
 	return &AIHandler{app: app}
 }
 
+func sanitizeAIModelForPublic(model *domain.AIModel) *domain.AIModel {
+	if model == nil {
+		return nil
+	}
+	sanitized := *model
+	sanitized.APIKey = nil
+	return &sanitized
+}
+
+func sanitizeAIModelListForPublic(items []domain.AIModel) []domain.AIModel {
+	if len(items) == 0 {
+		return items
+	}
+	sanitized := make([]domain.AIModel, 0, len(items))
+	for _, item := range items {
+		copyItem := item
+		copyItem.APIKey = nil
+		sanitized = append(sanitized, copyItem)
+	}
+	return sanitized
+}
+
 func (h *AIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
-	category := strings.TrimSpace(r.URL.Query().Get("category"))
+	category := normalizeAIModelCategory(firstNonEmptyAdminValue(
+		r.URL.Query().Get("modelType"),
+		r.URL.Query().Get("type"),
+		r.URL.Query().Get("category"),
+	))
 	items, err := h.app.Store.ListAIModels(r.Context(), category)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load AI models")
 		return
 	}
-	render.JSON(w, http.StatusOK, items)
+	render.JSON(w, http.StatusOK, sanitizeAIModelListForPublic(items))
 }
 
 func (h *AIHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
@@ -98,12 +124,13 @@ func (h *AIHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 	items, err := h.app.Store.ListAIJobsByOwner(r.Context(), user.ID, store.ListAIJobsFilter{
-		JobType:  strings.TrimSpace(r.URL.Query().Get("jobType")),
-		Status:   strings.TrimSpace(r.URL.Query().Get("status")),
-		SkillID:  strings.TrimSpace(r.URL.Query().Get("skillId")),
-		DeviceID: strings.TrimSpace(r.URL.Query().Get("deviceId")),
-		Source:   strings.TrimSpace(r.URL.Query().Get("source")),
-		Limit:    limit,
+		JobType:   strings.TrimSpace(r.URL.Query().Get("jobType")),
+		Status:    strings.TrimSpace(r.URL.Query().Get("status")),
+		SkillID:   strings.TrimSpace(r.URL.Query().Get("skillId")),
+		DeviceID:  strings.TrimSpace(r.URL.Query().Get("deviceId")),
+		AccountID: strings.TrimSpace(r.URL.Query().Get("accountId")),
+		Source:    strings.TrimSpace(r.URL.Query().Get("source")),
+		Limit:     limit,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load AI jobs")
@@ -318,7 +345,7 @@ func (h *AIHandler) WorkspaceJob(w http.ResponseWriter, r *http.Request) {
 
 	render.JSON(w, http.StatusOK, domain.AIJobWorkspace{
 		Job:                *job,
-		Model:              model,
+		Model:              sanitizeAIModelForPublic(model),
 		Skill:              skill,
 		Artifacts:          artifacts,
 		PublishTasks:       publishTasks,

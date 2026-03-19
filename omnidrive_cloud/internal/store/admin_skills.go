@@ -109,9 +109,8 @@ func (s *Store) UpdateProductSkillAdmin(ctx context.Context, id string, input Up
 		UPDATE product_skills
 		SET %s
 		WHERE id = $1
-		RETURNING id, owner_user_id, name, description, output_type, model_name,
-		          prompt_template, reference_payload, is_enabled, created_at, updated_at
-	`, setClause), args...)
+		RETURNING %s
+	`, setClause, skillSelectColumns), args...)
 
 	return scanSkill(row)
 }

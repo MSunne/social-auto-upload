@@ -26,6 +26,12 @@ const routes = [
     meta: { title: '发布中心' },
   },
   {
+    path: '/task-center',
+    name: 'TaskCenter',
+    component: () => import('../views/TaskCenter.vue'),
+    meta: { title: '任务中心' },
+  },
+  {
     path: '/system-status',
     name: 'SystemStatus',
     component: () => import('../views/SystemStatus.vue'),

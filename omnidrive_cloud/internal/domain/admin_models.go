@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type AdminIdentity struct {
 	ID          string     `json:"id"`
@@ -202,6 +205,18 @@ type AdminAIJobWorkspace struct {
 	PublishTasks       []PublishTask       `json:"publishTasks"`
 	BillingUsageEvents []BillingUsageEvent `json:"billingUsageEvents"`
 	RecentAudits       []AdminAuditRow     `json:"recentAudits"`
+	ExecutionLogs      []AdminExecutionLog `json:"executionLogs"`
+}
+
+type AdminExecutionLog struct {
+	ID        string          `json:"id"`
+	Stage     string          `json:"stage"`
+	Status    string          `json:"status"`
+	Title     string          `json:"title"`
+	Message   *string         `json:"message,omitempty"`
+	Source    string          `json:"source"`
+	Timestamp time.Time       `json:"timestamp"`
+	Payload   json.RawMessage `json:"payload,omitempty"`
 }
 
 type AdminUserWorkspace struct {
@@ -679,29 +694,41 @@ type AdminManualSupportConfig struct {
 }
 
 type AdminSystemSettingsRecord struct {
-	ID                   string                   `json:"id"`
-	AIWorkerEnabled      bool                     `json:"aiWorkerEnabled"`
-	PaymentChannels      []string                 `json:"paymentChannels"`
-	BillingManualSupport AdminManualSupportConfig `json:"billingManualSupport"`
-	DefaultChatModel     string                   `json:"defaultChatModel"`
-	DefaultImageModel    string                   `json:"defaultImageModel"`
-	DefaultVideoModel    string                   `json:"defaultVideoModel"`
-	CreatedAt            time.Time                `json:"createdAt"`
-	UpdatedAt            time.Time                `json:"updatedAt"`
+	ID                        string                   `json:"id"`
+	AIWorkerEnabled           bool                     `json:"aiWorkerEnabled"`
+	PaymentChannels           []string                 `json:"paymentChannels"`
+	BillingManualSupport      AdminManualSupportConfig `json:"billingManualSupport"`
+	DefaultChatModel          string                   `json:"defaultChatModel"`
+	DefaultImageModel         string                   `json:"defaultImageModel"`
+	DefaultVideoModel         string                   `json:"defaultVideoModel"`
+	StoryboardPrompt          string                   `json:"storyboardPrompt"`
+	StoryboardModel           string                   `json:"storyboardModel"`
+	StoryboardReferences      json.RawMessage          `json:"storyboardReferences,omitempty"`
+	ImageStoryboardPrompt     string                   `json:"imageStoryboardPrompt"`
+	ImageStoryboardModel      string                   `json:"imageStoryboardModel"`
+	ImageStoryboardReferences json.RawMessage          `json:"imageStoryboardReferences,omitempty"`
+	CreatedAt                 time.Time                `json:"createdAt"`
+	UpdatedAt                 time.Time                `json:"updatedAt"`
 }
 
 type AdminSystemConfig struct {
-	AuthMode             string                   `json:"authMode"`
-	AdminEmail           string                   `json:"adminEmail"`
-	S3Configured         bool                     `json:"s3Configured"`
-	S3Endpoint           string                   `json:"s3Endpoint"`
-	S3Bucket             string                   `json:"s3Bucket"`
-	AIWorkerEnabled      bool                     `json:"aiWorkerEnabled"`
-	PaymentChannels      []string                 `json:"paymentChannels"`
-	BillingManualSupport AdminManualSupportConfig `json:"billingManualSupport"`
-	DefaultChatModel     string                   `json:"defaultChatModel"`
-	DefaultImageModel    string                   `json:"defaultImageModel"`
-	DefaultVideoModel    string                   `json:"defaultVideoModel"`
-	Notes                []string                 `json:"notes"`
-	UpdatedAt            *time.Time               `json:"updatedAt,omitempty"`
+	AuthMode                  string                   `json:"authMode"`
+	AdminEmail                string                   `json:"adminEmail"`
+	S3Configured              bool                     `json:"s3Configured"`
+	S3Endpoint                string                   `json:"s3Endpoint"`
+	S3Bucket                  string                   `json:"s3Bucket"`
+	AIWorkerEnabled           bool                     `json:"aiWorkerEnabled"`
+	PaymentChannels           []string                 `json:"paymentChannels"`
+	BillingManualSupport      AdminManualSupportConfig `json:"billingManualSupport"`
+	DefaultChatModel          string                   `json:"defaultChatModel"`
+	DefaultImageModel         string                   `json:"defaultImageModel"`
+	DefaultVideoModel         string                   `json:"defaultVideoModel"`
+	StoryboardPrompt          string                   `json:"storyboardPrompt"`
+	StoryboardModel           string                   `json:"storyboardModel"`
+	StoryboardReferences      json.RawMessage          `json:"storyboardReferences,omitempty"`
+	ImageStoryboardPrompt     string                   `json:"imageStoryboardPrompt"`
+	ImageStoryboardModel      string                   `json:"imageStoryboardModel"`
+	ImageStoryboardReferences json.RawMessage          `json:"imageStoryboardReferences,omitempty"`
+	Notes                     []string                 `json:"notes"`
+	UpdatedAt                 *time.Time               `json:"updatedAt,omitempty"`
 }

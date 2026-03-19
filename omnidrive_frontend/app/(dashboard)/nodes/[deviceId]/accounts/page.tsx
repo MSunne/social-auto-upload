@@ -22,7 +22,6 @@ import Link from "next/link";
 import { getDevice, listAccounts, listSkills, listTasks, deleteAccount, validateAccount } from "@/lib/services";
 import type { Device, Account, Skill, Task, LoginSession } from "@/lib/types";
 import { StatusBadge } from "@/components/ui/common";
-import { AddTaskModal } from "@/components/ui/add-task-modal";
 import { AddAccountModal } from "@/components/ui/add-account-modal";
 
 /* Platform icon config */
@@ -58,7 +57,7 @@ export default function DeviceAccountsPage({
 
   const { data: skills = [] } = useQuery<Skill[]>({
     queryKey: ["skills"],
-    queryFn: listSkills,
+    queryFn: () => listSkills(),
   });
 
   const { data: tasks = [] } = useQuery<Task[]>({
@@ -70,9 +69,7 @@ export default function DeviceAccountsPage({
   const [platformFilter, setPlatformFilter] = useState<string | null>(null);
 
   /* Modal state */
-  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
-  const [selectedAccountName, setSelectedAccountName] = useState<string>("");
   const [validationSession, setValidationSession] = useState<LoginSession | null>(null);
 
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
@@ -315,10 +312,6 @@ export default function DeviceAccountsPage({
                   const platformCfg = PLATFORMS.find(
                     (p) => p.key === acc.platform
                   );
-                  const accTasks = tasks.filter(
-                    (t) =>
-                      t.accountId === acc.id || t.accountName === acc.accountName
-                  );
                   return (
                     <motion.tr
                       key={acc.id}
@@ -373,16 +366,13 @@ export default function DeviceAccountsPage({
 
                       {/* Task Table */}
                       <td className="px-6 py-4">
-                        <button
-                          onClick={() => {
-                            setSelectedAccountName(acc.accountName);
-                            setIsTaskModalOpen(true);
-                          }}
+                        <Link
+                          href={`/nodes/${deviceId}/accounts/${acc.id}`}
                           className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-accent/15 to-cyan/15 border border-accent/25 px-3 py-1.5 text-xs font-semibold text-accent transition-all hover:from-accent/25 hover:to-cyan/25 hover:border-accent/40 hover:shadow-[0_0_12px_rgba(177,73,255,0.2)] hover:-translate-y-px"
                         >
                           <ExternalLink className="h-3 w-3" />
-                          详情/增加任务
-                        </button>
+                          详情/任务列表
+                        </Link>
                       </td>
 
                       {/* Actions */}
@@ -459,14 +449,6 @@ export default function DeviceAccountsPage({
           </div>
         )}
       </motion.div>
-
-      {/* Add Task Modal */}
-      <AddTaskModal
-        isOpen={isTaskModalOpen}
-        onClose={() => setIsTaskModalOpen(false)}
-        skills={skills}
-        accountName={selectedAccountName}
-      />
 
       {/* Add Account Modal */}
       <AddAccountModal

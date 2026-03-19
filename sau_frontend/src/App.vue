@@ -37,6 +37,10 @@
               <el-icon><Upload /></el-icon>
               <span>发布中心</span>
             </el-menu-item>
+            <el-menu-item index="/task-center">
+              <el-icon><Tickets /></el-icon>
+              <span>任务中心</span>
+            </el-menu-item>
             <el-menu-item index="/system-status">
               <el-icon><DataLine /></el-icon>
               <span>系统状态</span>

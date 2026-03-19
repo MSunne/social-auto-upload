@@ -9,8 +9,8 @@ type Provider interface {
 	GenerateChat(ctx context.Context, req ChatRequest) (*ChatResult, error)
 	GenerateImage(ctx context.Context, req ImageRequest) (*ImageResult, error)
 	SubmitVideo(ctx context.Context, req VideoRequest) (*VideoSubmission, error)
-	GetVideo(ctx context.Context, videoID string) (*VideoStatus, error)
-	DownloadVideo(ctx context.Context, videoID string) (*BinaryArtifact, error)
+	GetVideo(ctx context.Context, videoID string, baseURL string, apiKey string) (*VideoStatus, error)
+	DownloadVideo(ctx context.Context, videoID string, baseURL string, apiKey string) (*BinaryArtifact, error)
 }
 
 type ChatMessage struct {
@@ -20,6 +20,8 @@ type ChatMessage struct {
 
 type ChatRequest struct {
 	Model       string        `json:"model"`
+	BaseURL     string        `json:"baseUrl,omitempty"`
+	APIKey      string        `json:"apiKey,omitempty"`
 	Messages    []ChatMessage `json:"messages"`
 	Temperature *float64      `json:"temperature,omitempty"`
 	MaxTokens   *int          `json:"maxTokens,omitempty"`
@@ -44,6 +46,8 @@ type MediaInput struct {
 
 type ImageRequest struct {
 	Model           string       `json:"model"`
+	BaseURL         string       `json:"baseUrl,omitempty"`
+	APIKey          string       `json:"apiKey,omitempty"`
 	Prompt          string       `json:"prompt"`
 	ReferenceImages []MediaInput `json:"referenceImages,omitempty"`
 	AspectRatio     string       `json:"aspectRatio,omitempty"`
@@ -68,6 +72,8 @@ type ImageResult struct {
 
 type VideoRequest struct {
 	Model           string       `json:"model"`
+	BaseURL         string       `json:"baseUrl,omitempty"`
+	APIKey          string       `json:"apiKey,omitempty"`
 	Prompt          string       `json:"prompt"`
 	ReferenceImages []MediaInput `json:"referenceImages,omitempty"`
 	AspectRatio     string       `json:"aspectRatio,omitempty"`

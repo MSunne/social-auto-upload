@@ -312,6 +312,11 @@ func stringValue(value any) string {
 		return ""
 	case string:
 		return typed
+	case *string:
+		if typed == nil {
+			return ""
+		}
+		return *typed
 	case json.Number:
 		return typed.String()
 	case float64:

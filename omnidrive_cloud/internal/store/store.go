@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -58,6 +59,14 @@ func bytesOrNil(value []byte) []byte {
 		return nil
 	}
 	return value
+}
+
+func mustJSONBytes(value any) []byte {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return payload
 }
 
 type UserWithPassword struct {
@@ -241,15 +250,20 @@ type CreateLoginActionInput struct {
 }
 
 type CreateSkillInput struct {
-	ID               string
-	OwnerUserID      string
-	Name             string
-	Description      string
-	OutputType       string
-	ModelName        string
-	PromptTemplate   *string
-	ReferencePayload []byte
-	IsEnabled        bool
+	ID                string
+	OwnerUserID       string
+	DeviceID          *string
+	Name              string
+	Description       string
+	OutputType        string
+	ModelName         string
+	PromptTemplate    *string
+	ReferencePayload  []byte
+	ExecutionTime     *time.Time
+	RepeatDaily       bool
+	StoryboardEnabled bool
+	NextRunAt         *time.Time
+	IsEnabled         bool
 }
 
 type CreateSkillAssetInput struct {
@@ -309,14 +323,24 @@ type SyncMaterialEntryInput struct {
 }
 
 type UpdateSkillInput struct {
-	Name             *string
-	Description      *string
-	OutputType       *string
-	ModelName        *string
-	PromptTemplate   *string
-	ReferencePayload []byte
-	ReferenceTouched bool
-	IsEnabled        *bool
+	Name              *string
+	Description       *string
+	OutputType        *string
+	ModelName         *string
+	PromptTemplate    *string
+	ReferencePayload  []byte
+	ReferenceTouched  bool
+	DeviceID          *string
+	DeviceTouched     bool
+	ExecutionTime     *time.Time
+	ExecutionTouched  bool
+	RepeatDaily       *bool
+	StoryboardEnabled *bool
+	NextRunAt         *time.Time
+	NextRunTouched    bool
+	LastRunAt         *time.Time
+	LastRunTouched    bool
+	IsEnabled         *bool
 }
 
 type CreatePublishTaskInput struct {
@@ -354,6 +378,7 @@ type ReplacePublishTaskMaterialRefInput struct {
 
 type ListPublishTasksFilter struct {
 	DeviceID    string
+	AccountID   string
 	Status      string
 	Platform    string
 	AccountName string
@@ -434,6 +459,7 @@ type CreateAIJobInput struct {
 	InputPayload []byte
 	Status       string
 	Message      *string
+	RunAt        *time.Time
 }
 
 type UpdateAIJobInput struct {
@@ -455,6 +481,8 @@ type UpdateAIJobInput struct {
 	DeliveryMessage         *string
 	LocalPublishTaskID      *string
 	LocalPublishTaskTouched bool
+	RunAt                   *time.Time
+	RunAtTouched            bool
 	FinishedAt              *time.Time
 	FinishedTouched         bool
 	DeliveredAt             *time.Time
@@ -462,12 +490,13 @@ type UpdateAIJobInput struct {
 }
 
 type ListAIJobsFilter struct {
-	JobType  string
-	Status   string
-	SkillID  string
-	DeviceID string
-	Source   string
-	Limit    int
+	JobType   string
+	Status    string
+	SkillID   string
+	DeviceID  string
+	AccountID string
+	Source    string
+	Limit     int
 }
 
 type UpsertAIJobArtifactInput struct {

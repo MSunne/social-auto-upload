@@ -59,7 +59,7 @@ func (p *APIYIProvider) GenerateChat(ctx context.Context, req ChatRequest) (*Cha
 		return nil, err
 	}
 
-	body, err := p.doJSON(ctx, http.MethodPost, "/v1/chat/completions", data, true)
+	body, err := p.doJSON(ctx, req.BaseURL, req.APIKey, http.MethodPost, "/v1/chat/completions", data, true)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +116,7 @@ func (p *APIYIProvider) GenerateImage(ctx context.Context, req ImageRequest) (*I
 	}
 
 	path := fmt.Sprintf("/v1beta/models/%s:generateContent", url.PathEscape(req.Model))
-	body, err := p.doJSON(ctx, http.MethodPost, path, data, true)
+	body, err := p.doJSON(ctx, req.BaseURL, req.APIKey, http.MethodPost, path, data, true)
 	if err != nil {
 		return nil, err
 	}
@@ -207,11 +207,11 @@ func (p *APIYIProvider) SubmitVideo(ctx context.Context, req VideoRequest) (*Vid
 		return nil, err
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/v1/videos", &body)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.resolveBaseURL(req.BaseURL)+"/v1/videos", &body)
 	if err != nil {
 		return nil, err
 	}
-	httpReq.Header.Set("Authorization", p.apiKey)
+	httpReq.Header.Set("Authorization", p.resolveAPIKey(req.APIKey))
 	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
 
 	resp, err := p.httpClient.Do(httpReq)
@@ -251,8 +251,8 @@ func (p *APIYIProvider) SubmitVideo(ctx context.Context, req VideoRequest) (*Vid
 	}, nil
 }
 
-func (p *APIYIProvider) GetVideo(ctx context.Context, videoID string) (*VideoStatus, error) {
-	body, err := p.doVideoRequest(ctx, http.MethodGet, fmt.Sprintf("/v1/videos/%s", url.PathEscape(videoID)), nil, "")
+func (p *APIYIProvider) GetVideo(ctx context.Context, videoID string, baseURL string, apiKey string) (*VideoStatus, error) {
+	body, err := p.doVideoRequest(ctx, baseURL, apiKey, http.MethodGet, fmt.Sprintf("/v1/videos/%s", url.PathEscape(videoID)), nil, "")
 	if err != nil {
 		return nil, err
 	}
@@ -296,12 +296,12 @@ func (p *APIYIProvider) GetVideo(ctx context.Context, videoID string) (*VideoSta
 	return status, nil
 }
 
-func (p *APIYIProvider) DownloadVideo(ctx context.Context, videoID string) (*BinaryArtifact, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+fmt.Sprintf("/v1/videos/%s/content", url.PathEscape(videoID)), nil)
+func (p *APIYIProvider) DownloadVideo(ctx context.Context, videoID string, baseURL string, apiKey string) (*BinaryArtifact, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, p.resolveBaseURL(baseURL)+fmt.Sprintf("/v1/videos/%s/content", url.PathEscape(videoID)), nil)
 	if err != nil {
 		return nil, err
 	}
-	httpReq.Header.Set("Authorization", p.apiKey)
+	httpReq.Header.Set("Authorization", p.resolveAPIKey(apiKey))
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
@@ -342,15 +342,16 @@ func (p *APIYIProvider) DownloadVideo(ctx context.Context, videoID string) (*Bin
 	}, nil
 }
 
-func (p *APIYIProvider) doJSON(ctx context.Context, method string, path string, data []byte, bearer bool) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, method, p.baseURL+path, bytes.NewReader(data))
+func (p *APIYIProvider) doJSON(ctx context.Context, baseURL string, apiKey string, method string, path string, data []byte, bearer bool) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, method, p.resolveBaseURL(baseURL)+path, bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
+	resolvedAPIKey := p.resolveAPIKey(apiKey)
 	if bearer {
-		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+		req.Header.Set("Authorization", "Bearer "+resolvedAPIKey)
 	} else {
-		req.Header.Set("Authorization", p.apiKey)
+		req.Header.Set("Authorization", resolvedAPIKey)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -371,12 +372,12 @@ func (p *APIYIProvider) doJSON(ctx context.Context, method string, path string, 
 	return body, nil
 }
 
-func (p *APIYIProvider) doVideoRequest(ctx context.Context, method string, path string, body io.Reader, contentType string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, method, p.baseURL+path, body)
+func (p *APIYIProvider) doVideoRequest(ctx context.Context, baseURL string, apiKey string, method string, path string, body io.Reader, contentType string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, method, p.resolveBaseURL(baseURL)+path, body)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", p.apiKey)
+	req.Header.Set("Authorization", p.resolveAPIKey(apiKey))
 	if strings.TrimSpace(contentType) != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
@@ -396,6 +397,20 @@ func (p *APIYIProvider) doVideoRequest(ctx context.Context, method string, path 
 		return nil, err
 	}
 	return responseBody, nil
+}
+
+func (p *APIYIProvider) resolveBaseURL(override string) string {
+	if trimmed := strings.TrimRight(strings.TrimSpace(override), "/"); trimmed != "" {
+		return trimmed
+	}
+	return p.baseURL
+}
+
+func (p *APIYIProvider) resolveAPIKey(override string) string {
+	if trimmed := strings.TrimSpace(override); trimmed != "" {
+		return trimmed
+	}
+	return p.apiKey
 }
 
 func (p *APIYIProvider) mediaToGeminiPart(ctx context.Context, media MediaInput) (map[string]any, error) {

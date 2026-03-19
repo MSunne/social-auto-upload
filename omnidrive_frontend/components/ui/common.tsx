@@ -93,29 +93,57 @@ const statusColors: Record<string, string> = {
   online: "bg-success/15 text-success",
   active: "bg-success/15 text-success",
   success: "bg-success/15 text-success",
+  completed: "bg-success/15 text-success",
+  published: "bg-success/15 text-success",
+  output_ready: "bg-success/15 text-success",
+  imported: "bg-success/15 text-success",
   offline: "bg-danger/15 text-danger",
   failed: "bg-danger/15 text-danger",
+  publish_failed: "bg-danger/15 text-danger",
   invalid: "bg-danger/15 text-danger",
+  inactive: "bg-text-muted/15 text-text-muted",
   pending: "bg-info/15 text-info",
   running: "bg-info/15 text-info",
+  generating: "bg-info/15 text-info",
+  storyboarding: "bg-info/15 text-info",
+  publishing: "bg-info/15 text-info",
+  queued_generation: "bg-info/15 text-info",
   awaiting_scan: "bg-warning/15 text-warning",
   awaiting_verification: "bg-warning/15 text-warning",
   needs_verify: "bg-warning/15 text-warning",
+  scheduled: "bg-warning/15 text-warning",
+  publish_queued: "bg-warning/15 text-warning",
+  cancel_requested: "bg-warning/15 text-warning",
   unknown: "bg-text-muted/15 text-text-muted",
+  cancelled: "bg-text-muted/15 text-text-muted",
 };
 
 const statusLabels: Record<string, string> = {
   online: "在线",
   offline: "离线",
   active: "有效",
+  inactive: "已停用",
   invalid: "失效",
   pending: "等待中",
   running: "执行中",
   success: "已完成",
+  completed: "已完成",
+  published: "已发布",
+  output_ready: "制作完成",
+  imported: "已回流",
   failed: "失败",
+  publish_failed: "发布失败",
   needs_verify: "待验证",
   awaiting_scan: "等待扫码",
   awaiting_verification: "等待验证",
+  generating: "生成中",
+  storyboarding: "优化分镜中",
+  publishing: "发布中",
+  queued_generation: "待生成",
+  scheduled: "未开始",
+  publish_queued: "待发布",
+  cancel_requested: "取消中",
+  cancelled: "已取消",
   unknown: "未知",
 };
 
@@ -133,17 +161,42 @@ export function StatusBadge({ status, size = "sm" }: StatusBadgeProps) {
       <span
         className={cn(
           "h-1.5 w-1.5 rounded-full",
-          status === "online" || status === "active" || status === "running"
+          status === "online" ||
+          status === "active" ||
+          status === "running" ||
+          status === "generating" ||
+          status === "storyboarding" ||
+          status === "publishing"
             ? "pulse-online"
             : "",
-          status === "online" || status === "active" || status === "success"
+          status === "online" ||
+          status === "active" ||
+          status === "success" ||
+          status === "completed" ||
+          status === "published" ||
+          status === "output_ready" ||
+          status === "imported"
             ? "bg-success"
             : "",
-          status === "offline" || status === "failed" || status === "invalid"
+          status === "offline" ||
+          status === "failed" ||
+          status === "publish_failed" ||
+          status === "invalid"
             ? "bg-danger"
             : "",
-          status === "pending" || status === "running" ? "bg-info" : "",
-          status.includes("verify") || status.includes("awaiting")
+          status === "pending" ||
+          status === "running" ||
+          status === "generating" ||
+          status === "storyboarding" ||
+          status === "publishing" ||
+          status === "queued_generation"
+            ? "bg-info"
+            : "",
+          status.includes("verify") ||
+          status.includes("awaiting") ||
+          status === "scheduled" ||
+          status === "publish_queued" ||
+          status === "cancel_requested"
             ? "bg-warning"
             : "",
         )}

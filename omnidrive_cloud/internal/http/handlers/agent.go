@@ -1582,6 +1582,7 @@ func (h *AgentHandler) SyncPublishTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var mediaPayload []byte
+	var normalizedMediaPayload map[string]any
 	if payload.MediaPayload != nil {
 		ownerUserID := strings.TrimSpace(stringValue(device.OwnerUserID))
 		if ownerUserID == "" {
@@ -1591,6 +1592,9 @@ func (h *AgentHandler) SyncPublishTask(w http.ResponseWriter, r *http.Request) {
 		if normalizeErr != nil {
 			render.Error(w, http.StatusBadGateway, "Failed to mirror remote media into storage")
 			return
+		}
+		if typed, ok := normalizedPayload.(map[string]any); ok {
+			normalizedMediaPayload = typed
 		}
 		mediaPayload, err = json.Marshal(normalizedPayload)
 		if err != nil {
@@ -1665,6 +1669,13 @@ func (h *AgentHandler) SyncPublishTask(w http.ResponseWriter, r *http.Request) {
 		if _, replaceErr := h.app.Store.ReplacePublishTaskMaterialRefs(r.Context(), task.ID, *device.OwnerUserID, materialRefs); replaceErr != nil {
 			render.Error(w, http.StatusInternalServerError, "Failed to sync publish task material refs")
 			return
+		}
+		if aiJobID := strings.TrimSpace(stringValueFromAny(normalizedMediaPayload["aiJobId"])); aiJobID != "" {
+			_ = h.app.Store.LinkAIJobToPublishTask(r.Context(), store.LinkAIJobPublishTaskInput{
+				JobID:       aiJobID,
+				TaskID:      task.ID,
+				OwnerUserID: *device.OwnerUserID,
+			})
 		}
 	}
 

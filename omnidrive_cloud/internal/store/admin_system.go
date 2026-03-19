@@ -22,6 +22,12 @@ type UpsertAdminSystemSettingsInput struct {
 	DefaultChatModel              string
 	DefaultImageModel             string
 	DefaultVideoModel             string
+	StoryboardPrompt              string
+	StoryboardModel               string
+	StoryboardReferences          []byte
+	ImageStoryboardPrompt         string
+	ImageStoryboardModel          string
+	ImageStoryboardReferences     []byte
 }
 
 func scanAdminSystemSettings(scan scanFn) (*domain.AdminSystemSettingsRecord, error) {
@@ -39,6 +45,12 @@ func scanAdminSystemSettings(scan scanFn) (*domain.AdminSystemSettingsRecord, er
 		&item.DefaultChatModel,
 		&item.DefaultImageModel,
 		&item.DefaultVideoModel,
+		&item.StoryboardPrompt,
+		&item.StoryboardModel,
+		&item.StoryboardReferences,
+		&item.ImageStoryboardPrompt,
+		&item.ImageStoryboardModel,
+		&item.ImageStoryboardReferences,
 		&item.CreatedAt,
 		&item.UpdatedAt,
 	); err != nil {
@@ -70,6 +82,12 @@ func (s *Store) GetAdminSystemSettings(ctx context.Context) (*domain.AdminSystem
 			default_chat_model,
 			default_image_model,
 			default_video_model,
+			storyboard_prompt_template,
+			storyboard_model,
+			storyboard_reference_payload,
+			image_storyboard_prompt_template,
+			image_storyboard_model,
+			image_storyboard_reference_payload,
 			created_at,
 			updated_at
 		FROM admin_system_configs
@@ -91,6 +109,14 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 	if err != nil {
 		return nil, err
 	}
+	storyboardReferences := input.StoryboardReferences
+	if len(storyboardReferences) == 0 {
+		storyboardReferences = []byte("[]")
+	}
+	imageStoryboardReferences := input.ImageStoryboardReferences
+	if len(imageStoryboardReferences) == 0 {
+		imageStoryboardReferences = []byte("[]")
+	}
 
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO admin_system_configs (
@@ -103,9 +129,15 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 			billing_manual_support_note,
 			default_chat_model,
 			default_image_model,
-			default_video_model
+			default_video_model,
+			storyboard_prompt_template,
+			storyboard_model,
+			storyboard_reference_payload,
+			image_storyboard_prompt_template,
+			image_storyboard_model,
+			image_storyboard_reference_payload
 		)
-		VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10)
+		VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16::jsonb)
 		ON CONFLICT (id) DO UPDATE
 		SET
 			ai_worker_enabled = EXCLUDED.ai_worker_enabled,
@@ -117,6 +149,12 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 			default_chat_model = EXCLUDED.default_chat_model,
 			default_image_model = EXCLUDED.default_image_model,
 			default_video_model = EXCLUDED.default_video_model,
+			storyboard_prompt_template = EXCLUDED.storyboard_prompt_template,
+			storyboard_model = EXCLUDED.storyboard_model,
+			storyboard_reference_payload = EXCLUDED.storyboard_reference_payload,
+			image_storyboard_prompt_template = EXCLUDED.image_storyboard_prompt_template,
+			image_storyboard_model = EXCLUDED.image_storyboard_model,
+			image_storyboard_reference_payload = EXCLUDED.image_storyboard_reference_payload,
 			updated_at = NOW()
 		RETURNING
 			id,
@@ -129,6 +167,12 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 			default_chat_model,
 			default_image_model,
 			default_video_model,
+			storyboard_prompt_template,
+			storyboard_model,
+			storyboard_reference_payload,
+			image_storyboard_prompt_template,
+			image_storyboard_model,
+			image_storyboard_reference_payload,
 			created_at,
 			updated_at
 	`,
@@ -142,6 +186,12 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 		input.DefaultChatModel,
 		input.DefaultImageModel,
 		input.DefaultVideoModel,
+		input.StoryboardPrompt,
+		input.StoryboardModel,
+		storyboardReferences,
+		input.ImageStoryboardPrompt,
+		input.ImageStoryboardModel,
+		imageStoryboardReferences,
 	)
 
 	return scanAdminSystemSettings(row.Scan)

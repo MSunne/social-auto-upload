@@ -20,7 +20,7 @@ import { PageHeader, EmptyState, StatusBadge } from "@/components/ui/common";
 export default function SkillsPage() {
   const { data: skills = [] } = useQuery<Skill[]>({
     queryKey: ["skills"],
-    queryFn: listSkills,
+    queryFn: () => listSkills(),
   });
 
   const [search, setSearch] = useState("");

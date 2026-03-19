@@ -80,6 +80,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 				accounts.Get("/", accountHandler.List)
 				accounts.Get("/{accountId}", accountHandler.Detail)
 				accounts.Get("/{accountId}/workspace", accountHandler.Workspace)
+				accounts.Post("/{accountId}/skill-runs", accountHandler.CreateSkillRun)
 				accounts.Delete("/{accountId}", accountHandler.Delete)
 				accounts.Post("/{accountId}/validate", accountHandler.Validate)
 				accounts.Post("/remote-login", accountHandler.CreateRemoteLogin)
@@ -97,6 +98,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 				skills.Delete("/{skillId}", skillHandler.Delete)
 				skills.Get("/{skillId}/assets", skillHandler.ListAssets)
 				skills.Post("/{skillId}/assets", skillHandler.CreateAsset)
+				skills.Delete("/{skillId}/assets/{assetId}", skillHandler.DeleteAsset)
 				skills.Post("/{skillId}/upload", skillHandler.UploadAsset)
 			})
 
@@ -198,6 +200,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 			private.With(authmiddleware.RequireAdminPermission("admin.manage")).Post("/roles", adminRBACHandler.CreateRole)
 			private.With(authmiddleware.RequireAdminPermission("system.config")).Get("/system-config", adminAuthHandler.SystemConfig)
 			private.With(authmiddleware.RequireAdminPermission("system.config")).Patch("/system-config", adminAuthHandler.UpdateSystemConfig)
+			private.With(authmiddleware.RequireAdminPermission("system.config")).Post("/system-config/storyboard-assets", adminAuthHandler.UploadStoryboardAsset)
 
 			private.With(authmiddleware.RequireAdminPermission("admin.manage")).Get("/dashboard/summary", adminConsoleHandler.DashboardSummary)
 			private.With(authmiddleware.RequireAdminPermission("user.read")).Get("/users", adminConsoleHandler.ListUsers)
@@ -282,8 +285,10 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 			private.With(authmiddleware.RequireAdminPermission("admin.manage")).Get("/audits", adminConsoleHandler.ListAudits)
 
 			private.With(authmiddleware.RequireAdminPermission("ai.read")).Get("/ai/models", adminAIHandler.ListModels)
+			private.With(authmiddleware.RequireAdminPermission("ai.read")).Get("/ai/models/{modelId}", adminAIHandler.DetailModel)
 			private.With(authmiddleware.RequireAdminPermission("ai.update")).Post("/ai/models", adminAIHandler.CreateModel)
 			private.With(authmiddleware.RequireAdminPermission("ai.update")).Patch("/ai/models/{modelId}", adminAIHandler.UpdateModel)
+			private.With(authmiddleware.RequireAdminPermission("ai.update")).Delete("/ai/models/{modelId}", adminAIHandler.DeleteModel)
 
 			private.With(authmiddleware.RequireAdminPermission("skill.read")).Get("/skills", adminSkillHandler.ListSkills)
 			private.With(authmiddleware.RequireAdminPermission("skill.update")).Patch("/skills/{skillId}", adminSkillHandler.UpdateSkill)

@@ -41,8 +41,78 @@ class DummyPublishTaskManager:
 
 
 class DummyAITaskManager:
+    def __init__(self):
+        self.tasks = {}
+
     def summary(self):
         return {}
+
+    def get_task(self, task_uuid):
+        return self.tasks.get(task_uuid)
+
+    def import_remote_task(self, data):
+        task = {
+            "taskUuid": data["taskUuid"],
+            "source": data.get("source"),
+            "jobType": data.get("jobType"),
+            "modelName": data.get("modelName"),
+            "skillId": data.get("skillId"),
+            "prompt": data.get("prompt"),
+            "status": data.get("status"),
+            "message": data.get("message"),
+            "payload": data.get("payload") or {},
+            "cloudJobId": data.get("cloudJobId"),
+            "cloudStatus": data.get("cloudStatus"),
+            "linkedPublishTaskUuid": data.get("linkedPublishTaskUuid"),
+            "artifactRefs": data.get("artifactRefs") or [],
+        }
+        self.tasks[task["taskUuid"]] = task
+        return task
+
+    def update_cloud_binding(self, task_uuid, cloud_job_id, cloud_status, message=None):
+        task = self.tasks[task_uuid]
+        task["cloudJobId"] = cloud_job_id
+        task["cloudStatus"] = cloud_status
+        if message:
+            task["message"] = message
+        return task
+
+    def mark_cloud_state(self, task_uuid, cloud_status, message=None):
+        task = self.tasks[task_uuid]
+        task["cloudStatus"] = cloud_status
+        if message:
+            task["message"] = message
+        return task
+
+    def mark_result_imported(self, task_uuid, artifact_refs, linked_publish_task_uuid=None, message=None):
+        task = self.tasks[task_uuid]
+        task["artifactRefs"] = artifact_refs
+        if linked_publish_task_uuid:
+            task["linkedPublishTaskUuid"] = linked_publish_task_uuid
+            task["status"] = "publish_pending"
+        else:
+            task["status"] = "output_ready"
+        if message:
+            task["message"] = message
+        return task
+
+    def list_tasks(self, limit=100, status=None, source=None):
+        items = list(self.tasks.values())
+        if status:
+            items = [item for item in items if item.get("status") == status]
+        if source:
+            items = [item for item in items if item.get("source") == source]
+        return items[:limit]
+
+    def list_tasks_for_cloud_sync(self, limit=200):
+        return list(self.tasks.values())[:limit]
+
+    def sync_linked_publish_status(self, task_uuid, publish_status, message=None):
+        task = self.tasks[task_uuid]
+        task["status"] = publish_status
+        if message:
+            task["message"] = message
+        return task
 
 
 class OmniDriveBridgeTests(unittest.TestCase):
@@ -50,15 +120,17 @@ class OmniDriveBridgeTests(unittest.TestCase):
         self.temp_dir = Path(tempfile.mkdtemp(prefix="omnidrive-agent-test-"))
         self.addCleanup(lambda: shutil.rmtree(self.temp_dir, ignore_errors=True))
 
-    def make_bridge(self, publish_task_manager=None):
+    def make_bridge(self, publish_task_manager=None, ai_task_manager=None):
         publish_task_manager = publish_task_manager or DummyPublishTaskManager()
+        ai_task_manager = ai_task_manager or DummyAITaskManager()
         with mock.patch.object(agent_module, "BASE_DIR", self.temp_dir):
             bridge = agent_module.OmniDriveBridge(
                 db_path=self.temp_dir / "database.db",
                 cloud_base_url="https://cloud.test",
                 agent_key="agent-key",
+                run_login_fn=lambda *args, **kwargs: None,
                 publish_task_manager=publish_task_manager,
-                ai_task_manager=DummyAITaskManager(),
+                ai_task_manager=ai_task_manager,
                 material_roots={},
                 device_name="test-device",
                 device_code="device-1",
@@ -224,6 +296,127 @@ class OmniDriveBridgeTests(unittest.TestCase):
         self.assertIsNotNone(lease)
         self.assertEqual(lease["last_synced_status"], "cancelled")
         self.assertEqual(lease["last_synced_updated_at"], "2026-03-16 03:20:44")
+
+    def test_import_remote_ai_job_creates_local_record_and_publish_tasks_for_targets(self):
+        publish_task_manager = DummyPublishTaskManager(worker_count=2)
+        ai_task_manager = DummyAITaskManager()
+        bridge = self.make_bridge(
+            publish_task_manager=publish_task_manager,
+            ai_task_manager=ai_task_manager,
+        )
+        delivery_updates = []
+
+        def fake_request(method, path, *, params=None, payload=None):
+            if method == "GET" and path == "/api/v1/agent/ai-jobs/device-1":
+                return [
+                    {
+                        "job": {
+                            "id": "cloud-job-1",
+                            "localTaskId": "local-ai-1",
+                            "status": "success",
+                            "source": "omnibull_local",
+                            "jobType": "video",
+                            "modelName": "veo",
+                            "prompt": "生成春季广告视频",
+                            "inputPayload": {
+                                "publishPayload": {
+                                    "title": "春季广告",
+                                    "contentText": "新品上新",
+                                    "targets": [
+                                        {"platform": "抖音", "accountName": "账号A"},
+                                        {"platform": "快手", "accountName": "账号B"},
+                                    ],
+                                }
+                            },
+                        },
+                        "artifacts": [{"artifactKey": "video-1", "artifactType": "video"}],
+                    }
+                ]
+            if method == "POST" and path == "/api/v1/agent/ai-jobs/cloud-job-1/delivery":
+                delivery_updates.append(payload)
+                return {"ok": True}
+            raise AssertionError(f"unexpected request {method} {path}")
+
+        artifact_refs = [
+            {
+                "root": "generated",
+                "path": "local-ai-1/video.mp4",
+                "absolutePath": str(self.temp_dir / "generated" / "local-ai-1" / "video.mp4"),
+                "name": "video.mp4",
+                "role": "media",
+            }
+        ]
+
+        with mock.patch.object(bridge, "_request", side_effect=fake_request):
+            with mock.patch.object(bridge, "_download_ai_artifacts", return_value=artifact_refs):
+                with mock.patch.object(
+                    bridge,
+                    "_resolve_local_account_file_path",
+                    side_effect=lambda platform, account: f"/tmp/{platform}-{account}.json",
+                ):
+                    imported = bridge._import_remote_ai_jobs()
+
+        self.assertEqual(imported, 1)
+        self.assertEqual(len(publish_task_manager.enqueued_specs), 2)
+        self.assertEqual(
+            {spec["platformName"] for spec in publish_task_manager.enqueued_specs},
+            {"抖音", "快手"},
+        )
+        self.assertEqual(
+            {spec["accountName"] for spec in publish_task_manager.enqueued_specs},
+            {"账号A", "账号B"},
+        )
+        self.assertEqual(
+            publish_task_manager.enqueued_specs[0]["payload"]["omnidriveAICloudJobId"],
+            "cloud-job-1",
+        )
+        self.assertEqual(
+            ai_task_manager.get_task("local-ai-1")["linkedPublishTaskUuid"],
+            publish_task_manager.enqueued_specs[0]["taskUuid"],
+        )
+        self.assertEqual(delivery_updates[0]["status"], "publish_queued")
+        self.assertEqual(
+            delivery_updates[0]["localPublishTaskId"],
+            publish_task_manager.enqueued_specs[0]["taskUuid"],
+        )
+
+    def test_sync_local_ai_tasks_skips_non_syncable_sources(self):
+        ai_task_manager = DummyAITaskManager()
+        ai_task_manager.tasks["remote-ai-1"] = {
+            "taskUuid": "remote-ai-1",
+            "source": "omnidrive_cloud",
+            "jobType": "video",
+            "modelName": "veo",
+            "prompt": "remote",
+            "status": "queued_cloud",
+            "message": "from cloud",
+            "payload": {"inputPayload": {}, "publishPayload": {}},
+        }
+        ai_task_manager.tasks["local-ai-1"] = {
+            "taskUuid": "local-ai-1",
+            "source": "local_ui",
+            "jobType": "video",
+            "modelName": "veo",
+            "prompt": "local",
+            "status": "queued_cloud",
+            "message": "from local",
+            "payload": {"inputPayload": {}, "publishPayload": {}},
+        }
+        bridge = self.make_bridge(ai_task_manager=ai_task_manager)
+        sync_payloads = []
+
+        def fake_request(method, path, *, params=None, payload=None):
+            if method == "POST" and path == "/api/v1/agent/ai-jobs/sync":
+                sync_payloads.append(payload)
+                return {"job": {"id": "cloud-local-1", "status": "queued", "message": "ok"}}
+            raise AssertionError(f"unexpected request {method} {path}")
+
+        with mock.patch.object(bridge, "_request", side_effect=fake_request):
+            mirrored = bridge._sync_local_ai_tasks()
+
+        self.assertEqual(mirrored, 1)
+        self.assertEqual(len(sync_payloads), 1)
+        self.assertEqual(sync_payloads[0]["id"], "local-ai-1")
 
 
 def make_http_error(status_code, payload):

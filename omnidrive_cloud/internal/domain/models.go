@@ -120,18 +120,24 @@ type LoginSessionAction struct {
 }
 
 type ProductSkill struct {
-	ID               string           `json:"id"`
-	OwnerUserID      string           `json:"ownerUserId"`
-	Name             string           `json:"name"`
-	Description      string           `json:"description"`
-	OutputType       string           `json:"outputType"`
-	ModelName        string           `json:"modelName"`
-	PromptTemplate   *string          `json:"promptTemplate"`
-	ReferencePayload json.RawMessage  `json:"referencePayload,omitempty"`
-	IsEnabled        bool             `json:"isEnabled"`
-	CreatedAt        time.Time        `json:"createdAt"`
-	UpdatedAt        time.Time        `json:"updatedAt"`
-	Load             ProductSkillLoad `json:"load"`
+	ID                string           `json:"id"`
+	OwnerUserID       string           `json:"ownerUserId"`
+	DeviceID          *string          `json:"deviceId,omitempty"`
+	Name              string           `json:"name"`
+	Description       string           `json:"description"`
+	OutputType        string           `json:"outputType"`
+	ModelName         string           `json:"modelName"`
+	PromptTemplate    *string          `json:"promptTemplate"`
+	ReferencePayload  json.RawMessage  `json:"referencePayload,omitempty"`
+	ExecutionTime     *time.Time       `json:"executionTime,omitempty"`
+	RepeatDaily       bool             `json:"repeatDaily"`
+	StoryboardEnabled bool             `json:"storyboardEnabled"`
+	NextRunAt         *time.Time       `json:"nextRunAt,omitempty"`
+	LastRunAt         *time.Time       `json:"lastRunAt,omitempty"`
+	IsEnabled         bool             `json:"isEnabled"`
+	CreatedAt         time.Time        `json:"createdAt"`
+	UpdatedAt         time.Time        `json:"updatedAt"`
+	Load              ProductSkillLoad `json:"load"`
 }
 
 type ProductSkillLoad struct {
@@ -535,15 +541,29 @@ type PublishTaskBulkActionResult struct {
 }
 
 type AIModel struct {
-	ID             string          `json:"id"`
-	Vendor         string          `json:"vendor"`
-	ModelName      string          `json:"modelName"`
-	Category       string          `json:"category"`
-	Description    *string         `json:"description"`
-	PricingPayload json.RawMessage `json:"pricingPayload,omitempty"`
-	IsEnabled      bool            `json:"isEnabled"`
-	CreatedAt      time.Time       `json:"createdAt"`
-	UpdatedAt      time.Time       `json:"updatedAt"`
+	ID                        string          `json:"id"`
+	Vendor                    string          `json:"vendor"`
+	ModelName                 string          `json:"modelName"`
+	Category                  string          `json:"category"`
+	BillingMode               string          `json:"billingMode"`
+	BaseURL                   *string         `json:"baseUrl,omitempty"`
+	APIKey                    *string         `json:"apiKey,omitempty"`
+	RawRate                   *float64        `json:"rawRate,omitempty"`
+	BillingAmount             *float64        `json:"billingAmount,omitempty"`
+	Description               *string         `json:"description"`
+	PricingPayload            json.RawMessage `json:"pricingPayload,omitempty"`
+	ChatInputRawRate          *float64        `json:"chatInputRawRate,omitempty"`
+	ChatOutputRawRate         *float64        `json:"chatOutputRawRate,omitempty"`
+	ChatInputBillingAmount    *float64        `json:"chatInputBillingAmount,omitempty"`
+	ChatOutputBillingAmount   *float64        `json:"chatOutputBillingAmount,omitempty"`
+	ImageReferenceLimit       *int            `json:"imageReferenceLimit,omitempty"`
+	ImageSupportedSizes       []string        `json:"imageSupportedSizes,omitempty"`
+	VideoReferenceLimit       *int            `json:"videoReferenceLimit,omitempty"`
+	VideoSupportedResolutions []string        `json:"videoSupportedResolutions,omitempty"`
+	VideoSupportedDurations   []string        `json:"videoSupportedDurations,omitempty"`
+	IsEnabled                 bool            `json:"isEnabled"`
+	CreatedAt                 time.Time       `json:"createdAt"`
+	UpdatedAt                 time.Time       `json:"updatedAt"`
 }
 
 type AIJob struct {
@@ -567,6 +587,7 @@ type AIJob struct {
 	DeliveryStatus     string          `json:"deliveryStatus"`
 	DeliveryMessage    *string         `json:"deliveryMessage"`
 	LocalPublishTaskID *string         `json:"localPublishTaskId"`
+	RunAt              *time.Time      `json:"runAt"`
 	CreatedAt          time.Time       `json:"createdAt"`
 	UpdatedAt          time.Time       `json:"updatedAt"`
 	DeliveredAt        *time.Time      `json:"deliveredAt"`

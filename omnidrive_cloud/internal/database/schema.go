@@ -104,6 +104,12 @@ CREATE TABLE IF NOT EXISTS admin_system_configs (
     default_chat_model TEXT NOT NULL DEFAULT 'gemini-3.1-pro-preview',
     default_image_model TEXT NOT NULL DEFAULT 'gemini-3-pro-image-preview',
     default_video_model TEXT NOT NULL DEFAULT 'veo-3.1-fast-fl',
+    storyboard_prompt_template TEXT NOT NULL DEFAULT '',
+    storyboard_model TEXT NOT NULL DEFAULT '',
+    storyboard_reference_payload JSONB NOT NULL DEFAULT '[]'::jsonb,
+    image_storyboard_prompt_template TEXT NOT NULL DEFAULT '',
+    image_storyboard_model TEXT NOT NULL DEFAULT '',
+    image_storyboard_reference_payload JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -169,12 +175,18 @@ CREATE TABLE IF NOT EXISTS login_session_actions (
 CREATE TABLE IF NOT EXISTS product_skills (
     id TEXT PRIMARY KEY,
     owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
     name TEXT NOT NULL,
     description TEXT NOT NULL,
     output_type TEXT NOT NULL,
     model_name TEXT NOT NULL,
     prompt_template TEXT,
     reference_payload JSONB,
+    execution_time TIMESTAMPTZ,
+    repeat_daily BOOLEAN NOT NULL DEFAULT FALSE,
+    storyboard_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    next_run_at TIMESTAMPTZ,
+    last_run_at TIMESTAMPTZ,
     is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -359,21 +371,60 @@ ALTER TABLE platform_accounts ADD COLUMN IF NOT EXISTS notes TEXT;
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS default_chat_model TEXT NOT NULL DEFAULT 'gemini-3.1-pro-preview';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS default_image_model TEXT NOT NULL DEFAULT 'gemini-3-pro-image-preview';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS default_video_model TEXT NOT NULL DEFAULT 'veo-3.1-fast-fl';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS storyboard_prompt_template TEXT NOT NULL DEFAULT '';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS storyboard_model TEXT NOT NULL DEFAULT '';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS storyboard_reference_payload JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS image_storyboard_prompt_template TEXT NOT NULL DEFAULT '';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS image_storyboard_model TEXT NOT NULL DEFAULT '';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS image_storyboard_reference_payload JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_chat_model TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_image_model TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_video_model TEXT;
+ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS device_id TEXT REFERENCES devices(id) ON DELETE SET NULL;
+ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS execution_time TIMESTAMPTZ;
+ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS repeat_daily BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS storyboard_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS next_run_at TIMESTAMPTZ;
+ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS last_run_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS ai_models (
     id TEXT PRIMARY KEY,
     vendor TEXT NOT NULL,
     model_name TEXT NOT NULL,
     category TEXT NOT NULL,
+    billing_mode TEXT NOT NULL DEFAULT 'per_call',
+    base_url TEXT,
+    api_key TEXT,
+    raw_rate DOUBLE PRECISION,
+    billing_amount DOUBLE PRECISION,
     description TEXT,
     pricing_payload JSONB,
+    image_reference_limit INT,
+    image_supported_sizes JSONB NOT NULL DEFAULT '[]'::jsonb,
+    video_reference_limit INT,
+    video_supported_resolutions JSONB NOT NULL DEFAULT '[]'::jsonb,
+    video_supported_durations JSONB NOT NULL DEFAULT '[]'::jsonb,
     is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS base_url TEXT;
+ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS billing_mode TEXT;
+UPDATE ai_models
+SET billing_mode = CASE
+    WHEN category = 'chat' THEN 'per_token'
+    ELSE 'per_call'
+END
+WHERE billing_mode IS NULL OR TRIM(billing_mode) = '';
+ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS api_key TEXT;
+ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS raw_rate DOUBLE PRECISION;
+ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS billing_amount DOUBLE PRECISION;
+ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS image_reference_limit INT;
+ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS image_supported_sizes JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS video_reference_limit INT;
+ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS video_supported_resolutions JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS video_supported_durations JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE TABLE IF NOT EXISTS ai_jobs (
     id TEXT PRIMARY KEY,
@@ -399,6 +450,7 @@ CREATE TABLE IF NOT EXISTS ai_jobs (
     delivery_status TEXT NOT NULL DEFAULT 'pending',
     delivery_message TEXT,
     local_publish_task_id TEXT,
+    run_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     delivered_at TIMESTAMPTZ,
@@ -415,6 +467,7 @@ ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ;
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS delivery_status TEXT NOT NULL DEFAULT 'pending';
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS delivery_message TEXT;
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS local_publish_task_id TEXT;
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS run_at TIMESTAMPTZ;
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS notes TEXT;
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS exception_reason TEXT;
@@ -962,11 +1015,11 @@ CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_resource_type ON admin_audit_log
 CREATE INDEX IF NOT EXISTS idx_audit_events_owner_user_id ON audit_events(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_resource_type ON audit_events(resource_type);
 
-INSERT INTO ai_models (id, vendor, model_name, category, description, pricing_payload, is_enabled)
+INSERT INTO ai_models (id, vendor, model_name, category, billing_mode, description, pricing_payload, is_enabled)
 VALUES
-    ('gemini-3.1-pro-preview', 'apiyi', 'gemini-3.1-pro-preview', 'chat', '默认思考与多模态理解模型', '{"unit":"credits","price":"dynamic"}', TRUE),
-    ('gemini-3-pro-image-preview', 'apiyi', 'gemini-3-pro-image-preview', 'image', '默认图片生成与编辑模型', '{"unit":"credits","price":"dynamic"}', TRUE),
-    ('veo-3.1-fast-fl', 'apiyi', 'veo-3.1-fast-fl', 'video', '默认视频生成模型', '{"unit":"credits","price":"dynamic"}', TRUE)
+    ('gemini-3.1-pro-preview', 'apiyi', 'gemini-3.1-pro-preview', 'chat', 'per_token', '默认思考与多模态理解模型', '{"unit":"credits","price":"dynamic"}', TRUE),
+    ('gemini-3-pro-image-preview', 'apiyi', 'gemini-3-pro-image-preview', 'image', 'per_call', '默认图片生成与编辑模型', '{"unit":"credits","price":"dynamic"}', TRUE),
+    ('veo-3.1-fast-fl', 'apiyi', 'veo-3.1-fast-fl', 'video', 'per_call', '默认视频生成模型', '{"unit":"credits","price":"dynamic"}', TRUE)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO billing_packages (id, name, channel, price_cents, credit_amount, manual_bonus_credit_amount, badge, description, is_enabled, sort_order)

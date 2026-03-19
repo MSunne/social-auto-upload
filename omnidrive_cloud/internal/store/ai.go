@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -16,21 +17,59 @@ import (
 const aiJobSelectColumns = `
 	id, owner_user_id, device_id, skill_id, source, local_task_id, job_type, model_name, prompt, status,
 	input_payload, output_payload, message, cost_credits, lease_owner_device_id, lease_token, lease_expires_at,
-	delivery_status, delivery_message, local_publish_task_id, created_at, updated_at, delivered_at, finished_at
+	delivery_status, delivery_message, local_publish_task_id, run_at, created_at, updated_at, delivered_at, finished_at
 `
+
+type aiModelPricingPayload struct {
+	ChatInputRawRate        *float64 `json:"chatInputRawRate,omitempty"`
+	ChatOutputRawRate       *float64 `json:"chatOutputRawRate,omitempty"`
+	ChatInputBillingAmount  *float64 `json:"chatInputBillingAmount,omitempty"`
+	ChatOutputBillingAmount *float64 `json:"chatOutputBillingAmount,omitempty"`
+}
+
+func normalizeAIModelBillingMode(category string, billingMode string) string {
+	switch strings.ToLower(strings.TrimSpace(billingMode)) {
+	case "per_call", "per_second", "per_token":
+		return strings.ToLower(strings.TrimSpace(billingMode))
+	default:
+		if strings.TrimSpace(category) == "chat" {
+			return "per_token"
+		}
+		return "per_call"
+	}
+}
 
 func scanAIModel(row pgx.Row) (*domain.AIModel, error) {
 	var model domain.AIModel
+	var baseURL *string
+	var apiKey *string
+	var rawRate *float64
+	var billingAmount *float64
 	var description *string
 	var pricingPayload []byte
+	var imageReferenceLimit *int
+	var imageSupportedSizes []byte
+	var videoReferenceLimit *int
+	var videoSupportedResolutions []byte
+	var videoSupportedDurations []byte
 
 	if err := row.Scan(
 		&model.ID,
 		&model.Vendor,
 		&model.ModelName,
 		&model.Category,
+		&model.BillingMode,
+		&baseURL,
+		&apiKey,
+		&rawRate,
+		&billingAmount,
 		&description,
 		&pricingPayload,
+		&imageReferenceLimit,
+		&imageSupportedSizes,
+		&videoReferenceLimit,
+		&videoSupportedResolutions,
+		&videoSupportedDurations,
 		&model.IsEnabled,
 		&model.CreatedAt,
 		&model.UpdatedAt,
@@ -38,9 +77,75 @@ func scanAIModel(row pgx.Row) (*domain.AIModel, error) {
 		return nil, err
 	}
 
+	model.BillingMode = normalizeAIModelBillingMode(model.Category, model.BillingMode)
+	model.BaseURL = normalizeOptionalString(baseURL)
+	model.APIKey = normalizeOptionalString(apiKey)
+	model.RawRate = rawRate
+	model.BillingAmount = billingAmount
 	model.Description = description
 	model.PricingPayload = bytesOrNil(pricingPayload)
+	applyAIModelPricingPayload(&model)
+	model.ImageReferenceLimit = imageReferenceLimit
+	model.ImageSupportedSizes = decodeStringList(imageSupportedSizes)
+	model.VideoReferenceLimit = videoReferenceLimit
+	model.VideoSupportedResolutions = decodeStringList(videoSupportedResolutions)
+	model.VideoSupportedDurations = decodeStringList(videoSupportedDurations)
 	return &model, nil
+}
+
+func applyAIModelPricingPayload(model *domain.AIModel) {
+	if model == nil {
+		return
+	}
+
+	var payload aiModelPricingPayload
+	if len(model.PricingPayload) > 0 {
+		if err := json.Unmarshal(model.PricingPayload, &payload); err == nil {
+			model.ChatInputRawRate = payload.ChatInputRawRate
+			model.ChatOutputRawRate = payload.ChatOutputRawRate
+			model.ChatInputBillingAmount = payload.ChatInputBillingAmount
+			model.ChatOutputBillingAmount = payload.ChatOutputBillingAmount
+		}
+	}
+
+	if strings.TrimSpace(model.Category) != "chat" {
+		return
+	}
+
+	if model.ChatInputRawRate == nil && model.RawRate != nil {
+		model.ChatInputRawRate = model.RawRate
+	}
+	if model.ChatOutputRawRate == nil && model.RawRate != nil {
+		model.ChatOutputRawRate = model.RawRate
+	}
+	if model.ChatInputBillingAmount == nil && model.BillingAmount != nil {
+		model.ChatInputBillingAmount = model.BillingAmount
+	}
+	if model.ChatOutputBillingAmount == nil && model.BillingAmount != nil {
+		model.ChatOutputBillingAmount = model.BillingAmount
+	}
+}
+
+func decodeStringList(raw []byte) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var values []string
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil
+	}
+	return values
+}
+
+func normalizeOptionalString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 func scanAIJob(row pgx.Row) (*domain.AIJob, error) {
@@ -57,6 +162,7 @@ func scanAIJob(row pgx.Row) (*domain.AIJob, error) {
 	var leaseExpiresAt *time.Time
 	var deliveryMessage *string
 	var localPublishTaskID *string
+	var runAt *time.Time
 	var deliveredAt *time.Time
 	var finishedAt *time.Time
 
@@ -81,6 +187,7 @@ func scanAIJob(row pgx.Row) (*domain.AIJob, error) {
 		&job.DeliveryStatus,
 		&deliveryMessage,
 		&localPublishTaskID,
+		&runAt,
 		&job.CreatedAt,
 		&job.UpdatedAt,
 		&deliveredAt,
@@ -101,6 +208,7 @@ func scanAIJob(row pgx.Row) (*domain.AIJob, error) {
 	job.LeaseExpiresAt = leaseExpiresAt
 	job.DeliveryMessage = deliveryMessage
 	job.LocalPublishTaskID = localPublishTaskID
+	job.RunAt = runAt
 	job.DeliveredAt = deliveredAt
 	job.FinishedAt = finishedAt
 	return &job, nil
@@ -162,7 +270,12 @@ func scanAIJobArtifact(row pgx.Row) (*domain.AIJobArtifact, error) {
 
 func (s *Store) ListAIModels(ctx context.Context, category string) ([]domain.AIModel, error) {
 	query := `
-		SELECT id, vendor, model_name, category, description, pricing_payload, is_enabled, created_at, updated_at
+		SELECT
+			id, vendor, model_name, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
+			description, pricing_payload,
+			image_reference_limit, image_supported_sizes,
+			video_reference_limit, video_supported_resolutions, video_supported_durations,
+			is_enabled, created_at, updated_at
 		FROM ai_models
 		WHERE is_enabled = TRUE
 	`
@@ -192,7 +305,12 @@ func (s *Store) ListAIModels(ctx context.Context, category string) ([]domain.AIM
 
 func (s *Store) GetAIModelByName(ctx context.Context, modelName string) (*domain.AIModel, error) {
 	row := s.pool.QueryRow(ctx, `
-		SELECT id, vendor, model_name, category, description, pricing_payload, is_enabled, created_at, updated_at
+		SELECT
+			id, vendor, model_name, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
+			description, pricing_payload,
+			image_reference_limit, image_supported_sizes,
+			video_reference_limit, video_supported_resolutions, video_supported_durations,
+			is_enabled, created_at, updated_at
 		FROM ai_models
 		WHERE model_name = $1
 	`, modelName)
@@ -235,6 +353,11 @@ func (s *Store) ListAIJobsByOwner(ctx context.Context, ownerUserID string, filte
 		args = append(args, filter.DeviceID)
 		argIndex++
 	}
+	if strings.TrimSpace(filter.AccountID) != "" {
+		query += fmt.Sprintf(" AND COALESCE(input_payload->>'accountId', '') = $%d", argIndex)
+		args = append(args, filter.AccountID)
+		argIndex++
+	}
 	if strings.TrimSpace(filter.Source) != "" {
 		query += fmt.Sprintf(" AND source = $%d", argIndex)
 		args = append(args, filter.Source)
@@ -266,11 +389,11 @@ func (s *Store) ListAIJobsByOwner(ctx context.Context, ownerUserID string, filte
 func (s *Store) CreateAIJob(ctx context.Context, input CreateAIJobInput) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO ai_jobs (
-			id, owner_user_id, device_id, skill_id, source, local_task_id, job_type, model_name, prompt, status, input_payload, message
+			id, owner_user_id, device_id, skill_id, source, local_task_id, job_type, model_name, prompt, status, input_payload, message, run_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING `+aiJobSelectColumns+`
-	`, input.ID, input.OwnerUserID, input.DeviceID, input.SkillID, input.Source, input.LocalTaskID, input.JobType, input.ModelName, input.Prompt, input.Status, input.InputPayload, input.Message)
+	`, input.ID, input.OwnerUserID, input.DeviceID, input.SkillID, input.Source, input.LocalTaskID, input.JobType, input.ModelName, input.Prompt, input.Status, input.InputPayload, input.Message, input.RunAt)
 
 	return scanAIJob(row)
 }
@@ -359,6 +482,10 @@ func (s *Store) UpdateAIJob(ctx context.Context, jobID string, ownerUserID strin
 	if input.LocalPublishTaskTouched {
 		localPublishTaskID = input.LocalPublishTaskID
 	}
+	var runAt any
+	if input.RunAtTouched {
+		runAt = input.RunAt
+	}
 	var deliveredAt any
 	if input.DeliveredTouched {
 		deliveredAt = input.DeliveredAt
@@ -396,18 +523,22 @@ func (s *Store) UpdateAIJob(ctx context.Context, jobID string, ownerUserID strin
 		        WHEN $19 = TRUE THEN $20
 		        ELSE local_publish_task_id
 		    END,
+		    run_at = CASE
+		        WHEN $21 = TRUE THEN $22::timestamptz
+		        ELSE run_at
+		    END,
 		    delivered_at = CASE
-		        WHEN $23 = TRUE THEN $24::timestamptz
+		        WHEN $25 = TRUE THEN $26::timestamptz
 		        ELSE delivered_at
 		    END,
 		    finished_at = CASE
-		        WHEN $21 = TRUE THEN $22::timestamptz
+		        WHEN $23 = TRUE THEN $24::timestamptz
 		        ELSE finished_at
 		    END,
 		    updated_at = NOW()
 		WHERE id = $1 AND owner_user_id = $2
 		RETURNING `+aiJobSelectColumns+`
-	`, jobID, ownerUserID, input.DeviceTouched, deviceID, input.SkillTouched, skillID, input.LocalTaskTouched, localTaskID, input.Prompt, input.Status, inputPayload, outputPayload, input.Message, input.CostCredits, input.InputTouched, input.OutputTouched, input.DeliveryStatus, input.DeliveryMessage, input.LocalPublishTaskTouched, localPublishTaskID, input.FinishedTouched, finishedAt, input.DeliveredTouched, deliveredAt)
+	`, jobID, ownerUserID, input.DeviceTouched, deviceID, input.SkillTouched, skillID, input.LocalTaskTouched, localTaskID, input.Prompt, input.Status, inputPayload, outputPayload, input.Message, input.CostCredits, input.InputTouched, input.OutputTouched, input.DeliveryStatus, input.DeliveryMessage, input.LocalPublishTaskTouched, localPublishTaskID, input.RunAtTouched, runAt, input.FinishedTouched, finishedAt, input.DeliveredTouched, deliveredAt)
 
 	job, err := scanAIJob(row)
 	if err != nil {
@@ -614,6 +745,7 @@ func (s *Store) ListExecutableAIJobs(ctx context.Context, limit int) ([]domain.A
 		FROM ai_jobs
 		WHERE status = 'queued'
 		  AND source IN ('omnidrive_cloud', 'omnibull_local')
+		  AND (run_at IS NULL OR run_at <= NOW())
 		  AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
 		ORDER BY created_at ASC
 	`
@@ -638,6 +770,69 @@ func (s *Store) ListExecutableAIJobs(ctx context.Context, limit int) ([]domain.A
 		items = append(items, *job)
 	}
 	return items, rows.Err()
+}
+
+func (s *Store) PromoteDueScheduledAIJobs(ctx context.Context, limit int) ([]domain.AIJob, error) {
+	query := `
+		UPDATE ai_jobs
+		SET status = 'queued',
+		    message = CASE
+		        WHEN COALESCE(message, '') = '' THEN '已到执行时间，等待云端生成'
+		        ELSE message
+		    END,
+		    updated_at = NOW()
+		WHERE id IN (
+		    SELECT id
+		    FROM ai_jobs
+		    WHERE status = 'scheduled'
+		      AND (run_at IS NULL OR run_at <= NOW())
+		    ORDER BY run_at ASC NULLS FIRST, created_at ASC
+	`
+	args := []any{}
+	if limit > 0 {
+		query += ` LIMIT $1`
+		args = append(args, limit)
+	}
+	query += `
+		)
+		RETURNING ` + aiJobSelectColumns
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.AIJob, 0)
+	for rows.Next() {
+		job, scanErr := scanAIJob(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *job)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) FindScheduledOrActiveAIJobBySkillRun(ctx context.Context, skillID string, runAt time.Time) (*domain.AIJob, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT `+aiJobSelectColumns+`
+		FROM ai_jobs
+		WHERE skill_id = $1
+		  AND run_at = $2
+		  AND status IN ('scheduled', 'queued', 'running')
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, skillID, runAt.UTC())
+
+	job, err := scanAIJob(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return job, nil
 }
 
 func (s *Store) RecoverExpiredAIJobLeases(ctx context.Context, deviceID string) ([]domain.AIJob, error) {

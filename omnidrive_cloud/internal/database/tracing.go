@@ -57,10 +57,11 @@ func (t *queryTracer) TraceConnectEnd(ctx context.Context, data pgx.TraceConnect
 }
 
 func (t *queryTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	sql := normalizeSQL(data.SQL)
 	return context.WithValue(ctx, queryTraceKey{}, traceQueryState{
 		startedAt: time.Now(),
-		sql:       normalizeSQL(data.SQL),
-		args:      logging.PreviewArgs(data.Args, 256),
+		sql:       sql,
+		args:      sanitizeLoggedQueryArgs(sql, data.Args),
 	})
 }
 
@@ -97,7 +98,7 @@ func (t *queryTracer) TraceBatchQuery(ctx context.Context, _ *pgx.Conn, data pgx
 	attrs := []any{
 		"request_id", chimiddleware.GetReqID(ctx),
 		"sql", normalizeSQL(data.SQL),
-		"args", logging.PreviewArgs(data.Args, 256),
+		"args", sanitizeLoggedQueryArgs(data.SQL, data.Args),
 		"command_tag", data.CommandTag.String(),
 	}
 	if data.Err != nil {
@@ -152,4 +153,32 @@ func shouldSkipIdleBackgroundQuery(requestID string, operation string, commandTa
 
 	commandTag = strings.TrimSpace(commandTag)
 	return strings.HasSuffix(commandTag, " 0")
+}
+
+func sanitizeLoggedQueryArgs(sql string, args []any) []any {
+	preview := logging.PreviewArgs(args, 256)
+	if len(preview) == 0 {
+		return preview
+	}
+	if !queryTouchesSensitiveColumns(sql) {
+		return preview
+	}
+	redacted := make([]any, 0, len(preview))
+	for range preview {
+		redacted = append(redacted, "[REDACTED]")
+	}
+	return redacted
+}
+
+func queryTouchesSensitiveColumns(sql string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(sql))
+	if normalized == "" {
+		return false
+	}
+	for _, token := range []string{"api_key", "agent_key", "password_hash", "password", "secret_key", "jwt_secret"} {
+		if strings.Contains(normalized, token) {
+			return true
+		}
+	}
+	return false
 }

@@ -125,6 +125,7 @@ func (h *TaskHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := h.app.Store.ListPublishTasksByOwner(r.Context(), user.ID, store.ListPublishTasksFilter{
 		DeviceID:    strings.TrimSpace(r.URL.Query().Get("deviceId")),
+		AccountID:   strings.TrimSpace(r.URL.Query().Get("accountId")),
 		Status:      strings.TrimSpace(r.URL.Query().Get("status")),
 		Platform:    strings.TrimSpace(r.URL.Query().Get("platform")),
 		AccountName: strings.TrimSpace(r.URL.Query().Get("accountName")),
@@ -162,6 +163,7 @@ func (h *TaskHandler) Diagnostics(w http.ResponseWriter, r *http.Request) {
 
 	items, err := h.app.Store.ListPublishTasksByOwner(r.Context(), user.ID, store.ListPublishTasksFilter{
 		DeviceID:    strings.TrimSpace(r.URL.Query().Get("deviceId")),
+		AccountID:   strings.TrimSpace(r.URL.Query().Get("accountId")),
 		Status:      strings.TrimSpace(r.URL.Query().Get("status")),
 		Platform:    strings.TrimSpace(r.URL.Query().Get("platform")),
 		AccountName: strings.TrimSpace(r.URL.Query().Get("accountName")),

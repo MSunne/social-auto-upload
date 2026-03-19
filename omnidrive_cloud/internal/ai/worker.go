@@ -217,6 +217,20 @@ func (w *Worker) executeChat(ctx context.Context, job *domain.AIJob, leaseToken 
 	if err != nil {
 		return err
 	}
+	originalPrompt := resolveChatPrompt(job, req.Messages)
+	storyboardPayload, optimizedPrompt, err := w.prepareStoryboardPrompt(ctx, job, leaseToken, originalPrompt)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(optimizedPrompt) != "" {
+		req.Messages = replaceLastUserMessage(req.Messages, optimizedPrompt)
+	}
+	baseURL, apiKey, err := w.resolveModelRuntimeConfig(ctx, job.ModelName)
+	if err != nil {
+		return err
+	}
+	req.BaseURL = baseURL
+	req.APIKey = apiKey
 	result, err := w.provider.GenerateChat(ctx, req)
 	if err != nil {
 		return err
@@ -258,6 +272,7 @@ func (w *Worker) executeChat(ctx context.Context, job *domain.AIJob, leaseToken 
 		"usage":        result.Usage,
 		"billing":      billingToPayload(billing),
 		"artifacts":    summarizeArtifacts(artifacts),
+		"storyboard":   storyboardPayload,
 		"completedAt":  time.Now().UTC().Format(time.RFC3339),
 	})
 	message := buildCompletionMessage("AI 聊天已完成", billing)
@@ -277,6 +292,19 @@ func (w *Worker) executeImage(ctx context.Context, job *domain.AIJob, leaseToken
 	if err != nil {
 		return err
 	}
+	storyboardPayload, optimizedPrompt, err := w.prepareStoryboardPrompt(ctx, job, leaseToken, req.Prompt)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(optimizedPrompt) != "" {
+		req.Prompt = optimizedPrompt
+	}
+	baseURL, apiKey, err := w.resolveModelRuntimeConfig(ctx, job.ModelName)
+	if err != nil {
+		return err
+	}
+	req.BaseURL = baseURL
+	req.APIKey = apiKey
 	result, err := w.provider.GenerateImage(ctx, req)
 	if err != nil {
 		return err
@@ -327,6 +355,7 @@ func (w *Worker) executeImage(ctx context.Context, job *domain.AIJob, leaseToken
 		"text":        result.Text,
 		"billing":     billingToPayload(billing),
 		"artifacts":   summarizeArtifacts(artifacts),
+		"storyboard":  storyboardPayload,
 		"completedAt": time.Now().UTC().Format(time.RFC3339),
 	})
 	message := buildCompletionMessage(fmt.Sprintf("AI 图片生成完成，共生成 %d 个结果", len(result.Images)), billing)
@@ -346,8 +375,24 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 	if err != nil {
 		return err
 	}
+	storyboardPayload, optimizedPrompt, err := w.prepareStoryboardPrompt(ctx, job, leaseToken, req.Prompt)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(optimizedPrompt) != "" {
+		req.Prompt = optimizedPrompt
+	}
+	baseURL, apiKey, err := w.resolveModelRuntimeConfig(ctx, job.ModelName)
+	if err != nil {
+		return err
+	}
+	req.BaseURL = baseURL
+	req.APIKey = apiKey
 
 	state := parseVideoExecutionState(job.OutputPayload)
+	if strings.TrimSpace(state.BaseURL) == "" {
+		state.BaseURL = baseURL
+	}
 	if strings.TrimSpace(state.RemoteVideoID) == "" {
 		submission, err := w.provider.SubmitVideo(ctx, req)
 		if err != nil {
@@ -383,7 +428,7 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 			return renewErr
 		}
 
-		status, err := w.provider.GetVideo(ctx, state.RemoteVideoID)
+		status, err := w.provider.GetVideo(ctx, state.RemoteVideoID, state.BaseURL, apiKey)
 		if err != nil {
 			return err
 		}
@@ -399,7 +444,7 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 
 		switch state.RemoteStatus {
 		case "completed":
-			artifact, err := w.provider.DownloadVideo(ctx, state.RemoteVideoID)
+			artifact, err := w.provider.DownloadVideo(ctx, state.RemoteVideoID, state.BaseURL, apiKey)
 			if err != nil {
 				return err
 			}
@@ -423,6 +468,9 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 			}
 			billing := w.applyUsageBilling(ctx, job, buildVideoBillingInput(job))
 			outputPayload := buildVideoOutputPayload(job, state, artifacts)
+			if len(storyboardPayload) > 0 {
+				outputPayload = mergeMetadataIntoPayload(outputPayload, "storyboard", storyboardPayload)
+			}
 			outputPayload = mergeBillingIntoPayload(outputPayload, billing)
 			message := buildCompletionMessage("AI 视频生成完成", billing)
 			if _, err := w.completeJob(ctx, job, leaseToken, message, outputPayload, billingCreditsPtr(billing)); err != nil {
@@ -465,6 +513,70 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 			}
 		}
 	}
+}
+
+func (w *Worker) prepareStoryboardPrompt(ctx context.Context, job *domain.AIJob, leaseToken string, originalPrompt string) (map[string]any, string, error) {
+	payload := decodePayloadMap(job.InputPayload)
+	config, _ := payload["storyboardConfig"].(map[string]any)
+	if !boolValue(config["enabled"]) {
+		return nil, originalPrompt, nil
+	}
+
+	modelName := strings.TrimSpace(stringValueFromMap(config, "modelName"))
+	if modelName == "" {
+		return nil, originalPrompt, nil
+	}
+
+	referenceTexts := normalizeStoryboardTexts(payload["referenceTexts"])
+	referenceImages := normalizeStoryboardImages(payload["referenceImages"])
+
+	systemPrompt := strings.TrimSpace(stringValueFromMap(config, "prompt"))
+	if systemPrompt == "" {
+		systemPrompt = "你是内容创作分镜与脚本优化助手。请结合用户目标、参考图片和参考文本，输出适合继续交给图片、视频或文本模型执行的精炼脚本。输出中需要保留主体、场景、镜头、风格、文案和节奏等关键信息。"
+	}
+
+	baseURL, apiKey, err := w.resolveModelRuntimeConfig(ctx, modelName)
+	if err != nil {
+		return nil, originalPrompt, err
+	}
+	userPrompt := buildStoryboardPrompt(job, originalPrompt, payload, referenceTexts, referenceImages, config["references"])
+
+	stagePayload := mustJSON(map[string]any{
+		"stage":     "storyboarding",
+		"modelName": modelName,
+		"startedAt": time.Now().UTC().Format(time.RFC3339),
+	})
+	if _, err := w.syncRunningState(ctx, job, leaseToken, "AI 正在优化分镜脚本", stagePayload); err != nil {
+		w.app.Logger.Warn("ai worker failed to sync storyboarding state", "job_id", job.ID, "error", err)
+	}
+
+	result, err := w.provider.GenerateChat(ctx, ChatRequest{
+		Model:   modelName,
+		BaseURL: baseURL,
+		APIKey:  apiKey,
+		Messages: []ChatMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userPrompt},
+		},
+	})
+	if err != nil {
+		return nil, originalPrompt, err
+	}
+
+	optimizedPrompt := strings.TrimSpace(result.Text)
+	if optimizedPrompt == "" {
+		optimizedPrompt = originalPrompt
+	}
+
+	return map[string]any{
+		"modelName":       modelName,
+		"promptTemplate":  systemPrompt,
+		"optimizedPrompt": optimizedPrompt,
+		"referenceCount": map[string]int{
+			"images": len(referenceImages),
+			"texts":  len(referenceTexts),
+		},
+	}, optimizedPrompt, nil
 }
 
 func (w *Worker) renewLease(ctx context.Context, jobID string, leaseToken string, leaseExpiresAt time.Time) (time.Time, error) {
@@ -614,6 +726,7 @@ func (w *Worker) applyUsageBilling(ctx context.Context, job *domain.AIJob, input
 }
 
 type videoExecutionState struct {
+	BaseURL       string
 	RemoteVideoID string
 	RemoteStatus  string
 	ContentURL    string
@@ -628,7 +741,9 @@ func buildVideoOutputPayload(job *domain.AIJob, state videoExecutionState, artif
 		"provider": "apiyi",
 		"kind":     "video",
 		"model":    job.ModelName,
+		"baseUrl":  state.BaseURL,
 		"video": map[string]any{
+			"baseUrl":     state.BaseURL,
 			"id":          state.RemoteVideoID,
 			"status":      state.RemoteStatus,
 			"contentUrl":  state.ContentURL,
@@ -650,6 +765,15 @@ func mergeBillingIntoPayload(raw []byte, billing *store.ApplyUsageBillingResult)
 	return mustJSON(payload)
 }
 
+func mergeMetadataIntoPayload(raw []byte, key string, value any) []byte {
+	payload := map[string]any{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &payload)
+	}
+	payload[key] = value
+	return mustJSON(payload)
+}
+
 func parseVideoExecutionState(raw []byte) videoExecutionState {
 	state := videoExecutionState{
 		SubmittedAt: time.Now().UTC(),
@@ -663,6 +787,10 @@ func parseVideoExecutionState(raw []byte) videoExecutionState {
 		return state
 	}
 	videoPayload, _ := payload["video"].(map[string]any)
+	state.BaseURL = strings.TrimSpace(firstNonEmptyString(
+		stringValue(payload["baseUrl"]),
+		stringValue(videoPayload["baseUrl"]),
+	))
 	state.RemoteVideoID = strings.TrimSpace(firstNonEmptyString(
 		stringValue(payload["remoteVideoId"]),
 		stringValue(videoPayload["id"]),
@@ -692,6 +820,27 @@ func parseVideoExecutionState(raw []byte) videoExecutionState {
 	return state
 }
 
+func (w *Worker) resolveModelRuntimeConfig(ctx context.Context, modelName string) (string, string, error) {
+	model, err := w.app.Store.GetAIModelByName(ctx, modelName)
+	if err != nil {
+		return "", "", err
+	}
+	if model == nil {
+		return "", "", fmt.Errorf("ai model not found: %s", modelName)
+	}
+	baseURL := ""
+	if model.BaseURL == nil {
+		baseURL = ""
+	} else {
+		baseURL = strings.TrimSpace(*model.BaseURL)
+	}
+	apiKey := ""
+	if model.APIKey != nil {
+		apiKey = strings.TrimSpace(*model.APIKey)
+	}
+	return baseURL, apiKey, nil
+}
+
 func summarizeArtifacts(items []domain.AIJobArtifact) []map[string]any {
 	result := make([]map[string]any, 0, len(items))
 	for _, item := range items {
@@ -708,6 +857,151 @@ func summarizeArtifacts(items []domain.AIJobArtifact) []map[string]any {
 		})
 	}
 	return result
+}
+
+func buildStoryboardPrompt(job *domain.AIJob, originalPrompt string, payload map[string]any, referenceTexts []map[string]string, referenceImages []map[string]string, references any) string {
+	var builder strings.Builder
+	builder.WriteString("请优化下面的内容创作需求，并输出适合继续交给生成模型执行的分镜脚本。\n")
+	builder.WriteString("任务类型: ")
+	builder.WriteString(strings.TrimSpace(job.JobType))
+	builder.WriteString("\n")
+	if name := strings.TrimSpace(stringValueFromMap(payload, "skillName")); name != "" {
+		builder.WriteString("技能名称: ")
+		builder.WriteString(name)
+		builder.WriteString("\n")
+	}
+	if desc := strings.TrimSpace(stringValueFromMap(payload, "skillDescription")); desc != "" {
+		builder.WriteString("技能说明: ")
+		builder.WriteString(desc)
+		builder.WriteString("\n")
+	}
+	builder.WriteString("用户提示词: ")
+	builder.WriteString(strings.TrimSpace(originalPrompt))
+	builder.WriteString("\n")
+
+	if len(referenceTexts) > 0 {
+		builder.WriteString("\n参考文本:\n")
+		for _, item := range referenceTexts {
+			builder.WriteString("- ")
+			builder.WriteString(item["fileName"])
+			builder.WriteString(": ")
+			builder.WriteString(item["content"])
+			builder.WriteString("\n")
+		}
+	}
+	if len(referenceImages) > 0 {
+		builder.WriteString("\n参考图片:\n")
+		for _, item := range referenceImages {
+			builder.WriteString("- ")
+			builder.WriteString(item["fileName"])
+			if item["publicUrl"] != "" {
+				builder.WriteString(" (")
+				builder.WriteString(item["publicUrl"])
+				builder.WriteString(")")
+			}
+			builder.WriteString("\n")
+		}
+	}
+	if references != nil {
+		if raw, err := json.Marshal(references); err == nil && len(raw) > 0 {
+			builder.WriteString("\n管理员补充参考:\n")
+			builder.Write(raw)
+			builder.WriteString("\n")
+		}
+	}
+	builder.WriteString("\n请直接输出最终可执行脚本，不要解释过程。")
+	return builder.String()
+}
+
+func resolveChatPrompt(job *domain.AIJob, messages []ChatMessage) string {
+	prompt := strings.TrimSpace(stringValue(job.Prompt))
+	if prompt != "" {
+		return prompt
+	}
+	payload := decodePayloadMap(job.InputPayload)
+	if raw := strings.TrimSpace(stringValueFromMap(payload, "prompt")); raw != "" {
+		return raw
+	}
+	for index := len(messages) - 1; index >= 0; index-- {
+		if strings.EqualFold(strings.TrimSpace(messages[index].Role), "user") {
+			return strings.TrimSpace(fmt.Sprint(messages[index].Content))
+		}
+	}
+	return ""
+}
+
+func replaceLastUserMessage(messages []ChatMessage, prompt string) []ChatMessage {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return messages
+	}
+	for index := len(messages) - 1; index >= 0; index-- {
+		if strings.EqualFold(strings.TrimSpace(messages[index].Role), "user") {
+			messages[index].Content = prompt
+			return messages
+		}
+	}
+	return append(messages, ChatMessage{Role: "user", Content: prompt})
+}
+
+func normalizeStoryboardTexts(raw any) []map[string]string {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]map[string]string, 0, len(items))
+	for _, item := range items {
+		obj, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		content := strings.TrimSpace(stringValueFromMap(obj, "content"))
+		if content == "" {
+			continue
+		}
+		result = append(result, map[string]string{
+			"fileName": strings.TrimSpace(stringValueFromMap(obj, "fileName")),
+			"content":  content,
+		})
+	}
+	return result
+}
+
+func normalizeStoryboardImages(raw any) []map[string]string {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]map[string]string, 0, len(items))
+	for _, item := range items {
+		obj, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		url := strings.TrimSpace(stringValueFromMap(obj, "publicUrl", "url"))
+		if url == "" {
+			continue
+		}
+		result = append(result, map[string]string{
+			"fileName":  strings.TrimSpace(stringValueFromMap(obj, "fileName")),
+			"publicUrl": url,
+		})
+	}
+	return result
+}
+
+func boolValue(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		value := strings.TrimSpace(strings.ToLower(typed))
+		return value == "true" || value == "1" || value == "yes"
+	case float64:
+		return typed != 0
+	default:
+		return false
+	}
 }
 
 func billingToPayload(result *store.ApplyUsageBillingResult) map[string]any {

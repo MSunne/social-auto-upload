@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -301,6 +303,190 @@ func summarizeAdminMediaAccountBulkActionItems(items []domain.AdminMediaAccountB
 		}
 	}
 	return summary
+}
+
+func compactJSONPayload(raw json.RawMessage) json.RawMessage {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return nil
+	}
+	return json.RawMessage(trimmed)
+}
+
+func compactJSONPayloadFromBytes(raw []byte) json.RawMessage {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil
+	}
+	if json.Valid(trimmed) {
+		return append(json.RawMessage(nil), trimmed...)
+	}
+	payload, err := json.Marshal(map[string]string{"raw": string(trimmed)})
+	if err != nil {
+		return nil
+	}
+	return payload
+}
+
+func pickJobLifecycleTitle(status string) string {
+	switch strings.TrimSpace(status) {
+	case "queued":
+		return "作业进入队列"
+	case "running":
+		return "AI 开始执行"
+	case "completed", "success":
+		return "AI 执行完成"
+	case "failed":
+		return "AI 执行失败"
+	case "cancelled":
+		return "AI 作业已取消"
+	default:
+		return "AI 作业状态更新"
+	}
+}
+
+func pickJobLifecycleTime(job domain.AIJob) time.Time {
+	if job.FinishedAt != nil {
+		return *job.FinishedAt
+	}
+	if !job.UpdatedAt.IsZero() {
+		return job.UpdatedAt
+	}
+	return job.CreatedAt
+}
+
+func buildAIJobExecutionLogs(workspace *domain.AdminAIJobWorkspace) []domain.AdminExecutionLog {
+	if workspace == nil {
+		return nil
+	}
+
+	job := workspace.Record.Job
+	entries := make([]domain.AdminExecutionLog, 0, len(workspace.RecentAudits)+len(workspace.Artifacts)+len(workspace.PublishTasks)+len(workspace.BillingUsageEvents)+4)
+
+	createdMessage := fmt.Sprintf("来源：%s", strings.TrimSpace(job.Source))
+	if job.RunAt != nil {
+		createdMessage += fmt.Sprintf(" · 计划执行：%s", job.RunAt.Format(time.RFC3339))
+	}
+	entries = append(entries, domain.AdminExecutionLog{
+		ID:        "job-created",
+		Stage:     "job",
+		Status:    "created",
+		Title:     "AI 作业已创建",
+		Message:   &createdMessage,
+		Source:    "system",
+		Timestamp: job.CreatedAt,
+		Payload:   compactJSONPayload(job.InputPayload),
+	})
+
+	if job.RunAt != nil {
+		runMessage := "到达计划执行时间，准备进入模型调用。"
+		entries = append(entries, domain.AdminExecutionLog{
+			ID:        "job-scheduled",
+			Stage:     "schedule",
+			Status:    "scheduled",
+			Title:     "进入调度窗口",
+			Message:   &runMessage,
+			Source:    "scheduler",
+			Timestamp: *job.RunAt,
+		})
+	}
+
+	if !job.UpdatedAt.Equal(job.CreatedAt) || job.Message != nil || len(job.OutputPayload) > 0 || strings.TrimSpace(job.Status) != "queued" {
+		payload := compactJSONPayload(job.OutputPayload)
+		if payload == nil && len(job.InputPayload) > 0 && strings.TrimSpace(job.Status) == "failed" {
+			payload = compactJSONPayload(job.InputPayload)
+		}
+		entries = append(entries, domain.AdminExecutionLog{
+			ID:        "job-lifecycle",
+			Stage:     "generation",
+			Status:    strings.TrimSpace(job.Status),
+			Title:     pickJobLifecycleTitle(job.Status),
+			Message:   job.Message,
+			Source:    "ai_worker",
+			Timestamp: pickJobLifecycleTime(job),
+			Payload:   payload,
+		})
+	}
+
+	for _, artifact := range workspace.Artifacts {
+		label := artifact.ArtifactType
+		if artifact.FileName != nil && strings.TrimSpace(*artifact.FileName) != "" {
+			label = fmt.Sprintf("%s · %s", artifact.ArtifactType, strings.TrimSpace(*artifact.FileName))
+		}
+		message := fmt.Sprintf("产物来源：%s", strings.TrimSpace(artifact.Source))
+		entries = append(entries, domain.AdminExecutionLog{
+			ID:        "artifact-" + artifact.ID,
+			Stage:     "artifact",
+			Status:    "stored",
+			Title:     "生成产物已落库",
+			Message:   stringPtr(label + " · " + message),
+			Source:    "artifact_store",
+			Timestamp: artifact.CreatedAt,
+			Payload:   compactJSONPayload(artifact.Payload),
+		})
+	}
+
+	for _, event := range workspace.BillingUsageEvents {
+		title := "计费记录已写入"
+		if event.MeterName != nil && strings.TrimSpace(*event.MeterName) != "" {
+			title = fmt.Sprintf("计费：%s", strings.TrimSpace(*event.MeterName))
+		}
+		message := fmt.Sprintf("计量项 %s，数量 %d，状态 %s", strings.TrimSpace(event.MeterCode), event.UsageQuantity, strings.TrimSpace(event.BillStatus))
+		if event.BillMessage != nil && strings.TrimSpace(*event.BillMessage) != "" {
+			message += " · " + strings.TrimSpace(*event.BillMessage)
+		}
+		entries = append(entries, domain.AdminExecutionLog{
+			ID:        "billing-" + event.ID,
+			Stage:     "billing",
+			Status:    strings.TrimSpace(event.BillStatus),
+			Title:     title,
+			Message:   &message,
+			Source:    "billing",
+			Timestamp: event.CreatedAt,
+			Payload:   compactJSONPayload(event.Payload),
+		})
+	}
+
+	for _, task := range workspace.PublishTasks {
+		message := fmt.Sprintf("%s / %s", strings.TrimSpace(task.Platform), strings.TrimSpace(task.AccountName))
+		if task.Message != nil && strings.TrimSpace(*task.Message) != "" {
+			message += " · " + strings.TrimSpace(*task.Message)
+		}
+		payload := compactJSONPayload(task.MediaPayload)
+		entries = append(entries, domain.AdminExecutionLog{
+			ID:        "publish-task-" + task.ID,
+			Stage:     "publish",
+			Status:    strings.TrimSpace(task.Status),
+			Title:     "已关联发布任务",
+			Message:   &message,
+			Source:    "omnibull",
+			Timestamp: task.CreatedAt,
+			Payload:   payload,
+		})
+	}
+
+	for _, audit := range workspace.RecentAudits {
+		message := audit.Message
+		entries = append(entries, domain.AdminExecutionLog{
+			ID:        "audit-" + audit.ID,
+			Stage:     "audit",
+			Status:    strings.TrimSpace(audit.Status),
+			Title:     strings.TrimSpace(audit.Title),
+			Message:   message,
+			Source:    strings.TrimSpace(audit.Source),
+			Timestamp: audit.CreatedAt,
+			Payload:   compactJSONPayloadFromBytes(audit.Payload),
+		})
+	}
+
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].Timestamp.Equal(entries[j].Timestamp) {
+			return entries[i].ID < entries[j].ID
+		}
+		return entries[i].Timestamp.Before(entries[j].Timestamp)
+	})
+
+	return entries
 }
 
 func (h *AdminConsoleHandler) recordAdminAction(ctx context.Context, resourceType string, resourceID *string, action string, title string, status string, message *string, payload []byte) {
@@ -2622,6 +2808,7 @@ func (h *AdminConsoleHandler) AIJobWorkspace(w http.ResponseWriter, r *http.Requ
 		render.Error(w, http.StatusInternalServerError, "Failed to load AI job audits")
 		return
 	}
+	workspace.ExecutionLogs = buildAIJobExecutionLogs(&workspace)
 
 	render.JSON(w, http.StatusOK, workspace)
 }

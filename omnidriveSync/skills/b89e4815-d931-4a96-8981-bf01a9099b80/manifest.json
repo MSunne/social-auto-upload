@@ -1,0 +1,68 @@
+{
+  "revision": "2026-03-19T08:23:23.324562Z|1|2026-03-19T08:23:22.912443Z",
+  "skill": {
+    "id": "b89e4815-d931-4a96-8981-bf01a9099b80",
+    "ownerUserId": "854c1e12-896f-4c43-a332-4fb6fb023402",
+    "deviceId": "52371fe9-b1d5-4593-80ed-786be702c3a7",
+    "name": "测试种草视频",
+    "description": "视频号发送的测试",
+    "outputType": "视文模式",
+    "modelName": "veo-3.1-fast-fl",
+    "promptTemplate": "制作珠宝的视频号风格视频",
+    "executionTime": "2026-03-19T16:56:45+08:00",
+    "repeatDaily": false,
+    "storyboardEnabled": true,
+    "isEnabled": true,
+    "createdAt": "2026-03-19T16:23:22.84223+08:00",
+    "updatedAt": "2026-03-19T16:23:23.324562+08:00",
+    "load": {
+      "assetCount": 1,
+      "taskCount": 0,
+      "pendingTaskCount": 0,
+      "runningTaskCount": 0,
+      "needsVerifyTaskCount": 0,
+      "failedTaskCount": 0,
+      "aiJobCount": 1,
+      "activeAiJobCount": 0
+    }
+  },
+  "assets": [
+    {
+      "id": "36500067-fbd6-421c-8cef-c791e73a2442",
+      "skillId": "b89e4815-d931-4a96-8981-bf01a9099b80",
+      "ownerUserId": "854c1e12-896f-4c43-a332-4fb6fb023402",
+      "assetType": "reference_image",
+      "fileName": "红宝石套链产品图.jpg",
+      "mimeType": "image/jpeg",
+      "storageKey": "skills/854c1e12-896f-4c43-a332-4fb6fb023402/b89e4815-d931-4a96-8981-bf01a9099b80/56da1ef0-5afe-43bb-8de4-d29bcb352c04-红宝石套链产品图.jpg",
+      "publicUrl": "http://127.0.0.1:8410/api/v1/files/skills/854c1e12-896f-4c43-a332-4fb6fb023402/b89e4815-d931-4a96-8981-bf01a9099b80/56da1ef0-5afe-43bb-8de4-d29bcb352c04-红宝石套链产品图.jpg",
+      "sizeBytes": 3472960,
+      "createdAt": "2026-03-19T16:23:22.912443+08:00",
+      "updatedAt": "2026-03-19T16:23:22.912443+08:00",
+      "localFileName": "红宝石套链产品图.jpg",
+      "localPath": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/b89e4815-d931-4a96-8981-bf01a9099b80/assets/红宝石套链产品图.jpg",
+      "metadataPath": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/b89e4815-d931-4a96-8981-bf01a9099b80/assets/红宝石套链产品图.jpg.json",
+      "downloadStatus": "success",
+      "downloadError": null
+    }
+  ],
+  "sync": {
+    "id": "47790c3e-5640-4116-9b38-e909d8be4e8e",
+    "deviceId": "52371fe9-b1d5-4593-80ed-786be702c3a7",
+    "skillId": "b89e4815-d931-4a96-8981-bf01a9099b80",
+    "syncStatus": "success",
+    "syncedRevision": "2026-03-19T08:23:23.324562Z|1|2026-03-19T08:23:22.912443Z",
+    "isCurrent": false,
+    "needsSync": false,
+    "assetCount": 1,
+    "message": null,
+    "lastSyncedAt": "2026-03-19T16:56:29.347975+08:00",
+    "createdAt": "2026-03-19T16:24:21.938872+08:00",
+    "updatedAt": "2026-03-19T16:56:29.352848+08:00"
+  },
+  "cache": {
+    "manifestPath": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/b89e4815-d931-4a96-8981-bf01a9099b80/manifest.json",
+    "assetsDir": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/b89e4815-d931-4a96-8981-bf01a9099b80/assets",
+    "syncedAt": "2026-03-19T08:58:29.873751Z"
+  }
+}

@@ -15,6 +15,7 @@ import (
 	httpcontext "omnidrive_cloud/internal/http/context"
 	"omnidrive_cloud/internal/http/render"
 	"omnidrive_cloud/internal/store"
+	"omnidrive_cloud/internal/workflow"
 )
 
 type AccountHandler struct {
@@ -30,6 +31,11 @@ type createRemoteLoginRequest struct {
 type createLoginActionRequest struct {
 	ActionType string      `json:"actionType"`
 	Payload    interface{} `json:"payload"`
+}
+
+type createAccountSkillRunRequest struct {
+	SkillID   string  `json:"skillId"`
+	PublishAt *string `json:"publishAt"`
 }
 
 func isLoginCancelAction(actionType string) bool {
@@ -140,6 +146,164 @@ func (h *AccountHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 		RecentTasks:         recentTasks,
 		ActiveLoginSessions: activeLoginSessions,
 	})
+}
+
+func (h *AccountHandler) CreateSkillRun(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	accountID := strings.TrimSpace(chi.URLParam(r, "accountId"))
+	if accountID == "" {
+		render.Error(w, http.StatusBadRequest, "accountId is required")
+		return
+	}
+
+	settings, err := loadEffectiveAdminSystemSettings(r.Context(), h.app)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load AI configuration")
+		return
+	}
+	if !settings.AIWorkerEnabled {
+		render.Error(w, http.StatusServiceUnavailable, "AI worker is currently disabled by admin configuration")
+		return
+	}
+
+	var payload createAccountSkillRunRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	account, err := h.app.Store.GetOwnedAccountByID(r.Context(), accountID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load account")
+		return
+	}
+	if account == nil {
+		render.Error(w, http.StatusNotFound, "Account not found")
+		return
+	}
+
+	skillID := strings.TrimSpace(payload.SkillID)
+	if skillID == "" {
+		render.Error(w, http.StatusBadRequest, "skillId is required")
+		return
+	}
+	skill, err := h.app.Store.GetOwnedSkillByID(r.Context(), skillID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load skill")
+		return
+	}
+	if skill == nil {
+		render.Error(w, http.StatusNotFound, "Skill not found")
+		return
+	}
+	if !skill.IsEnabled {
+		render.Error(w, http.StatusConflict, "Skill is disabled")
+		return
+	}
+	if skill.DeviceID == nil || strings.TrimSpace(*skill.DeviceID) != account.DeviceID {
+		render.Error(w, http.StatusConflict, "Skill does not belong to the selected OmniBull device")
+		return
+	}
+
+	jobType, ok := workflow.MapSkillOutputTypeToJobType(skill.OutputType)
+	if !ok {
+		render.Error(w, http.StatusConflict, "Skill outputType is not supported")
+		return
+	}
+	model, err := h.app.Store.GetAIModelByName(r.Context(), strings.TrimSpace(skill.ModelName))
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to validate AI model")
+		return
+	}
+	if model == nil || !model.IsEnabled {
+		render.Error(w, http.StatusConflict, "Skill model is disabled or missing")
+		return
+	}
+	if model.Category != jobType {
+		render.Error(w, http.StatusConflict, "Skill model category does not match skill output type")
+		return
+	}
+
+	if payload.PublishAt == nil || strings.TrimSpace(*payload.PublishAt) == "" {
+		render.Error(w, http.StatusBadRequest, "publishAt is required")
+		return
+	}
+	publishAt, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(*payload.PublishAt))
+	if parseErr != nil {
+		render.Error(w, http.StatusBadRequest, "publishAt must be RFC3339")
+		return
+	}
+	publishAt = publishAt.UTC()
+	generateAt := workflow.ScheduledSkillGenerationTime(publishAt)
+
+	inputPayload, err := workflow.BuildSkillAIJobPayload(
+		r.Context(),
+		h.app,
+		*skill,
+		generateAt,
+		publishAt,
+		jobType,
+		[]workflow.PublishTarget{{
+			AccountID:   &account.ID,
+			Platform:    account.Platform,
+			AccountName: account.AccountName,
+		}},
+	)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to prepare account skill run payload")
+		return
+	}
+
+	status := "scheduled"
+	message := "等待定时生成"
+	if !generateAt.After(time.Now().UTC()) {
+		status = "queued"
+		message = "等待云端生成"
+	}
+
+	prompt := workflow.BuildSkillJobPrompt(*skill)
+	job, err := h.app.Store.CreateAIJob(r.Context(), store.CreateAIJobInput{
+		ID:           uuid.NewString(),
+		OwnerUserID:  user.ID,
+		DeviceID:     &account.DeviceID,
+		SkillID:      &skill.ID,
+		Source:       "account_skill_binding",
+		LocalTaskID:  nil,
+		JobType:      jobType,
+		ModelName:    strings.TrimSpace(skill.ModelName),
+		Prompt:       &prompt,
+		InputPayload: inputPayload,
+		Status:       status,
+		Message:      &message,
+		RunAt:        &generateAt,
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to create account skill run")
+		return
+	}
+
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "ai_job",
+		ResourceID:   &job.ID,
+		Action:       "create",
+		Title:        "账号绑定技能任务",
+		Source:       account.Platform,
+		Status:       job.Status,
+		Message:      auditStringPtr("已为账号创建专属技能生成任务"),
+		Payload: mustJSONBytes(map[string]any{
+			"accountId":   account.ID,
+			"accountName": account.AccountName,
+			"deviceId":    account.DeviceID,
+			"skillId":     skill.ID,
+			"publishAt":   publishAt,
+			"generateAt":  generateAt,
+			"jobType":     jobType,
+			"source":      job.Source,
+		}),
+	})
+
+	render.JSON(w, http.StatusCreated, job)
 }
 
 func (h *AccountHandler) Delete(w http.ResponseWriter, r *http.Request) {

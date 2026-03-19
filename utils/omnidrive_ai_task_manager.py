@@ -57,8 +57,8 @@ class OmniDriveAITaskManager:
         job_type = str(data.get("jobType") or "").strip()
         model_name = str(data.get("modelName") or "").strip()
         prompt = str(data.get("prompt") or "").strip()
-        if job_type not in {"image", "video"}:
-            raise ValueError("jobType 仅支持 image 或 video")
+        if job_type not in {"image", "video", "chat"}:
+            raise ValueError("jobType 仅支持 image、video 或 chat")
         if not model_name:
             raise ValueError("modelName 不能为空")
         if not prompt:
@@ -128,6 +128,69 @@ class OmniDriveAITaskManager:
             task["skillId"],
         )
         return self.get_task(task["taskUuid"])
+
+    def import_remote_task(self, data):
+        task_uuid = str(data.get("taskUuid") or uuid.uuid4()).strip()
+        job_type = str(data.get("jobType") or "").strip()
+        model_name = str(data.get("modelName") or "").strip()
+        prompt = str(data.get("prompt") or "").strip()
+        cloud_status = str(data.get("cloudStatus") or data.get("status") or "").strip() or "queued"
+        local_status = str(data.get("status") or "").strip() or self._map_cloud_to_local_status(cloud_status, current_status="scheduled")
+        payload = data.get("payload") or {}
+        artifact_refs = data.get("artifactRefs") or []
+        message = str(data.get("message") or "").strip() or "等待 OmniDrive 云端执行"
+
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO omnidrive_ai_tasks (
+                    task_uuid, source, job_type, model_name, skill_id, prompt, status, message,
+                    payload_json, cloud_job_id, cloud_status, linked_publish_task_uuid, artifact_refs_json, finished_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(task_uuid) DO UPDATE SET
+                    source = excluded.source,
+                    job_type = excluded.job_type,
+                    model_name = excluded.model_name,
+                    skill_id = excluded.skill_id,
+                    prompt = excluded.prompt,
+                    status = excluded.status,
+                    message = excluded.message,
+                    payload_json = excluded.payload_json,
+                    cloud_job_id = excluded.cloud_job_id,
+                    cloud_status = excluded.cloud_status,
+                    linked_publish_task_uuid = COALESCE(excluded.linked_publish_task_uuid, omnidrive_ai_tasks.linked_publish_task_uuid),
+                    artifact_refs_json = excluded.artifact_refs_json,
+                    finished_at = excluded.finished_at,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    task_uuid,
+                    str(data.get("source") or "omnidrive_cloud").strip() or "omnidrive_cloud",
+                    job_type,
+                    model_name,
+                    str(data.get("skillId") or "").strip() or None,
+                    prompt,
+                    local_status,
+                    message,
+                    json.dumps(payload, ensure_ascii=False),
+                    str(data.get("cloudJobId") or "").strip() or None,
+                    cloud_status,
+                    str(data.get("linkedPublishTaskUuid") or "").strip() or None,
+                    json.dumps(artifact_refs, ensure_ascii=False),
+                    self._finished_at_for_status(local_status),
+                ),
+            )
+            conn.commit()
+        ai_logger.debug(
+            "ai remote task imported task_uuid={} cloud_job_id={} cloud_status={} local_status={}",
+            task_uuid,
+            data.get("cloudJobId"),
+            cloud_status,
+            local_status,
+        )
+        return self.get_task(task_uuid)
 
     def list_tasks(self, limit=100, status=None, source=None):
         limit = max(1, min(int(limit), 500))
@@ -358,6 +421,8 @@ class OmniDriveAITaskManager:
     @staticmethod
     def _map_cloud_to_local_status(cloud_status, current_status="queued_cloud"):
         cloud_status = str(cloud_status or "").strip()
+        if cloud_status == "scheduled":
+            return "scheduled"
         if cloud_status in {"queued", "pending"}:
             return "queued_cloud"
         if cloud_status == "running":
