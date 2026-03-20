@@ -1,9 +1,11 @@
 "use client";
 
+import Image from "next/image";
 import { useState } from "react";
 import { 
   useSupportRechargeDetail, 
   useCreditSupportRecharge, 
+  useInvalidateSupportRecharge,
   useRejectSupportRecharge 
 } from "@/lib/hooks/useFinance";
 import { X, Loader2, ExternalLink, CheckCircle, XCircle } from "lucide-react";
@@ -17,6 +19,7 @@ export function SupportRechargeDrawer({ orderId, onClose }: SupportRechargeDrawe
   const { data, isLoading, error } = useSupportRechargeDetail(orderId);
   const creditMutation = useCreditSupportRecharge();
   const rejectMutation = useRejectSupportRecharge();
+  const invalidateMutation = useInvalidateSupportRecharge();
 
   const [rejectReason, setRejectReason] = useState("");
   const [creditNote, setCreditNote] = useState("");
@@ -39,10 +42,19 @@ export function SupportRechargeDrawer({ orderId, onClose }: SupportRechargeDrawe
       return;
     }
     try {
-      await rejectMutation.mutateAsync({ orderId, payload: { reason: rejectReason } });
+      await rejectMutation.mutateAsync({ orderId, payload: { note: rejectReason } });
       onClose();
     } catch (e: unknown) {
       alert("驳回失败：" + ((e as { response?: { data?: { message?: string } } }).response?.data?.message || (e as Error).message));
+    }
+  };
+
+  const handleInvalidate = async () => {
+    try {
+      await invalidateMutation.mutateAsync({ orderId, payload: { note: creditNote || rejectReason || undefined } });
+      onClose();
+    } catch (e: unknown) {
+      alert("失效失败：" + ((e as { response?: { data?: { message?: string } } }).response?.data?.message || (e as Error).message));
     }
   };
 
@@ -110,28 +122,26 @@ export function SupportRechargeDrawer({ orderId, onClose }: SupportRechargeDrawe
 
               {/* Submission Details */}
               <div className="pt-6 border-t border-[var(--color-border)]">
-                <h3 className="text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-wider mb-4">提交凭证</h3>
+                <h3 className="text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-wider mb-4">充值码与审核凭据</h3>
                 
                 {data.submission ? (
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-4 text-sm">
-                      {data.submission.contactChannel && (
-                        <div>
-                          <p className="text-[var(--color-text-secondary)] mb-1">联系渠道</p>
-                          <p>{data.submission.contactChannel}: {data.submission.contactHandle}</p>
-                        </div>
-                      )}
+                      <div>
+                        <p className="text-[var(--color-text-secondary)] mb-1">充值激活码</p>
+                        <p className="font-mono text-xs break-all">{data.record.orderNo}</p>
+                      </div>
                       {data.submission.paymentReference && (
                         <div>
-                          <p className="text-[var(--color-text-secondary)] mb-1">支付流水号</p>
-                          <p className="font-mono text-xs">{data.submission.paymentReference}</p>
+                          <p className="text-[var(--color-text-secondary)] mb-1">客户提供充值码</p>
+                          <p className="font-mono text-xs break-all">{data.submission.paymentReference}</p>
                         </div>
                       )}
                     </div>
 
                     {data.submission.customerNote && (
                       <div>
-                        <p className="text-[var(--color-text-secondary)] text-sm mb-1">用户备注</p>
+                        <p className="text-[var(--color-text-secondary)] text-sm mb-1">系统备注</p>
                         <p className="text-sm p-3 bg-[var(--color-bg-secondary)] rounded-lg text-white">
                           {data.submission.customerNote}
                         </p>
@@ -140,7 +150,7 @@ export function SupportRechargeDrawer({ orderId, onClose }: SupportRechargeDrawe
 
                     {data.submission.proofUrls && data.submission.proofUrls.length > 0 && (
                       <div>
-                        <p className="text-[var(--color-text-secondary)] text-sm mb-2">打款截图 / 凭证</p>
+                        <p className="text-[var(--color-text-secondary)] text-sm mb-2">附带截图 / 凭证</p>
                         <div className="grid grid-cols-2 gap-2">
                           {data.submission.proofUrls.map((url, idx) => (
                             <a 
@@ -150,7 +160,13 @@ export function SupportRechargeDrawer({ orderId, onClose }: SupportRechargeDrawe
                               rel="noreferrer"
                               className="group relative aspect-video bg-[var(--color-bg-secondary)] rounded-lg border border-[var(--color-border)] overflow-hidden flex items-center justify-center hover:border-[var(--color-primary)] transition-colors"
                             >
-                              <img src={url} alt={`凭证 ${idx + 1}`} className="object-cover w-full h-full opacity-80 group-hover:opacity-100 transition-opacity" />
+                              <Image
+                                src={url}
+                                alt={`凭证 ${idx + 1}`}
+                                fill
+                                unoptimized
+                                className="object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                              />
                               <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                                 <ExternalLink className="h-5 w-5 text-white" />
                               </div>
@@ -161,7 +177,7 @@ export function SupportRechargeDrawer({ orderId, onClose }: SupportRechargeDrawe
                     )}
                   </div>
                 ) : (
-                  <p className="text-sm text-[var(--color-text-secondary)]">暂未提交凭单信息</p>
+                  <p className="text-sm text-[var(--color-text-secondary)]">暂未记录充值码信息</p>
                 )}
               </div>
 
@@ -169,12 +185,26 @@ export function SupportRechargeDrawer({ orderId, onClose }: SupportRechargeDrawe
               {data.review && data.review.status !== "pending" && (
                 <div className="pt-6 border-t border-[var(--color-border)]">
                   <h3 className="text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-wider mb-4">审核结果</h3>
-                  <div className={`p-4 rounded-xl border ${data.review.status === "credited" ? "bg-green-500/5 border-green-500/20" : "bg-red-500/5 border-red-500/20"}`}>
+                  <div className={`p-4 rounded-xl border ${
+                    data.review.status === "credited"
+                      ? "bg-green-500/5 border-green-500/20"
+                      : data.review.status === "invalidated"
+                        ? "bg-slate-500/5 border-slate-500/20"
+                        : "bg-red-500/5 border-red-500/20"
+                  }`}>
                     <div className="flex items-start gap-3">
-                      {data.review.status === "credited" ? <CheckCircle className="h-5 w-5 text-green-500 mt-0.5" /> : <XCircle className="h-5 w-5 text-red-500 mt-0.5" />}
+                      {data.review.status === "credited" ? (
+                        <CheckCircle className="h-5 w-5 text-green-500 mt-0.5" />
+                      ) : (
+                        <XCircle className={`h-5 w-5 mt-0.5 ${data.review.status === "invalidated" ? "text-slate-300" : "text-red-500"}`} />
+                      )}
                       <div>
                         <p className="font-medium text-[var(--color-text-primary)]">
-                          {data.review.status === "credited" ? "已入账并下发积分" : "已驳回充值请求"}
+                          {data.review.status === "credited"
+                            ? "已入账并下发积分"
+                            : data.review.status === "invalidated"
+                              ? "充值码已失效关闭"
+                              : "已驳回充值请求"}
                         </p>
                         <p className="text-xs text-[var(--color-text-secondary)] mt-1">处理人: {data.review.operatorEmail || "系统"}</p>
                         {data.review.note && (
@@ -192,7 +222,7 @@ export function SupportRechargeDrawer({ orderId, onClose }: SupportRechargeDrawe
         </div>
 
         {/* Footer Actions */}
-        {data && data.actions && (data.actions.canCredit || data.actions.canReject) && (
+        {data && data.actions && (data.actions.canCredit || data.actions.canReject || data.actions.canInvalidate) && (
           <div className="border-t border-[var(--color-border)] p-4 bg-[var(--color-bg-secondary)]/50 backdrop-blur sticky bottom-0">
             {isRejecting ? (
               <div className="space-y-4">
@@ -237,6 +267,15 @@ export function SupportRechargeDrawer({ orderId, onClose }: SupportRechargeDrawe
                  )}
                  
                  <div className="flex gap-3">
+                    {data.actions.canInvalidate && (
+                      <button 
+                        onClick={handleInvalidate}
+                        disabled={invalidateMutation.isPending}
+                        className="flex-1 px-4 py-2 bg-[var(--color-bg-primary)] border border-slate-500/40 text-slate-200 rounded-lg text-sm font-medium hover:bg-slate-500/10 transition-colors disabled:opacity-50"
+                      >
+                        {invalidateMutation.isPending ? "失效中..." : "标记失效"}
+                      </button>
+                    )}
                     {data.actions.canReject && (
                       <button 
                         onClick={() => setIsRejecting(true)} 

@@ -185,27 +185,26 @@ func (h *AdminConsoleHandler) ListUsageEvents(w http.ResponseWriter, r *http.Req
 func (h *AdminConsoleHandler) ListSupportRecharges(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	requestedStatus := strings.TrimSpace(r.URL.Query().Get("status"))
-	orderStatus := requestedStatus
-	switch requestedStatus {
-	case "awaiting_submission":
-		orderStatus = "awaiting_manual_review"
-	case "pending_review":
-		orderStatus = "processing"
-	case "rejected":
-		orderStatus = "rejected"
-	case "credited":
-		orderStatus = "credited"
-	}
-
-	orderItems, total, orderSummary, err := h.app.Store.ListAdminOrders(r.Context(), store.AdminOrderListFilter{
+	orderFilter := store.AdminOrderListFilter{
 		Query:   strings.TrimSpace(r.URL.Query().Get("query")),
-		Status:  orderStatus,
 		Channel: "manual_cs",
 		AdminPageFilter: store.AdminPageFilter{
 			Page:     page.Page,
 			PageSize: page.PageSize,
 		},
-	})
+	}
+	switch requestedStatus {
+	case "pending_review":
+		orderFilter.Statuses = []string{"awaiting_manual_review", "processing"}
+	case "rejected":
+		orderFilter.Status = "rejected"
+	case "credited":
+		orderFilter.Status = "credited"
+	case "invalidated":
+		orderFilter.Status = "closed"
+	}
+
+	orderItems, total, orderSummary, err := h.app.Store.ListAdminOrders(r.Context(), orderFilter)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load support recharge requests")
 		return
@@ -217,9 +216,10 @@ func (h *AdminConsoleHandler) ListSupportRecharges(w http.ResponseWriter, r *htt
 	}
 
 	summary := domain.AdminSupportRechargeSummary{
-		AwaitingSubmissionCount:   orderSummary.AwaitingManualReviewCount,
-		PendingReviewCount:        orderSummary.ProcessingCount,
+		AwaitingSubmissionCount:   0,
+		PendingReviewCount:        orderSummary.AwaitingManualReviewCount + orderSummary.ProcessingCount,
 		RejectedCount:             orderSummary.RejectedCount,
+		InvalidatedCount:          orderSummary.ClosedCount,
 		CreditedCount:             orderSummary.PaidOrderCount,
 		TotalRequestedAmountCents: orderSummary.TotalAmountCents,
 		TotalBaseCredits:          orderSummary.TotalCreditAmount,
@@ -229,7 +229,7 @@ func (h *AdminConsoleHandler) ListSupportRecharges(w http.ResponseWriter, r *htt
 	renderAdminList(w, page, total, items, summary, map[string]any{
 		"query":         strings.TrimSpace(r.URL.Query().Get("query")),
 		"status":        requestedStatus,
-		"statusOptions": []string{"awaiting_submission", "pending_review", "credited", "rejected"},
+		"statusOptions": []string{"pending_review", "credited", "rejected", "invalidated"},
 	})
 }
 

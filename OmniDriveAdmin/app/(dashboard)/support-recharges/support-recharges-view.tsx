@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useSupportRecharges } from "@/lib/hooks/useFinance";
+import { useSupportRechargeLookup, useSupportRecharges } from "@/lib/hooks/useFinance";
 import { PageHeader } from "@/components/ui/common";
 import { Search, Loader2 } from "lucide-react";
 import { SupportRechargeDrawer } from "./support-recharge-drawer";
@@ -9,9 +9,11 @@ import { SupportRechargeDrawer } from "./support-recharge-drawer";
 export function SupportRechargesView() {
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState<"pending_review" | "awaiting_submission" | "credited" | "rejected">("pending_review");
+  const [status, setStatus] = useState<"pending_review" | "credited" | "rejected" | "invalidated">("pending_review");
   const [searchInput, setSearchInput] = useState("");
+  const [rechargeCode, setRechargeCode] = useState("");
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const lookupMutation = useSupportRechargeLookup();
 
   const { data, isLoading, error } = useSupportRecharges({
     page,
@@ -26,23 +28,40 @@ export function SupportRechargesView() {
     setPage(1);
   };
 
+  const handleLookup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const code = rechargeCode.trim();
+    if (!code) {
+      return;
+    }
+    try {
+      const detail = await lookupMutation.mutateAsync(code);
+      setSelectedOrderId(detail.record.id);
+    } catch {
+      // Error is already normalized by the API client and rendered below.
+    }
+  };
+
   const tabs = [
     { label: "待审核", value: "pending_review", count: data?.summary?.pendingReviewCount || 0 },
-    { label: "待用户传凭单", value: "awaiting_submission", count: data?.summary?.awaitingSubmissionCount || 0 },
     { label: "已入账", value: "credited", count: data?.summary?.creditedCount || 0 },
     { label: "已驳回", value: "rejected", count: data?.summary?.rejectedCount || 0 },
+    { label: "已失效", value: "invalidated", count: data?.summary?.invalidatedCount || 0 },
   ] as const;
 
   const renderStatusBadge = (value: string) => {
     switch (value) {
       case "awaiting_submission":
-        return <span className="inline-flex rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-500">待提交凭证</span>;
+        return <span className="inline-flex rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-500">待人工审核</span>;
       case "pending_review":
         return <span className="inline-flex rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-1 text-xs font-medium text-blue-500">待人工审核</span>;
       case "credited":
         return <span className="inline-flex rounded-full border border-green-500/20 bg-green-500/10 px-2 py-1 text-xs font-medium text-green-500">已入账</span>;
       case "rejected":
         return <span className="inline-flex rounded-full border border-red-500/20 bg-red-500/10 px-2 py-1 text-xs font-medium text-red-500">已驳回</span>;
+      case "invalidated":
+      case "closed":
+        return <span className="inline-flex rounded-full border border-slate-500/20 bg-slate-500/10 px-2 py-1 text-xs font-medium text-slate-300">已失效</span>;
       default:
         return <span className="inline-flex rounded-full border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1 text-xs font-medium text-[var(--color-text-secondary)]">{value}</span>;
     }
@@ -55,8 +74,37 @@ export function SupportRechargesView() {
         subtitle="处理用户通过企业公户、微信客服等渠道进行的大额对公充值。"
       />
 
-      <div className="flex flex-col sm:flex-row gap-4 justify-between items-end sm:items-center">
-        <div className="flex space-x-1 border-b border-[var(--color-border)] w-full sm:w-auto">
+      <div className="grid gap-4 xl:grid-cols-[1.1fr_1fr]">
+        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-4">
+          <div className="flex items-center gap-2 text-sm font-medium text-[var(--color-text-primary)]">
+            充值码直达
+          </div>
+          <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+            直接输入客户发来的充值激活码，系统会自动定位工单并打开审核抽屉。
+          </p>
+          <form onSubmit={handleLookup} className="mt-3 flex gap-3">
+            <input
+              type="text"
+              placeholder="输入充值激活码，例如 RC202603..."
+              value={rechargeCode}
+              onChange={(e) => setRechargeCode(e.target.value)}
+              className="flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm focus:outline-none focus:border-[var(--color-primary)]"
+            />
+            <button
+              type="submit"
+              disabled={!rechargeCode.trim() || lookupMutation.isPending}
+              className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {lookupMutation.isPending ? "查找中..." : "查找并处理"}
+            </button>
+          </form>
+          {lookupMutation.isError ? (
+            <p className="mt-3 text-xs text-red-500">{lookupMutation.error instanceof Error ? lookupMutation.error.message : "查找失败，请稍后重试"}</p>
+          ) : null}
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-4 justify-between items-end sm:items-center">
+          <div className="flex space-x-1 border-b border-[var(--color-border)] w-full sm:w-auto">
           {tabs.map(tab => (
             <button
               key={tab.value}
@@ -67,26 +115,27 @@ export function SupportRechargesView() {
                   : "border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)]"
                 }`}
             >
-              {tab.label}
-              {tab.count > 0 && tab.value === "pending_review" && (
-                <span className="ml-2 bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">
-                  {tab.count}
-                </span>
+                {tab.label}
+                {tab.count > 0 && tab.value === "pending_review" && (
+                  <span className="ml-2 bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">
+                    {tab.count}
+                  </span>
               )}
             </button>
           ))}
         </div>
 
-        <form onSubmit={handleSearch} className="relative w-full sm:w-72">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-text-secondary)]" />
-          <input
-            type="text"
-            placeholder="搜索订单头或邮箱..."
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-sm focus:outline-none focus:border-[var(--color-primary)] transition-all"
-          />
-        </form>
+          <form onSubmit={handleSearch} className="relative w-full sm:w-72">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-text-secondary)]" />
+            <input
+              type="text"
+              placeholder="搜索激活码 / 邮箱 / 套餐..."
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              className="w-full pl-9 pr-4 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-sm focus:outline-none focus:border-[var(--color-primary)] transition-all"
+            />
+          </form>
+        </div>
       </div>
 
       {/* Main Table */}

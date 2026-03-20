@@ -175,6 +175,7 @@ export function PricingView() {
       )}
 
       <PricingPackageDrawer
+        key={selectedPackage?.id ?? (showCreateDrawer ? "__create__" : "__closed__")}
         pkg={selectedPackage}
         isOpen={!!selectedPackage || showCreateDrawer}
         onClose={() => { setSelectedPackage(null); setShowCreateDrawer(false); }}

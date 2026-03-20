@@ -92,19 +92,19 @@ func buildRechargeBlueprint(channel string, orderNo string, pkgID string, amount
 
 	switch channel {
 	case "manual_cs":
-		status = "awaiting_manual_review"
+		status = "processing"
 		transactionKind = "manual_service"
 		expires := now.Add(72 * time.Hour)
 		expiresAt = &expires
-		value := "manual_pending"
+		value := "manual_pending_review"
 		providerStatus = &value
 		customerServicePayload, _ = json.Marshal(map[string]any{
 			"provider":      "manual_cs",
-			"nextAction":    "contact_support",
+			"nextAction":    "manual_review",
 			"orderNo":       orderNo,
 			"packageId":     pkgID,
 			"amountCents":   amountCents,
-			"note":          "客服充值订单已创建，后续由人工确认付款和入账。",
+			"note":          "客服充值订单已创建，系统已进入人工审核队列。",
 			"requiresAudit": true,
 		})
 		paymentPayload = customerServicePayload
@@ -151,9 +151,10 @@ func buildRechargeBlueprint(channel string, orderNo string, pkgID string, amount
 }
 
 func buildManualSupportPayload(settings effectiveAdminSystemSettings, orderNo string, pkgID string, amountCents int64, creditAmount int64, manualBonusCreditAmount int64) []byte {
+	submittedAt := time.Now().UTC().Format(time.RFC3339)
 	payload, _ := json.Marshal(map[string]any{
 		"provider":    "manual_cs",
-		"nextAction":  "contact_support",
+		"nextAction":  "manual_review",
 		"orderNo":     orderNo,
 		"packageId":   pkgID,
 		"amountCents": amountCents,
@@ -169,9 +170,12 @@ func buildManualSupportPayload(settings effectiveAdminSystemSettings, orderNo st
 			"note":      settings.BillingManualSupport.Note,
 		},
 		"submission": map[string]any{
-			"status":      "pending",
-			"proofUrls":   []string{},
-			"submittedAt": nil,
+			"status":           "submitted",
+			"paymentReference": orderNo,
+			"proofUrls":        []string{},
+			"customerNote":     "系统已生成充值激活码，等待客服核验入账。",
+			"submittedAt":      submittedAt,
+			"source":           "activation_code",
 		},
 	})
 	return payload

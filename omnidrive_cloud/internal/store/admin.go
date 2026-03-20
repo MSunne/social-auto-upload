@@ -30,9 +30,10 @@ type AdminDeviceListFilter struct {
 }
 
 type AdminOrderListFilter struct {
-	Query   string
-	Status  string
-	Channel string
+	Query    string
+	Status   string
+	Statuses []string
+	Channel  string
 	AdminPageFilter
 }
 
@@ -319,7 +320,7 @@ func (s *Store) GetAdminDashboardSummary(ctx context.Context) (*domain.AdminDash
 			COALESCE((SELECT COUNT(*) FROM recharge_orders WHERE paid_at IS NOT NULL OR status = ANY($1)), 0)::BIGINT,
 			COALESCE((SELECT SUM(amount_cents) FROM recharge_orders WHERE paid_at IS NOT NULL OR status = ANY($1)), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM wallet_ledgers), 0)::BIGINT,
-			COALESCE((SELECT COUNT(*) FROM recharge_orders WHERE channel = 'manual_cs' AND status = 'processing'), 0)::BIGINT,
+			COALESCE((SELECT COUNT(*) FROM recharge_orders WHERE channel = 'manual_cs' AND status IN ('awaiting_manual_review', 'processing')), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM recharge_orders WHERE channel = 'manual_cs'), 0)::BIGINT,
 			COALESCE((SELECT SUM(GREATEST(amount_cents - released_amount_cents, 0)) FROM distribution_commission_items), 0)::BIGINT,
 			COALESCE((SELECT SUM(GREATEST(released_amount_cents - settled_amount_cents, 0)) FROM distribution_commission_items), 0)::BIGINT,
@@ -565,7 +566,19 @@ func (s *Store) ListAdminOrders(ctx context.Context, filter AdminOrderListFilter
 		args = append(args, ilikePattern(query))
 		argIndex++
 	}
-	if status := strings.TrimSpace(filter.Status); status != "" {
+	if len(filter.Statuses) > 0 {
+		statuses := make([]string, 0, len(filter.Statuses))
+		for _, item := range filter.Statuses {
+			if trimmed := strings.TrimSpace(item); trimmed != "" {
+				statuses = append(statuses, trimmed)
+			}
+		}
+		if len(statuses) > 0 {
+			whereParts = append(whereParts, fmt.Sprintf("ro.status = ANY($%d)", argIndex))
+			args = append(args, statuses)
+			argIndex++
+		}
+	} else if status := strings.TrimSpace(filter.Status); status != "" {
 		whereParts = append(whereParts, fmt.Sprintf("ro.status = $%d", argIndex))
 		args = append(args, status)
 		argIndex++
@@ -593,6 +606,7 @@ func (s *Store) ListAdminOrders(ctx context.Context, filter AdminOrderListFilter
 			COUNT(*) FILTER (WHERE ro.status = 'pending_payment')::BIGINT,
 			COUNT(*) FILTER (WHERE ro.status = 'processing')::BIGINT,
 			COUNT(*) FILTER (WHERE ro.status = 'rejected')::BIGINT,
+			COUNT(*) FILTER (WHERE ro.status = 'closed')::BIGINT,
 			COUNT(*) FILTER (WHERE ro.channel = 'manual_cs')::BIGINT
 		FROM recharge_orders ro
 		LEFT JOIN users u ON u.id = ro.user_id
@@ -607,6 +621,7 @@ func (s *Store) ListAdminOrders(ctx context.Context, filter AdminOrderListFilter
 		&summary.PendingPaymentCount,
 		&summary.ProcessingCount,
 		&summary.RejectedCount,
+		&summary.ClosedCount,
 		&summary.ManualChannelCount,
 	); err != nil {
 		return nil, 0, domain.AdminOrderListSummary{}, err

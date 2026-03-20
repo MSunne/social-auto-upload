@@ -18,6 +18,7 @@ var (
 	ErrRechargeOrderNotManual        = errors.New("recharge order is not a manual customer-service order")
 	ErrRechargeOrderNotPendingReview = errors.New("support recharge is not pending review")
 	ErrRechargeOrderAlreadyCredited  = errors.New("recharge order already credited")
+	ErrRechargeOrderAlreadyClosed    = errors.New("recharge order already closed")
 )
 
 type CreditSupportRechargeInput struct {
@@ -29,6 +30,13 @@ type CreditSupportRechargeInput struct {
 }
 
 type RejectSupportRechargeInput struct {
+	AdminID    string
+	AdminEmail string
+	AdminName  string
+	Note       *string
+}
+
+type InvalidateSupportRechargeInput struct {
 	AdminID    string
 	AdminEmail string
 	AdminName  string
@@ -133,6 +141,21 @@ func isRechargeOrderPendingReview(order *domain.RechargeOrder) bool {
 	}
 	payload := decodeSupportRechargePayload(order.CustomerServicePayload)
 	return strings.EqualFold(lookupNestedString(payload, "submission", "status"), "submitted")
+}
+
+func isRechargeOrderClosed(order *domain.RechargeOrder) bool {
+	if order == nil {
+		return false
+	}
+	if order.ClosedAt != nil {
+		return true
+	}
+	switch strings.TrimSpace(order.Status) {
+	case "closed", "cancelled", "invalidated":
+		return true
+	default:
+		return false
+	}
 }
 
 func buildSupportRechargeGrantPlan(order *domain.RechargeOrder, now time.Time) ([]domain.BillingPackageEntitlement, *time.Time, string) {
@@ -440,6 +463,9 @@ func (s *Store) RejectSupportRecharge(ctx context.Context, orderID string, input
 	if isRechargeOrderCredited(order) {
 		return nil, ErrRechargeOrderAlreadyCredited
 	}
+	if isRechargeOrderClosed(order) {
+		return nil, ErrRechargeOrderAlreadyClosed
+	}
 	if !isRechargeOrderPendingReview(order) {
 		return nil, ErrRechargeOrderNotPendingReview
 	}
@@ -510,6 +536,109 @@ func (s *Store) RejectSupportRecharge(ctx context.Context, orderID string, input
 		order.UserID,
 		"manual_rejected",
 		"rejected",
+		&message,
+		eventPayload,
+	); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return s.getRechargeOrderByIDAnyUser(ctx, order.ID)
+}
+
+func (s *Store) InvalidateSupportRecharge(ctx context.Context, orderID string, input InvalidateSupportRechargeInput) (*domain.RechargeOrder, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	order, err := s.getRechargeOrderByIDAnyUserTx(ctx, tx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if order == nil {
+		return nil, ErrRechargeOrderNotFound
+	}
+	if order.Channel != "manual_cs" {
+		return nil, ErrRechargeOrderNotManual
+	}
+	if isRechargeOrderCredited(order) {
+		return nil, ErrRechargeOrderAlreadyCredited
+	}
+	if isRechargeOrderClosed(order) {
+		return nil, ErrRechargeOrderAlreadyClosed
+	}
+
+	now := time.Now().UTC()
+	servicePayload := decodeSupportRechargePayload(order.CustomerServicePayload)
+	trimmedNote := valueOrEmptyString(input.Note)
+
+	servicePayload["review"] = map[string]any{
+		"status":        "invalidated",
+		"operatorId":    strings.TrimSpace(input.AdminID),
+		"operatorName":  strings.TrimSpace(input.AdminName),
+		"operatorEmail": strings.TrimSpace(input.AdminEmail),
+		"note":          trimmedNote,
+		"reviewedAt":    now.Format(time.RFC3339),
+	}
+	servicePayload["nextAction"] = "closed"
+
+	servicePayloadBytes, err := json.Marshal(servicePayload)
+	if err != nil {
+		return nil, err
+	}
+
+	providerStatus := "manual_invalidated"
+	if _, err := tx.Exec(ctx, `
+		UPDATE recharge_orders
+		SET status = 'closed',
+		    provider_status = $2,
+		    customer_service_payload = $3,
+		    closed_at = COALESCE(closed_at, $4),
+		    updated_at = NOW()
+		WHERE id = $1
+	`, order.ID, providerStatus, servicePayloadBytes, now); err != nil {
+		return nil, err
+	}
+
+	paymentTransactionID, err := loadPaymentTransactionIDTx(ctx, tx, order.ID)
+	if err != nil {
+		return nil, err
+	}
+	if paymentTransactionID != nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE payment_transactions
+			SET status = 'closed',
+			    response_payload = $2,
+			    error_message = NULLIF($3, ''),
+			    updated_at = NOW()
+			WHERE id = $1
+		`, *paymentTransactionID, servicePayloadBytes, trimmedNote); err != nil {
+			return nil, err
+		}
+	}
+
+	eventPayload, _ := json.Marshal(map[string]any{
+		"operator": map[string]any{
+			"id":    strings.TrimSpace(input.AdminID),
+			"name":  strings.TrimSpace(input.AdminName),
+			"email": strings.TrimSpace(input.AdminEmail),
+		},
+		"note":       trimmedNote,
+		"reviewedAt": now.Format(time.RFC3339),
+	})
+	message := "客服充值已失效关闭"
+	if err := s.appendRechargeOrderEventTx(
+		ctx,
+		tx,
+		fmt.Sprintf("%s-manual-invalidated-%d", order.ID, now.UnixNano()),
+		order.ID,
+		order.UserID,
+		"manual_invalidated",
+		"closed",
 		&message,
 		eventPayload,
 	); err != nil {

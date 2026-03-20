@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
@@ -21,20 +21,10 @@ import {
   getBillingSummary,
   listBillingPackages,
   listRechargeOrders,
-  submitManualRecharge,
 } from "@/lib/services";
 import type { BillingPackage, BillingSummary, RechargeOrder } from "@/lib/types";
 import { EmptyState, PageHeader, StatCard, StatusBadge } from "@/components/ui/common";
 import { cn } from "@/lib/utils";
-
-type ManualFormState = {
-  contactChannel: string;
-  contactHandle: string;
-  paymentReference: string;
-  transferAmount: string;
-  proofUrls: string;
-  customerNote: string;
-};
 
 const CHANNEL_LABELS: Record<string, string> = {
   manual_cs: "客服充值",
@@ -47,15 +37,6 @@ const CHANNEL_BUTTON_STYLES: Record<string, string> = {
     "border-warning/40 bg-gradient-to-r from-warning/15 to-amber-500/10 text-warning hover:from-warning/20 hover:to-amber-500/15",
   alipay: "border-info/30 bg-info/10 text-info hover:bg-info/15",
   wechatpay: "border-success/30 bg-success/10 text-success hover:bg-success/15",
-};
-
-const EMPTY_MANUAL_FORM: ManualFormState = {
-  contactChannel: "",
-  contactHandle: "",
-  paymentReference: "",
-  transferAmount: "",
-  proofUrls: "",
-  customerNote: "",
 };
 
 function formatCurrency(cents: number) {
@@ -97,27 +78,6 @@ function getString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function getStringArray(value: unknown) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value
-    .map((item) => (typeof item === "string" ? item.trim() : ""))
-    .filter(Boolean);
-}
-
-function parseAmountToCents(value: string) {
-  const normalized = value.trim();
-  if (!normalized) {
-    return undefined;
-  }
-  const parsed = Number.parseFloat(normalized);
-  if (Number.isNaN(parsed) || parsed <= 0) {
-    return undefined;
-  }
-  return Math.round(parsed * 100);
-}
-
 async function copyText(value: string) {
   try {
     if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
@@ -147,24 +107,6 @@ async function copyText(value: string) {
   }
 }
 
-function buildManualForm(order: RechargeOrder | null): ManualFormState {
-  const payload = asRecord(order?.customerServicePayload) ?? {};
-  const submission = getNestedRecord(payload, "submission");
-  const transferAmountCents = submission?.transferAmountCents;
-
-  return {
-    contactChannel: getString(submission?.contactChannel),
-    contactHandle: getString(submission?.contactHandle),
-    paymentReference: getString(submission?.paymentReference),
-    transferAmount:
-      typeof transferAmountCents === "number" && transferAmountCents > 0
-        ? (transferAmountCents / 100).toFixed(2)
-        : "",
-    proofUrls: getStringArray(submission?.proofUrls).join("\n"),
-    customerNote: getString(submission?.customerNote),
-  };
-}
-
 function getManualSupport(order: RechargeOrder | null) {
   const payload = asRecord(order?.customerServicePayload);
   return getNestedRecord(payload, "support");
@@ -180,13 +122,6 @@ export default function TopUpPage() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [activationOrder, setActivationOrder] = useState<RechargeOrder | null>(null);
   const [activationCopied, setActivationCopied] = useState<"idle" | "success" | "error">("idle");
-  const [manualDraft, setManualDraft] = useState<{
-    orderId: string | null;
-    form: ManualFormState;
-  }>({
-    orderId: null,
-    form: EMPTY_MANUAL_FORM,
-  });
 
   const { data: summary, isLoading: summaryLoading } = useQuery<BillingSummary>({
     queryKey: ["billingSummary"],
@@ -221,15 +156,6 @@ export default function TopUpPage() {
 
   const activeSupport = getManualSupport(activeOrder);
   const activeSubmission = getManualSubmission(activeOrder);
-  const manualForm =
-    manualDraft.orderId === activeOrder?.id ? manualDraft.form : buildManualForm(activeOrder);
-  const activeOrderAllowsManualSubmit =
-    activeOrder?.channel === "manual_cs" &&
-    activeOrder.status !== "credited" &&
-    activeOrder.status !== "paid" &&
-    activeOrder.status !== "success" &&
-    activeOrder.status !== "completed" &&
-    activeOrder.status !== "closed";
 
   const copyActivationCode = async (code: string) => {
     const copied = await copyText(code);
@@ -241,10 +167,6 @@ export default function TopUpPage() {
       createRechargeOrder(payload),
     onSuccess: async (order, variables) => {
       setSelectedOrderId(order.id);
-      setManualDraft({
-        orderId: order.id,
-        form: buildManualForm(order),
-      });
       if (variables.channel === "manual_cs") {
         setActivationOrder(order);
         setActivationCopied("idle");
@@ -260,82 +182,11 @@ export default function TopUpPage() {
     },
   });
 
-  const submitManualMutation = useMutation({
-    mutationFn: (payload: {
-      orderId: string;
-      contactChannel: string;
-      contactHandle: string;
-      paymentReference: string;
-      transferAmountCents?: number;
-      proofUrls: string[];
-      customerNote: string;
-    }) =>
-      submitManualRecharge(payload.orderId, {
-        contactChannel: payload.contactChannel,
-        contactHandle: payload.contactHandle,
-        paymentReference: payload.paymentReference,
-        transferAmountCents: payload.transferAmountCents,
-        proofUrls: payload.proofUrls,
-        customerNote: payload.customerNote,
-      }),
-    onSuccess: async (order) => {
-      setSelectedOrderId(order.id);
-      setManualDraft({
-        orderId: order.id,
-        form: buildManualForm(order),
-      });
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["billingSummary"] }),
-        queryClient.invalidateQueries({ queryKey: ["rechargeOrders"] }),
-      ]);
-    },
-    onError: (error) => {
-      window.alert(error instanceof Error ? error.message : "提交客服充值资料失败，请稍后重试");
-    },
-  });
-
   const handleCreateOrder = (pkg: BillingPackage, channel: string) => {
     createOrderMutation.mutate({
       packageId: pkg.id,
       channel,
       subject: `${pkg.name} 充值`,
-    });
-  };
-
-  const handleManualSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!activeOrder || activeOrder.channel !== "manual_cs") {
-      return;
-    }
-
-    const proofUrls = manualForm.proofUrls
-      .split("\n")
-      .map((item) => item.trim())
-      .filter(Boolean);
-
-    if (!manualForm.paymentReference.trim() && proofUrls.length === 0) {
-      window.alert("请至少填写付款参考号或上传一条凭证链接。");
-      return;
-    }
-
-    submitManualMutation.mutate({
-      orderId: activeOrder.id,
-      contactChannel: manualForm.contactChannel.trim(),
-      contactHandle: manualForm.contactHandle.trim(),
-      paymentReference: manualForm.paymentReference.trim(),
-      transferAmountCents: parseAmountToCents(manualForm.transferAmount),
-      proofUrls,
-      customerNote: manualForm.customerNote.trim(),
-    });
-  };
-
-  const updateManualForm = (field: keyof ManualFormState, value: string) => {
-    setManualDraft({
-      orderId: activeOrder?.id ?? null,
-      form: {
-        ...manualForm,
-        [field]: value,
-      },
     });
   };
 
@@ -576,13 +427,7 @@ export default function TopUpPage() {
                           <div className="flex justify-end gap-2">
                             <button
                               type="button"
-                              onClick={() => {
-                                setSelectedOrderId(order.id);
-                                setManualDraft({
-                                  orderId: order.id,
-                                  form: buildManualForm(order),
-                                });
-                              }}
+                              onClick={() => setSelectedOrderId(order.id)}
                               className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-text-primary transition-colors hover:border-accent/30 hover:text-accent"
                             >
                               查看
@@ -615,8 +460,8 @@ export default function TopUpPage() {
             <div className="glass-card p-6">
               <div className="flex flex-col gap-4 border-b border-border pb-5 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <h2 className="text-base font-semibold text-text-primary">客服充值资料</h2>
-                  <p className="mt-1 text-sm text-text-secondary">当前订单的激活码、客服联系方式和提交状态。</p>
+                  <h2 className="text-base font-semibold text-text-primary">客服充值订单</h2>
+                  <p className="mt-1 text-sm text-text-secondary">激活码生成后会自动进入人工审核，无需再上传付款凭证。</p>
                 </div>
                 <div className="flex items-center gap-3">
                   <StatusBadge status={activeOrder.status} />
@@ -647,8 +492,10 @@ export default function TopUpPage() {
                   </p>
                 </div>
                 <div className="rounded-2xl border border-border bg-surface p-4">
-                  <p className="text-xs uppercase tracking-wide text-text-muted">提交状态</p>
-                  <p className="mt-2 text-sm font-medium text-text-primary">{getString(activeSubmission?.status) || "pending"}</p>
+                  <p className="text-xs uppercase tracking-wide text-text-muted">审核状态</p>
+                  <div className="mt-2">
+                    <StatusBadge status={activeOrder.status} />
+                  </div>
                 </div>
               </div>
 
@@ -663,7 +510,7 @@ export default function TopUpPage() {
                   ) : null}
                 </div>
                 <div className="rounded-2xl border border-border bg-surface/70 p-4 text-sm">
-                  <p className="text-xs uppercase tracking-wide text-text-muted">时间信息</p>
+                  <p className="text-xs uppercase tracking-wide text-text-muted">审核进度</p>
                   <div className="mt-2 space-y-2 text-text-secondary">
                     <div className="flex items-center justify-between gap-3">
                       <span>创建时间</span>
@@ -675,12 +522,16 @@ export default function TopUpPage() {
                     </div>
                     {getString(activeSubmission?.submittedAt) ? (
                       <div className="flex items-center justify-between gap-3">
-                        <span>最近提交</span>
+                        <span>进入审核</span>
                         <span className="font-medium text-text-primary">{formatDateTime(getString(activeSubmission?.submittedAt))}</span>
                       </div>
                     ) : null}
                   </div>
                 </div>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-warning/20 bg-warning/8 px-4 py-4 text-sm text-text-secondary">
+                客服收到你的充值激活码后，可以在后台直接输入激活码完成查单和审核。通过后会自动入账，驳回或失效则不会扣款入账。
               </div>
 
               {getString(activeSupport?.qrCodeUrl) ? (
@@ -699,118 +550,6 @@ export default function TopUpPage() {
                 </div>
               ) : null}
             </div>
-
-            {activeOrderAllowsManualSubmit ? (
-              <form onSubmit={handleManualSubmit} className="glass-card space-y-4 p-6">
-                <div className="border-b border-border pb-5">
-                  <h2 className="text-base font-semibold text-text-primary">提交付款凭证</h2>
-                  <p className="mt-1 text-sm text-text-secondary">填写已付款信息后，订单会进入后台客服审核流程。</p>
-                </div>
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <label className="block text-sm">
-                    <span className="mb-2 block text-text-secondary">联系渠道</span>
-                    <input
-                      value={manualForm.contactChannel}
-                      onChange={(event) => updateManualForm("contactChannel", event.target.value)}
-                      placeholder="例如：微信 / 企业微信"
-                      className="w-full rounded-xl border border-border bg-background px-4 py-3 text-text-primary outline-none transition-colors focus:border-accent/40"
-                    />
-                  </label>
-                  <label className="block text-sm">
-                    <span className="mb-2 block text-text-secondary">联系账号</span>
-                    <input
-                      value={manualForm.contactHandle}
-                      onChange={(event) => updateManualForm("contactHandle", event.target.value)}
-                      placeholder="例如：support_user"
-                      className="w-full rounded-xl border border-border bg-background px-4 py-3 text-text-primary outline-none transition-colors focus:border-accent/40"
-                    />
-                  </label>
-                </div>
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <label className="block text-sm">
-                    <span className="mb-2 block text-text-secondary">付款参考号</span>
-                    <input
-                      value={manualForm.paymentReference}
-                      onChange={(event) => updateManualForm("paymentReference", event.target.value)}
-                      placeholder="银行流水号 / 转账单号"
-                      className="w-full rounded-xl border border-border bg-background px-4 py-3 text-text-primary outline-none transition-colors focus:border-accent/40"
-                    />
-                  </label>
-                  <label className="block text-sm">
-                    <span className="mb-2 block text-text-secondary">实付金额</span>
-                    <input
-                      value={manualForm.transferAmount}
-                      onChange={(event) => updateManualForm("transferAmount", event.target.value)}
-                      placeholder="单位元，例如 299.00"
-                      className="w-full rounded-xl border border-border bg-background px-4 py-3 text-text-primary outline-none transition-colors focus:border-accent/40"
-                    />
-                  </label>
-                </div>
-
-                <label className="block text-sm">
-                  <span className="mb-2 block text-text-secondary">凭证链接</span>
-                  <textarea
-                    value={manualForm.proofUrls}
-                    onChange={(event) => updateManualForm("proofUrls", event.target.value)}
-                    placeholder={"每行一条链接，例如\nhttps://example.com/proof-1.png"}
-                    rows={4}
-                    className="w-full rounded-xl border border-border bg-background px-4 py-3 text-text-primary outline-none transition-colors focus:border-accent/40"
-                  />
-                </label>
-
-                <label className="block text-sm">
-                  <span className="mb-2 block text-text-secondary">补充说明</span>
-                  <textarea
-                    value={manualForm.customerNote}
-                    onChange={(event) => updateManualForm("customerNote", event.target.value)}
-                    placeholder="例如：已联系微信客服，尾号 2481 的公司账户付款。"
-                    rows={3}
-                    className="w-full rounded-xl border border-border bg-background px-4 py-3 text-text-primary outline-none transition-colors focus:border-accent/40"
-                  />
-                </label>
-
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className={cn(
-                    "text-sm",
-                    activationCopied === "success" && "text-success",
-                    activationCopied === "error" && "text-warning",
-                    activationCopied === "idle" && "text-text-muted",
-                  )}>
-                    {activationCopied === "success"
-                      ? "充值激活码已复制。"
-                      : activationCopied === "error"
-                        ? "自动复制失败，可手动点击复制。"
-                        : "提交前可再次复制充值激活码。 "}
-                  </div>
-                  <div className="flex gap-3">
-                    <button
-                      type="button"
-                      onClick={() => void copyActivationCode(activeOrder.orderNo)}
-                      className="inline-flex items-center gap-2 rounded-xl border border-warning/30 bg-warning/10 px-4 py-2.5 text-sm font-medium text-warning transition-colors hover:bg-warning/15"
-                    >
-                      <Copy className="h-4 w-4" />
-                      复制激活码
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={submitManualMutation.isPending}
-                      className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-accent to-cyan px-4 py-2.5 text-sm font-semibold text-background transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {submitManualMutation.isPending ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          提交中...
-                        </>
-                      ) : (
-                        "提交付款凭证"
-                      )}
-                    </button>
-                  </div>
-                </div>
-              </form>
-            ) : null}
           </div>
         ) : null}
       </div>

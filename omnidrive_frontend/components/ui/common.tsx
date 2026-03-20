@@ -105,6 +105,7 @@ const statusColors: Record<string, string> = {
   publish_failed: "bg-danger/15 text-danger",
   invalid: "bg-danger/15 text-danger",
   rejected: "bg-danger/15 text-danger",
+  invalidated: "bg-text-muted/15 text-text-muted",
   inactive: "bg-text-muted/15 text-text-muted",
   pending: "bg-info/15 text-info",
   running: "bg-info/15 text-info",
@@ -137,6 +138,7 @@ const statusLabels: Record<string, string> = {
   active: "有效",
   inactive: "已停用",
   invalid: "失效",
+  invalidated: "已失效",
   pending: "等待中",
   running: "执行中",
   success: "已完成",
@@ -213,6 +215,9 @@ export function StatusBadge({ status, size = "sm" }: StatusBadgeProps) {
           status === "invalid" ||
           status === "rejected"
             ? "bg-danger"
+            : "",
+          status === "invalidated" || status === "closed" || status === "cancelled"
+            ? "bg-text-muted"
             : "",
           status === "pending" ||
           status === "running" ||

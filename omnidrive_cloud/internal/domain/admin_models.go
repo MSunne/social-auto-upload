@@ -323,8 +323,9 @@ type AdminSupportRechargeReview struct {
 }
 
 type AdminSupportRechargeActions struct {
-	CanCredit bool `json:"canCredit"`
-	CanReject bool `json:"canReject"`
+	CanCredit     bool `json:"canCredit"`
+	CanReject     bool `json:"canReject"`
+	CanInvalidate bool `json:"canInvalidate"`
 }
 
 type AdminSupportRechargeDetail struct {
@@ -406,6 +407,7 @@ type AdminOrderListSummary struct {
 	PendingPaymentCount       int64 `json:"pendingPaymentCount"`
 	ProcessingCount           int64 `json:"processingCount"`
 	RejectedCount             int64 `json:"rejectedCount"`
+	ClosedCount               int64 `json:"closedCount"`
 	ManualChannelCount        int64 `json:"manualChannelCount"`
 }
 
@@ -426,6 +428,7 @@ type AdminSupportRechargeSummary struct {
 	AwaitingSubmissionCount   int64 `json:"awaitingSubmissionCount"`
 	PendingReviewCount        int64 `json:"pendingReviewCount"`
 	RejectedCount             int64 `json:"rejectedCount"`
+	InvalidatedCount          int64 `json:"invalidatedCount"`
 	CreditedCount             int64 `json:"creditedCount"`
 	TotalRequestedAmountCents int64 `json:"totalRequestedAmountCents"`
 	TotalBaseCredits          int64 `json:"totalBaseCredits"`

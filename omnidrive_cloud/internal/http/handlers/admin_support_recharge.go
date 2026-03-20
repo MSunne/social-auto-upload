@@ -119,16 +119,28 @@ func lookupSupportRechargeStrings(payload map[string]any, parents ...string) []s
 	return items
 }
 
-func normalizeSupportRechargeStatus(raw string) string {
-	switch strings.TrimSpace(raw) {
-	case "awaiting_manual_review":
-		return "awaiting_submission"
-	case "processing":
+func normalizeSupportRechargeStatus(order domain.RechargeOrder, payload map[string]any) string {
+	raw := strings.TrimSpace(order.Status)
+	reviewStatus := ""
+	if value := lookupSupportRechargeString(payload, "review", "status"); value != nil {
+		reviewStatus = strings.TrimSpace(*value)
+	}
+
+	switch raw {
+	case "awaiting_manual_review", "processing":
 		return "pending_review"
 	case "credited", "paid", "success", "completed":
 		return "credited"
+	case "closed":
+		if reviewStatus == "invalidated" || strings.TrimSpace(valueOrEmpty(order.ProviderStatus)) == "manual_invalidated" {
+			return "invalidated"
+		}
+		return "closed"
 	default:
-		return strings.TrimSpace(raw)
+		if reviewStatus == "invalidated" {
+			return "invalidated"
+		}
+		return raw
 	}
 }
 
@@ -136,8 +148,13 @@ func adminSupportRechargeActions(status string) domain.AdminSupportRechargeActio
 	switch status {
 	case "pending_review":
 		return domain.AdminSupportRechargeActions{
-			CanCredit: true,
-			CanReject: true,
+			CanCredit:     true,
+			CanReject:     true,
+			CanInvalidate: true,
+		}
+	case "rejected":
+		return domain.AdminSupportRechargeActions{
+			CanInvalidate: true,
 		}
 	default:
 		return domain.AdminSupportRechargeActions{}
@@ -146,7 +163,7 @@ func adminSupportRechargeActions(status string) domain.AdminSupportRechargeActio
 
 func buildAdminSupportRechargeRow(item domain.AdminOrderRow) domain.AdminSupportRechargeRow {
 	payload := decodeAdminSupportRechargePayload(item.Order.CustomerServicePayload)
-	status := normalizeSupportRechargeStatus(item.Order.Status)
+	status := normalizeSupportRechargeStatus(item.Order, payload)
 	submittedAt := lookupSupportRechargeTime(payload, "submission", "submittedAt")
 	if submittedAt == nil {
 		submittedAt = &item.Order.CreatedAt
@@ -204,7 +221,7 @@ func buildAdminSupportRechargeDetail(item *domain.AdminOrderRow, events []domain
 		creditedAt = record.CreditedAt
 	}
 
-	submissionStatus := "pending"
+	submissionStatus := "submitted"
 	if value := lookupSupportRechargeString(payload, "submission", "status"); value != nil {
 		submissionStatus = *value
 	}
@@ -216,6 +233,8 @@ func buildAdminSupportRechargeDetail(item *domain.AdminOrderRow, events []domain
 		reviewStatus = "credited"
 	} else if record.Status == "rejected" {
 		reviewStatus = "rejected"
+	} else if record.Status == "invalidated" {
+		reviewStatus = "invalidated"
 	}
 
 	return domain.AdminSupportRechargeDetail{
@@ -223,10 +242,15 @@ func buildAdminSupportRechargeDetail(item *domain.AdminOrderRow, events []domain
 		Order:  item.Order,
 		User:   item.User,
 		Submission: domain.AdminSupportRechargeSubmission{
-			Status:              submissionStatus,
-			ContactChannel:      lookupSupportRechargeString(payload, "submission", "contactChannel"),
-			ContactHandle:       lookupSupportRechargeString(payload, "submission", "contactHandle"),
-			PaymentReference:    lookupSupportRechargeString(payload, "submission", "paymentReference"),
+			Status:         submissionStatus,
+			ContactChannel: lookupSupportRechargeString(payload, "submission", "contactChannel"),
+			ContactHandle:  lookupSupportRechargeString(payload, "submission", "contactHandle"),
+			PaymentReference: func() *string {
+				if value := lookupSupportRechargeString(payload, "submission", "paymentReference"); value != nil {
+					return value
+				}
+				return stringPtr(item.Order.OrderNo)
+			}(),
 			TransferAmountCents: lookupSupportRechargeInt64(payload, "submission", "transferAmountCents"),
 			ProofURLs:           lookupSupportRechargeStrings(payload, "submission", "proofUrls"),
 			CustomerNote:        lookupSupportRechargeString(payload, "submission", "customerNote"),
@@ -280,6 +304,36 @@ func (h *AdminConsoleHandler) DetailSupportRecharge(w http.ResponseWriter, r *ht
 		render.Error(w, http.StatusNotFound, "Support recharge not found")
 		return
 	}
+	render.JSON(w, http.StatusOK, detail)
+}
+
+func (h *AdminConsoleHandler) LookupSupportRecharge(w http.ResponseWriter, r *http.Request) {
+	code := strings.TrimSpace(r.URL.Query().Get("code"))
+	if code == "" {
+		code = strings.TrimSpace(r.URL.Query().Get("rechargeCode"))
+	}
+	if code == "" {
+		render.Error(w, http.StatusBadRequest, "code is required")
+		return
+	}
+
+	item, err := h.app.Store.GetAdminOrderByOrderNo(r.Context(), code)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load support recharge")
+		return
+	}
+	if item == nil || item.Order.Channel != "manual_cs" {
+		render.Error(w, http.StatusNotFound, "Support recharge not found")
+		return
+	}
+
+	events, err := h.app.Store.ListRechargeOrderEvents(r.Context(), item.Order.UserID, item.Order.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load support recharge")
+		return
+	}
+
+	detail := buildAdminSupportRechargeDetail(item, events)
 	render.JSON(w, http.StatusOK, detail)
 }
 
@@ -414,6 +468,66 @@ func (h *AdminConsoleHandler) RejectSupportRecharge(w http.ResponseWriter, r *ht
 		Title:        "客服充值驳回",
 		Source:       "admin_console",
 		Status:       "rejected",
+		Message:      auditStringPtr(strings.TrimSpace(payload.Note)),
+		Payload: mustJSONBytes(map[string]any{
+			"orderId": order.ID,
+			"orderNo": order.OrderNo,
+		}),
+	})
+
+	render.JSON(w, http.StatusOK, detail)
+}
+
+func (h *AdminConsoleHandler) InvalidateSupportRecharge(w http.ResponseWriter, r *http.Request) {
+	orderID := strings.TrimSpace(chi.URLParam(r, "orderId"))
+	if orderID == "" {
+		render.Error(w, http.StatusBadRequest, "orderId is required")
+		return
+	}
+
+	var payload adminSupportRechargeDecisionRequest
+	if r.ContentLength != 0 {
+		if err := render.DecodeJSON(r, &payload); err != nil {
+			render.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
+	admin := httpcontext.CurrentAdmin(r.Context())
+	order, err := h.app.Store.InvalidateSupportRecharge(r.Context(), orderID, store.InvalidateSupportRechargeInput{
+		AdminID:    admin.ID,
+		AdminEmail: admin.Email,
+		AdminName:  admin.Name,
+		Note:       trimmedStringPtr(payload.Note),
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrRechargeOrderNotFound):
+			render.Error(w, http.StatusNotFound, "Support recharge not found")
+		case errors.Is(err, store.ErrRechargeOrderNotManual),
+			errors.Is(err, store.ErrRechargeOrderAlreadyCredited),
+			errors.Is(err, store.ErrRechargeOrderAlreadyClosed):
+			render.Error(w, http.StatusConflict, err.Error())
+		default:
+			render.Error(w, http.StatusInternalServerError, "Failed to invalidate support recharge")
+		}
+		return
+	}
+
+	detail, err := h.loadAdminSupportRechargeDetail(r, order.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load support recharge detail")
+		return
+	}
+
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  order.UserID,
+		ResourceType: "support_recharge",
+		ResourceID:   &order.ID,
+		Action:       "manual_invalidate",
+		Title:        "客服充值失效关闭",
+		Source:       "admin_console",
+		Status:       "closed",
 		Message:      auditStringPtr(strings.TrimSpace(payload.Note)),
 		Payload: mustJSONBytes(map[string]any{
 			"orderId": order.ID,
