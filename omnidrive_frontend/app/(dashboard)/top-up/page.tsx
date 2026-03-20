@@ -569,86 +569,112 @@ export default function TopUpPage() {
               initial={{ opacity: 0, scale: 0.96, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: 20 }}
-              className="relative z-10 w-full max-w-lg overflow-hidden rounded-3xl border border-white/10 bg-[#0A0A14]/95 shadow-2xl backdrop-blur-xl"
+              className="relative z-10 w-full max-w-md overflow-hidden rounded-3xl border border-white/10 bg-[#0c0c18]/98 shadow-2xl backdrop-blur-xl"
             >
-              <div className="border-b border-white/8 bg-gradient-to-r from-warning/15 via-warning/10 to-transparent px-6 py-5">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <div className="inline-flex items-center gap-2 rounded-full border border-warning/30 bg-warning/10 px-3 py-1 text-xs font-semibold text-warning">
-                      <Gift className="h-3.5 w-3.5" />
-                      客服充值专享优惠
-                    </div>
-                    <h3 className="mt-3 text-xl font-semibold text-white">充值激活码已生成</h3>
-                    <p className="mt-2 text-sm leading-6 text-white/70">
-                      激活码已经自动复制，请将此码发送给客服即可。后续审核和入账都会绑定这笔订单。
-                    </p>
+              {/* Close button */}
+              <button
+                type="button"
+                onClick={() => setActivationOrder(null)}
+                className="absolute right-4 top-4 z-20 rounded-full bg-white/6 p-2 text-white/50 transition-colors hover:bg-white/12 hover:text-white"
+                title="关闭"
+              >
+                <X className="h-4 w-4" />
+              </button>
+
+              {/* Header */}
+              <div className="relative px-7 pb-1 pt-7">
+                <div className="absolute inset-0 bg-gradient-to-b from-accent/8 via-accent/4 to-transparent" />
+                <div className="relative">
+                  <div className="inline-flex items-center gap-1.5 rounded-full bg-accent/12 px-3 py-1 text-[11px] font-semibold tracking-wide text-accent">
+                    <ShieldCheck className="h-3 w-3" />
+                    充值激活码已生成
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setActivationOrder(null)}
-                    className="rounded-full bg-white/6 p-2 text-white/70 transition-colors hover:bg-white/12 hover:text-white"
-                    title="关闭"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
+                  <p className="mt-3 text-[13px] leading-relaxed text-white/55">
+                    请将下方激活码发送给客服完成充值，审核通过后积分自动到账。
+                  </p>
                 </div>
               </div>
 
-              <div className="space-y-5 p-6">
-                <div className="rounded-3xl border border-warning/30 bg-warning/10 p-5 text-center">
-                  <p className="text-xs uppercase tracking-[0.25em] text-warning/80">Recharge Code</p>
-                  <div className="mt-3 break-all font-mono text-2xl font-semibold tracking-[0.12em] text-white">
+              {/* Activation code */}
+              <div className="px-7 py-5">
+                <div className="relative overflow-hidden rounded-2xl border border-accent/20 bg-accent/[0.06] p-5">
+                  <div className="absolute -right-6 -top-6 h-24 w-24 rounded-full bg-accent/10 blur-2xl" />
+                  <div className="absolute -bottom-4 -left-4 h-16 w-16 rounded-full bg-cyan/8 blur-xl" />
+                  <p className="relative text-center text-[10px] font-semibold uppercase tracking-[0.3em] text-accent/60">
+                    Activation Code
+                  </p>
+                  <div className="relative mt-3 break-all text-center font-mono text-lg font-bold tracking-wider text-white">
                     {activationOrder.orderNo}
                   </div>
                 </div>
+              </div>
 
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-2xl border border-white/8 bg-white/4 p-4">
-                    <p className="text-xs uppercase tracking-wide text-white/45">套餐</p>
-                    <p className="mt-2 text-sm font-medium text-white">{activationOrder.subject}</p>
-                  </div>
-                  <div className="rounded-2xl border border-white/8 bg-white/4 p-4">
-                    <p className="text-xs uppercase tracking-wide text-white/45">金额</p>
-                    <p className="mt-2 text-sm font-medium text-white">{formatCurrency(activationOrder.amountCents)}</p>
-                  </div>
-                  <div className="rounded-2xl border border-white/8 bg-white/4 p-4">
-                    <p className="text-xs uppercase tracking-wide text-white/45">到账积分</p>
-                    <p className="mt-2 text-sm font-medium text-white">
-                      {(activationOrder.creditAmount + activationOrder.manualBonusCreditAmount).toLocaleString("zh-CN")}
-                    </p>
-                  </div>
+              {/* Order info */}
+              <div className="grid grid-cols-3 gap-px bg-white/[0.04] mx-7 rounded-xl overflow-hidden border border-white/[0.06]">
+                <div className="bg-[#0c0c18] px-4 py-3.5 text-center">
+                  <p className="text-[10px] font-medium uppercase tracking-wider text-white/35">套餐</p>
+                  <p className="mt-1.5 text-sm font-semibold text-white/90">{activationOrder.subject}</p>
                 </div>
+                <div className="bg-[#0c0c18] px-4 py-3.5 text-center">
+                  <p className="text-[10px] font-medium uppercase tracking-wider text-white/35">金额</p>
+                  <p className="mt-1.5 text-sm font-semibold text-white/90">{formatCurrency(activationOrder.amountCents)}</p>
+                </div>
+                <div className="bg-[#0c0c18] px-4 py-3.5 text-center">
+                  <p className="text-[10px] font-medium uppercase tracking-wider text-white/35">到账积分</p>
+                  <p className="mt-1.5 text-sm font-semibold text-accent">
+                    {(activationOrder.creditAmount + activationOrder.manualBonusCreditAmount).toLocaleString("zh-CN")}
+                  </p>
+                </div>
+              </div>
 
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div
+              {/* Steps */}
+              <div className="mx-7 mt-5 space-y-2.5">
+                {[
+                  { num: "1", text: "复制下方激活码" },
+                  { num: "2", text: "发送给客服" },
+                  { num: "3", text: "等待审核通过，积分自动到账" },
+                ].map((step) => (
+                  <div key={step.num} className="flex items-center gap-3">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[10px] font-bold text-accent">
+                      {step.num}
+                    </span>
+                    <span className="text-[13px] text-white/50">{step.text}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Status + actions */}
+              <div className="mt-6 border-t border-white/[0.06] px-7 py-5">
+                <div className="flex items-center justify-between gap-4">
+                  <p
                     className={cn(
-                      "text-sm",
+                      "text-xs",
                       activationCopied === "success" && "text-success",
                       activationCopied === "error" && "text-warning",
-                      activationCopied === "idle" && "text-white/60",
+                      activationCopied === "idle" && "text-white/40",
                     )}
                   >
                     {activationCopied === "success"
-                      ? "充值激活码已复制，联系客服发送此码即可。"
+                      ? "✓ 激活码已复制到剪贴板"
                       : activationCopied === "error"
-                        ? "自动复制失败，请点击右侧按钮重新复制。"
-                        : "正在准备复制充值激活码..."}
-                  </div>
-                  <div className="flex gap-3">
+                        ? "复制失败，请手动复制"
+                        : "准备中..."}
+                  </p>
+                  <div className="flex shrink-0 gap-2.5">
                     <button
                       type="button"
                       onClick={() => void copyActivationCode(activationOrder.orderNo)}
-                      className="inline-flex items-center gap-2 rounded-xl border border-white/12 bg-white/6 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-white/10"
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-medium text-white/80 transition-all hover:border-white/20 hover:bg-white/[0.08] hover:text-white"
                     >
-                      <Copy className="h-4 w-4" />
-                      再次复制
+                      <Copy className="h-3.5 w-3.5" />
+                      复制
                     </button>
                     <button
                       type="button"
                       onClick={() => setActivationOrder(null)}
-                      className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-accent to-cyan px-4 py-2.5 text-sm font-semibold text-background"
+                      className="rounded-xl bg-accent px-5 py-2 text-xs font-semibold text-background transition-all hover:brightness-110"
                     >
-                      我知道了
+                      完成
                     </button>
                   </div>
                 </div>

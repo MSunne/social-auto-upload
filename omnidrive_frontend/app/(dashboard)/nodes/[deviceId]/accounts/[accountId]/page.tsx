@@ -23,7 +23,7 @@ import {
   listTasks,
 } from "@/lib/services";
 import type { AIJob, Device, PlatformAccountWorkspace, Skill, Task } from "@/lib/types";
-import { formatDateTime } from "@/lib/workflow";
+import { buildAIJobTitle, formatDateTime, shouldShowAIJobInWorkflow } from "@/lib/workflow";
 
 type TimelineItem = {
   id: string;
@@ -98,7 +98,7 @@ export default function AccountTaskPage({
 
   const { data: skillRuns = [], isLoading: aiLoading } = useQuery<AIJob[]>({
     queryKey: ["aiJobs", "account", accountId],
-    queryFn: () => listAIJobs({ deviceId, accountId, limit: 100 }),
+    queryFn: () => listAIJobs({ deviceId, accountId, limit: 100, excludeSource: "omnidrive_chat" }),
   });
 
   const { data: skills = [] } = useQuery<Skill[]>({
@@ -123,10 +123,10 @@ export default function AccountTaskPage({
   });
 
   const timelineItems = useMemo(() => {
-    const aiItems: TimelineItem[] = skillRuns.map((job) => ({
+    const aiItems: TimelineItem[] = skillRuns.filter(shouldShowAIJobInWorkflow).map((job) => ({
       id: job.id,
       kind: "ai_job",
-      title: job.prompt || job.modelName,
+      title: buildAIJobTitle(job),
       subtitle: job.skillId ? `技能 ${job.skillId}` : job.modelName,
       status: toTimelineStatus(job, "ai_job"),
       scheduledAt: getAIJobPublishAt(job),

@@ -5,7 +5,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from conf import BASE_DIR
@@ -81,6 +81,7 @@ class PublishTaskManager:
 
     def init_db(self):
         with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
                 '''
@@ -110,6 +111,7 @@ class PublishTaskManager:
                 )
                 '''
             )
+            repaired = self._repair_omnidrive_ai_schedule_drift(cursor)
             cursor.execute(
                 '''
                 UPDATE publish_tasks
@@ -121,6 +123,11 @@ class PublishTaskManager:
                 '''
             )
             conn.commit()
+        if repaired:
+            task_logger.info(
+                "publish task startup repair rescheduled_count={} source=omnidrive_ai",
+                repaired,
+            )
 
     def enqueue_from_request(self, data, source="local_api"):
         tasks = self._build_task_specs(data, source=source)
@@ -658,36 +665,168 @@ class PublishTaskManager:
     def _connect(self):
         return sqlite3.connect(self.db_path, timeout=30)
 
+    def _repair_omnidrive_ai_schedule_drift(self, cursor):
+        try:
+            cursor.execute(
+                '''
+                SELECT task_uuid, status, message, run_at, platform_publish_at, payload_json
+                FROM publish_tasks
+                WHERE source = 'omnidrive_ai'
+                  AND status IN ('pending', 'scheduled', 'running', 'failed')
+                '''
+            )
+            publish_rows = cursor.fetchall()
+        except sqlite3.OperationalError:
+            return 0
+
+        repaired = 0
+        for row in publish_rows:
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except json.JSONDecodeError:
+                continue
+
+            ai_task_uuid = str(payload.get("omnidriveAITaskUuid") or "").strip()
+            if not ai_task_uuid:
+                continue
+
+            cursor.execute(
+                '''
+                SELECT payload_json
+                FROM omnidrive_ai_tasks
+                WHERE task_uuid = ?
+                LIMIT 1
+                ''',
+                (ai_task_uuid,),
+            )
+            ai_row = cursor.fetchone()
+            if not ai_row:
+                continue
+
+            try:
+                ai_payload = json.loads(ai_row["payload_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                continue
+
+            publish_payload = ai_payload.get("publishPayload") or {}
+            intended_run_at = self._normalize_datetime(
+                publish_payload.get("runAt")
+                or publish_payload.get("requestedRun")
+                or ai_payload.get("publishAt")
+                or ai_payload.get("runAt")
+            )
+            if not intended_run_at:
+                continue
+
+            intended_publish_at = self._normalize_datetime(
+                publish_payload.get("publishDate")
+                or publish_payload.get("requestedRun")
+                or ai_payload.get("publishAt")
+            ) or intended_run_at
+
+            if row["status"] == "failed" and row["message"] != "OmniBull 重启导致任务中断，请按需重试":
+                continue
+
+            if not self._is_future_datetime(intended_run_at):
+                continue
+
+            next_status = "scheduled"
+            next_message = "等待 AI 产物定时发布"
+            if row["status"] in {"pending", "scheduled"} and intended_run_at == row["run_at"] and intended_publish_at == row["platform_publish_at"]:
+                continue
+
+            cursor.execute(
+                '''
+                UPDATE publish_tasks
+                SET run_at = ?,
+                    platform_publish_at = ?,
+                    status = ?,
+                    message = ?,
+                    worker_name = NULL,
+                    started_at = NULL,
+                    finished_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE task_uuid = ?
+                ''',
+                (
+                    intended_run_at,
+                    intended_publish_at,
+                    next_status,
+                    next_message,
+                    row["task_uuid"],
+                ),
+            )
+            repaired += cursor.rowcount
+
+        return repaired
+
     @staticmethod
-    def _normalize_datetime(value):
+    def _local_timezone():
+        return datetime.now().astimezone().tzinfo or timezone.utc
+
+    @classmethod
+    def _parse_datetime_value(cls, value):
         if value in (None, "", 0, "0"):
             return None
-
         if isinstance(value, datetime):
-            return value.strftime("%Y-%m-%d %H:%M:%S")
+            return value
 
-        value_str = str(value).strip().replace("T", " ")
+        value_str = str(value).strip()
         if not value_str:
             return None
 
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            iso_parsed = datetime.fromisoformat(value_str.replace("Z", "+00:00"))
+            if (
+                iso_parsed.tzinfo is not None
+                or "T" in value_str
+                or value_str.endswith("Z")
+                or "+" in value_str[10:]
+                or "-" in value_str[10:]
+            ):
+                return iso_parsed
+        except ValueError:
+            pass
+
+        normalized = value_str.replace("T", " ")
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1]
+
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S.%f"):
             try:
-                return datetime.strptime(value_str, fmt).strftime("%Y-%m-%d %H:%M:%S")
+                return datetime.strptime(normalized, fmt)
             except ValueError:
                 continue
-        return value_str
 
-    @staticmethod
-    def _parse_publish_date(value):
+        try:
+            return datetime.fromisoformat(value_str.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    @classmethod
+    def _normalize_datetime(cls, value):
+        if value in (None, "", 0, "0"):
+            return None
+
+        parsed = cls._parse_datetime_value(value)
+        if parsed is not None:
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(cls._local_timezone()).replace(tzinfo=None)
+            return parsed.strftime("%Y-%m-%d %H:%M:%S")
+
+        value_str = str(value).strip().replace("T", " ")
+        return value_str[:-1] if value_str.endswith("Z") else value_str
+
+    @classmethod
+    def _parse_publish_date(cls, value):
         if value in (None, "", 0, "0"):
             return 0
 
-        value_str = str(value).strip().replace("T", " ")
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
-            try:
-                return datetime.strptime(value_str, fmt)
-            except ValueError:
-                continue
+        parsed = cls._parse_datetime_value(value)
+        if parsed is not None:
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(cls._local_timezone()).replace(tzinfo=None)
+            return parsed
         raise ValueError(f"无法解析发布时间: {value}")
 
     @staticmethod
@@ -786,11 +925,13 @@ class PublishTaskManager:
             return resolved["absolutePath"]
         return str(Path(BASE_DIR / "videoFile" / thumbnail_path))
 
-    @staticmethod
-    def _is_future_datetime(value):
+    @classmethod
+    def _is_future_datetime(cls, value):
         if not value:
             return False
-        try:
-            return datetime.strptime(value, "%Y-%m-%d %H:%M:%S") > datetime.now()
-        except ValueError:
+        parsed = cls._parse_datetime_value(value)
+        if parsed is None:
             return True
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(cls._local_timezone()).replace(tzinfo=None)
+        return parsed > datetime.now()

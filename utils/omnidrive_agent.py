@@ -7,7 +7,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from queue import Empty, Queue
 
@@ -2871,52 +2871,81 @@ class OmniDriveBridge:
         return (expires_at.timestamp() - time.time()) < 20
 
     @staticmethod
-    def _normalize_datetime(value):
+    def _local_timezone():
+        return datetime.now().astimezone().tzinfo or timezone.utc
+
+    @classmethod
+    def _parse_datetime_value(cls, value):
         if value in (None, "", 0, "0"):
             return None
         if isinstance(value, datetime):
-            return value.strftime("%Y-%m-%d %H:%M:%S")
-        value_str = str(value).strip().replace("T", " ")
-        if value_str.endswith("Z"):
-            value_str = value_str[:-1]
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S.%f"):
-            try:
-                return datetime.strptime(value_str, fmt).strftime("%Y-%m-%d %H:%M:%S")
-            except ValueError:
-                continue
-        try:
-            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-            return parsed.strftime("%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            return value_str
+            return value
 
-    @staticmethod
-    def _is_future_datetime(value):
-        if not value:
-            return False
-        try:
-            return datetime.strptime(value, "%Y-%m-%d %H:%M:%S") > datetime.now()
-        except ValueError:
-            return False
-
-    @staticmethod
-    def _to_rfc3339(value):
-        if value in (None, "", 0, "0"):
-            return None
-        value_str = str(value).strip().replace("T", " ")
+        value_str = str(value).strip()
         if not value_str:
             return None
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+
+        try:
+            iso_parsed = datetime.fromisoformat(value_str.replace("Z", "+00:00"))
+            if (
+                iso_parsed.tzinfo is not None
+                or "T" in value_str
+                or value_str.endswith("Z")
+                or "+" in value_str[10:]
+                or "-" in value_str[10:]
+            ):
+                return iso_parsed
+        except ValueError:
+            pass
+
+        normalized = value_str.replace("T", " ")
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1]
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S.%f"):
             try:
-                parsed = datetime.strptime(value_str, fmt)
-                return parsed.isoformat() + "Z"
+                return datetime.strptime(normalized, fmt)
             except ValueError:
                 continue
+
         try:
-            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-            return parsed.astimezone().isoformat().replace("+00:00", "Z")
+            return datetime.fromisoformat(value_str.replace("Z", "+00:00"))
         except ValueError:
             return None
+
+    @classmethod
+    def _normalize_datetime(cls, value):
+        if value in (None, "", 0, "0"):
+            return None
+        parsed = cls._parse_datetime_value(value)
+        if parsed is not None:
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(cls._local_timezone()).replace(tzinfo=None)
+            return parsed.strftime("%Y-%m-%d %H:%M:%S")
+
+        value_str = str(value).strip().replace("T", " ")
+        return value_str[:-1] if value_str.endswith("Z") else value_str
+
+    @classmethod
+    def _is_future_datetime(cls, value):
+        if not value:
+            return False
+        parsed = cls._parse_datetime_value(value)
+        if parsed is None:
+            return False
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(cls._local_timezone()).replace(tzinfo=None)
+        return parsed > datetime.now()
+
+    @classmethod
+    def _to_rfc3339(cls, value):
+        if value in (None, "", 0, "0"):
+            return None
+        parsed = cls._parse_datetime_value(value)
+        if parsed is None:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=cls._local_timezone())
+        return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
     @staticmethod
     def _now_string():

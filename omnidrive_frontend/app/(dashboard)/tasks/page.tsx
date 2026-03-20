@@ -12,6 +12,7 @@ import {
   formatDateTime,
   resolveAIJobStage,
   resolvePublishTaskStage,
+  shouldShowAIJobInWorkflow,
 } from "@/lib/workflow";
 
 type WorkflowRow = {
@@ -78,7 +79,7 @@ export default function TasksPage() {
   });
   const { data: aiJobs = [], isLoading: aiLoading } = useQuery<AIJob[]>({
     queryKey: ["aiJobs"],
-    queryFn: () => listAIJobs({ limit: 200 }),
+    queryFn: () => listAIJobs({ limit: 200, excludeSource: "omnidrive_chat" }),
   });
 
   const deviceMap = useMemo(() => {
@@ -86,7 +87,7 @@ export default function TasksPage() {
   }, [devices]);
 
   const rows = useMemo<WorkflowRow[]>(() => {
-    const aiRows = aiJobs.map((job) => {
+    const aiRows = aiJobs.filter(shouldShowAIJobInWorkflow).map((job) => {
       const stage = resolveAIJobStage(job);
       return {
         id: `ai-${job.id}`,

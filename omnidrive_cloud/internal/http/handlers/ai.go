@@ -161,13 +161,14 @@ func (h *AIHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 	items, err := h.app.Store.ListAIJobsByOwner(r.Context(), user.ID, store.ListAIJobsFilter{
-		JobType:   strings.TrimSpace(r.URL.Query().Get("jobType")),
-		Status:    strings.TrimSpace(r.URL.Query().Get("status")),
-		SkillID:   strings.TrimSpace(r.URL.Query().Get("skillId")),
-		DeviceID:  strings.TrimSpace(r.URL.Query().Get("deviceId")),
-		AccountID: strings.TrimSpace(r.URL.Query().Get("accountId")),
-		Source:    strings.TrimSpace(r.URL.Query().Get("source")),
-		Limit:     limit,
+		JobType:       strings.TrimSpace(r.URL.Query().Get("jobType")),
+		Status:        strings.TrimSpace(r.URL.Query().Get("status")),
+		SkillID:       strings.TrimSpace(r.URL.Query().Get("skillId")),
+		DeviceID:      strings.TrimSpace(r.URL.Query().Get("deviceId")),
+		AccountID:     strings.TrimSpace(r.URL.Query().Get("accountId")),
+		Source:        strings.TrimSpace(r.URL.Query().Get("source")),
+		ExcludeSource: strings.TrimSpace(r.URL.Query().Get("excludeSource")),
+		Limit:         limit,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load AI jobs")

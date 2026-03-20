@@ -365,6 +365,11 @@ func (s *Store) ListAIJobsByOwner(ctx context.Context, ownerUserID string, filte
 		args = append(args, filter.Source)
 		argIndex++
 	}
+	if strings.TrimSpace(filter.ExcludeSource) != "" {
+		query += fmt.Sprintf(" AND source <> $%d", argIndex)
+		args = append(args, filter.ExcludeSource)
+		argIndex++
+	}
 	query += ` ORDER BY updated_at DESC`
 	if filter.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", argIndex)

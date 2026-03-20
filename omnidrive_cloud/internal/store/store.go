@@ -495,13 +495,14 @@ type UpdateAIJobInput struct {
 }
 
 type ListAIJobsFilter struct {
-	JobType   string
-	Status    string
-	SkillID   string
-	DeviceID  string
-	AccountID string
-	Source    string
-	Limit     int
+	JobType       string
+	Status        string
+	SkillID       string
+	DeviceID      string
+	AccountID     string
+	Source        string
+	ExcludeSource string
+	Limit         int
 }
 
 type UpsertAIJobArtifactInput struct {
