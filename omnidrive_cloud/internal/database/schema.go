@@ -750,6 +750,20 @@ CREATE TABLE IF NOT EXISTS distribution_referrals (
     CHECK (promoter_user_id <> invitee_user_id)
 );
 
+CREATE TABLE IF NOT EXISTS partner_profiles (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    partner_code TEXT NOT NULL UNIQUE,
+    partner_name TEXT NOT NULL,
+    contact_name TEXT,
+    contact_phone TEXT,
+    contact_wechat TEXT,
+    settlement_account_payload JSONB,
+    status TEXT NOT NULL DEFAULT 'active',
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS distribution_rules (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -986,12 +1000,14 @@ CREATE INDEX IF NOT EXISTS idx_wallet_adjustment_requests_status ON wallet_adjus
 CREATE INDEX IF NOT EXISTS idx_recharge_order_events_order_id ON recharge_order_events(recharge_order_id);
 CREATE INDEX IF NOT EXISTS idx_billing_quota_accounts_user_id ON billing_quota_accounts(user_id);
 CREATE INDEX IF NOT EXISTS idx_billing_quota_accounts_meter_code ON billing_quota_accounts(meter_code);
+CREATE INDEX IF NOT EXISTS idx_billing_quota_accounts_status_expires_at ON billing_quota_accounts(status, expires_at);
 CREATE INDEX IF NOT EXISTS idx_billing_quota_ledgers_user_id ON billing_quota_ledgers(user_id);
 CREATE INDEX IF NOT EXISTS idx_billing_usage_events_user_id ON billing_usage_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_billing_usage_events_source ON billing_usage_events(source_type, source_id);
 CREATE INDEX IF NOT EXISTS idx_distribution_referrals_promoter_user_id ON distribution_referrals(promoter_user_id);
 CREATE INDEX IF NOT EXISTS idx_distribution_referrals_invitee_user_id ON distribution_referrals(invitee_user_id);
 CREATE INDEX IF NOT EXISTS idx_distribution_referrals_status ON distribution_referrals(status);
+CREATE INDEX IF NOT EXISTS idx_partner_profiles_status ON partner_profiles(status);
 CREATE INDEX IF NOT EXISTS idx_distribution_rules_scope_status ON distribution_rules(scope, status);
 CREATE INDEX IF NOT EXISTS idx_distribution_rules_promoter_user_id ON distribution_rules(promoter_user_id);
 CREATE INDEX IF NOT EXISTS idx_distribution_commission_items_promoter_user_id ON distribution_commission_items(promoter_user_id);

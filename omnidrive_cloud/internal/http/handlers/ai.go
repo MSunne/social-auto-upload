@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	aiclient "omnidrive_cloud/internal/ai"
 	appstate "omnidrive_cloud/internal/app"
 	"omnidrive_cloud/internal/domain"
 	httpcontext "omnidrive_cloud/internal/http/context"
@@ -70,6 +73,40 @@ type uploadAIArtifactURLRequest struct {
 	RootName     *string `json:"rootName"`
 	RelativePath *string `json:"relativePath"`
 	AbsolutePath *string `json:"absolutePath"`
+}
+
+type chatStreamResponse struct {
+	JobID        string         `json:"jobId,omitempty"`
+	ModelName    string         `json:"modelName,omitempty"`
+	Delta        string         `json:"delta,omitempty"`
+	Text         string         `json:"text,omitempty"`
+	Role         string         `json:"role,omitempty"`
+	Usage        map[string]any `json:"usage,omitempty"`
+	FinishReason string         `json:"finishReason,omitempty"`
+	Progressed   bool           `json:"progressed,omitempty"`
+	Done         bool           `json:"done,omitempty"`
+	Error        string         `json:"error,omitempty"`
+}
+
+type chatAttachmentDraft struct {
+	FileName    string  `json:"fileName"`
+	MimeType    string  `json:"mimeType"`
+	DataURL     string  `json:"dataUrl"`
+	Base64Data  string  `json:"base64Data"`
+	TextContent *string `json:"textContent"`
+	SizeBytes   *int64  `json:"sizeBytes"`
+}
+
+type persistedChatAttachment struct {
+	ArtifactKey  string  `json:"artifactKey"`
+	FileName     string  `json:"fileName"`
+	MimeType     string  `json:"mimeType"`
+	PublicURL    string  `json:"publicUrl"`
+	StorageKey   string  `json:"storageKey,omitempty"`
+	SizeBytes    *int64  `json:"sizeBytes,omitempty"`
+	Kind         string  `json:"kind"`
+	TextContent  *string `json:"textContent,omitempty"`
+	MessageIndex int     `json:"messageIndex"`
 }
 
 func NewAIHandler(app *appstate.App) *AIHandler {
@@ -137,6 +174,303 @@ func (h *AIHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	render.JSON(w, http.StatusOK, items)
+}
+
+func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+
+	settings, err := loadEffectiveAdminSystemSettings(r.Context(), h.app)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load AI configuration")
+		return
+	}
+	if !settings.AIWorkerEnabled {
+		render.Error(w, http.StatusServiceUnavailable, "AI worker is currently disabled by admin configuration")
+		return
+	}
+
+	var payload createAIJobRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	payload.ModelName = strings.TrimSpace(payload.ModelName)
+	if payload.ModelName == "" {
+		render.Error(w, http.StatusBadRequest, "modelName is required")
+		return
+	}
+
+	model, err := h.app.Store.GetAIModelByName(r.Context(), payload.ModelName)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to validate AI model")
+		return
+	}
+	if model == nil || !model.IsEnabled {
+		render.Error(w, http.StatusNotFound, "AI model not found")
+		return
+	}
+	if strings.TrimSpace(model.Category) != "chat" {
+		render.Error(w, http.StatusConflict, "AI model category does not match chat")
+		return
+	}
+
+	var inputPayload []byte
+	if payload.InputPayload != nil {
+		inputPayload, err = json.Marshal(payload.InputPayload)
+		if err != nil {
+			render.Error(w, http.StatusBadRequest, "inputPayload must be valid json")
+			return
+		}
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		render.Error(w, http.StatusInternalServerError, "Streaming is not supported by this server")
+		return
+	}
+
+	jobID := uuid.NewString()
+	source := "omnidrive_chat"
+	initialMessage := "聊天生成中"
+
+	createdJob, err := h.app.Store.CreateAIJob(r.Context(), store.CreateAIJobInput{
+		ID:           jobID,
+		OwnerUserID:  user.ID,
+		Source:       source,
+		JobType:      "chat",
+		ModelName:    payload.ModelName,
+		Prompt:       payload.Prompt,
+		InputPayload: stripChatAttachmentDrafts(inputPayload),
+		Status:       "running",
+		Message:      &initialMessage,
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to create chat history")
+		return
+	}
+
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "ai_job",
+		ResourceID:   &createdJob.ID,
+		Action:       "create",
+		Title:        "创建流式聊天",
+		Source:       createdJob.ModelName,
+		Status:       createdJob.Status,
+		Message:      createdJob.Message,
+		Payload: mustJSONBytes(map[string]any{
+			"jobType":   createdJob.JobType,
+			"modelName": createdJob.ModelName,
+			"source":    createdJob.Source,
+		}),
+	})
+
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	if err := writeSSEEvent(w, flusher, "meta", chatStreamResponse{
+		JobID:     jobID,
+		ModelName: payload.ModelName,
+		Role:      "assistant",
+	}); err != nil {
+		return
+	}
+
+	sanitizedInputPayload, artifactInputs, attachmentRefs, err := h.prepareStreamChatPayload(r.Context(), user.ID, jobID, payload.Prompt, inputPayload)
+	if err != nil {
+		failedStatus := "failed"
+		failedAt := time.Now().UTC()
+		_, _ = h.app.Store.UpdateAIJob(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
+			Status:          &failedStatus,
+			Message:         stringPtr(err.Error()),
+			FinishedAt:      &failedAt,
+			FinishedTouched: true,
+		})
+		_ = writeSSEEvent(w, flusher, "error", chatStreamResponse{
+			JobID:     jobID,
+			ModelName: payload.ModelName,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	if len(artifactInputs) > 0 {
+		if _, err := h.app.Store.UpsertAIJobArtifacts(r.Context(), artifactInputs); err != nil {
+			failedStatus := "failed"
+			failedAt := time.Now().UTC()
+			_, _ = h.app.Store.UpdateAIJob(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
+				Status:          &failedStatus,
+				Message:         stringPtr("Failed to persist chat attachments"),
+				FinishedAt:      &failedAt,
+				FinishedTouched: true,
+			})
+			_ = writeSSEEvent(w, flusher, "error", chatStreamResponse{
+				JobID:     jobID,
+				ModelName: payload.ModelName,
+				Error:     "Failed to persist chat attachments",
+			})
+			return
+		}
+	}
+
+	updatedJob, err := h.app.Store.UpdateAIJob(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
+		InputPayload: sanitizedInputPayload,
+		InputTouched: true,
+	})
+	if err != nil || updatedJob == nil {
+		failedStatus := "failed"
+		failedAt := time.Now().UTC()
+		_, _ = h.app.Store.UpdateAIJob(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
+			Status:          &failedStatus,
+			Message:         stringPtr("Failed to save chat payload"),
+			FinishedAt:      &failedAt,
+			FinishedTouched: true,
+		})
+		_ = writeSSEEvent(w, flusher, "error", chatStreamResponse{
+			JobID:     jobID,
+			ModelName: payload.ModelName,
+			Error:     "Failed to save chat payload",
+		})
+		return
+	}
+
+	req, err := aiclient.BuildChatRequest(updatedJob)
+	if err != nil {
+		failedStatus := "failed"
+		failedAt := time.Now().UTC()
+		_, _ = h.app.Store.UpdateAIJob(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
+			Status:          &failedStatus,
+			Message:         stringPtr(err.Error()),
+			FinishedAt:      &failedAt,
+			FinishedTouched: true,
+		})
+		_ = writeSSEEvent(w, flusher, "error", chatStreamResponse{
+			JobID:     jobID,
+			ModelName: payload.ModelName,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	if model.BaseURL != nil {
+		req.BaseURL = strings.TrimSpace(*model.BaseURL)
+	}
+	if model.APIKey != nil {
+		req.APIKey = strings.TrimSpace(*model.APIKey)
+	}
+
+	provider, err := aiclient.NewAPIYIProvider(h.app.Config)
+	if err != nil {
+		failedStatus := "failed"
+		failedAt := time.Now().UTC()
+		_, _ = h.app.Store.UpdateAIJob(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
+			Status:          &failedStatus,
+			Message:         stringPtr("Failed to initialize AI provider"),
+			FinishedAt:      &failedAt,
+			FinishedTouched: true,
+		})
+		_ = writeSSEEvent(w, flusher, "error", chatStreamResponse{
+			JobID:     jobID,
+			ModelName: payload.ModelName,
+			Error:     "Failed to initialize AI provider",
+		})
+		return
+	}
+
+	result, err := provider.GenerateChatStream(r.Context(), req, func(chunk aiclient.ChatStreamChunk) error {
+		if chunk.Done {
+			return writeSSEEvent(w, flusher, "done", chatStreamResponse{
+				JobID:        jobID,
+				ModelName:    payload.ModelName,
+				Text:         chunk.Text,
+				Role:         chunk.Role,
+				Usage:        chunk.Usage,
+				FinishReason: chunk.FinishReason,
+				Done:         true,
+			})
+		}
+		if chunk.Progressed {
+			return writeSSEEvent(w, flusher, "progress", chatStreamResponse{
+				JobID:      jobID,
+				ModelName:  payload.ModelName,
+				Role:       chunk.Role,
+				Progressed: true,
+			})
+		}
+		if chunk.Delta == "" {
+			return nil
+		}
+		return writeSSEEvent(w, flusher, "delta", chatStreamResponse{
+			JobID:        jobID,
+			ModelName:    payload.ModelName,
+			Delta:        chunk.Delta,
+			Text:         chunk.Text,
+			Role:         chunk.Role,
+			Usage:        chunk.Usage,
+			FinishReason: chunk.FinishReason,
+		})
+	})
+	if err != nil {
+		failedStatus := "failed"
+		failedAt := time.Now().UTC()
+		outputPayload := mustJSONBytes(map[string]any{
+			"error": err.Error(),
+		})
+		_, _ = h.app.Store.UpdateAIJob(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
+			Status:          &failedStatus,
+			OutputPayload:   outputPayload,
+			OutputTouched:   true,
+			Message:         stringPtr(err.Error()),
+			FinishedAt:      &failedAt,
+			FinishedTouched: true,
+		})
+		_ = writeSSEEvent(w, flusher, "error", chatStreamResponse{
+			JobID:     jobID,
+			ModelName: payload.ModelName,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	if result == nil {
+		result = &aiclient.ChatResult{}
+	}
+
+	responsePayload := mustJSONBytes(map[string]any{
+		"text":         result.Text,
+		"role":         result.Role,
+		"usage":        result.Usage,
+		"finishReason": result.FinishReason,
+		"attachments":  attachmentRefs,
+	})
+	successStatus := "success"
+	successMessage := "聊天已完成"
+	finishedAt := time.Now().UTC()
+	_, _ = h.app.Store.UpdateAIJob(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
+		Status:          &successStatus,
+		OutputPayload:   responsePayload,
+		OutputTouched:   true,
+		Message:         &successMessage,
+		FinishedAt:      &finishedAt,
+		FinishedTouched: true,
+	})
+	if strings.TrimSpace(result.Text) != "" {
+		_, _ = h.app.Store.UpsertAIJobArtifacts(r.Context(), []store.UpsertAIJobArtifactInput{{
+			JobID:        jobID,
+			ArtifactKey:  "assistant-response",
+			ArtifactType: "chat_response",
+			Source:       payload.ModelName,
+			Title:        stringPtr("助手回复"),
+			TextContent:  stringPtr(result.Text),
+			Payload: mustJSONBytes(map[string]any{
+				"usage":        result.Usage,
+				"finishReason": result.FinishReason,
+			}),
+		}})
+	}
 }
 
 func (h *AIHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
@@ -270,6 +604,293 @@ func (h *AIHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		}),
 	})
 	render.JSON(w, http.StatusCreated, job)
+}
+
+func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, event string, payload any) error {
+	if w == nil || flusher == nil {
+		return fmt.Errorf("streaming writer is unavailable")
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "event: %s\n", strings.TrimSpace(event)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+		return err
+	}
+	flusher.Flush()
+	return nil
+}
+
+func stripChatAttachmentDrafts(raw []byte) []byte {
+	if len(raw) == 0 {
+		return raw
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return raw
+	}
+	delete(payload, "attachments")
+	sanitized, err := json.Marshal(payload)
+	if err != nil {
+		return raw
+	}
+	return sanitized
+}
+
+func (h *AIHandler) prepareStreamChatPayload(ctx context.Context, ownerUserID string, jobID string, prompt *string, rawPayload []byte) ([]byte, []store.UpsertAIJobArtifactInput, []persistedChatAttachment, error) {
+	payload := map[string]any{}
+	if len(rawPayload) > 0 {
+		if err := json.Unmarshal(rawPayload, &payload); err != nil {
+			return nil, nil, nil, fmt.Errorf("inputPayload must be valid json")
+		}
+	}
+
+	messages, err := parseChatMessagesForPersistence(payload, prompt)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if len(messages) == 0 {
+		return nil, nil, nil, fmt.Errorf("chat job requires prompt or messages")
+	}
+
+	artifactInputs := make([]store.UpsertAIJobArtifactInput, 0)
+	attachmentRefs := make([]persistedChatAttachment, 0)
+
+	messageIndex := len(messages) - 1
+	currentUserParts, hasStructuredContent := normalizeChatMessageContent(messages[messageIndex].Content)
+	drafts, err := decodeChatAttachmentDrafts(payload["attachments"])
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	for index, draft := range drafts {
+		prepared, err := h.persistChatAttachment(ctx, ownerUserID, jobID, messageIndex, index, draft)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if prepared == nil {
+			continue
+		}
+		artifactInputs = append(artifactInputs, prepared.ArtifactInput)
+		attachmentRefs = append(attachmentRefs, prepared.Reference)
+		currentUserParts = append(currentUserParts, prepared.PromptParts...)
+		hasStructuredContent = true
+	}
+	if hasStructuredContent {
+		messages[messageIndex].Content = currentUserParts
+	}
+
+	payload["messages"] = messages
+	if len(attachmentRefs) > 0 {
+		payload["attachments"] = attachmentRefs
+	} else {
+		delete(payload, "attachments")
+	}
+	sanitized, err := json.Marshal(payload)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to encode chat payload")
+	}
+	return sanitized, artifactInputs, attachmentRefs, nil
+}
+
+type preparedChatAttachment struct {
+	ArtifactInput store.UpsertAIJobArtifactInput
+	Reference     persistedChatAttachment
+	PromptParts   []map[string]any
+}
+
+func (h *AIHandler) persistChatAttachment(ctx context.Context, ownerUserID string, jobID string, messageIndex int, order int, draft chatAttachmentDraft) (*preparedChatAttachment, error) {
+	fileName := sanitizeUploadFilename(draft.FileName)
+	if fileName == "" {
+		fileName = fmt.Sprintf("attachment-%d.bin", order+1)
+	}
+
+	data, mimeType, err := decodeChatAttachmentBytes(draft)
+	if err != nil {
+		return nil, err
+	}
+	if mimeType == "" {
+		mimeType = strings.TrimSpace(draft.MimeType)
+	}
+	if mimeType == "" {
+		mimeType = mime.TypeByExtension(filepath.Ext(fileName))
+	}
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+
+	object, err := h.app.Storage.SaveBytes(
+		ctx,
+		fmt.Sprintf("ai-jobs/%s/%s/chat-attachments/%s-%s", ownerUserID, jobID, uuid.NewString(), fileName),
+		mimeType,
+		data,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to store chat attachment")
+	}
+
+	kind := detectChatAttachmentKind(mimeType, fileName)
+	textContent := normalizeTrimmedString(draft.TextContent)
+	if kind == "text" && textContent == nil && len(data) > 0 {
+		derived := normalizeTrimmedStringPtr(string(data))
+		textContent = derived
+	}
+
+	artifactKey := fmt.Sprintf("chat-attachment-%d-%s", order+1, buildAIArtifactKey(fileName, "chat_attachment"))
+	artifactPayload := mustJSONBytes(map[string]any{
+		"kind":         kind,
+		"messageIndex": messageIndex,
+		"order":        order,
+	})
+
+	reference := persistedChatAttachment{
+		ArtifactKey:  artifactKey,
+		FileName:     fileName,
+		MimeType:     object.ContentType,
+		PublicURL:    object.PublicURL,
+		StorageKey:   object.StorageKey,
+		SizeBytes:    &object.SizeBytes,
+		Kind:         kind,
+		TextContent:  textContent,
+		MessageIndex: messageIndex,
+	}
+
+	return &preparedChatAttachment{
+		ArtifactInput: store.UpsertAIJobArtifactInput{
+			JobID:        jobID,
+			ArtifactKey:  artifactKey,
+			ArtifactType: "chat_attachment",
+			Source:       "chat_upload",
+			Title:        stringPtr(fileName),
+			FileName:     stringPtr(fileName),
+			MimeType:     stringPtr(object.ContentType),
+			StorageKey:   stringPtr(object.StorageKey),
+			PublicURL:    stringPtr(object.PublicURL),
+			SizeBytes:    &object.SizeBytes,
+			TextContent:  textContent,
+			Payload:      artifactPayload,
+		},
+		Reference:   reference,
+		PromptParts: buildChatAttachmentPromptParts(reference),
+	}, nil
+}
+
+func parseChatMessagesForPersistence(payload map[string]any, prompt *string) ([]aiclient.ChatMessage, error) {
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	rawMessages, err := aiclient.BuildChatRequest(&domain.AIJob{
+		JobType:      "chat",
+		ModelName:    "chat",
+		Prompt:       prompt,
+		InputPayload: mustJSONBytes(payload),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return rawMessages.Messages, nil
+}
+
+func normalizeChatMessageContent(content any) ([]map[string]any, bool) {
+	switch typed := content.(type) {
+	case []any:
+		result := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			part, ok := item.(map[string]any)
+			if ok {
+				result = append(result, part)
+			}
+		}
+		return result, len(result) > 0
+	case []map[string]any:
+		return append([]map[string]any{}, typed...), len(typed) > 0
+	default:
+		text := strings.TrimSpace(fmt.Sprint(content))
+		if text == "" {
+			return []map[string]any{}, false
+		}
+		return []map[string]any{{"type": "text", "text": text}}, true
+	}
+}
+
+func decodeChatAttachmentDrafts(raw any) ([]chatAttachmentDraft, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("attachments must be valid json")
+	}
+	var drafts []chatAttachmentDraft
+	if err := json.Unmarshal(encoded, &drafts); err != nil {
+		return nil, fmt.Errorf("attachments must be an array")
+	}
+	return drafts, nil
+}
+
+func decodeChatAttachmentBytes(draft chatAttachmentDraft) ([]byte, string, error) {
+	if strings.TrimSpace(draft.DataURL) != "" {
+		return decodeBase64Payload(strings.TrimSpace(draft.DataURL))
+	}
+	if strings.TrimSpace(draft.Base64Data) != "" {
+		return decodeBase64Payload(strings.TrimSpace(draft.Base64Data))
+	}
+	return nil, "", fmt.Errorf("attachment %q is missing file data", strings.TrimSpace(draft.FileName))
+}
+
+func detectChatAttachmentKind(mimeType string, fileName string) string {
+	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
+	if strings.HasPrefix(mimeType, "image/") {
+		return "image"
+	}
+	if strings.HasPrefix(mimeType, "text/") {
+		return "text"
+	}
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(fileName))) {
+	case ".txt", ".md", ".markdown", ".json", ".csv", ".tsv", ".yaml", ".yml", ".xml", ".html", ".htm":
+		return "text"
+	default:
+		return "file"
+	}
+}
+
+func buildChatAttachmentPromptParts(ref persistedChatAttachment) []map[string]any {
+	parts := make([]map[string]any, 0, 2)
+	switch ref.Kind {
+	case "image":
+		parts = append(parts,
+			map[string]any{
+				"type": "text",
+				"text": fmt.Sprintf("附件图片：%s", ref.FileName),
+			},
+			map[string]any{
+				"type": "image_url",
+				"image_url": map[string]any{
+					"url": ref.PublicURL,
+				},
+			},
+		)
+	case "text":
+		textBody := ""
+		if ref.TextContent != nil {
+			textBody = strings.TrimSpace(*ref.TextContent)
+		}
+		if textBody == "" {
+			textBody = "该文本附件未能提取到有效内容。"
+		}
+		parts = append(parts, map[string]any{
+			"type": "text",
+			"text": fmt.Sprintf("附件文件 %s 内容如下：\n%s", ref.FileName, textBody),
+		})
+	default:
+		parts = append(parts, map[string]any{
+			"type": "text",
+			"text": fmt.Sprintf("用户上传了文件 %s（%s），文件已存档。当前聊天自动注入仅覆盖图片和文本附件。", ref.FileName, ref.MimeType),
+		})
+	}
+	return parts
 }
 
 func (h *AIHandler) DetailJob(w http.ResponseWriter, r *http.Request) {

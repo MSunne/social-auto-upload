@@ -97,10 +97,14 @@ const statusColors: Record<string, string> = {
   published: "bg-success/15 text-success",
   output_ready: "bg-success/15 text-success",
   imported: "bg-success/15 text-success",
+  paid: "bg-success/15 text-success",
+  credited: "bg-success/15 text-success",
+  approved: "bg-success/15 text-success",
   offline: "bg-danger/15 text-danger",
   failed: "bg-danger/15 text-danger",
   publish_failed: "bg-danger/15 text-danger",
   invalid: "bg-danger/15 text-danger",
+  rejected: "bg-danger/15 text-danger",
   inactive: "bg-text-muted/15 text-text-muted",
   pending: "bg-info/15 text-info",
   running: "bg-info/15 text-info",
@@ -108,14 +112,23 @@ const statusColors: Record<string, string> = {
   storyboarding: "bg-info/15 text-info",
   publishing: "bg-info/15 text-info",
   queued_generation: "bg-info/15 text-info",
+  pending_payment: "bg-info/15 text-info",
   awaiting_scan: "bg-warning/15 text-warning",
   awaiting_verification: "bg-warning/15 text-warning",
   needs_verify: "bg-warning/15 text-warning",
   scheduled: "bg-warning/15 text-warning",
   publish_queued: "bg-warning/15 text-warning",
   cancel_requested: "bg-warning/15 text-warning",
+  awaiting_submission: "bg-warning/15 text-warning",
+  awaiting_manual_review: "bg-warning/15 text-warning",
+  pending_review: "bg-warning/15 text-warning",
+  processing: "bg-warning/15 text-warning",
+  pending_consume: "bg-warning/15 text-warning",
+  pending_settlement: "bg-info/15 text-info",
+  requested: "bg-warning/15 text-warning",
   unknown: "bg-text-muted/15 text-text-muted",
   cancelled: "bg-text-muted/15 text-text-muted",
+  closed: "bg-text-muted/15 text-text-muted",
 };
 
 const statusLabels: Record<string, string> = {
@@ -131,8 +144,12 @@ const statusLabels: Record<string, string> = {
   published: "已发布",
   output_ready: "制作完成",
   imported: "已回流",
+  paid: "已支付",
+  credited: "已入账",
+  approved: "已通过",
   failed: "失败",
   publish_failed: "发布失败",
+  rejected: "已驳回",
   needs_verify: "待验证",
   awaiting_scan: "等待扫码",
   awaiting_verification: "等待验证",
@@ -140,10 +157,19 @@ const statusLabels: Record<string, string> = {
   storyboarding: "优化分镜中",
   publishing: "发布中",
   queued_generation: "待生成",
+  pending_payment: "待支付",
   scheduled: "未开始",
   publish_queued: "待发布",
   cancel_requested: "取消中",
+  awaiting_submission: "待提交凭证",
+  awaiting_manual_review: "待提交凭证",
+  pending_review: "待人工审核",
+  processing: "人工审核中",
+  pending_consume: "待生效",
+  pending_settlement: "待结算",
+  requested: "待审核",
   cancelled: "已取消",
+  closed: "已关闭",
   unknown: "未知",
 };
 
@@ -175,13 +201,17 @@ export function StatusBadge({ status, size = "sm" }: StatusBadgeProps) {
           status === "completed" ||
           status === "published" ||
           status === "output_ready" ||
-          status === "imported"
+          status === "imported" ||
+          status === "paid" ||
+          status === "credited" ||
+          status === "approved"
             ? "bg-success"
             : "",
           status === "offline" ||
           status === "failed" ||
           status === "publish_failed" ||
-          status === "invalid"
+          status === "invalid" ||
+          status === "rejected"
             ? "bg-danger"
             : "",
           status === "pending" ||
@@ -189,16 +219,22 @@ export function StatusBadge({ status, size = "sm" }: StatusBadgeProps) {
           status === "generating" ||
           status === "storyboarding" ||
           status === "publishing" ||
-          status === "queued_generation"
+          status === "queued_generation" ||
+          status === "pending_payment"
             ? "bg-info"
             : "",
           status.includes("verify") ||
           status.includes("awaiting") ||
           status === "scheduled" ||
           status === "publish_queued" ||
-          status === "cancel_requested"
+          status === "cancel_requested" ||
+          status === "pending_review" ||
+          status === "processing" ||
+          status === "pending_consume" ||
+          status === "requested"
             ? "bg-warning"
             : "",
+          status === "pending_settlement" ? "bg-info" : "",
         )}
       />
       {statusLabels[status] ?? status}

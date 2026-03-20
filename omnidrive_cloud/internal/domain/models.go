@@ -731,15 +731,37 @@ type BillingSummary struct {
 	QuotaBalances        []BillingQuotaBalance `json:"quotaBalances"`
 }
 
+type PartnerProfile struct {
+	UserID        string    `json:"userId"`
+	PartnerCode   string    `json:"partnerCode"`
+	PartnerName   string    `json:"partnerName"`
+	ContactName   *string   `json:"contactName,omitempty"`
+	ContactPhone  *string   `json:"contactPhone,omitempty"`
+	ContactWechat *string   `json:"contactWechat,omitempty"`
+	Status        string    `json:"status"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
 type DistributionSummary struct {
-	InviteeCount                   int64 `json:"inviteeCount"`
-	PendingConsumeAmountCents      int64 `json:"pendingConsumeAmountCents"`
-	PendingSettlementAmountCents   int64 `json:"pendingSettlementAmountCents"`
-	SettledAmountCents             int64 `json:"settledAmountCents"`
-	AvailableWithdrawalAmountCents int64 `json:"availableWithdrawalAmountCents"`
-	RequestedWithdrawalAmountCents int64 `json:"requestedWithdrawalAmountCents"`
-	ApprovedWithdrawalAmountCents  int64 `json:"approvedWithdrawalAmountCents"`
-	PaidWithdrawalAmountCents      int64 `json:"paidWithdrawalAmountCents"`
+	InviteeCount                   int64   `json:"inviteeCount"`
+	CurrentCommissionRate          float64 `json:"currentCommissionRate"`
+	SettlementThresholdCents       int64   `json:"settlementThresholdCents"`
+	PendingConsumeBaseAmountCents  int64   `json:"pendingConsumeBaseAmountCents"`
+	ActivatedBaseAmountCents       int64   `json:"activatedBaseAmountCents"`
+	SettledBaseAmountCents         int64   `json:"settledBaseAmountCents"`
+	PendingConsumeAmountCents      int64   `json:"pendingConsumeAmountCents"`
+	PendingSettlementAmountCents   int64   `json:"pendingSettlementAmountCents"`
+	SettledAmountCents             int64   `json:"settledAmountCents"`
+	AvailableWithdrawalAmountCents int64   `json:"availableWithdrawalAmountCents"`
+	RequestedWithdrawalAmountCents int64   `json:"requestedWithdrawalAmountCents"`
+	ApprovedWithdrawalAmountCents  int64   `json:"approvedWithdrawalAmountCents"`
+	PaidWithdrawalAmountCents      int64   `json:"paidWithdrawalAmountCents"`
+}
+
+type PartnerOverview struct {
+	Profile *PartnerProfile     `json:"profile,omitempty"`
+	Summary DistributionSummary `json:"summary"`
 }
 
 type CommissionItem struct {

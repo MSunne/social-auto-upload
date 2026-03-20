@@ -203,6 +203,12 @@ func (w *responseCaptureWriter) WriteString(value string) (int, error) {
 	return w.WrapResponseWriter.Write([]byte(value))
 }
 
+func (w *responseCaptureWriter) Flush() {
+	if flusher, ok := w.WrapResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
 func (w *responseCaptureWriter) preview() string {
 	return logging.PreviewBody(w.Header().Get("Content-Type"), w.buffer.Bytes(), w.truncated)
 }

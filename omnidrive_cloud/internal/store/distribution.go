@@ -105,6 +105,108 @@ type commissionSettlementCandidate struct {
 	SettlementThresholdCents int64
 }
 
+func loadQuotaUnitCreditMapTx(ctx context.Context, tx pgx.Tx, meterCodes map[string]struct{}) (map[string]int64, error) {
+	result := make(map[string]int64)
+	if len(meterCodes) == 0 {
+		return result, nil
+	}
+
+	codes := make([]string, 0, len(meterCodes))
+	for code := range meterCodes {
+		trimmed := strings.TrimSpace(code)
+		if trimmed == "" {
+			continue
+		}
+		codes = append(codes, trimmed)
+	}
+	if len(codes) == 0 {
+		return result, nil
+	}
+
+	rows, err := tx.Query(ctx, `
+		SELECT DISTINCT ON (quota_meter_code)
+			quota_meter_code,
+			wallet_debit_amount
+		FROM billing_pricing_rules
+		WHERE is_enabled = TRUE
+		  AND charge_mode = 'quota_first_wallet_fallback'
+		  AND quota_meter_code = ANY($1)
+		  AND wallet_debit_amount > 0
+		ORDER BY quota_meter_code, sort_order ASC, created_at ASC
+	`, codes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var meterCode string
+		var walletDebitAmount int64
+		if scanErr := rows.Scan(&meterCode, &walletDebitAmount); scanErr != nil {
+			return nil, scanErr
+		}
+		result[strings.TrimSpace(meterCode)] = walletDebitAmount
+	}
+	return result, rows.Err()
+}
+
+func calculateDistributionGrantCreditsFromEntitlements(entitlements []domain.BillingPackageEntitlement, quotaUnitCredits map[string]int64) int64 {
+	var total int64
+	for _, entitlement := range entitlements {
+		if entitlement.GrantAmount <= 0 {
+			continue
+		}
+		meterCode := strings.TrimSpace(entitlement.MeterCode)
+		switch meterCode {
+		case "", "wallet_credit":
+			total += entitlement.GrantAmount
+		default:
+			if unitCredits := quotaUnitCredits[meterCode]; unitCredits > 0 {
+				total += entitlement.GrantAmount * unitCredits
+			}
+		}
+	}
+	return total
+}
+
+func (s *Store) distributionGrantCreditsForRechargeOrderTx(ctx context.Context, tx pgx.Tx, order *domain.RechargeOrder) (int64, error) {
+	if order == nil {
+		return 0, nil
+	}
+
+	entitlements, _, _ := buildSupportRechargeGrantPlan(order, time.Now().UTC())
+	if len(entitlements) == 0 {
+		totalGrantedCredits := order.CreditAmount + order.ManualBonusCreditAmount
+		if totalGrantedCredits < 0 {
+			return 0, nil
+		}
+		return totalGrantedCredits, nil
+	}
+
+	quotaMeterCodes := make(map[string]struct{})
+	for _, entitlement := range entitlements {
+		meterCode := strings.TrimSpace(entitlement.MeterCode)
+		if meterCode == "" || meterCode == "wallet_credit" || entitlement.GrantAmount <= 0 {
+			continue
+		}
+		quotaMeterCodes[meterCode] = struct{}{}
+	}
+
+	quotaUnitCredits, err := loadQuotaUnitCreditMapTx(ctx, tx, quotaMeterCodes)
+	if err != nil {
+		return 0, err
+	}
+
+	totalGrantedCredits := calculateDistributionGrantCreditsFromEntitlements(entitlements, quotaUnitCredits)
+	if totalGrantedCredits <= 0 {
+		totalGrantedCredits = order.CreditAmount + order.ManualBonusCreditAmount
+	}
+	if totalGrantedCredits < 0 {
+		totalGrantedCredits = 0
+	}
+	return totalGrantedCredits, nil
+}
+
 func calculateCommissionRateBasisPoints(rate float64) (int, error) {
 	if rate <= 0 || rate > 1 {
 		return 0, ErrDistributionRuleInvalidRate
@@ -617,7 +719,10 @@ func (s *Store) ensureDistributionCommissionForRechargeOrderTx(ctx context.Conte
 		return nil
 	}
 
-	totalGrantedCredits := order.CreditAmount + order.ManualBonusCreditAmount
+	totalGrantedCredits, err := s.distributionGrantCreditsForRechargeOrderTx(ctx, tx, order)
+	if err != nil {
+		return err
+	}
 	if totalGrantedCredits <= 0 {
 		return nil
 	}
@@ -633,6 +738,7 @@ func (s *Store) ensureDistributionCommissionForRechargeOrderTx(ctx context.Conte
 		"amountCents":       order.AmountCents,
 		"creditAmount":      order.CreditAmount,
 		"bonusCreditAmount": order.ManualBonusCreditAmount,
+		"grantCredits":      totalGrantedCredits,
 	})
 	_, err = tx.Exec(ctx, `
 		INSERT INTO distribution_commission_items (

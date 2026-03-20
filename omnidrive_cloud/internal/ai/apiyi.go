@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -53,16 +54,7 @@ func NewAPIYIProvider(cfg config.Config) (*APIYIProvider, error) {
 }
 
 func (p *APIYIProvider) GenerateChat(ctx context.Context, req ChatRequest) (*ChatResult, error) {
-	payload := map[string]any{
-		"model":    req.Model,
-		"messages": req.Messages,
-	}
-	if req.Temperature != nil {
-		payload["temperature"] = *req.Temperature
-	}
-	if req.MaxTokens != nil {
-		payload["max_tokens"] = *req.MaxTokens
-	}
+	payload := buildChatPayload(req, false)
 
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -99,6 +91,185 @@ func (p *APIYIProvider) GenerateChat(ctx context.Context, req ChatRequest) (*Cha
 		FinishReason: strings.TrimSpace(choice.FinishReason),
 		RawResponse:  body,
 	}, nil
+}
+
+func (p *APIYIProvider) GenerateChatStream(ctx context.Context, req ChatRequest, onChunk func(ChatStreamChunk) error) (*ChatResult, error) {
+	payload := buildChatPayload(req, true)
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := p.newRetryableRequest(ctx, http.MethodPost, p.resolveEndpointURL(req.BaseURL, "/v1/chat/completions"), data, func(r *http.Request) {
+		r.Header.Set("Authorization", "Bearer "+p.resolveAPIKey(req.APIKey))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Accept", "text/event-stream")
+		r.Header.Set("Cache-Control", "no-cache")
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.doRequest(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, readErr
+		}
+		if statusErr := ensureHTTPStatus(resp, body); statusErr != nil {
+			return nil, statusErr
+		}
+		return nil, fmt.Errorf("provider request failed with status %d", resp.StatusCode)
+	}
+
+	result := &ChatResult{Role: "assistant"}
+	var fullText strings.Builder
+	var rawResponse bytes.Buffer
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
+
+	dataLines := make([]string, 0, 4)
+	dispatchEvent := func() error {
+		if len(dataLines) == 0 {
+			return nil
+		}
+		payloadText := strings.Join(dataLines, "\n")
+		dataLines = dataLines[:0]
+		rawResponse.WriteString("data: ")
+		rawResponse.WriteString(payloadText)
+		rawResponse.WriteString("\n\n")
+
+		if strings.TrimSpace(payloadText) == "[DONE]" {
+			return nil
+		}
+
+		var response struct {
+			Choices []struct {
+				Delta struct {
+					Role             string `json:"role"`
+					Content          any    `json:"content"`
+					ReasoningContent any    `json:"reasoning_content"`
+				} `json:"delta"`
+				Message struct {
+					Role             string `json:"role"`
+					Content          any    `json:"content"`
+					ReasoningContent any    `json:"reasoning_content"`
+				} `json:"message"`
+				FinishReason string `json:"finish_reason"`
+			} `json:"choices"`
+			Usage map[string]any `json:"usage"`
+		}
+		if err := json.Unmarshal([]byte(payloadText), &response); err != nil {
+			return err
+		}
+		if response.Usage != nil {
+			result.Usage = response.Usage
+		}
+		if len(response.Choices) == 0 {
+			return nil
+		}
+
+		choice := response.Choices[0]
+		if role := strings.TrimSpace(firstNonEmptyString(choice.Delta.Role, choice.Message.Role)); role != "" {
+			result.Role = role
+		}
+		if finishReason := strings.TrimSpace(choice.FinishReason); finishReason != "" {
+			result.FinishReason = finishReason
+		}
+
+		deltaText := extractDeltaText(choice.Delta.Content)
+		if deltaText == "" {
+			deltaText = extractDeltaText(choice.Message.Content)
+		}
+		reasoningText := extractText(choice.Delta.ReasoningContent)
+		if reasoningText == "" {
+			reasoningText = extractText(choice.Message.ReasoningContent)
+		}
+		if deltaText == "" {
+			if reasoningText != "" && onChunk != nil {
+				return onChunk(ChatStreamChunk{
+					Text:         fullText.String(),
+					Role:         result.Role,
+					Usage:        result.Usage,
+					FinishReason: result.FinishReason,
+					Progressed:   true,
+				})
+			}
+			return nil
+		}
+		fullText.WriteString(deltaText)
+		if onChunk != nil {
+			return onChunk(ChatStreamChunk{
+				Delta:        deltaText,
+				Text:         fullText.String(),
+				Role:         result.Role,
+				Usage:        result.Usage,
+				FinishReason: result.FinishReason,
+			})
+		}
+		return nil
+	}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case strings.TrimSpace(line) == "":
+			if err := dispatchEvent(); err != nil {
+				return nil, err
+			}
+		case strings.HasPrefix(line, "data:"):
+			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if err := dispatchEvent(); err != nil {
+		return nil, err
+	}
+
+	result.Text = fullText.String()
+	result.RawResponse = rawResponse.Bytes()
+	if onChunk != nil {
+		if err := onChunk(ChatStreamChunk{
+			Text:         result.Text,
+			Role:         result.Role,
+			Usage:        result.Usage,
+			FinishReason: result.FinishReason,
+			Done:         true,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+func buildChatPayload(req ChatRequest, stream bool) map[string]any {
+	payload := map[string]any{
+		"model":    req.Model,
+		"messages": req.Messages,
+	}
+	if stream {
+		payload["stream"] = true
+	}
+
+	if req.Temperature != nil && shouldIncludeChatTemperature(req.Model, *req.Temperature) {
+		payload["temperature"] = *req.Temperature
+	}
+	if req.MaxTokens != nil && *req.MaxTokens > 0 {
+		if usesMaxCompletionTokens(req.Model) {
+			payload["max_completion_tokens"] = *req.MaxTokens
+		} else {
+			payload["max_tokens"] = *req.MaxTokens
+		}
+	}
+	return payload
 }
 
 func (p *APIYIProvider) GenerateImage(ctx context.Context, req ImageRequest) (*ImageResult, error) {
@@ -723,6 +894,18 @@ func isVeoVideoModel(model string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "veo-")
 }
 
+func usesMaxCompletionTokens(model string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	return strings.HasPrefix(normalized, "gpt-5")
+}
+
+func shouldIncludeChatTemperature(model string, value float64) bool {
+	if usesMaxCompletionTokens(model) {
+		return value == 1
+	}
+	return true
+}
+
 func sanitizeEndpointPath(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" || value == "/" {
@@ -852,6 +1035,28 @@ func extractText(content any) string {
 		return strings.Join(parts, "\n")
 	default:
 		return strings.TrimSpace(stringValue(content))
+	}
+}
+
+// extractDeltaText extracts text from a streaming delta without trimming whitespace.
+// Unlike extractText, this preserves leading/trailing spaces and newlines
+// which are essential for correct token concatenation in streamed responses.
+func extractDeltaText(content any) string {
+	switch typed := content.(type) {
+	case string:
+		return typed
+	case []any:
+		parts := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if obj, ok := item.(map[string]any); ok {
+				if text := stringValue(obj["text"]); text != "" {
+					parts = append(parts, text)
+				}
+			}
+		}
+		return strings.Join(parts, "\n")
+	default:
+		return stringValue(content)
 	}
 }
 

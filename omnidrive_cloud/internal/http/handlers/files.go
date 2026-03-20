@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 
 	appstate "omnidrive_cloud/internal/app"
@@ -21,6 +22,10 @@ func (h *FileHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if storageKey == "" {
 		render.Error(w, http.StatusBadRequest, "file key is required")
 		return
+	}
+	decodedStorageKey, err := url.PathUnescape(storageKey)
+	if err == nil && strings.TrimSpace(decodedStorageKey) != "" {
+		storageKey = decodedStorageKey
 	}
 
 	data, contentType, err := h.app.Storage.ReadBytes(r.Context(), storageKey)

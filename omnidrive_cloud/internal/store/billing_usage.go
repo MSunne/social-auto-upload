@@ -28,23 +28,25 @@ type ApplyUsageBillingInput struct {
 }
 
 type UsageBillingDetail struct {
-	MeterCode     string `json:"meterCode"`
-	Quantity      int64  `json:"quantity"`
-	Units         int64  `json:"units"`
-	DebitCredits  int64  `json:"debitCredits"`
-	QuotaUsed     int64  `json:"quotaUsed"`
-	ChargeMode    string `json:"chargeMode"`
-	BillStatus    string `json:"billStatus"`
-	BillMessage   string `json:"billMessage,omitempty"`
-	PricingRuleID string `json:"pricingRuleId,omitempty"`
+	MeterCode                  string `json:"meterCode"`
+	Quantity                   int64  `json:"quantity"`
+	Units                      int64  `json:"units"`
+	DebitCredits               int64  `json:"debitCredits"`
+	QuotaUsed                  int64  `json:"quotaUsed"`
+	DistributionReleaseCredits int64  `json:"distributionReleaseCredits"`
+	ChargeMode                 string `json:"chargeMode"`
+	BillStatus                 string `json:"billStatus"`
+	BillMessage                string `json:"billMessage,omitempty"`
+	PricingRuleID              string `json:"pricingRuleId,omitempty"`
 }
 
 type ApplyUsageBillingResult struct {
-	TotalCredits  int64                `json:"totalCredits"`
-	BillStatus    string               `json:"billStatus"`
-	BillMessage   string               `json:"billMessage,omitempty"`
-	AlreadyBilled bool                 `json:"alreadyBilled"`
-	Details       []UsageBillingDetail `json:"details"`
+	TotalCredits               int64                `json:"totalCredits"`
+	DistributionReleaseCredits int64                `json:"distributionReleaseCredits"`
+	BillStatus                 string               `json:"billStatus"`
+	BillMessage                string               `json:"billMessage,omitempty"`
+	AlreadyBilled              bool                 `json:"alreadyBilled"`
+	Details                    []UsageBillingDetail `json:"details"`
 }
 
 type pricingRuleRecord struct {
@@ -171,16 +173,18 @@ func (s *Store) ApplyUsageBilling(ctx context.Context, input ApplyUsageBillingIn
 		}
 		walletBalance -= plannedWallet.debitCredits
 		result.TotalCredits += plannedWallet.debitCredits
+		result.DistributionReleaseCredits += detail.DistributionReleaseCredits
 		if plannedWallet.debitCredits > 0 {
 			plannedWallet.payload = mustJSONMap(map[string]any{
-				"sourceType":     input.SourceType,
-				"sourceId":       input.SourceID,
-				"meterCode":      metric.MeterCode,
-				"quantity":       detail.Quantity,
-				"units":          detail.Units,
-				"debitedCredits": detail.DebitCredits,
-				"jobType":        input.JobType,
-				"modelName":      input.ModelName,
+				"sourceType":                 input.SourceType,
+				"sourceId":                   input.SourceID,
+				"meterCode":                  metric.MeterCode,
+				"quantity":                   detail.Quantity,
+				"units":                      detail.Units,
+				"debitedCredits":             detail.DebitCredits,
+				"distributionReleaseCredits": detail.DistributionReleaseCredits,
+				"jobType":                    input.JobType,
+				"modelName":                  input.ModelName,
 			})
 			walletPlans = append(walletPlans, plannedWallet)
 		}
@@ -232,7 +236,7 @@ func (s *Store) ApplyUsageBilling(ctx context.Context, input ApplyUsageBillingIn
 		}
 	}
 
-	if err := s.releaseDistributionCommissionForUsageTx(ctx, tx, input.UserID, input.SourceType, input.SourceID, result.TotalCredits); err != nil {
+	if err := s.releaseDistributionCommissionForUsageTx(ctx, tx, input.UserID, input.SourceType, input.SourceID, result.DistributionReleaseCredits); err != nil {
 		return nil, err
 	}
 
@@ -251,6 +255,7 @@ func (s *Store) ApplyUsageBilling(ctx context.Context, input ApplyUsageBillingIn
 func usageBillingSummaryBySourceTx(ctx context.Context, tx pgx.Tx, sourceType string, sourceID string) (*ApplyUsageBillingResult, error) {
 	var billedCount int64
 	var totalCredits int64
+	var distributionReleaseCredits int64
 	err := tx.QueryRow(ctx, `
 		SELECT
 			COUNT(*) FILTER (WHERE bill_status = 'billed')::BIGINT,
@@ -260,11 +265,20 @@ func usageBillingSummaryBySourceTx(ctx context.Context, tx pgx.Tx, sourceType st
 						THEN NULLIF(payload ->> 'debitedCredits', '')::BIGINT
 					ELSE 0
 				END
+			), 0)::BIGINT,
+			COALESCE(SUM(
+				CASE
+					WHEN bill_status = 'billed' AND payload IS NOT NULL AND payload ? 'distributionReleaseCredits'
+						THEN NULLIF(payload ->> 'distributionReleaseCredits', '')::BIGINT
+					WHEN bill_status = 'billed' AND payload IS NOT NULL AND payload ? 'debitedCredits'
+						THEN NULLIF(payload ->> 'debitedCredits', '')::BIGINT
+					ELSE 0
+				END
 			), 0)::BIGINT
 		FROM billing_usage_events
 		WHERE source_type = $1
 		  AND source_id = $2
-	`, sourceType, sourceID).Scan(&billedCount, &totalCredits)
+	`, sourceType, sourceID).Scan(&billedCount, &totalCredits, &distributionReleaseCredits)
 	if err != nil {
 		return nil, err
 	}
@@ -272,11 +286,12 @@ func usageBillingSummaryBySourceTx(ctx context.Context, tx pgx.Tx, sourceType st
 		return nil, nil
 	}
 	return &ApplyUsageBillingResult{
-		TotalCredits:  totalCredits,
-		BillStatus:    "billed",
-		BillMessage:   "usage already billed",
-		AlreadyBilled: true,
-		Details:       []UsageBillingDetail{},
+		TotalCredits:               totalCredits,
+		DistributionReleaseCredits: distributionReleaseCredits,
+		BillStatus:                 "billed",
+		BillMessage:                "usage already billed",
+		AlreadyBilled:              true,
+		Details:                    []UsageBillingDetail{},
 	}, nil
 }
 
@@ -403,6 +418,7 @@ func planUsageCharge(metric ApplyUsageMetricInput, rule pricingRuleRecord, walle
 	switch strings.TrimSpace(rule.ChargeMode) {
 	case "wallet_only":
 		detail.DebitCredits = detail.Units * rule.WalletDebitAmount
+		detail.DistributionReleaseCredits = detail.DebitCredits
 		if walletBalance < detail.DebitCredits {
 			detail.BillStatus = "failed"
 			detail.BillMessage = "wallet credits insufficient"
@@ -450,6 +466,7 @@ func planUsageCharge(metric ApplyUsageMetricInput, rule pricingRuleRecord, walle
 			}
 			walletPlan.debitCredits = detail.DebitCredits
 		}
+		detail.DistributionReleaseCredits = detail.DebitCredits + (detail.QuotaUsed * rule.WalletDebitAmount)
 	default:
 		detail.BillStatus = "failed"
 		detail.BillMessage = "unsupported charge mode"
@@ -530,12 +547,13 @@ func applyWalletLedgerPlanTx(ctx context.Context, tx pgx.Tx, userID string, curr
 func insertBilledUsageEventsTx(ctx context.Context, tx pgx.Tx, input ApplyUsageBillingInput, details []UsageBillingDetail, refs usageLedgerRefs) error {
 	for _, detail := range details {
 		payload := map[string]any{
-			"debitedCredits": detail.DebitCredits,
-			"quantity":       detail.Quantity,
-			"units":          detail.Units,
-			"quotaUsed":      detail.QuotaUsed,
-			"chargeMode":     detail.ChargeMode,
-			"pricingRuleId":  detail.PricingRuleID,
+			"debitedCredits":             detail.DebitCredits,
+			"distributionReleaseCredits": detail.DistributionReleaseCredits,
+			"quantity":                   detail.Quantity,
+			"units":                      detail.Units,
+			"quotaUsed":                  detail.QuotaUsed,
+			"chargeMode":                 detail.ChargeMode,
+			"pricingRuleId":              detail.PricingRuleID,
 		}
 		if metricMetadata := metricMetadataByMeter(input.Metrics, detail.MeterCode); metricMetadata != nil {
 			payload["metricMetadata"] = metricMetadata
@@ -569,12 +587,13 @@ func insertBilledUsageEventsTx(ctx context.Context, tx pgx.Tx, input ApplyUsageB
 func insertFailedUsageEventsTx(ctx context.Context, tx pgx.Tx, input ApplyUsageBillingInput, details []UsageBillingDetail) error {
 	for _, detail := range details {
 		payload := map[string]any{
-			"debitedCredits": detail.DebitCredits,
-			"quantity":       detail.Quantity,
-			"units":          detail.Units,
-			"quotaUsed":      detail.QuotaUsed,
-			"chargeMode":     detail.ChargeMode,
-			"pricingRuleId":  detail.PricingRuleID,
+			"debitedCredits":             detail.DebitCredits,
+			"distributionReleaseCredits": detail.DistributionReleaseCredits,
+			"quantity":                   detail.Quantity,
+			"units":                      detail.Units,
+			"quotaUsed":                  detail.QuotaUsed,
+			"chargeMode":                 detail.ChargeMode,
+			"pricingRuleId":              detail.PricingRuleID,
 		}
 		if metricMetadata := metricMetadataByMeter(input.Metrics, detail.MeterCode); metricMetadata != nil {
 			payload["metricMetadata"] = metricMetadata

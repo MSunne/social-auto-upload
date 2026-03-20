@@ -7,6 +7,7 @@ import (
 
 type Provider interface {
 	GenerateChat(ctx context.Context, req ChatRequest) (*ChatResult, error)
+	GenerateChatStream(ctx context.Context, req ChatRequest, onChunk func(ChatStreamChunk) error) (*ChatResult, error)
 	GenerateImage(ctx context.Context, req ImageRequest) (*ImageResult, error)
 	SubmitVideo(ctx context.Context, req VideoRequest) (*VideoSubmission, error)
 	GetVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string) (*VideoStatus, error)
@@ -33,6 +34,16 @@ type ChatResult struct {
 	Usage        map[string]any `json:"usage,omitempty"`
 	FinishReason string         `json:"finishReason,omitempty"`
 	RawResponse  []byte         `json:"rawResponse,omitempty"`
+}
+
+type ChatStreamChunk struct {
+	Delta        string         `json:"delta,omitempty"`
+	Text         string         `json:"text,omitempty"`
+	Role         string         `json:"role,omitempty"`
+	Usage        map[string]any `json:"usage,omitempty"`
+	FinishReason string         `json:"finishReason,omitempty"`
+	Progressed   bool           `json:"progressed,omitempty"`
+	Done         bool           `json:"done,omitempty"`
 }
 
 type MediaInput struct {

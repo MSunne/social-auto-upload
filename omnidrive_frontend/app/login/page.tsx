@@ -16,6 +16,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [partnerCode, setPartnerCode] = useState("");
   const [showPwd, setShowPwd] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -27,7 +28,7 @@ export default function LoginPage() {
 
     try {
       if (mode === "register") {
-        await register(email, name, password);
+        await register(email, name, password, partnerCode);
       }
       const resp = await login(email, password);
       // Backend may return user in the login response, or we fetch it separately
@@ -80,19 +81,38 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {mode === "register" && (
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                用户名
-              </label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="输入用户名"
-                className="w-full rounded-xl border border-border bg-surface px-4 py-3 text-sm text-text-primary placeholder-text-muted outline-none transition-all focus:border-accent/50 focus:ring-2 focus:ring-accent/20"
-                required
-              />
-            </div>
+            <>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-text-secondary">
+                  用户名
+                </label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="输入用户名"
+                  className="w-full rounded-xl border border-border bg-surface px-4 py-3 text-sm text-text-primary placeholder-text-muted outline-none transition-all focus:border-accent/50 focus:ring-2 focus:ring-accent/20"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-text-secondary">
+                  专属客服码
+                  <span className="ml-1 text-text-muted">（选填）</span>
+                </label>
+                <input
+                  type="text"
+                  value={partnerCode}
+                  onChange={(e) => setPartnerCode(e.target.value)}
+                  placeholder="填写合作伙伴提供的客服码"
+                  className="w-full rounded-xl border border-border bg-surface px-4 py-3 text-sm uppercase text-text-primary placeholder-text-muted outline-none transition-all focus:border-accent/50 focus:ring-2 focus:ring-accent/20"
+                />
+                <p className="mt-1.5 text-xs text-text-muted">
+                  如果你是通过合作伙伴介绍注册，可以填写专属客服码，后续消费会自动绑定到对应合作账本。
+                </p>
+              </div>
+            </>
           )}
 
           <div>
@@ -178,6 +198,7 @@ export default function LoginPage() {
             onClick={() => {
               setMode(mode === "login" ? "register" : "login");
               setError("");
+              setPartnerCode("");
             }}
             className="ml-1 font-medium text-accent hover:text-accent-strong transition-colors"
           >

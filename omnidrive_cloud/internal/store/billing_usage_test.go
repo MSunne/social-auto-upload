@@ -19,7 +19,7 @@ func TestPlanUsageChargeWalletOnly(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected wallet-only plan to succeed: %#v", detail)
 	}
-	if detail.Units != 2 || detail.DebitCredits != 4 || detail.BillStatus != "billed" {
+	if detail.Units != 2 || detail.DebitCredits != 4 || detail.DistributionReleaseCredits != 4 || detail.BillStatus != "billed" {
 		t.Fatalf("unexpected billing detail: %#v", detail)
 	}
 	if walletPlan.debitCredits != 4 {
@@ -55,7 +55,7 @@ func TestPlanUsageChargeQuotaFallbackUsesQuotaBeforeWallet(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected quota fallback to succeed: %#v", detail)
 	}
-	if detail.Units != 2 || detail.QuotaUsed != 1 || detail.DebitCredits != 80 {
+	if detail.Units != 2 || detail.QuotaUsed != 1 || detail.DebitCredits != 80 || detail.DistributionReleaseCredits != 160 {
 		t.Fatalf("unexpected billing detail: %#v", detail)
 	}
 	if len(quotaPlans) != 1 || quotaPlans[0].amountDelta != -1 {

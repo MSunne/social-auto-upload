@@ -17,12 +17,12 @@ const STATUS_OPTIONS = [
 ];
 
 const STATUS_CLASS: Record<string, string> = {
-  queued: "border-yellow-500/25 bg-yellow-500/10 text-yellow-300",
-  running: "border-blue-500/25 bg-blue-500/10 text-blue-300",
-  completed: "border-emerald-500/25 bg-emerald-500/10 text-emerald-300",
-  failed: "border-red-500/25 bg-red-500/10 text-red-300",
-  cancelled: "border-white/10 bg-white/5 text-[var(--color-text-secondary)]",
-  pending_delivery: "border-purple-500/25 bg-purple-500/10 text-purple-300",
+  queued: "border-yellow-600/25 bg-yellow-500/10 text-yellow-700",
+  running: "border-blue-600/25 bg-blue-500/10 text-blue-700",
+  completed: "border-emerald-600/25 bg-emerald-500/10 text-emerald-700",
+  failed: "border-red-600/25 bg-red-500/10 text-red-700",
+  cancelled: "border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]",
+  pending_delivery: "border-purple-600/25 bg-purple-500/10 text-purple-700",
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -53,20 +53,20 @@ function formatCompactTime(value?: string | null) {
 function getCategoryColor(category?: string) {
   switch (category) {
     case "image":
-      return "text-blue-300";
+      return "text-blue-600";
     case "video":
-      return "text-purple-300";
+      return "text-purple-600";
     case "chat":
-      return "text-emerald-300";
+      return "text-emerald-600";
     case "music":
-      return "text-amber-300";
+      return "text-amber-600";
     default:
       return "text-[var(--color-text-secondary)]";
   }
 }
 
 function StatusPill({ status }: { status: string }) {
-  const tone = STATUS_CLASS[status] || "border-white/10 bg-white/5 text-[var(--color-text-secondary)]";
+  const tone = STATUS_CLASS[status] || "border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]";
   return (
     <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${tone}`}>
       {STATUS_LABEL[status] || status || "未知"}
@@ -128,7 +128,7 @@ function JobRow({
           <p className="text-sm text-[var(--color-text-primary)]">{formatCompactTime(row.job.createdAt)}</p>
           <p className="text-xs text-[var(--color-text-secondary)]">更新 {formatCompactTime(row.job.updatedAt)}</p>
           {row.job.message ? (
-            <p className="line-clamp-2 max-w-[240px] text-xs leading-5 text-red-300" title={row.job.message}>
+            <p className="line-clamp-2 max-w-[240px] text-xs leading-5 text-red-600" title={row.job.message}>
               {row.job.message}
             </p>
           ) : null}
@@ -261,7 +261,7 @@ export function AIJobsView() {
               <button
                 type="button"
                 onClick={() => handleBulkAction("retry", "重试")}
-                className="inline-flex items-center gap-1 rounded-lg border border-blue-500/25 px-3 py-1.5 text-xs text-blue-300 transition-colors hover:bg-blue-500/10"
+                className="inline-flex items-center gap-1 rounded-lg border border-blue-500/25 px-3 py-1.5 text-xs text-blue-600 transition-colors hover:bg-blue-500/10"
               >
                 <RotateCcw className="h-3 w-3" />
                 重试
@@ -269,7 +269,7 @@ export function AIJobsView() {
               <button
                 type="button"
                 onClick={() => handleBulkAction("cancel", "取消")}
-                className="inline-flex items-center gap-1 rounded-lg border border-red-500/25 px-3 py-1.5 text-xs text-red-300 transition-colors hover:bg-red-500/10"
+                className="inline-flex items-center gap-1 rounded-lg border border-red-500/25 px-3 py-1.5 text-xs text-red-600 transition-colors hover:bg-red-500/10"
               >
                 <XCircle className="h-3 w-3" />
                 取消
@@ -309,7 +309,7 @@ export function AIJobsView() {
                 </tr>
               ) : error ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-sm text-red-300">
+                  <td colSpan={6} className="px-6 py-12 text-center text-sm text-red-600">
                     读取失败，请刷新后重试。
                   </td>
                 </tr>

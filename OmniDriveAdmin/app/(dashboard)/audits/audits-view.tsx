@@ -16,15 +16,15 @@ const RESOURCE_TYPES = [
 ];
 
 const STATUS_META: Record<string, { label: string; className: string }> = {
-  pending: { label: "待处理", className: "text-amber-300" },
-  queued: { label: "排队中", className: "text-amber-300" },
-  running: { label: "执行中", className: "text-sky-300" },
-  cancel_requested: { label: "取消中", className: "text-amber-300" },
-  cancelled: { label: "已取消", className: "text-slate-300" },
-  needs_verify: { label: "待验证", className: "text-orange-300" },
-  success: { label: "成功", className: "text-green-400 font-medium" },
-  completed: { label: "已完成", className: "text-green-400 font-medium" },
-  failed: { label: "失败", className: "text-red-400 font-medium" },
+  pending: { label: "待处理", className: "text-amber-600" },
+  queued: { label: "排队中", className: "text-amber-600" },
+  running: { label: "执行中", className: "text-sky-600" },
+  cancel_requested: { label: "取消中", className: "text-amber-600" },
+  cancelled: { label: "已取消", className: "text-slate-500" },
+  needs_verify: { label: "待验证", className: "text-orange-600" },
+  success: { label: "成功", className: "text-green-600 font-medium" },
+  completed: { label: "已完成", className: "text-green-600 font-medium" },
+  failed: { label: "失败", className: "text-red-600 font-medium" },
 };
 
 const getStatusBadge = (status: string, prefix?: string) => {
@@ -179,9 +179,9 @@ export function AuditsView() {
 
       {/* Security Notice */}
       <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-500/5 border border-amber-500/20">
-        <ShieldAlert className="h-5 w-5 text-amber-400 flex-shrink-0 mt-0.5" />
+        <ShieldAlert className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
         <div>
-          <p className="text-sm font-medium text-amber-400">安全审计说明</p>
+          <p className="text-sm font-medium text-amber-700">安全审计说明</p>
           <p className="text-xs text-[var(--color-text-secondary)] mt-1">审计日志为只读记录，包含所有管理员操作和系统自动行为。每条记录包含操作时间、执行方、目标资源和操作结果，不可修改或删除。</p>
         </div>
       </div>

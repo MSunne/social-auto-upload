@@ -28,15 +28,15 @@ interface AIJobDetailDrawerProps {
 }
 
 const STATUS_CLASS: Record<string, string> = {
-  queued: "border-yellow-500/25 bg-yellow-500/10 text-yellow-300",
-  running: "border-blue-500/25 bg-blue-500/10 text-blue-300",
-  completed: "border-emerald-500/25 bg-emerald-500/10 text-emerald-300",
-  success: "border-emerald-500/25 bg-emerald-500/10 text-emerald-300",
-  failed: "border-red-500/25 bg-red-500/10 text-red-300",
-  cancelled: "border-white/10 bg-white/5 text-[var(--color-text-secondary)]",
-  scheduled: "border-cyan-500/25 bg-cyan-500/10 text-cyan-300",
-  created: "border-white/10 bg-white/5 text-[var(--color-text-primary)]",
-  stored: "border-purple-500/25 bg-purple-500/10 text-purple-300",
+  queued: "border-yellow-600/25 bg-yellow-500/10 text-yellow-700",
+  running: "border-blue-600/25 bg-blue-500/10 text-blue-700",
+  completed: "border-emerald-600/25 bg-emerald-500/10 text-emerald-700",
+  success: "border-emerald-600/25 bg-emerald-500/10 text-emerald-700",
+  failed: "border-red-600/25 bg-red-500/10 text-red-700",
+  cancelled: "border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]",
+  scheduled: "border-cyan-600/25 bg-cyan-500/10 text-cyan-700",
+  created: "border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)]",
+  stored: "border-purple-600/25 bg-purple-500/10 text-purple-700",
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -110,13 +110,13 @@ function pickArtifactLabel(artifact: AIJobArtifact) {
 function pickLogIcon(stage: string) {
   switch (stage) {
     case "generation":
-      return <Sparkles className="h-4 w-4 text-blue-300" />;
+      return <Sparkles className="h-4 w-4 text-blue-600" />;
     case "artifact":
-      return <FileJson className="h-4 w-4 text-purple-300" />;
+      return <FileJson className="h-4 w-4 text-purple-600" />;
     case "billing":
-      return <Receipt className="h-4 w-4 text-amber-300" />;
+      return <Receipt className="h-4 w-4 text-amber-600" />;
     case "publish":
-      return <Send className="h-4 w-4 text-cyan-300" />;
+      return <Send className="h-4 w-4 text-cyan-600" />;
     default:
       return <Clock3 className="h-4 w-4 text-[var(--color-text-secondary)]" />;
   }
@@ -264,7 +264,7 @@ export function AIJobDetailDrawer({ jobId, onClose }: AIJobDetailDrawerProps) {
                 <p className="mt-4 text-sm">正在加载执行详情...</p>
               </div>
             ) : error ? (
-              <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-300">
+              <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-700">
                 详情读取失败，请刷新后重试。
               </div>
             ) : data ? (
@@ -300,7 +300,7 @@ function DrawerBody({
   return (
     <div className="space-y-5">
       {mainMessage ? (
-        <div className="flex items-start gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+        <div className="flex items-start gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-700">
           <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
           <div>
             <p className="font-medium">最近一次异常 / 返回信息</p>

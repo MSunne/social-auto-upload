@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -18,10 +19,11 @@ type AuthHandler struct {
 }
 
 type registerRequest struct {
-	Email    string `json:"email"`
-	Phone    string `json:"phone"`
-	Name     string `json:"name"`
-	Password string `json:"password"`
+	Email       string `json:"email"`
+	Phone       string `json:"phone"`
+	Name        string `json:"name"`
+	Password    string `json:"password"`
+	PartnerCode string `json:"partnerCode"`
 }
 
 type loginRequest struct {
@@ -156,15 +158,23 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.app.Store.CreateUser(r.Context(), store.CreateUserInput{
-		ID:           uuid.NewString(),
-		Email:        email,
-		Phone:        phone,
-		Name:         payload.Name,
-		PasswordHash: passwordHash,
+	user, err := h.app.Store.CreateUserRegistration(r.Context(), store.CreateUserRegistrationInput{
+		CreateUserInput: store.CreateUserInput{
+			ID:           uuid.NewString(),
+			Email:        email,
+			Phone:        phone,
+			Name:         payload.Name,
+			PasswordHash: passwordHash,
+		},
+		PartnerCode: payload.PartnerCode,
 	})
 	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to create user")
+		switch {
+		case errors.Is(err, store.ErrPartnerCodeInvalid):
+			render.Error(w, http.StatusBadRequest, "Invalid partner code")
+		default:
+			render.Error(w, http.StatusInternalServerError, "Failed to create user")
+		}
 		return
 	}
 	h.app.Logger.Info("user registered", "user_id", user.ID, "email", user.Email, "phone", user.Phone)

@@ -3,6 +3,8 @@ package store
 import (
 	"testing"
 	"time"
+
+	"omnidrive_cloud/internal/domain"
 )
 
 func TestAdvanceCommissionReleaseStatePartialAndFullRelease(t *testing.T) {
@@ -64,5 +66,22 @@ func TestCalculateCommissionAmountCentsRoundsHalfUp(t *testing.T) {
 	amount := calculateCommissionAmountCents(999, 1500)
 	if amount != 150 {
 		t.Fatalf("expected rounded commission amount 150, got %d", amount)
+	}
+}
+
+func TestCalculateDistributionGrantCreditsFromEntitlements(t *testing.T) {
+	entitlements := []domain.BillingPackageEntitlement{
+		{MeterCode: "wallet_credit", GrantAmount: 1200},
+		{MeterCode: "image_generation_quota", GrantAmount: 3},
+		{MeterCode: "video_generation_quota", GrantAmount: 1},
+	}
+
+	total := calculateDistributionGrantCreditsFromEntitlements(entitlements, map[string]int64{
+		"image_generation_quota": 80,
+		"video_generation_quota": 400,
+	})
+
+	if total != 1840 {
+		t.Fatalf("expected total grant credits 1840, got %d", total)
 	}
 }

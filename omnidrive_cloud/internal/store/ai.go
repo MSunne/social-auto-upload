@@ -20,6 +20,8 @@ const aiJobSelectColumns = `
 	delivery_status, delivery_message, local_publish_task_id, run_at, created_at, updated_at, delivered_at, finished_at
 `
 
+const executableAIJobSourcesSQL = "'omnidrive_cloud', 'omnibull_local', 'openclaw_skill', 'openclaw_main_chat'"
+
 type aiModelPricingPayload struct {
 	ChatInputRawRate        *float64 `json:"chatInputRawRate,omitempty"`
 	ChatOutputRawRate       *float64 `json:"chatOutputRawRate,omitempty"`
@@ -744,7 +746,7 @@ func (s *Store) ListExecutableAIJobs(ctx context.Context, limit int) ([]domain.A
 		SELECT ` + aiJobSelectColumns + `
 		FROM ai_jobs
 		WHERE status = 'queued'
-		  AND source IN ('omnidrive_cloud', 'omnibull_local')
+		  AND source IN (` + executableAIJobSourcesSQL + `)
 		  AND (run_at IS NULL OR run_at <= NOW())
 		  AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
 		ORDER BY created_at ASC
@@ -878,7 +880,7 @@ func (s *Store) RecoverExpiredExecutableAIJobLeases(ctx context.Context) ([]doma
 		    lease_expires_at = NULL,
 		    finished_at = NULL,
 		    updated_at = NOW()
-		WHERE source IN ('omnidrive_cloud', 'omnibull_local')
+		WHERE source IN (`+executableAIJobSourcesSQL+`)
 		  AND status = 'running'
 		  AND lease_token IS NOT NULL
 		  AND lease_expires_at IS NOT NULL
@@ -935,7 +937,7 @@ func (s *Store) ClaimCloudAIJobLease(ctx context.Context, jobID string, leaseTok
 		    lease_expires_at = $3,
 		    updated_at = NOW()
 		WHERE id = $1
-		  AND source IN ('omnidrive_cloud', 'omnibull_local')
+		  AND source IN (`+executableAIJobSourcesSQL+`)
 		  AND status = 'queued'
 		  AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
 		RETURNING `+aiJobSelectColumns+`
@@ -1062,7 +1064,7 @@ func (s *Store) SyncCloudAIJobExecution(ctx context.Context, jobID string, lease
 		    END,
 		    updated_at = NOW()
 		WHERE id = $1
-		  AND source IN ('omnidrive_cloud', 'omnibull_local')
+		  AND source IN (`+executableAIJobSourcesSQL+`)
 		  AND lease_owner_device_id IS NULL
 		  AND lease_token = $2
 		  AND status = 'running'

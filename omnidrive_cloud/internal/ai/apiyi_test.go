@@ -360,6 +360,129 @@ func TestGenerateImageUsesGeminiImageConfigAndInlineData(t *testing.T) {
 	}
 }
 
+func TestGenerateChatStreamAggregatesSSEChunks(t *testing.T) {
+	var capturedPath string
+	var capturedAuth string
+	var capturedPayload map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		capturedAuth = r.Header.Get("Authorization")
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll returned error: %v", err)
+		}
+		if err := json.Unmarshal(body, &capturedPayload); err != nil {
+			t.Fatalf("json.Unmarshal returned error: %v", err)
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"你好\"},\"finish_reason\":\"\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"，世界\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":8}}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	provider, err := NewAPIYIProvider(config.Config{
+		APIYIBaseURL: server.URL,
+		APIYIApiKey:  "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewAPIYIProvider returned error: %v", err)
+	}
+
+	chunks := make([]ChatStreamChunk, 0, 4)
+	result, err := provider.GenerateChatStream(context.Background(), ChatRequest{
+		Model:   "gpt-5.4",
+		BaseURL: server.URL,
+		APIKey:  "sk-chat",
+		Messages: []ChatMessage{
+			{Role: "user", Content: "say hello"},
+		},
+	}, func(chunk ChatStreamChunk) error {
+		chunks = append(chunks, chunk)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("GenerateChatStream returned error: %v", err)
+	}
+
+	if capturedPath != "/v1/chat/completions" {
+		t.Fatalf("unexpected request path %q", capturedPath)
+	}
+	if capturedAuth != "Bearer sk-chat" {
+		t.Fatalf("unexpected authorization header %q", capturedAuth)
+	}
+	if capturedPayload["stream"] != true {
+		t.Fatalf("expected stream=true payload, got %#v", capturedPayload["stream"])
+	}
+	if result.Text != "你好，世界" {
+		t.Fatalf("unexpected aggregated text %q", result.Text)
+	}
+	if result.Role != "assistant" {
+		t.Fatalf("unexpected role %q", result.Role)
+	}
+	if result.FinishReason != "stop" {
+		t.Fatalf("unexpected finish reason %q", result.FinishReason)
+	}
+	if len(chunks) != 3 {
+		t.Fatalf("expected 3 stream callbacks, got %d", len(chunks))
+	}
+	if chunks[0].Delta != "你好" || chunks[1].Delta != "，世界" {
+		t.Fatalf("unexpected delta sequence %#v", chunks)
+	}
+	if !chunks[2].Done {
+		t.Fatalf("expected last callback to mark done, got %#v", chunks[2])
+	}
+}
+
+func TestBuildChatPayloadUsesGPT5SpecificFields(t *testing.T) {
+	temperature := 0.5
+	maxTokens := 1200
+
+	payload := buildChatPayload(ChatRequest{
+		Model:       "gpt-5.4",
+		Messages:    []ChatMessage{{Role: "user", Content: "hello"}},
+		Temperature: &temperature,
+		MaxTokens:   &maxTokens,
+	}, true)
+
+	if payload["stream"] != true {
+		t.Fatalf("expected stream flag to be set")
+	}
+	if _, exists := payload["temperature"]; exists {
+		t.Fatalf("gpt-5 payload should omit temperature when it is not 1: %#v", payload)
+	}
+	if _, exists := payload["max_tokens"]; exists {
+		t.Fatalf("gpt-5 payload should not use max_tokens: %#v", payload)
+	}
+	if payload["max_completion_tokens"] != 1200 {
+		t.Fatalf("unexpected max_completion_tokens %#v", payload["max_completion_tokens"])
+	}
+}
+
+func TestBuildChatPayloadUsesStandardFieldsForNonGPT5(t *testing.T) {
+	temperature := 0.4
+	maxTokens := 600
+
+	payload := buildChatPayload(ChatRequest{
+		Model:       "gemini-3.1-pro-preview",
+		Messages:    []ChatMessage{{Role: "user", Content: "hello"}},
+		Temperature: &temperature,
+		MaxTokens:   &maxTokens,
+	}, false)
+
+	if payload["temperature"] != 0.4 {
+		t.Fatalf("expected standard chat payload to keep temperature, got %#v", payload["temperature"])
+	}
+	if payload["max_tokens"] != 600 {
+		t.Fatalf("expected standard chat payload to use max_tokens, got %#v", payload["max_tokens"])
+	}
+	if _, exists := payload["max_completion_tokens"]; exists {
+		t.Fatalf("non gpt-5 payload should not use max_completion_tokens: %#v", payload)
+	}
+}
+
 func TestIsRetryableProviderErrorTreatsClosedNetworkConnectionAsTransient(t *testing.T) {
 	err := errors.New(`Post "https://api.apiyi.com/v1beta/models/gemini-3-pro-image-preview:generateContent": write tcp 198.18.0.1:51244->198.18.3.36:443: use of closed network connection`)
 	if !isRetryableProviderError(err) {

@@ -82,6 +82,11 @@ type CreateUserInput struct {
 	PasswordHash string
 }
 
+type CreateUserRegistrationInput struct {
+	CreateUserInput
+	PartnerCode string
+}
+
 type UpdateDeviceInput struct {
 	Name                  *string
 	DefaultReasoningModel *string

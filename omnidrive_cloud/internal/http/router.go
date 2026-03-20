@@ -29,6 +29,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 	taskHandler := handlers.NewTaskHandler(app)
 	aiHandler := handlers.NewAIHandler(app)
 	billingHandler := handlers.NewBillingHandler(app)
+	partnerHandler := handlers.NewPartnerHandler(app)
 	agentHandler := handlers.NewAgentHandler(app)
 	fileHandler := handlers.NewFileHandler(app)
 	adminAuthHandler := handlers.NewAdminAuthHandler(app)
@@ -127,6 +128,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 			private.Route("/ai", func(ai chi.Router) {
 				ai.Get("/models", aiHandler.ListModels)
 				ai.Get("/jobs", aiHandler.ListJobs)
+				ai.Post("/chat/stream", aiHandler.StreamChat)
 				ai.Post("/jobs", aiHandler.CreateJob)
 				ai.Get("/jobs/{jobId}", aiHandler.DetailJob)
 				ai.Get("/jobs/{jobId}/workspace", aiHandler.WorkspaceJob)
@@ -155,6 +157,11 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 				billing.Get("/orders/{orderId}", billingHandler.DetailOrder)
 				billing.Get("/orders/{orderId}/events", billingHandler.ListOrderEvents)
 				billing.Post("/orders/{orderId}/manual-submit", billingHandler.SubmitManualRecharge)
+			})
+
+			private.Route("/partners", func(partners chi.Router) {
+				partners.Get("/me", partnerHandler.MyOverview)
+				partners.Post("/me/open", partnerHandler.OpenMyProfile)
 			})
 		})
 
@@ -270,6 +277,8 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 			private.With(authmiddleware.RequireAdminPermission("support_recharge.review")).Get("/support-recharges/{orderId}/events", adminConsoleHandler.ListSupportRechargeEvents)
 			private.With(authmiddleware.RequireAdminPermission("support_recharge.review")).Post("/support-recharges/{orderId}/credit", adminConsoleHandler.CreditSupportRecharge)
 			private.With(authmiddleware.RequireAdminPermission("support_recharge.review")).Post("/support-recharges/{orderId}/reject", adminConsoleHandler.RejectSupportRecharge)
+			private.With(authmiddleware.RequireAdminPermission("distribution.read")).Get("/distribution/partners", adminDistributionHandler.ListPartners)
+			private.With(authmiddleware.RequireAdminPermission("distribution.settle")).Post("/distribution/partners", adminDistributionHandler.OpenPartner)
 			private.With(authmiddleware.RequireAdminPermission("distribution.read")).Get("/distribution/relations", adminDistributionHandler.ListRelations)
 			private.With(authmiddleware.RequireAdminPermission("distribution.settle")).Post("/distribution/relations", adminDistributionHandler.CreateRelation)
 			private.With(authmiddleware.RequireAdminPermission("distribution.read")).Get("/distribution/rules", adminDistributionHandler.ListRules)

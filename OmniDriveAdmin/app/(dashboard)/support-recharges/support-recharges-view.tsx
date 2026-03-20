@@ -33,6 +33,21 @@ export function SupportRechargesView() {
     { label: "已驳回", value: "rejected", count: data?.summary?.rejectedCount || 0 },
   ] as const;
 
+  const renderStatusBadge = (value: string) => {
+    switch (value) {
+      case "awaiting_submission":
+        return <span className="inline-flex rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-500">待提交凭证</span>;
+      case "pending_review":
+        return <span className="inline-flex rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-1 text-xs font-medium text-blue-500">待人工审核</span>;
+      case "credited":
+        return <span className="inline-flex rounded-full border border-green-500/20 bg-green-500/10 px-2 py-1 text-xs font-medium text-green-500">已入账</span>;
+      case "rejected":
+        return <span className="inline-flex rounded-full border border-red-500/20 bg-red-500/10 px-2 py-1 text-xs font-medium text-red-500">已驳回</span>;
+      default:
+        return <span className="inline-flex rounded-full border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1 text-xs font-medium text-[var(--color-text-secondary)]">{value}</span>;
+    }
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -128,10 +143,17 @@ export function SupportRechargesView() {
                     {row.bonusCredits > 0 && <div className="font-mono text-amber-500">赠送: {row.bonusCredits}</div>}
                   </td>
                   <td className="px-6 py-4 text-xs text-[var(--color-text-secondary)]">
-                    {row.status === "awaiting_manual_review" ? "等待提交凭证" : row.status === "processing" ? "等待财务查收" : row.status}
+                    {renderStatusBadge(row.status)}
                   </td>
                   <td className="px-6 py-4 text-[var(--color-text-secondary)] text-xs">
-                     {new Date(row.submittedAt || row.user.id ? row.submittedAt : 0).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    {row.submittedAt
+                      ? new Date(row.submittedAt).toLocaleString("zh-CN", {
+                          month: "2-digit",
+                          day: "2-digit",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
+                      : "—"}
                   </td>
                   <td className="px-6 py-4 text-right">
                     <button 

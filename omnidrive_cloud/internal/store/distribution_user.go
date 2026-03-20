@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+
 	"omnidrive_cloud/internal/domain"
 )
 
@@ -19,6 +21,27 @@ func (s *Store) GetDistributionSummaryByPromoter(ctx context.Context, promoterUs
 	if err := s.pool.QueryRow(ctx, `
 		SELECT
 			COUNT(DISTINCT invitee_user_id)::BIGINT,
+			COALESCE(SUM(
+				CASE
+					WHEN amount_cents > 0
+						THEN GREATEST(commission_base_amount_cents - ((commission_base_amount_cents * released_amount_cents) / amount_cents), 0)
+					ELSE 0
+				END
+			), 0)::BIGINT,
+			COALESCE(SUM(
+				CASE
+					WHEN amount_cents > 0
+						THEN LEAST((commission_base_amount_cents * released_amount_cents) / amount_cents, commission_base_amount_cents)
+					ELSE 0
+				END
+			), 0)::BIGINT,
+			COALESCE(SUM(
+				CASE
+					WHEN amount_cents > 0
+						THEN LEAST((commission_base_amount_cents * settled_amount_cents) / amount_cents, commission_base_amount_cents)
+					ELSE 0
+				END
+			), 0)::BIGINT,
 			COALESCE(SUM(GREATEST(amount_cents - released_amount_cents, 0)), 0)::BIGINT,
 			COALESCE(SUM(GREATEST(released_amount_cents - settled_amount_cents, 0)), 0)::BIGINT,
 			COALESCE(SUM(settled_amount_cents), 0)::BIGINT
@@ -26,6 +49,9 @@ func (s *Store) GetDistributionSummaryByPromoter(ctx context.Context, promoterUs
 		WHERE promoter_user_id = $1
 	`, promoterUserID).Scan(
 		&summary.InviteeCount,
+		&summary.PendingConsumeBaseAmountCents,
+		&summary.ActivatedBaseAmountCents,
+		&summary.SettledBaseAmountCents,
 		&summary.PendingConsumeAmountCents,
 		&summary.PendingSettlementAmountCents,
 		&summary.SettledAmountCents,
@@ -53,7 +79,58 @@ func (s *Store) GetDistributionSummaryByPromoter(ctx context.Context, promoterUs
 		availableAmountCents = 0
 	}
 	summary.AvailableWithdrawalAmountCents = availableAmountCents
+
+	rule, err := s.getApplicableDistributionRuleByPromoter(ctx, promoterUserID)
+	if err != nil {
+		return nil, err
+	}
+	if rule != nil {
+		summary.CurrentCommissionRate = basisPointsToRate(rule.CommissionRateBasisPoint)
+		summary.SettlementThresholdCents = rule.SettlementThresholdCents
+	}
 	return summary, nil
+}
+
+func (s *Store) getApplicableDistributionRuleByPromoter(ctx context.Context, promoterUserID string) (*distributionRuleRecord, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT
+			id,
+			name,
+			scope,
+			promoter_user_id,
+			status,
+			commission_rate_basis_points,
+			settlement_threshold_cents,
+			notes
+		FROM distribution_rules
+		WHERE status = 'active'
+		  AND (
+			(scope = 'promoter' AND promoter_user_id = $1) OR
+			scope = 'default'
+		  )
+		ORDER BY
+			CASE WHEN scope = 'promoter' AND promoter_user_id = $1 THEN 0 ELSE 1 END ASC,
+			created_at DESC
+		LIMIT 1
+	`, promoterUserID)
+
+	var item distributionRuleRecord
+	if err := row.Scan(
+		&item.ID,
+		&item.Name,
+		&item.Scope,
+		&item.PromoterUserID,
+		&item.Status,
+		&item.CommissionRateBasisPoint,
+		&item.SettlementThresholdCents,
+		&item.Notes,
+	); err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &item, nil
 }
 
 func (s *Store) ListCommissionItemsByPromoter(ctx context.Context, promoterUserID string, filter CommissionListFilter) ([]domain.CommissionItem, error) {

@@ -64,7 +64,7 @@ func New(cfg config.Config, logger *slog.Logger) (*http.Server, func(), error) {
 		Handler: apphttp.NewRouter(app),
 	}
 
-	cleanupFns := make([]func(), 0, 3)
+	cleanupFns := make([]func(), 0, 4)
 	if cfg.AIWorkerEnabled {
 		worker, err := ai.NewWorker(app)
 		if err != nil {
@@ -84,6 +84,14 @@ func New(cfg config.Config, logger *slog.Logger) (*http.Server, func(), error) {
 	}
 	stopSkillScheduler := skillScheduler.Start(context.Background())
 	cleanupFns = append(cleanupFns, stopSkillScheduler)
+
+	quotaExpiryScheduler, err := workflow.NewQuotaExpiryScheduler(app)
+	if err != nil {
+		db.Close()
+		return nil, nil, fmt.Errorf("init quota expiry scheduler: %w", err)
+	}
+	stopQuotaExpiryScheduler := quotaExpiryScheduler.Start(context.Background())
+	cleanupFns = append(cleanupFns, stopQuotaExpiryScheduler)
 
 	cleanup := func() {
 		logger.Info("shutting down omnidrive api")

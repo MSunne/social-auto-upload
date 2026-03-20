@@ -535,10 +535,10 @@ export function MediaAccountsView() {
         <div
           className={`flex items-start justify-between gap-3 rounded-xl border px-4 py-3 text-sm ${
             notice.tone === "success"
-              ? "border-green-500/30 bg-green-500/10 text-green-300"
+              ? "border-green-500/30 bg-green-500/10 text-green-700"
               : notice.tone === "error"
-                ? "border-red-500/30 bg-red-500/10 text-red-300"
-                : "border-blue-500/30 bg-blue-500/10 text-blue-200"
+                ? "border-red-500/30 bg-red-500/10 text-red-700"
+                : "border-blue-500/30 bg-blue-500/10 text-blue-700"
           }`}
         >
           <p className="leading-6">{notice.text}</p>
@@ -638,7 +638,7 @@ export function MediaAccountsView() {
           {verificationPayload && (
             <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
               <div className="flex items-start gap-3">
-                <div className="rounded-full bg-amber-500/12 p-2 text-amber-300">
+                <div className="rounded-full bg-amber-500/12 p-2 text-amber-600">
                   <ShieldCheck className="h-4 w-4" />
                 </div>
                 <div className="min-w-0 flex-1">
@@ -666,7 +666,7 @@ export function MediaAccountsView() {
                           type="button"
                           onClick={() => void handleSelectVerificationOption(optionText)}
                           disabled={Boolean(sessionActionLoading) || isSessionFinal}
-                          className="inline-flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200 hover:bg-amber-500/15 transition-colors disabled:opacity-50"
+                          className="inline-flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 hover:bg-amber-500/15 transition-colors disabled:opacity-50"
                         >
                           {isLoadingOption && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                           <span>{optionText}</span>
@@ -879,14 +879,14 @@ export function MediaAccountsView() {
                     <td className="px-4 py-3.5">
                       <div className="text-xs space-y-0.5">
                         <div className="flex gap-2">
-                          {row.account.load.runningTaskCount > 0 && <span className="text-blue-400">{row.account.load.runningTaskCount} 运行</span>}
+                          {row.account.load.runningTaskCount > 0 && <span className="text-blue-600">{row.account.load.runningTaskCount} 运行</span>}
                           {row.account.load.pendingTaskCount > 0 && <span className="text-[var(--color-text-secondary)]">{row.account.load.pendingTaskCount} 等待</span>}
-                          {row.account.load.needsVerifyTaskCount > 0 && <span className="text-purple-400">{row.account.load.needsVerifyTaskCount} 待核</span>}
-                          {row.account.load.failedTaskCount > 0 && <span className="text-red-400">{row.account.load.failedTaskCount} 失败</span>}
+                          {row.account.load.needsVerifyTaskCount > 0 && <span className="text-purple-600">{row.account.load.needsVerifyTaskCount} 待核</span>}
+                          {row.account.load.failedTaskCount > 0 && <span className="text-red-600">{row.account.load.failedTaskCount} 失败</span>}
                           {row.account.load.taskCount === 0 && <span className="text-[var(--color-text-secondary)]">无任务</span>}
                         </div>
                         {row.account.load.activeLoginSessionCount > 0 && (
-                          <div className="text-orange-400">{row.account.load.activeLoginSessionCount} 登录会话</div>
+                          <div className="text-orange-600">{row.account.load.activeLoginSessionCount} 登录会话</div>
                         )}
                       </div>
                     </td>
@@ -965,7 +965,7 @@ export function MediaAccountsView() {
             </div>
 
             <form onSubmit={handleAddAccount} className="space-y-4 px-6 py-5">
-              <div className="rounded-xl border border-blue-500/20 bg-blue-500/8 px-4 py-3 text-sm text-blue-200">
+              <div className="rounded-xl border border-blue-500/20 bg-blue-500/8 px-4 py-3 text-sm text-blue-700">
                 当前已接通真实本地登录链路的平台：{REMOTE_LOGIN_PLATFORM_OPTIONS.map((item) => getPlatformLabel(item.value)).join(" / ")}
               </div>
 

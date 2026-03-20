@@ -438,6 +438,14 @@ type AdminDistributionRelationSummary struct {
 	InactiveCount int64 `json:"inactiveCount"`
 }
 
+type AdminPartnerProfileSummary struct {
+	TotalCount                   int64 `json:"totalCount"`
+	ActiveCount                  int64 `json:"activeCount"`
+	InviteeCount                 int64 `json:"inviteeCount"`
+	PendingSettlementAmountCents int64 `json:"pendingSettlementAmountCents"`
+	SettledAmountCents           int64 `json:"settledAmountCents"`
+}
+
 type AdminCommissionListSummary struct {
 	TotalCommissionAmountCents    int64 `json:"totalCommissionAmountCents"`
 	PendingConsumeAmountCents     int64 `json:"pendingConsumeAmountCents"`
@@ -623,6 +631,21 @@ type AdminDistributionRelationRow struct {
 	Status    string           `json:"status"`
 	CreatedAt time.Time        `json:"createdAt"`
 	Notes     *string          `json:"notes,omitempty"`
+}
+
+type AdminPartnerProfileRow struct {
+	User                           AdminUserSummary `json:"user"`
+	PartnerCode                    string           `json:"partnerCode"`
+	PartnerName                    string           `json:"partnerName"`
+	Status                         string           `json:"status"`
+	CurrentCommissionRate          float64          `json:"currentCommissionRate"`
+	SettlementThresholdCents       int64            `json:"settlementThresholdCents"`
+	InviteeCount                   int64            `json:"inviteeCount"`
+	PendingSettlementAmountCents   int64            `json:"pendingSettlementAmountCents"`
+	SettledAmountCents             int64            `json:"settledAmountCents"`
+	AvailableWithdrawalAmountCents int64            `json:"availableWithdrawalAmountCents"`
+	CreatedAt                      time.Time        `json:"createdAt"`
+	UpdatedAt                      time.Time        `json:"updatedAt"`
 }
 
 type AdminCommissionRow struct {

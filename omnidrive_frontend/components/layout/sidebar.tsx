@@ -14,6 +14,7 @@ import {
   ListTodo,
   Wallet,
   CreditCard,
+  Building2,
   LogOut,
   ChevronRight,
   Zap,
@@ -48,6 +49,7 @@ const navGroups = [
     items: [
       { href: "/finance", label: "财务管理", icon: Wallet },
       { href: "/top-up", label: "充值中心", icon: CreditCard },
+      { href: "/enterprise-cooperation", label: "企业合作", icon: Building2 },
     ],
   },
 ];

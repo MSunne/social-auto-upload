@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useCreateAIModel, useUpdateAIModel } from "@/lib/hooks/useAIModels";
 import { AIModel } from "@/lib/types";
 import { X } from "lucide-react";
@@ -127,6 +127,12 @@ export function AIModelDrawer({
   const updateModel = useUpdateAIModel();
 
   const [form, setForm] = useState(() => toFormState(model));
+
+  useEffect(() => {
+    if (isOpen) {
+      setForm(toFormState(model));
+    }
+  }, [isOpen, model]);
 
   const chatInputRawRate = parseOptionalNumber(form.chatInputRawRate);
   const chatOutputRawRate = parseOptionalNumber(form.chatOutputRawRate);

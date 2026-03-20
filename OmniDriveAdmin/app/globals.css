@@ -5,6 +5,9 @@
   --color-surface: #ebe5d8;
   --color-panel: rgba(255, 251, 245, 0.82);
   --color-panel-muted: rgba(246, 239, 227, 0.9);
+  --color-bg-primary: #f3efe6;
+  --color-bg-secondary: #ebe5d8;
+  --color-primary: #0f766e;
   --color-sidebar: #1f2522;
   --color-sidebar-muted: #2a322d;
   --color-border: rgba(64, 78, 70, 0.12);

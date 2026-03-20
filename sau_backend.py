@@ -732,6 +732,224 @@ def _extract_last_openai_user_prompt(messages):
     return ""
 
 
+def _extract_openai_function_tools(tools):
+    result = {}
+    for item in tools or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("type") or "function").strip() != "function":
+            continue
+        function_def = item.get("function") if isinstance(item.get("function"), dict) else {}
+        name = str(function_def.get("name") or "").strip()
+        if not name:
+            continue
+        result[name] = function_def
+    return result
+
+
+def _index_openai_tool_calls(messages):
+    result = {}
+    for item in messages or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("role") or "").strip() != "assistant":
+            continue
+        for tool_call in item.get("tool_calls") or []:
+            if not isinstance(tool_call, dict):
+                continue
+            tool_call_id = str(tool_call.get("id") or "").strip()
+            function_payload = tool_call.get("function") if isinstance(tool_call.get("function"), dict) else {}
+            tool_name = str(function_payload.get("name") or "").strip()
+            if tool_call_id and tool_name:
+                result[tool_call_id] = {
+                    "toolName": tool_name,
+                    "toolCall": tool_call,
+                }
+    return result
+
+
+def _extract_last_openai_tool_result(messages):
+    tool_call_index = _index_openai_tool_calls(messages)
+    for item in reversed(messages or []):
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip()
+        if role not in {"tool", "toolResult"}:
+            continue
+        tool_call_id = str(item.get("tool_call_id") or "").strip()
+        indexed = tool_call_index.get(tool_call_id) if tool_call_id else None
+        tool_name = str(item.get("tool_name") or "").strip() or (indexed or {}).get("toolName") or ""
+        content = item.get("content")
+        flattened = _flatten_openai_message_content(content)
+        if not flattened and isinstance(content, str):
+            flattened = content.strip()
+        return {
+            "toolName": tool_name,
+            "toolCallId": tool_call_id,
+            "content": flattened,
+            "rawContent": content,
+        }
+    return None
+
+
+def _safe_json_loads(text):
+    if not isinstance(text, str):
+        return None
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def _prompt_is_media_capability_question(prompt):
+    normalized = str(prompt or "").strip().lower()
+    if not normalized:
+        return False
+
+    media_keywords = ("视频", "video", "veo", "图片", "图像", "image", "海报", "封面", "壁纸", "做图", "画图")
+    capability_keywords = (
+        "你能",
+        "你可以",
+        "能不能",
+        "可不可以",
+        "能否",
+        "是否可以",
+        "可以帮我",
+        "能帮我",
+        "can you",
+        "could you",
+        "are you able",
+    )
+    generic_generation_keywords = ("做一个", "做个", "生成一个", "生成个", "create a", "make a", "generate a")
+
+    if any(keyword in normalized for keyword in media_keywords) and any(
+        keyword in normalized for keyword in capability_keywords
+    ):
+        return True
+
+    return (
+        any(keyword in normalized for keyword in media_keywords)
+        and any(keyword in normalized for keyword in generic_generation_keywords)
+        and normalized.endswith(("吗", "吗？", "吗?", "?", "？"))
+        and len(normalized) <= 36
+    )
+
+
+def _select_openai_media_tool(prompt, tool_map):
+    normalized = str(prompt or "").strip().lower()
+    if not normalized:
+        return None
+
+    skip_keywords = ("脚本", "文案", "提示词", "prompt", "教程", "方案", "流程", "步骤")
+    if any(keyword in normalized for keyword in skip_keywords):
+        return None
+
+    if "omnidrive_video" in tool_map and any(keyword in normalized for keyword in ("veo", "视频", "video", "短片")):
+        return {
+            "toolName": "omnidrive_video",
+            "arguments": {
+                "prompt": str(prompt or "").strip(),
+                "wait": False,
+            },
+        }
+
+    if "omnidrive_image" in tool_map and any(
+        keyword in normalized
+        for keyword in ("图片", "图像", "image", "海报", "封面", "壁纸", "插画", "配图", "做图", "画图")
+    ):
+        return {
+            "toolName": "omnidrive_image",
+            "arguments": {
+                "prompt": str(prompt or "").strip(),
+                "wait": True,
+            },
+        }
+
+    return None
+
+
+def _build_openai_tool_call(tool_name, arguments):
+    return {
+        "id": f"call_{uuid.uuid4().hex[:24]}",
+        "type": "function",
+        "function": {
+            "name": tool_name,
+            "arguments": json.dumps(arguments or {}, ensure_ascii=False),
+        },
+    }
+
+
+def _build_media_clarification_text(prompt, tool_map):
+    normalized = str(prompt or "").strip().lower()
+    if "omnidrive_video" in tool_map and any(keyword in normalized for keyword in ("veo", "视频", "video", "短片")):
+        return (
+            "可以，我能帮你发起 OmniDrive 视频生成。"
+            "\n请直接告诉我你想生成的视频内容，比如主体、风格、镜头、时长或比例；"
+            "\n例如：用 veo 生成一个 8 秒的城市夜景延时视频，16:9，电影感。"
+        )
+    if "omnidrive_image" in tool_map and any(
+        keyword in normalized
+        for keyword in ("图片", "图像", "image", "海报", "封面", "壁纸", "插画", "配图", "做图", "画图")
+    ):
+        return (
+            "可以，我能帮你发起 OmniDrive 图片生成。"
+            "\n请直接告诉我图片主体、风格、比例或用途；"
+            "\n例如：生成一张赛博朋克风格的产品海报，竖版 9:16。"
+        )
+    return ""
+
+
+def _summarize_openai_media_tool_result(tool_name, content):
+    parsed = _safe_json_loads(content)
+    if not isinstance(parsed, dict):
+        return str(content or "").strip() or "工具执行完成。"
+
+    job = parsed.get("job") if isinstance(parsed.get("job"), dict) else {}
+    workspace = parsed.get("workspace") if isinstance(parsed.get("workspace"), dict) else {}
+    noun = "视频" if tool_name == "omnidrive_video" else "图片"
+
+    job_id = str(job.get("id") or workspace.get("jobId") or "").strip()
+    model_name = str(job.get("modelName") or workspace.get("modelName") or "").strip()
+    status = str(workspace.get("status") or job.get("status") or "").strip()
+    message = str(workspace.get("message") or parsed.get("message") or "").strip()
+    text = str(workspace.get("text") or "").strip()
+    next_step = str(parsed.get("nextStep") or "").strip()
+
+    public_urls = []
+    for item in workspace.get("publicUrls") or []:
+        if isinstance(item, str) and item.strip():
+            public_urls.append(item.strip())
+
+    lines = []
+    if public_urls:
+        lines.append(f"{noun}已生成完成。")
+    elif job_id:
+        lines.append(f"{noun}任务已提交。")
+    else:
+        lines.append(f"{noun}请求已处理。")
+
+    if job_id:
+        lines.append(f"任务 ID：{job_id}")
+    if model_name:
+        lines.append(f"模型：{model_name}")
+    if status:
+        lines.append(f"状态：{status}")
+    if public_urls:
+        lines.append("结果地址：")
+        lines.extend(public_urls[:3])
+    elif next_step:
+        lines.append(next_step)
+    if message:
+        lines.append(f"消息：{message}")
+    if text:
+        lines.append(text)
+
+    return "\n".join(lines)
+
+
 def _extract_workspace_text(workspace):
     if not isinstance(workspace, dict):
         return ""
@@ -804,9 +1022,74 @@ def _build_openai_chat_completion_response(job_id, model_name, text):
     }
 
 
-def _build_openai_chat_stream_chunks(job_id, model_name, text):
+def _build_openai_tool_call_completion_response(job_id, model_name, tool_call):
     created = int(time.time())
     response_id = f"chatcmpl-{job_id}"
+    return {
+        "id": response_id,
+        "object": "chat.completion",
+        "created": created,
+        "model": model_name,
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [tool_call],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+        "usage": _build_openai_usage(),
+    }
+
+
+def _build_openai_chat_stream_chunks(job_id, model_name, text=None, tool_call=None):
+    created = int(time.time())
+    response_id = f"chatcmpl-{job_id}"
+    if tool_call:
+        return [
+            {
+                "id": response_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model_name,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant"},
+                        "finish_reason": None,
+                    }
+                ],
+            },
+            {
+                "id": response_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model_name,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"tool_calls": [{**tool_call, "index": 0}]},
+                        "finish_reason": None,
+                    }
+                ],
+            },
+            {
+                "id": response_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model_name,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+            },
+        ]
     return [
         {
             "id": response_id,
@@ -862,18 +1145,46 @@ def create_omnidrive_openai_chat_completion(openai_payload):
     if not isinstance(messages, list) or not messages:
         raise ValueError("messages 不能为空")
 
+    tool_result = _extract_last_openai_tool_result(messages)
+    if tool_result and tool_result["toolName"] in {"omnidrive_image", "omnidrive_video"}:
+        return {
+            "jobId": f"tool-result-{uuid.uuid4().hex}",
+            "modelName": model_name,
+            "text": _summarize_openai_media_tool_result(tool_result["toolName"], tool_result["content"]),
+        }
+
     prompt = _extract_last_openai_user_prompt(messages)
     if not prompt:
         raise ValueError("messages 中缺少可用的 user 文本内容")
 
+    tool_map = _extract_openai_function_tools(openai_payload.get("tools"))
+    clarification_text = _build_media_clarification_text(prompt, tool_map)
+    if clarification_text and _prompt_is_media_capability_question(prompt):
+        return {
+            "jobId": f"tool-clarify-{uuid.uuid4().hex}",
+            "modelName": model_name,
+            "text": clarification_text,
+        }
+
+    media_tool = _select_openai_media_tool(prompt, tool_map)
+    if media_tool:
+        return {
+            "jobId": f"tool-call-{uuid.uuid4().hex}",
+            "modelName": model_name,
+            "toolCall": _build_openai_tool_call(media_tool["toolName"], media_tool["arguments"]),
+        }
+
     request_payload = {
-        "source": "openclaw_main_chat",
+        # Use the cloud-executable source so current OmniDrive workers can pick up
+        # OpenClaw main-chat requests without waiting for a cloud-side rollout.
+        "source": "omnidrive_cloud",
         "jobType": "chat",
         "modelName": model_name,
         "prompt": prompt,
         "deviceId": device_id,
         "inputPayload": {
             "messages": messages,
+            "requestSource": "openclaw_main_chat",
         },
     }
     if openai_payload.get("temperature") is not None:
@@ -1762,7 +2073,8 @@ def omnidrive_openai_chat_completions():
         chunks = _build_openai_chat_stream_chunks(
             completion["jobId"],
             completion["modelName"],
-            completion["text"],
+            text=completion.get("text"),
+            tool_call=completion.get("toolCall"),
         )
 
         def event_stream():
@@ -1771,6 +2083,15 @@ def omnidrive_openai_chat_completions():
             yield "data: [DONE]\n\n"
 
         return Response(event_stream(), mimetype="text/event-stream")
+
+    if completion.get("toolCall"):
+        return jsonify(
+            _build_openai_tool_call_completion_response(
+                completion["jobId"],
+                completion["modelName"],
+                completion["toolCall"],
+            )
+        ), 200
 
     return jsonify(
         _build_openai_chat_completion_response(

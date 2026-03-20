@@ -21,6 +21,10 @@ type createDistributionRelationRequest struct {
 	Notes          *string `json:"notes"`
 }
 
+type openPartnerProfileRequest struct {
+	UserID string `json:"userId"`
+}
+
 type createDistributionRuleRequest struct {
 	Name                     string  `json:"name"`
 	PromoterUserID           *string `json:"promoterUserId"`
@@ -37,6 +41,74 @@ type createDistributionSettlementRequest struct {
 
 func NewAdminDistributionHandler(app *appstate.App) *AdminDistributionHandler {
 	return &AdminDistributionHandler{app: app}
+}
+
+func (h *AdminDistributionHandler) ListPartners(w http.ResponseWriter, r *http.Request) {
+	page := parseAdminPageQuery(r)
+	items, total, summary, err := h.app.Store.ListAdminPartnerProfiles(r.Context(), store.AdminPartnerProfileListFilter{
+		Query:  strings.TrimSpace(r.URL.Query().Get("query")),
+		Status: strings.TrimSpace(r.URL.Query().Get("status")),
+		AdminPageFilter: store.AdminPageFilter{
+			Page:     page.Page,
+			PageSize: page.PageSize,
+		},
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load partner profiles")
+		return
+	}
+
+	renderAdminList(w, page, total, items, summary, map[string]any{
+		"query":         strings.TrimSpace(r.URL.Query().Get("query")),
+		"status":        strings.TrimSpace(r.URL.Query().Get("status")),
+		"statusOptions": []string{"active", "inactive"},
+	})
+}
+
+func (h *AdminDistributionHandler) OpenPartner(w http.ResponseWriter, r *http.Request) {
+	var payload openPartnerProfileRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	userID := strings.TrimSpace(payload.UserID)
+	if userID == "" {
+		render.Error(w, http.StatusBadRequest, "userId is required")
+		return
+	}
+
+	admin := httpcontext.CurrentAdmin(r.Context())
+	profile, err := h.app.Store.OpenPartnerProfile(r.Context(), userID)
+	if err != nil {
+		switch err {
+		case store.ErrPartnerProfileUserMiss:
+			render.Error(w, http.StatusNotFound, "Partner user not found")
+		default:
+			render.Error(w, http.StatusInternalServerError, "Failed to open partner profile")
+		}
+		return
+	}
+
+	recordAdminAuditLog(h.app, r.Context(), store.CreateAdminAuditLogInput{
+		AdminUserID:  stringPtr(admin.ID),
+		AdminEmail:   stringPtr(admin.Email),
+		AdminName:    stringPtr(admin.Name),
+		ResourceType: "partner_profile",
+		ResourceID:   stringPtr(profile.UserID),
+		Action:       "open",
+		Title:        "代用户开通企业合作",
+		Source:       "admin_console",
+		Status:       "success",
+		Message:      auditStringPtr("企业合作伙伴档案已开通"),
+		Payload: mustJSONBytes(map[string]any{
+			"userId":      profile.UserID,
+			"partnerCode": profile.PartnerCode,
+			"status":      profile.Status,
+		}),
+	})
+
+	render.JSON(w, http.StatusCreated, profile)
 }
 
 func (h *AdminDistributionHandler) ListRelations(w http.ResponseWriter, r *http.Request) {
