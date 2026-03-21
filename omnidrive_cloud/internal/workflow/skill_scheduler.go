@@ -80,18 +80,100 @@ func (s *SkillScheduler) runOnce(ctx context.Context) {
 		s.app.Logger.Debug("skill scheduler promoted scheduled ai jobs", "count", len(promoted))
 	}
 
-	lookAhead := time.Now().UTC().Add(skillSchedulerLookAhead)
-	skills, err := s.app.Store.ListSkillsForScheduling(ctx, lookAhead, 200)
-	if err != nil {
-		s.app.Logger.Error("skill scheduler failed to load scheduled skills", "error", err)
-		return
+	if err := s.ensureRecurringAccountSkillRuns(ctx); err != nil {
+		s.app.Logger.Error("skill scheduler failed to ensure recurring account skill runs", "error", err)
 	}
 
-	for _, skill := range skills {
-		if err := s.ensureScheduledJob(ctx, skill); err != nil {
-			s.app.Logger.Error("skill scheduler failed to ensure scheduled job", "skill_id", skill.ID, "error", err)
+	// Skill-level execution times are deprecated. New timed runs are created from
+	// account-bound skill tasks in OmniBull.
+}
+
+func (s *SkillScheduler) ensureRecurringAccountSkillRuns(ctx context.Context) error {
+	jobs, err := s.app.Store.ListRecurringAccountSkillTemplateJobs(ctx, 200)
+	if err != nil {
+		return err
+	}
+	for _, job := range jobs {
+		if err := s.ensureRecurringAccountSkillRun(ctx, job); err != nil {
+			s.app.Logger.Error("skill scheduler failed to ensure recurring account skill run", "job_id", job.ID, "error", err)
 		}
 	}
+	return nil
+}
+
+func (s *SkillScheduler) ensureRecurringAccountSkillRun(ctx context.Context, seed domain.AIJob) error {
+	config, ok := ParseAccountSkillScheduleConfig(seed.InputPayload)
+	if !ok || !config.RepeatDaily || strings.TrimSpace(config.ScheduleKey) == "" {
+		return nil
+	}
+
+	activeJob, err := s.app.Store.FindActiveAccountSkillJobByScheduleKey(ctx, config.ScheduleKey)
+	if err != nil {
+		return err
+	}
+	if activeJob != nil {
+		return nil
+	}
+
+	if seed.SkillID == nil || strings.TrimSpace(*seed.SkillID) == "" {
+		return nil
+	}
+	skill, err := s.app.Store.GetOwnedSkillByID(ctx, strings.TrimSpace(*seed.SkillID), seed.OwnerUserID)
+	if err != nil {
+		return err
+	}
+	if skill == nil || !skill.IsEnabled || skill.DeviceID == nil || strings.TrimSpace(*skill.DeviceID) == "" {
+		return nil
+	}
+
+	accountID := ExtractAccountSkillTargetAccountID(seed.InputPayload)
+	if accountID == "" {
+		return nil
+	}
+	account, err := s.app.Store.GetOwnedAccountByID(ctx, accountID, seed.OwnerUserID)
+	if err != nil {
+		return err
+	}
+	if account == nil || !AccountAllowedForAutoPublish(account.Status) {
+		return nil
+	}
+
+	publishAt, err := NextAccountSkillPublishAt(config.TimeOfDay, config.Timezone, time.Now())
+	if err != nil {
+		return err
+	}
+	prepared, err := PrepareAccountSkillRun(ctx, s.app, *skill, *account, publishAt, config)
+	if err != nil {
+		return err
+	}
+	job, err := s.app.Store.CreateAIJob(ctx, store.CreateAIJobInput{
+		ID:           uuid.NewString(),
+		OwnerUserID:  seed.OwnerUserID,
+		DeviceID:     &account.DeviceID,
+		SkillID:      &skill.ID,
+		Source:       "account_skill_binding",
+		LocalTaskID:  nil,
+		JobType:      prepared.JobType,
+		ModelName:    prepared.ModelName,
+		Prompt:       stringPtr(prepared.Prompt),
+		InputPayload: prepared.InputPayload,
+		Status:       prepared.Status,
+		Message:      stringPtr(prepared.Message),
+		RunAt:        &prepared.GenerateAt,
+	})
+	if err != nil {
+		return err
+	}
+	s.app.Logger.Info(
+		"skill scheduler created recurring account skill run",
+		"seed_job_id", seed.ID,
+		"job_id", job.ID,
+		"skill_id", skill.ID,
+		"account_id", account.ID,
+		"time_of_day", config.TimeOfDay,
+		"publish_at", prepared.PublishAt.Format(time.RFC3339),
+	)
+	return nil
 }
 
 func (s *SkillScheduler) ensureScheduledJob(ctx context.Context, skill domain.ProductSkill) error {
@@ -105,6 +187,24 @@ func (s *SkillScheduler) ensureScheduledJob(ctx context.Context, skill domain.Pr
 		return err
 	}
 	if existing != nil {
+		return nil
+	}
+
+	hasAccountBindings, err := s.app.Store.HasActiveAIJobsBySkillAndSource(ctx, skill.OwnerUserID, skill.ID, "account_skill_binding")
+	if err != nil {
+		return err
+	}
+	if hasAccountBindings {
+		nextRunAt := nextScheduledSkillRunAt(skill, publishAt)
+		if _, err := s.app.Store.UpdateSkillScheduleState(ctx, skill.ID, nextRunAt, skill.LastRunAt); err != nil {
+			return err
+		}
+		s.app.Logger.Info(
+			"skill scheduler skipped omnibull_local job because account-bound skill runs are active",
+			"skill_id", skill.ID,
+			"publish_at", publishAt.Format(time.RFC3339),
+			"next_run_at", formatOptionalRFC3339(nextRunAt),
+		)
 		return nil
 	}
 
@@ -152,11 +252,7 @@ func (s *SkillScheduler) ensureScheduledJob(ctx context.Context, skill domain.Pr
 		return err
 	}
 
-	var nextRunAt *time.Time
-	if skill.RepeatDaily {
-		next := publishAt.Add(24 * time.Hour)
-		nextRunAt = &next
-	}
+	nextRunAt := nextScheduledSkillRunAt(skill, publishAt)
 	if _, err := s.app.Store.UpdateSkillScheduleState(ctx, skill.ID, nextRunAt, skill.LastRunAt); err != nil {
 		return err
 	}
@@ -171,6 +267,21 @@ func (s *SkillScheduler) ensureScheduledJob(ctx context.Context, skill domain.Pr
 		"status", job.Status,
 	)
 	return nil
+}
+
+func nextScheduledSkillRunAt(skill domain.ProductSkill, publishAt time.Time) *time.Time {
+	if !skill.RepeatDaily {
+		return nil
+	}
+	next := publishAt.Add(24 * time.Hour)
+	return &next
+}
+
+func formatOptionalRFC3339(value *time.Time) string {
+	if value == nil {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339)
 }
 
 func scheduledSkillGenerationTime(publishAt time.Time) time.Time {

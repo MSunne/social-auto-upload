@@ -66,6 +66,15 @@ func NewSkillHandler(app *appstate.App) *SkillHandler {
 	return &SkillHandler{app: app}
 }
 
+func sanitizeSkillSchedule(skill *domain.ProductSkill) {
+	if skill == nil {
+		return
+	}
+	skill.ExecutionTime = nil
+	skill.RepeatDaily = false
+	skill.NextRunAt = nil
+}
+
 func parseSkillExecutionTime(raw string, now time.Time) (*time.Time, error) {
 	value := strings.TrimSpace(raw)
 	if value == "" {
@@ -112,10 +121,19 @@ func (h *SkillHandler) List(w http.ResponseWriter, r *http.Request) {
 		filtered := make([]domain.ProductSkill, 0, len(items))
 		for _, item := range items {
 			if item.DeviceID != nil && strings.TrimSpace(*item.DeviceID) == deviceID {
+				item.ExecutionTime = nil
+				item.RepeatDaily = false
+				item.NextRunAt = nil
 				filtered = append(filtered, item)
 			}
 		}
 		items = filtered
+	} else {
+		for i := range items {
+			items[i].ExecutionTime = nil
+			items[i].RepeatDaily = false
+			items[i].NextRunAt = nil
+		}
 	}
 	render.JSON(w, http.StatusOK, items)
 }
@@ -138,6 +156,7 @@ func (h *SkillHandler) Detail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sanitizeSkillSchedule(skill)
 	render.JSON(w, http.StatusOK, skill)
 }
 
@@ -185,6 +204,7 @@ func (h *SkillHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to decorate skill sync states")
 		return
 	}
+	sanitizeSkillSchedule(skill)
 
 	render.JSON(w, http.StatusOK, domain.ProductSkillWorkspace{
 		Skill:        *skill,
@@ -212,6 +232,7 @@ func (h *SkillHandler) Impact(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusNotFound, "Skill not found")
 		return
 	}
+	sanitizeSkillSchedule(skill)
 
 	limit := 0
 	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
@@ -310,18 +331,6 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 		deviceID = &trimmed
 	}
-	var executionTime *time.Time
-	var nextRunAt *time.Time
-	if payload.ExecutionTime != nil && strings.TrimSpace(*payload.ExecutionTime) != "" {
-		parsed, err := parseSkillExecutionTime(strings.TrimSpace(*payload.ExecutionTime), time.Now())
-		if err != nil {
-			render.Error(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		executionTime = parsed
-		nextRunAt = parsed
-	}
-	repeatDaily := payload.RepeatDaily != nil && *payload.RepeatDaily
 	storyboardEnabled := true
 	if payload.StoryboardEnabled != nil {
 		storyboardEnabled = *payload.StoryboardEnabled
@@ -352,10 +361,10 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 		ModelName:         payload.ModelName,
 		PromptTemplate:    payload.PromptTemplate,
 		ReferencePayload:  referenceBytes,
-		ExecutionTime:     executionTime,
-		RepeatDaily:       repeatDaily,
+		ExecutionTime:     nil,
+		RepeatDaily:       false,
 		StoryboardEnabled: storyboardEnabled,
-		NextRunAt:         nextRunAt,
+		NextRunAt:         nil,
 		IsEnabled:         isEnabled,
 	})
 	if err != nil {
@@ -427,20 +436,7 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 			deviceID = &trimmed
 		}
 	}
-	var executionTime *time.Time
-	executionTouched := payload.ExecutionTime != nil
-	if executionTouched && strings.TrimSpace(*payload.ExecutionTime) != "" {
-		parsed, err := parseSkillExecutionTime(strings.TrimSpace(*payload.ExecutionTime), time.Now())
-		if err != nil {
-			render.Error(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		executionTime = parsed
-	}
-	var nextRunAt *time.Time
-	if executionTouched {
-		nextRunAt = executionTime
-	}
+	repeatDaily := false
 
 	skill, err := h.app.Store.UpdateSkill(r.Context(), skillID, user.ID, store.UpdateSkillInput{
 		Name:              payload.Name,
@@ -452,12 +448,12 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 		ReferenceTouched:  referenceTouched,
 		DeviceID:          deviceID,
 		DeviceTouched:     deviceTouched,
-		ExecutionTime:     executionTime,
-		ExecutionTouched:  executionTouched,
-		RepeatDaily:       payload.RepeatDaily,
+		ExecutionTime:     nil,
+		ExecutionTouched:  true,
+		RepeatDaily:       &repeatDaily,
 		StoryboardEnabled: payload.StoryboardEnabled,
-		NextRunAt:         nextRunAt,
-		NextRunTouched:    executionTouched,
+		NextRunAt:         nil,
+		NextRunTouched:    true,
 		IsEnabled:         payload.IsEnabled,
 	})
 	if err != nil {

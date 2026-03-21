@@ -107,6 +107,67 @@ function pickArtifactLabel(artifact: AIJobArtifact) {
   return artifact.fileName || artifact.title || artifact.artifactType || artifact.artifactKey;
 }
 
+function extractPublishTargets(inputPayload: unknown) {
+  const payload =
+    inputPayload && typeof inputPayload === "object"
+      ? (inputPayload as Record<string, unknown>)
+      : null;
+  const publishPayload =
+    payload?.publishPayload && typeof payload.publishPayload === "object"
+      ? (payload.publishPayload as Record<string, unknown>)
+      : null;
+  const targets = Array.isArray(publishPayload?.targets) ? publishPayload.targets : [];
+  return targets.flatMap((item) => {
+    if (!item || typeof item !== "object") {
+      return [];
+    }
+    const target = item as Record<string, unknown>;
+    const platform = typeof target.platform === "string" ? target.platform.trim() : "";
+    const accountName = typeof target.accountName === "string" ? target.accountName.trim() : "";
+    if (!platform && !accountName) {
+      return [];
+    }
+    return [{ platform, accountName }];
+  });
+}
+
+function formatPublishTargetSummary(inputPayload: unknown) {
+  const targets = extractPublishTargets(inputPayload);
+  if (targets.length === 0) {
+    return "—";
+  }
+  if (targets.length === 1) {
+    const target = targets[0];
+    return `${target.platform || "未知平台"} / ${target.accountName || "未命名账号"}`;
+  }
+  const first = targets[0];
+  return `${targets.length} 个（${first.platform || "未知平台"} / ${first.accountName || "未命名账号"} 等）`;
+}
+
+function summarizePublishTaskOutcome(tasks: PublishTask[]) {
+  let successCount = 0;
+  let failedCount = 0;
+  let pendingCount = 0;
+
+  tasks.forEach((task) => {
+    switch (task.status) {
+      case "success":
+      case "completed":
+        successCount += 1;
+        break;
+      case "failed":
+      case "cancelled":
+        failedCount += 1;
+        break;
+      default:
+        pendingCount += 1;
+        break;
+    }
+  });
+
+  return { successCount, failedCount, pendingCount };
+}
+
 function pickLogIcon(stage: string) {
   switch (stage) {
     case "generation":
@@ -296,6 +357,8 @@ function DrawerBody({
   const artifacts = data.artifacts ?? [];
   const publishTasks = data.publishTasks ?? [];
   const billingUsageEvents = data.billingUsageEvents ?? [];
+  const publishOutcome = summarizePublishTaskOutcome(publishTasks);
+  const publishTargetSummary = formatPublishTargetSummary(job.inputPayload);
 
   return (
     <div className="space-y-5">
@@ -375,6 +438,11 @@ function DrawerBody({
               <InfoRow label="所属用户" value={data.record.owner?.email || "—"} />
               <InfoRow label="执行设备" value={data.record.device?.name || "云端"} />
               <InfoRow label="关联技能" value={data.record.skill?.name || "—"} />
+              <InfoRow label="目标账号" value={publishTargetSummary} />
+              <InfoRow label="关联发布任务" value={`${publishTasks.length} 条`} />
+              <InfoRow label="发布成功" value={`${publishOutcome.successCount} 条`} />
+              <InfoRow label="发布失败" value={`${publishOutcome.failedCount} 条`} />
+              <InfoRow label="待处理发布" value={`${publishOutcome.pendingCount} 条`} />
               <InfoRow label="创建时间" value={formatFullDateTime(job.createdAt)} />
               <InfoRow label="更新时间" value={formatFullDateTime(job.updatedAt)} />
               <InfoRow label="完成时间" value={formatFullDateTime(job.finishedAt)} />
@@ -385,7 +453,10 @@ function DrawerBody({
             <ArtifactList artifacts={artifacts} />
           </CompactPanel>
 
-          <CompactPanel title="关联发布任务">
+          <CompactPanel
+            title="关联发布任务"
+            subtitle="这里统计的是挂接到下游发布链路的任务数量，不等于最终发布成功数量。"
+          >
             <PublishTaskList tasks={publishTasks} />
           </CompactPanel>
 

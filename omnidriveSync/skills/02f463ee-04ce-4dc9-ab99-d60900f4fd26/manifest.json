@@ -1,0 +1,67 @@
+{
+  "revision": "2026-03-21T08:40:26.865964Z|1|2026-03-21T08:31:24.747907Z",
+  "skill": {
+    "id": "02f463ee-04ce-4dc9-ab99-d60900f4fd26",
+    "ownerUserId": "854c1e12-896f-4c43-a332-4fb6fb023402",
+    "deviceId": "52371fe9-b1d5-4593-80ed-786be702c3a7",
+    "name": "测试玩具种草视频",
+    "description": "测试玩具的种草视频",
+    "outputType": "视文模式",
+    "modelName": "veo-3.1-fast-fl",
+    "promptTemplate": "做一个抖音风格视频，不要字幕",
+    "repeatDaily": false,
+    "storyboardEnabled": true,
+    "isEnabled": true,
+    "createdAt": "2026-03-21T16:31:24.543562+08:00",
+    "updatedAt": "2026-03-21T16:40:26.865964+08:00",
+    "load": {
+      "assetCount": 1,
+      "taskCount": 0,
+      "pendingTaskCount": 0,
+      "runningTaskCount": 0,
+      "needsVerifyTaskCount": 0,
+      "failedTaskCount": 0,
+      "aiJobCount": 10,
+      "activeAiJobCount": 0
+    }
+  },
+  "assets": [
+    {
+      "id": "321cea0e-85a7-401b-889c-ca977344d618",
+      "skillId": "02f463ee-04ce-4dc9-ab99-d60900f4fd26",
+      "ownerUserId": "854c1e12-896f-4c43-a332-4fb6fb023402",
+      "assetType": "reference_image",
+      "fileName": "ScreenShot_2026-03-20_200139_372.png",
+      "mimeType": "image/png",
+      "storageKey": "plus_ai/img/skills/854c1e12-896f-4c43-a332-4fb6fb023402/02f463ee-04ce-4dc9-ab99-d60900f4fd26/fe568d32-f03a-4080-b620-0f64e810b402-ScreenShot_2026-03-20_200139_372.png",
+      "publicUrl": "https://qny.sunne.xyz/plus_ai/img/skills/854c1e12-896f-4c43-a332-4fb6fb023402/02f463ee-04ce-4dc9-ab99-d60900f4fd26/fe568d32-f03a-4080-b620-0f64e810b402-ScreenShot_2026-03-20_200139_372.png",
+      "sizeBytes": 958551,
+      "createdAt": "2026-03-21T16:31:24.747907+08:00",
+      "updatedAt": "2026-03-21T16:31:24.747907+08:00",
+      "localFileName": "ScreenShot_2026-03-20_200139_372.png",
+      "localPath": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/02f463ee-04ce-4dc9-ab99-d60900f4fd26/assets/ScreenShot_2026-03-20_200139_372.png",
+      "metadataPath": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/02f463ee-04ce-4dc9-ab99-d60900f4fd26/assets/ScreenShot_2026-03-20_200139_372.png.json",
+      "downloadStatus": "success",
+      "downloadError": null
+    }
+  ],
+  "sync": {
+    "id": "2868e935-519b-4472-89fb-c059cf17be4d",
+    "deviceId": "52371fe9-b1d5-4593-80ed-786be702c3a7",
+    "skillId": "02f463ee-04ce-4dc9-ab99-d60900f4fd26",
+    "syncStatus": "success",
+    "syncedRevision": "2026-03-21T08:40:26.865964Z|1|2026-03-21T08:31:24.747907Z",
+    "isCurrent": false,
+    "needsSync": false,
+    "assetCount": 1,
+    "message": null,
+    "lastSyncedAt": "2026-03-21T17:31:39.562415+08:00",
+    "createdAt": "2026-03-21T16:32:04.522283+08:00",
+    "updatedAt": "2026-03-21T17:31:39.565432+08:00"
+  },
+  "cache": {
+    "manifestPath": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/02f463ee-04ce-4dc9-ab99-d60900f4fd26/manifest.json",
+    "assetsDir": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/02f463ee-04ce-4dc9-ab99-d60900f4fd26/assets",
+    "syncedAt": "2026-03-21T09:31:40.745980Z"
+  }
+}

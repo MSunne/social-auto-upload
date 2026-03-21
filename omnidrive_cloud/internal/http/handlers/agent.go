@@ -894,7 +894,7 @@ func (h *AgentHandler) ListAIJobs(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 
-	items, err := h.app.Store.ListAgentAIJobsByDevice(r.Context(), device.ID, "omnibull_local", limit)
+	items, err := h.app.Store.ListAgentAIJobsByDevice(r.Context(), device.ID, []string{"omnibull_local", "account_skill_binding"}, limit)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load AI jobs")
 		return
@@ -1957,9 +1957,9 @@ func isAllowedAgentPublishTaskTransition(current string, next string) bool {
 
 	switch current {
 	case "pending":
-		return next == "needs_verify" || next == "failed" || next == "success" || next == "completed"
+		return next == "running" || next == "needs_verify" || next == "failed" || next == "success" || next == "completed"
 	case "running":
-		return next == "needs_verify" || next == "failed" || next == "success" || next == "completed" || next == "cancelled" || next == "cancel_requested"
+		return next == "pending" || next == "needs_verify" || next == "failed" || next == "success" || next == "completed" || next == "cancelled" || next == "cancel_requested"
 	case "needs_verify":
 		return next == "success" || next == "completed" || next == "failed" || next == "cancelled"
 	case "cancel_requested":

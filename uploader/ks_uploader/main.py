@@ -2,22 +2,24 @@
 from datetime import datetime
 
 from playwright.async_api import Playwright, async_playwright
-import os
 import asyncio
 
 from conf import LOCAL_CHROME_HEADLESS
+from utils.account_storage import account_storage_exists, load_account_storage_state, update_account_storage_state
 from utils.base_social_media import set_init_script
 from utils.browser_hook import get_browser_options
 from utils.creator_popup import dismiss_platform_popups
-from utils.files_times import get_absolute_path
 from utils.log import kuaishou_logger
 from utils.publish_verification import PublishManualVerificationRequired, ensure_no_publish_verification
 
 
 async def cookie_auth(account_file):
+    storage_state = load_account_storage_state(account_file)
+    if storage_state is None:
+        return False
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(**get_browser_options())
-        context = await browser.new_context(storage_state=account_file)
+        context = await browser.new_context(storage_state=storage_state)
         context = await set_init_script(context)
         # 创建一个新的页面
         page = await context.new_page()
@@ -34,8 +36,7 @@ async def cookie_auth(account_file):
 
 
 async def ks_setup(account_file, handle=False):
-    account_file = get_absolute_path(account_file, "ks_uploader")
-    if not os.path.exists(account_file) or not await cookie_auth(account_file):
+    if not account_storage_exists(account_file) or not await cookie_auth(account_file):
         if not handle:
             return False
         kuaishou_logger.info('[+] cookie文件不存在或已失效，即将自动打开浏览器，请扫码登录，登陆后会自动生成cookie文件')
@@ -55,7 +56,7 @@ async def get_ks_cookie(account_file):
         await page.goto("https://cp.kuaishou.com")
         await page.pause()
         # 点击调试器的继续，保存cookie
-        await context.storage_state(path=account_file)
+        update_account_storage_state(account_file, await context.storage_state())
 
 
 class KSVideo(object):
@@ -75,7 +76,11 @@ class KSVideo(object):
     async def upload(self, playwright: Playwright) -> None:
         # 使用 Chromium 浏览器启动一个浏览器实例
         browser = await playwright.chromium.launch(**get_browser_options(headless=self.headless))
-        context = await browser.new_context(storage_state=f"{self.account_file}")
+        storage_state = load_account_storage_state(self.account_file)
+        if storage_state is None:
+            await browser.close()
+            raise FileNotFoundError(f"账号登录态不存在: {self.account_file}")
+        context = await browser.new_context(storage_state=storage_state)
         context = await set_init_script(context)
         try:
             page = await context.new_page()
@@ -170,7 +175,7 @@ class KSVideo(object):
                     await page.screenshot(full_page=True)
                     await asyncio.sleep(1)
 
-            await context.storage_state(path=self.account_file)
+            update_account_storage_state(self.account_file, await context.storage_state())
             kuaishou_logger.info('cookie更新完毕！')
             await asyncio.sleep(2)
         finally:

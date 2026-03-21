@@ -47,6 +47,7 @@ type updateAIJobRequest struct {
 	OutputPayload interface{} `json:"outputPayload"`
 	Message       *string     `json:"message"`
 	CostCredits   *int64      `json:"costCredits"`
+	RunAt         *string     `json:"runAt"`
 	FinishedAt    *string     `json:"finishedAt"`
 }
 
@@ -1544,6 +1545,10 @@ func (h *AIHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	runAt, runAtTouched, ok := parseOptionalRFC3339Touched(w, payload.RunAt, "runAt")
+	if !ok {
+		return
+	}
 
 	job, err := h.app.Store.UpdateAIJob(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
 		DeviceID:        deviceID,
@@ -1558,6 +1563,8 @@ func (h *AIHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 		OutputTouched:   outputTouched,
 		Message:         payload.Message,
 		CostCredits:     payload.CostCredits,
+		RunAt:           runAt,
+		RunAtTouched:    runAtTouched,
 		FinishedAt:      finishedAt,
 		FinishedTouched: finishedTouched,
 	})
@@ -1586,6 +1593,7 @@ func (h *AIHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 			"costCredits": payload.CostCredits,
 			"hasOutput":   outputTouched,
 			"hasInput":    inputTouched,
+			"runAt":       payload.RunAt,
 			"finishedAt":  payload.FinishedAt,
 		}),
 	})
@@ -1862,8 +1870,10 @@ func isAllowedAIJobTransition(current string, next string) bool {
 	}
 
 	switch current {
+	case "scheduled":
+		return next == "queued" || next == "running" || next == "cancelled" || next == "failed"
 	case "queued":
-		return next == "running" || next == "cancelled" || next == "failed"
+		return next == "scheduled" || next == "running" || next == "cancelled" || next == "failed"
 	case "running":
 		return next == "success" || next == "completed" || next == "failed" || next == "cancelled"
 	case "failed", "cancelled", "success", "completed":

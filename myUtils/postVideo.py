@@ -13,7 +13,7 @@ from utils.log import task_logger
 
 def post_video_tencent(title,files,tags,account_file,category=TencentZoneTypes.LIFESTYLE.value,enableTimer=False,videos_per_day = 1, daily_times=None,start_days = 0, is_draft=False):
     # 生成文件的完整路径
-    account_file = [Path(BASE_DIR / "cookiesFile" / file) for file in account_file]
+    account_file = [str(file).strip() for file in account_file]
     files = [Path(BASE_DIR / "videoFile" / file) for file in files]
     if enableTimer:
         publish_datetimes = generate_schedule_time_next_day(len(files), videos_per_day, daily_times,start_days)
@@ -36,7 +36,7 @@ def post_video_DouYin(title,files,tags,account_file,category=TencentZoneTypes.LI
                       thumbnail_path = '',
                       productLink = '', productTitle = ''):
     # 生成文件的完整路径
-    account_file = [Path(BASE_DIR / "cookiesFile" / file) for file in account_file]
+    account_file = [str(file).strip() for file in account_file]
     files = [Path(BASE_DIR / "videoFile" / file) for file in files]
     if enableTimer:
         publish_datetimes = generate_schedule_time_next_day(len(files), videos_per_day, daily_times,start_days)
@@ -57,7 +57,7 @@ def post_video_DouYin(title,files,tags,account_file,category=TencentZoneTypes.LI
 
 def post_video_ks(title,files,tags,account_file,category=TencentZoneTypes.LIFESTYLE.value,enableTimer=False,videos_per_day = 1, daily_times=None,start_days = 0):
     # 生成文件的完整路径
-    account_file = [Path(BASE_DIR / "cookiesFile" / file) for file in account_file]
+    account_file = [str(file).strip() for file in account_file]
     files = [Path(BASE_DIR / "videoFile" / file) for file in files]
     if enableTimer:
         publish_datetimes = generate_schedule_time_next_day(len(files), videos_per_day, daily_times,start_days)
@@ -77,7 +77,7 @@ def post_video_ks(title,files,tags,account_file,category=TencentZoneTypes.LIFEST
 
 def post_video_xhs(title,files,tags,account_file,category=TencentZoneTypes.LIFESTYLE.value,enableTimer=False,videos_per_day = 1, daily_times=None,start_days = 0):
     # 生成文件的完整路径
-    account_file = [Path(BASE_DIR / "cookiesFile" / file) for file in account_file]
+    account_file = [str(file).strip() for file in account_file]
     files = [Path(BASE_DIR / "videoFile" / file) for file in files]
     file_num = len(files)
     if enableTimer:

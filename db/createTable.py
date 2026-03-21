@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS user_info (
     type INTEGER NOT NULL,
     filePath TEXT NOT NULL,  -- 存储文件路径
     userName TEXT NOT NULL,
-    status INTEGER DEFAULT 0
+    status INTEGER DEFAULT 0,
+    storageStateJson TEXT,   -- 数据库主存的 Playwright storage_state JSON
+    storageStateUpdatedAt DATETIME
 )
 ''')
 

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import secrets
 import sqlite3
 import threading
@@ -17,6 +18,16 @@ from myUtils.auth import check_cookie
 from flask import Flask, request, jsonify, Response, render_template, send_from_directory
 from conf import BASE_DIR
 from myUtils.login import get_tencent_cookie, douyin_cookie_gen, get_ks_cookie, xiaohongshu_cookie_gen
+from utils.account_storage import (
+    account_storage_exists,
+    clear_account_storage_state,
+    ensure_account_storage_schema,
+    export_account_storage_state,
+    get_account_row,
+    get_cookie_dir,
+    has_persisted_storage_state,
+    import_account_storage_state,
+)
 from utils.cloud_agent import CloudAgent
 from utils.cloud_qr_bridge import CloudLoginBridge
 from utils.cloud_sync import CloudSyncClient
@@ -43,6 +54,7 @@ from utils.log import (
 
 active_queues = {}
 app = Flask(__name__)
+ensure_account_storage_schema()
 PLATFORM_LABELS = {
     '1': '小红书',
     '2': '视频号',
@@ -62,6 +74,19 @@ NOISY_REQUEST_PREFIX_INTERVALS = {
 REQUEST_LOG_BODY_LIMIT = 500
 OMNIDRIVE_OPENAI_PROXY_BASE_PATH = "/openai/v1"
 OMNIDRIVE_OPENAI_PROXY_FINAL_JOB_STATUSES = {"success", "completed", "failed", "cancelled", "needs_verify"}
+OMNIDRIVE_OPENAI_SUPPORTED_TOOL_NAMES = {"omnidrive_image", "omnidrive_video"}
+OMNIDRIVE_OPENAI_LOCAL_TOOL_GUARD_TEXT = (
+    "当前这条 OmniDrive 默认聊天接入只支持普通对话，以及 OmniDrive 图片和视频生成。"
+    "\n它不支持 OpenClaw 的本地工具，例如 read、write、edit、exec、process 或 web_search。"
+    "\n所以我不能真实读取本地文件、重启服务、修改配置或列出本地技能，也不会假装这些动作已经执行。"
+    "\n如果你要继续用 OmniDrive，请直接给我图片或视频生成需求；如果你要做本地运维或代码操作，请切回支持 OpenClaw 本地工具的系统模型。"
+)
+OMNIDRIVE_OPENAI_LOCAL_TOOL_SYSTEM_GUARD = (
+    "This OmniDrive route cannot execute OpenClaw local tools such as read, write, edit, exec, process, "
+    "or web_search. Never claim that you ran commands, restarted services, read local files, listed local "
+    "skills, or modified configuration. If asked to do that, clearly say this route currently supports "
+    "plain chat plus OmniDrive image/video generation only."
+)
 
 
 def parse_bool(value):
@@ -272,8 +297,10 @@ def serialize_account_row(row, status=None):
 
 def serialize_account_detail(row, status=None):
     row_status = row['status'] if status is None else status
-    cookie_path = Path(BASE_DIR / "cookiesFile" / row['filePath'])
+    cookie_path = get_cookie_dir() / row['filePath']
     platform_type = int(row['type'])
+    cookie_exists = account_storage_exists(row)
+    storage_backend = "database" if has_persisted_storage_state(row) else ("legacy_file" if cookie_path.exists() else "missing")
     return {
         "id": row['id'],
         "platformType": platform_type,
@@ -283,7 +310,8 @@ def serialize_account_detail(row, status=None):
         "cookieAbsolutePath": str(cookie_path.resolve()),
         "userName": row['userName'],
         "status": row_status,
-        "cookieExists": cookie_path.exists(),
+        "cookieExists": cookie_exists,
+        "storageBackend": storage_backend,
     }
 
 
@@ -297,14 +325,6 @@ async def validate_account_rows(conn, rows):
         validated_rows.append(serialize_account_row(row, status))
         if row['status'] != status:
             updates.append((status, row['id']))
-        if not is_valid:
-            try:
-                cookie_path = Path(BASE_DIR / "cookiesFile" / row['filePath'])
-                if cookie_path.exists():
-                    cookie_path.unlink()
-                    print(f"🗑️ 已清理失效的 cookie 文件 [{row['id']}]: {cookie_path.name}")
-            except Exception as e:
-                print(f"⚠️ 清理失效的 cookie 文件失败: {e}")
 
     if updates:
         cursor = conn.cursor()
@@ -348,6 +368,7 @@ def ensure_skill_api_authorized():
 
 
 def fetch_account_rows(account_ids=None):
+    ensure_account_storage_schema()
     with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
@@ -372,6 +393,7 @@ def fetch_account_rows(account_ids=None):
 
 
 def fetch_account_rows_by_file_paths(account_file_paths):
+    ensure_account_storage_schema()
     with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
@@ -804,6 +826,127 @@ def _safe_json_loads(text):
         return None
 
 
+def _extract_unsupported_openai_tool_names(tool_map):
+    unsupported = []
+    for name in tool_map:
+        if name not in OMNIDRIVE_OPENAI_SUPPORTED_TOOL_NAMES:
+            unsupported.append(name)
+    return sorted(unsupported)
+
+
+def _strip_openclaw_tooling_sections(text):
+    if not isinstance(text, str):
+        return ""
+    cleaned = re.sub(r"(^|\n)## Tooling\b.*?(?=\n##\s|\Z)", "\n", text, flags=re.DOTALL)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def _is_openai_bridge_error_text(text):
+    normalized = str(text or "").strip()
+    if not normalized:
+        return False
+    error_markers = (
+        "[Gemini Error:",
+        "MALFORMED_FUNCTION_CALL",
+        "UNEXPECTED_TOOL_CALL",
+        "Malformed function call:",
+    )
+    return any(marker in normalized for marker in error_markers)
+
+
+def _prompt_requests_local_system_action(prompt):
+    normalized = str(prompt or "").strip().lower()
+    if not normalized:
+        return False
+
+    action_keywords = (
+        "重启",
+        "重新加载",
+        "reload",
+        "restart",
+        "read",
+        "读取",
+        "查看",
+        "列出",
+        "list",
+        "执行",
+        "运行",
+        "run",
+        "edit",
+        "修改",
+        "write",
+        "打开",
+        "open",
+    )
+    target_keywords = (
+        "配置",
+        "config",
+        "技能",
+        "skill",
+        "文件",
+        "file",
+        "路径",
+        "path",
+        "命令",
+        "command",
+        "终端",
+        "shell",
+        "service",
+        "服务",
+        "gateway",
+        "openclaw",
+        "系统",
+        "system",
+        "本地",
+        "local",
+    )
+    return any(keyword in normalized for keyword in action_keywords) and any(
+        keyword in normalized for keyword in target_keywords
+    )
+
+
+def _sanitize_omnidrive_forwarded_openai_messages(messages, unsupported_tool_names):
+    sanitized = []
+
+    for item in messages or []:
+        if not isinstance(item, dict):
+            continue
+
+        role = str(item.get("role") or "").strip()
+        if role in {"tool", "toolResult"}:
+            # OmniDrive upstream chat currently does not understand OpenAI tool
+            # messages; media tool results are handled before sanitization.
+            continue
+        if role not in {"system", "user", "assistant"}:
+            continue
+
+        text = _flatten_openai_message_content(item.get("content"))
+        if role == "system":
+            text = _strip_openclaw_tooling_sections(text)
+        else:
+            text = str(text or "").strip()
+
+        if role == "assistant" and _is_openai_bridge_error_text(text):
+            continue
+
+        if not text:
+            continue
+
+        sanitized.append({
+            "role": role,
+            "content": text,
+        })
+
+    if unsupported_tool_names:
+        sanitized.insert(0, {
+            "role": "system",
+            "content": OMNIDRIVE_OPENAI_LOCAL_TOOL_SYSTEM_GUARD,
+        })
+
+    return sanitized
+
+
 def _prompt_is_media_capability_question(prompt):
     normalized = str(prompt or "").strip().lower()
     if not normalized:
@@ -1133,7 +1276,23 @@ def _build_openai_chat_stream_chunks(job_id, model_name, text=None, tool_call=No
     ]
 
 
-def create_omnidrive_openai_chat_completion(openai_payload):
+def _build_openai_chat_stream_chunk(response_id, model_name, delta=None, finish_reason=None):
+    return {
+        "id": response_id,
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": model_name,
+        "choices": [
+            {
+                "index": 0,
+                "delta": delta or {},
+                "finish_reason": finish_reason,
+            }
+        ],
+    }
+
+
+def _prepare_omnidrive_openai_chat_context(openai_payload):
     session = get_omnidrive_device_session_data()
     access_token = session["accessToken"]
     device = session["device"]
@@ -1148,9 +1307,15 @@ def create_omnidrive_openai_chat_completion(openai_payload):
     tool_result = _extract_last_openai_tool_result(messages)
     if tool_result and tool_result["toolName"] in {"omnidrive_image", "omnidrive_video"}:
         return {
-            "jobId": f"tool-result-{uuid.uuid4().hex}",
+            "accessToken": access_token,
+            "deviceId": device_id,
+            "messages": messages,
             "modelName": model_name,
-            "text": _summarize_openai_media_tool_result(tool_result["toolName"], tool_result["content"]),
+            "specialCompletion": {
+                "jobId": f"tool-result-{uuid.uuid4().hex}",
+                "modelName": model_name,
+                "text": _summarize_openai_media_tool_result(tool_result["toolName"], tool_result["content"]),
+            },
         }
 
     prompt = _extract_last_openai_user_prompt(messages)
@@ -1158,32 +1323,77 @@ def create_omnidrive_openai_chat_completion(openai_payload):
         raise ValueError("messages 中缺少可用的 user 文本内容")
 
     tool_map = _extract_openai_function_tools(openai_payload.get("tools"))
+    unsupported_tool_names = _extract_unsupported_openai_tool_names(tool_map)
     clarification_text = _build_media_clarification_text(prompt, tool_map)
     if clarification_text and _prompt_is_media_capability_question(prompt):
         return {
-            "jobId": f"tool-clarify-{uuid.uuid4().hex}",
+            "accessToken": access_token,
+            "deviceId": device_id,
+            "messages": messages,
+            "prompt": prompt,
             "modelName": model_name,
-            "text": clarification_text,
+            "specialCompletion": {
+                "jobId": f"tool-clarify-{uuid.uuid4().hex}",
+                "modelName": model_name,
+                "text": clarification_text,
+            },
         }
 
     media_tool = _select_openai_media_tool(prompt, tool_map)
     if media_tool:
         return {
-            "jobId": f"tool-call-{uuid.uuid4().hex}",
+            "accessToken": access_token,
+            "deviceId": device_id,
+            "messages": messages,
+            "prompt": prompt,
             "modelName": model_name,
-            "toolCall": _build_openai_tool_call(media_tool["toolName"], media_tool["arguments"]),
+            "specialCompletion": {
+                "jobId": f"tool-call-{uuid.uuid4().hex}",
+                "modelName": model_name,
+                "toolCall": _build_openai_tool_call(media_tool["toolName"], media_tool["arguments"]),
+            },
         }
 
+    if unsupported_tool_names and _prompt_requests_local_system_action(prompt):
+        return {
+            "accessToken": access_token,
+            "deviceId": device_id,
+            "messages": messages,
+            "prompt": prompt,
+            "modelName": model_name,
+            "specialCompletion": {
+                "jobId": f"tool-guard-{uuid.uuid4().hex}",
+                "modelName": model_name,
+                "text": OMNIDRIVE_OPENAI_LOCAL_TOOL_GUARD_TEXT,
+            },
+        }
+
+    sanitized_messages = _sanitize_omnidrive_forwarded_openai_messages(messages, unsupported_tool_names)
+    sanitized_prompt = _extract_last_openai_user_prompt(sanitized_messages) or prompt
+    if not sanitized_messages:
+        sanitized_messages = [{"role": "user", "content": prompt}]
+
+    return {
+        "accessToken": access_token,
+        "deviceId": device_id,
+        "messages": sanitized_messages,
+        "prompt": sanitized_prompt,
+        "modelName": model_name,
+        "specialCompletion": None,
+    }
+
+
+def _build_omnidrive_openai_chat_request_payload(openai_payload, context):
     request_payload = {
         # Use the cloud-executable source so current OmniDrive workers can pick up
         # OpenClaw main-chat requests without waiting for a cloud-side rollout.
         "source": "omnidrive_cloud",
         "jobType": "chat",
-        "modelName": model_name,
-        "prompt": prompt,
-        "deviceId": device_id,
+        "modelName": context["modelName"],
+        "prompt": context["prompt"],
+        "deviceId": context["deviceId"],
         "inputPayload": {
-            "messages": messages,
+            "messages": context["messages"],
             "requestSource": "openclaw_main_chat",
         },
     }
@@ -1191,6 +1401,177 @@ def create_omnidrive_openai_chat_completion(openai_payload):
         request_payload["inputPayload"]["temperature"] = openai_payload.get("temperature")
     if openai_payload.get("max_tokens") is not None:
         request_payload["inputPayload"]["maxTokens"] = openai_payload.get("max_tokens")
+    return request_payload
+
+
+def _iter_sse_events(stream):
+    event_name = None
+    data_lines = []
+
+    for raw_line in stream:
+        line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+        if line == "":
+            if event_name is not None or data_lines:
+                yield event_name or "message", "\n".join(data_lines)
+            event_name = None
+            data_lines = []
+            continue
+        if line.startswith(":"):
+            continue
+        if line.startswith("event:"):
+            event_name = line.split(":", 1)[1].strip()
+            continue
+        if line.startswith("data:"):
+            data_lines.append(line.split(":", 1)[1].lstrip())
+
+    if event_name is not None or data_lines:
+        yield event_name or "message", "\n".join(data_lines)
+
+
+def _stream_special_openai_completion(special_completion):
+    def event_stream():
+        chunks = _build_openai_chat_stream_chunks(
+            special_completion["jobId"],
+            special_completion["modelName"],
+            text=special_completion.get("text"),
+            tool_call=special_completion.get("toolCall"),
+        )
+        for chunk in chunks:
+            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    response = Response(event_stream(), mimetype="text/event-stream")
+    response.headers["Cache-Control"] = "no-cache, no-transform"
+    response.headers["Connection"] = "keep-alive"
+    response.headers["X-Accel-Buffering"] = "no"
+    return response
+
+
+def stream_omnidrive_openai_chat_completion(openai_payload):
+    context = _prepare_omnidrive_openai_chat_context(openai_payload)
+    special_completion = context.get("specialCompletion")
+    if special_completion:
+        return _stream_special_openai_completion(special_completion)
+
+    request_payload = _build_omnidrive_openai_chat_request_payload(openai_payload, context)
+    endpoint = f"{OMNIDRIVE_BASE_URL.rstrip('/')}/api/v1/ai/chat/stream"
+    headers = {
+        "Accept": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {context['accessToken']}",
+    }
+    data = json.dumps(request_payload).encode("utf-8")
+
+    def event_stream():
+        upstream = None
+        response_id = None
+        role_sent = False
+        emitted_text = ""
+        model_name = context["modelName"]
+        try:
+            request_obj = urllib_request.Request(
+                endpoint,
+                method="POST",
+                headers=headers,
+                data=data,
+            )
+            upstream = urllib_request.urlopen(request_obj, timeout=300)
+
+            for event_name, payload_text in _iter_sse_events(upstream):
+                payload = _safe_json_loads(payload_text) if payload_text.strip() != "[DONE]" else None
+
+                if event_name == "meta" and isinstance(payload, dict):
+                    job_id = str(payload.get("jobId") or "").strip() or f"stream-{uuid.uuid4().hex}"
+                    response_id = f"chatcmpl-{job_id}"
+                    model_name = str(payload.get("modelName") or model_name).strip() or model_name
+                    if not role_sent:
+                        role = str(payload.get("role") or "assistant").strip() or "assistant"
+                        yield f"data: {json.dumps(_build_openai_chat_stream_chunk(response_id, model_name, delta={'role': role}), ensure_ascii=False)}\n\n"
+                        role_sent = True
+                    continue
+
+                if event_name == "progress":
+                    continue
+
+                if event_name == "error":
+                    message = ""
+                    if isinstance(payload, dict):
+                        message = str(payload.get("error") or payload.get("message") or "").strip()
+                    yield f"data: {json.dumps({'error': {'message': message or 'OmniDrive 流式聊天失败', 'type': 'server_error'}}, ensure_ascii=False)}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+
+                if event_name == "delta" and isinstance(payload, dict):
+                    if not response_id:
+                        job_id = str(payload.get("jobId") or "").strip() or f"stream-{uuid.uuid4().hex}"
+                        response_id = f"chatcmpl-{job_id}"
+                    model_name = str(payload.get("modelName") or model_name).strip() or model_name
+                    if not role_sent:
+                        role = str(payload.get("role") or "assistant").strip() or "assistant"
+                        yield f"data: {json.dumps(_build_openai_chat_stream_chunk(response_id, model_name, delta={'role': role}), ensure_ascii=False)}\n\n"
+                        role_sent = True
+                    delta = str(payload.get("delta") or "")
+                    if delta:
+                        emitted_text += delta
+                        yield f"data: {json.dumps(_build_openai_chat_stream_chunk(response_id, model_name, delta={'content': delta}), ensure_ascii=False)}\n\n"
+                    continue
+
+                if event_name == "done" and isinstance(payload, dict):
+                    if not response_id:
+                        job_id = str(payload.get("jobId") or "").strip() or f"stream-{uuid.uuid4().hex}"
+                        response_id = f"chatcmpl-{job_id}"
+                    model_name = str(payload.get("modelName") or model_name).strip() or model_name
+                    if not role_sent:
+                        role = str(payload.get("role") or "assistant").strip() or "assistant"
+                        yield f"data: {json.dumps(_build_openai_chat_stream_chunk(response_id, model_name, delta={'role': role}), ensure_ascii=False)}\n\n"
+                        role_sent = True
+                    full_text = str(payload.get("text") or "")
+                    if full_text.startswith(emitted_text):
+                        remainder = full_text[len(emitted_text):]
+                        if remainder:
+                            yield f"data: {json.dumps(_build_openai_chat_stream_chunk(response_id, model_name, delta={'content': remainder}), ensure_ascii=False)}\n\n"
+                    finish_reason = str(payload.get("finishReason") or "").strip() or "stop"
+                    yield f"data: {json.dumps(_build_openai_chat_stream_chunk(response_id, model_name, delta={}, finish_reason=finish_reason), ensure_ascii=False)}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+
+            if response_id:
+                yield f"data: {json.dumps(_build_openai_chat_stream_chunk(response_id, model_name, delta={}, finish_reason='stop'), ensure_ascii=False)}\n\n"
+            else:
+                yield f"data: {json.dumps({'error': {'message': 'OmniDrive 未返回任何流式事件', 'type': 'server_error'}}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+        except urllib_error.HTTPError as exc:
+            raw_payload = exc.read().decode("utf-8", errors="replace")
+            parsed = _safe_json_loads(raw_payload)
+            message = ""
+            if isinstance(parsed, dict):
+                message = str(parsed.get("error") or parsed.get("message") or "").strip()
+            yield f"data: {json.dumps({'error': {'message': message or raw_payload or str(exc), 'type': 'server_error'}}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'error': {'message': str(exc), 'type': 'server_error'}}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+        finally:
+            if upstream is not None:
+                upstream.close()
+
+    response = Response(event_stream(), mimetype="text/event-stream")
+    response.headers["Cache-Control"] = "no-cache, no-transform"
+    response.headers["Connection"] = "keep-alive"
+    response.headers["X-Accel-Buffering"] = "no"
+    return response
+
+
+def create_omnidrive_openai_chat_completion(openai_payload):
+    context = _prepare_omnidrive_openai_chat_context(openai_payload)
+    special_completion = context.get("specialCompletion")
+    if special_completion:
+        return special_completion
+
+    access_token = context["accessToken"]
+    model_name = context["modelName"]
+    request_payload = _build_omnidrive_openai_chat_request_payload(openai_payload, context)
 
     status_code, create_payload = omnidrive_cloud_json_request(
         "POST",
@@ -1758,16 +2139,7 @@ def delete_account():
                 }), 404
 
             record = dict(record)
-
-            # 删除关联的cookie文件
-            if record.get('filePath'):
-                cookie_file_path = Path(BASE_DIR / "cookiesFile" / record['filePath'])
-                if cookie_file_path.exists():
-                    try:
-                        cookie_file_path.unlink()
-                        print(f"✅ Cookie文件已删除: {cookie_file_path}")
-                    except Exception as e:
-                        print(f"⚠️ 删除Cookie文件失败: {e}")
+            clear_account_storage_state(record)
 
             # 删除数据库记录
             cursor.execute("DELETE FROM user_info WHERE id = ?", (account_id,))
@@ -2060,6 +2432,16 @@ def omnidrive_openai_chat_completions():
         return auth_error
 
     payload = request.get_json(silent=True) or {}
+    if parse_bool(payload.get("stream")):
+        try:
+            return stream_omnidrive_openai_chat_completion(payload)
+        except ValueError as exc:
+            return _openai_error_response(str(exc), status_code=400)
+        except RuntimeError as exc:
+            return _openai_error_response(str(exc), status_code=502, error_type="server_error")
+        except Exception as exc:
+            return _openai_error_response(str(exc), status_code=500, error_type="server_error")
+
     try:
         completion = create_omnidrive_openai_chat_completion(payload)
     except ValueError as exc:
@@ -2068,21 +2450,6 @@ def omnidrive_openai_chat_completions():
         return _openai_error_response(str(exc), status_code=502, error_type="server_error")
     except Exception as exc:
         return _openai_error_response(str(exc), status_code=500, error_type="server_error")
-
-    if parse_bool(payload.get("stream")):
-        chunks = _build_openai_chat_stream_chunks(
-            completion["jobId"],
-            completion["modelName"],
-            text=completion.get("text"),
-            tool_call=completion.get("toolCall"),
-        )
-
-        def event_stream():
-            for chunk in chunks:
-                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-            yield "data: [DONE]\n\n"
-
-        return Response(event_stream(), mimetype="text/event-stream")
 
     if completion.get("toolCall"):
         return jsonify(
@@ -2606,42 +2973,29 @@ def upload_cookie():
 
         # 获取账号信息
         account_id = request.form.get('id')
-        platform = request.form.get('platform')
 
-        if not account_id or not platform:
+        if not account_id or not str(account_id).isdigit():
             return jsonify({
                 "code": 400,
-                "msg": "缺少账号ID或平台信息",
+                "msg": "缺少或错误的账号ID",
                 "data": None
             }), 400
 
-        # 从数据库获取账号的文件路径
-        with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute('SELECT filePath FROM user_info WHERE id = ?', (account_id,))
-            result = cursor.fetchone()
-
-        if not result:
+        account_id = int(account_id)
+        account_row = get_account_row(account_id)
+        if not account_row:
             return jsonify({
-                "code": 500,
+                "code": 404,
                 "msg": "账号不存在",
                 "data": None
             }), 404
 
-        # 保存上传的Cookie文件到对应路径
-        cookie_file_path = Path(BASE_DIR / "cookiesFile" / result['filePath'])
-        cookie_file_path.parent.mkdir(parents=True, exist_ok=True)
-
-        file.save(str(cookie_file_path))
-
-        # 更新数据库中的账号信息（可选，比如更新更新时间）
-        # 这里可以根据需要添加额外的处理逻辑
+        import_account_storage_state(account_id, file.read())
 
         return jsonify({
             "code": 200,
             "msg": "Cookie文件上传成功",
-            "data": None
+            "data": serialize_account_detail(get_account_row(account_row["id"]))
         }), 200
 
     except Exception as e:
@@ -2657,37 +3011,32 @@ def upload_cookie():
 @app.route('/downloadCookie', methods=['GET'])
 def download_cookie():
     try:
+        account_id = request.args.get('id')
         file_path = request.args.get('filePath')
-        if not file_path:
+        if not account_id and not file_path:
             return jsonify({
-                "code": 500,
-                "msg": "缺少文件路径参数",
+                "code": 400,
+                "msg": "缺少账号ID或文件路径参数",
                 "data": None
             }), 400
 
-        # 验证文件路径的安全性，防止路径遍历攻击
-        cookie_file_path = Path(BASE_DIR / "cookiesFile" / file_path).resolve()
-        base_path = Path(BASE_DIR / "cookiesFile").resolve()
-
-        if not cookie_file_path.is_relative_to(base_path):
+        account_ref = int(account_id) if account_id and str(account_id).isdigit() else file_path
+        account_row = get_account_row(account_ref)
+        if not account_row:
             return jsonify({
-                "code": 500,
-                "msg": "非法文件路径",
-                "data": None
-            }), 400
-
-        if not cookie_file_path.exists():
-            return jsonify({
-                "code": 500,
-                "msg": "Cookie文件不存在",
+                "code": 404,
+                "msg": "账号不存在",
                 "data": None
             }), 404
 
-        # 返回文件
-        return send_from_directory(
-            directory=str(cookie_file_path.parent),
-            path=cookie_file_path.name,
-            as_attachment=True
+        payload = export_account_storage_state(account_row["id"])
+        download_name = str(account_row.get("filePath") or "cookie.json").strip() or "cookie.json"
+        return Response(
+            payload,
+            mimetype='application/json',
+            headers={
+                'Content-Disposition': f'attachment; filename="{download_name}"'
+            },
         )
 
     except Exception as e:
@@ -2775,4 +3124,5 @@ if __name__ == '__main__':
     ensure_publish_task_manager_started()
     ensure_cloud_agent_started()
     ensure_omnidrive_agent_started()
-    app.run(host='0.0.0.0' ,port=5410)
+    backend_port = int(os.getenv("SAU_BACKEND_PORT", "5409"))
+    app.run(host='0.0.0.0', port=backend_port, threaded=True)

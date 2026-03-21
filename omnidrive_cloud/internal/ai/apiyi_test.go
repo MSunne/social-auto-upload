@@ -436,6 +436,37 @@ func TestGenerateChatStreamAggregatesSSEChunks(t *testing.T) {
 	}
 }
 
+func TestGenerateChatStreamFailsWhenTerminalEventIsMissing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"半截回复\"},\"finish_reason\":\"\"}]}\n\n"))
+	}))
+	defer server.Close()
+
+	provider, err := NewAPIYIProvider(config.Config{
+		APIYIBaseURL: server.URL,
+		APIYIApiKey:  "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewAPIYIProvider returned error: %v", err)
+	}
+
+	_, err = provider.GenerateChatStream(context.Background(), ChatRequest{
+		Model:   "gpt-5.4",
+		BaseURL: server.URL,
+		APIKey:  "sk-chat",
+		Messages: []ChatMessage{
+			{Role: "user", Content: "say hello"},
+		},
+	}, nil)
+	if err == nil {
+		t.Fatal("expected GenerateChatStream to fail without terminal event")
+	}
+	if !strings.Contains(err.Error(), "terminal event") {
+		t.Fatalf("unexpected error %v", err)
+	}
+}
+
 func TestBuildChatPayloadUsesGPT5SpecificFields(t *testing.T) {
 	temperature := 0.5
 	maxTokens := 1200
@@ -458,6 +489,98 @@ func TestBuildChatPayloadUsesGPT5SpecificFields(t *testing.T) {
 	}
 	if payload["max_completion_tokens"] != 1200 {
 		t.Fatalf("unexpected max_completion_tokens %#v", payload["max_completion_tokens"])
+	}
+}
+
+func TestGenerateChatStreamInlinesImageURLsForGPT5Models(t *testing.T) {
+	var capturedPayload map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/img.png":
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write([]byte{
+				0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+				0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+				0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+				0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+				0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41,
+				0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
+				0x00, 0x03, 0x01, 0x01, 0x00, 0xc9, 0xfe, 0x92,
+				0xef, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e,
+				0x44, 0xae, 0x42, 0x60, 0x82,
+			})
+		case "/v1/chat/completions":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("ReadAll returned error: %v", err)
+			}
+			if err := json.Unmarshal(body, &capturedPayload); err != nil {
+				t.Fatalf("json.Unmarshal returned error: %v", err)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	provider, err := NewAPIYIProvider(config.Config{
+		APIYIBaseURL: server.URL,
+		APIYIApiKey:  "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewAPIYIProvider returned error: %v", err)
+	}
+
+	_, err = provider.GenerateChatStream(context.Background(), ChatRequest{
+		Model:   "gpt-5.4",
+		BaseURL: server.URL,
+		APIKey:  "sk-chat",
+		Messages: []ChatMessage{
+			{
+				Role: "user",
+				Content: []map[string]any{
+					{"type": "text", "text": "看看这张图"},
+					{
+						"type": "image_url",
+						"image_url": map[string]any{
+							"url": server.URL + "/img.png",
+						},
+					},
+				},
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("GenerateChatStream returned error: %v", err)
+	}
+
+	messages, ok := capturedPayload["messages"].([]any)
+	if !ok || len(messages) != 1 {
+		t.Fatalf("unexpected messages payload %#v", capturedPayload["messages"])
+	}
+	message, ok := messages[0].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected message payload %#v", messages[0])
+	}
+	parts, ok := message["content"].([]any)
+	if !ok || len(parts) != 2 {
+		t.Fatalf("unexpected content payload %#v", message["content"])
+	}
+	imagePart, ok := parts[1].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected image part %#v", parts[1])
+	}
+	imageURL, ok := imagePart["image_url"].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected image_url payload %#v", imagePart["image_url"])
+	}
+	value, _ := imageURL["url"].(string)
+	if !strings.HasPrefix(value, "data:image/png;base64,") {
+		t.Fatalf("expected gpt-5 image attachment to be inlined, got %q", value)
 	}
 }
 

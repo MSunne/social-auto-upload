@@ -1467,12 +1467,14 @@ class OmniDriveBridge:
             return False
 
         message = self._extract_remote_error_message(response)
-        if message != "Publish task belongs to a different device":
-            return False
-
-        self._finalize_lease_record(task["taskUuid"], task.get("status"), task.get("updatedAt"))
-        self._clear_lease_token(task["taskUuid"])
-        return True
+        if message in {
+            "Publish task belongs to a different device",
+            "Publish task status transition is not allowed",
+        }:
+            self._finalize_lease_record(task["taskUuid"], task.get("status"), task.get("updatedAt"))
+            self._clear_lease_token(task["taskUuid"])
+            return True
+        return False
 
     def _sync_local_ai_tasks(self):
         if not self.ai_task_manager:
@@ -1519,7 +1521,7 @@ class OmniDriveBridge:
         if not self.ai_task_manager:
             return None
 
-        local_task_id = str(job.get("localTaskId") or "").strip()
+        local_task_id = self._resolve_remote_ai_local_task_id(job)
         cloud_job_id = str(job.get("id") or "").strip()
         if not local_task_id or not cloud_job_id:
             return None
@@ -1553,6 +1555,13 @@ class OmniDriveBridge:
         )
         return imported
 
+    @staticmethod
+    def _resolve_remote_ai_local_task_id(job):
+        local_task_id = str((job or {}).get("localTaskId") or "").strip()
+        if local_task_id:
+            return local_task_id
+        return str((job or {}).get("id") or "").strip()
+
     def _import_remote_ai_jobs(self):
         if not self.ai_task_manager:
             return 0
@@ -1566,7 +1575,7 @@ class OmniDriveBridge:
             job = item.get("job") or {}
             artifacts = item.get("artifacts") or []
             cloud_job_id = str(job.get("id") or "").strip()
-            local_task_id = str(job.get("localTaskId") or "").strip()
+            local_task_id = self._resolve_remote_ai_local_task_id(job)
             cloud_status = str(job.get("status") or "").strip()
             if not cloud_job_id or not local_task_id:
                 continue
@@ -1611,6 +1620,20 @@ class OmniDriveBridge:
                     },
                 )
                 continue
+
+            if any(str(item.get("root") or "").strip() == self.generated_root_name for item in artifact_refs):
+                try:
+                    self._sync_materials()
+                except Exception as exc:
+                    log_throttled(
+                        agent_logger,
+                        "WARNING",
+                        f"omnidrive_agent.generated_material_sync_error:{self.device_code}",
+                        30,
+                        "omnidrive bridge generated material sync failed before publish import device_code={} error={}",
+                        self.device_code,
+                        exc,
+                    )
 
             publish_task_uuid = self._enqueue_publish_from_ai_task(local_task, artifact_refs)
             if publish_task_uuid:
@@ -1994,27 +2017,55 @@ class OmniDriveBridge:
         return artifacts
 
     def _resolve_local_account_file_path(self, platform_name, account_name):
+        row = self._load_local_account_by_name(platform_name, account_name)
+        return row["filePath"]
+
+    def _load_local_account_by_name(self, platform_name, account_name):
         platform_type = PLATFORM_TYPE_BY_NAME.get(platform_name)
+        normalized_name = str(account_name or "").strip()
         if not platform_type:
             raise ValueError(f"不支持的平台: {platform_name}")
+        if not normalized_name:
+            raise ValueError(f"本地未找到账号: {platform_name} / {normalized_name}")
 
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT filePath, status
+                SELECT id, type, filePath, userName, status
                 FROM user_info
                 WHERE type = ? AND userName = ?
                 ORDER BY status DESC, id DESC
                 LIMIT 1
                 """,
-                (platform_type, account_name),
+                (platform_type, normalized_name),
             )
             row = cursor.fetchone()
         if not row:
-            raise ValueError(f"本地未找到账号: {platform_name} / {account_name}")
-        return row["filePath"]
+            raise ValueError(f"本地未找到账号: {platform_name} / {normalized_name}")
+        return dict(row)
+
+    def _load_local_account_by_file_path(self, account_file_path):
+        normalized_path = str(account_file_path or "").strip()
+        if not normalized_path:
+            return None
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, type, filePath, userName, status
+                FROM user_info
+                WHERE filePath = ?
+                ORDER BY status DESC, id DESC
+                LIMIT 1
+                """,
+                (normalized_path,),
+            )
+            row = cursor.fetchone()
+        return dict(row) if row else None
 
     def _load_local_accounts(self):
         with sqlite3.connect(self.db_path) as conn:
@@ -2417,8 +2468,6 @@ class OmniDriveBridge:
         account_file_path=None,
     ):
         account_name = str(account_name or "").strip()
-        if not account_name:
-            return None
 
         platform_type = 0
         platform_name = ""
@@ -2449,9 +2498,40 @@ class OmniDriveBridge:
             return None
 
         account_file_path = str(account_file_path or "").strip()
+        if account_file_path:
+            local_record = self._load_local_account_by_file_path(account_file_path)
+            if local_record and int(local_record.get("type") or 0) == platform_type:
+                account_name = str(local_record.get("userName") or account_name or account_file_path).strip()
+                return {
+                    "platformType": platform_type,
+                    "platformName": platform_name,
+                    "accountName": account_name,
+                    "accountFilePath": str(local_record.get("filePath") or account_file_path).strip(),
+                }
+            if local_record:
+                actual_platform = PLATFORM_NAME_BY_TYPE.get(int(local_record.get("type") or 0)) or str(local_record.get("type") or "")
+                agent_logger.warning(
+                    "omnidrive bridge ignored mismatched ai publish target file path platform={} account_name={} account_file_path={} actual_platform={}",
+                    platform_name,
+                    account_name,
+                    account_file_path,
+                    actual_platform,
+                )
+            else:
+                agent_logger.warning(
+                    "omnidrive bridge ignored missing ai publish target file path platform={} account_name={} account_file_path={}",
+                    platform_name,
+                    account_name,
+                    account_file_path,
+                )
+            account_file_path = ""
+
+        if not account_name:
+            return None
+
         if not account_file_path:
             try:
-                account_file_path = self._resolve_local_account_file_path(platform_name, account_name)
+                local_record = self._load_local_account_by_name(platform_name, account_name)
             except Exception as exc:
                 agent_logger.warning(
                     "omnidrive bridge skipped ai publish target because local account was not found platform={} account_name={} error={}",
@@ -2460,6 +2540,8 @@ class OmniDriveBridge:
                     exc,
                 )
                 return None
+            account_name = str(local_record.get("userName") or account_name).strip()
+            account_file_path = str(local_record.get("filePath") or "").strip()
 
         return {
             "platformType": platform_type,

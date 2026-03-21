@@ -72,6 +72,14 @@ type StreamEventPayload = {
   progressed?: boolean;
 };
 
+type StreamReadState = {
+  sawDone: boolean;
+  sawError: boolean;
+};
+
+const DEFAULT_CHAT_MAX_TOKENS = 1800;
+const ATTACHMENT_HEAVY_CHAT_MAX_TOKENS = 3200;
+
 const INITIAL_MESSAGES: ChatMessage[] = [
   {
     id: "seed-assistant",
@@ -211,10 +219,14 @@ function parseSSEBlock(block: string) {
 async function readStream(
   stream: ReadableStream<Uint8Array>,
   onEvent: (event: string, payload: StreamEventPayload) => void,
-) {
+): Promise<StreamReadState> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  const state: StreamReadState = {
+    sawDone: false,
+    sawError: false,
+  };
 
   while (true) {
     const { done, value } = await reader.read();
@@ -226,6 +238,12 @@ async function readStream(
     for (const part of parts) {
       const parsed = parseSSEBlock(part);
       if (parsed) {
+        if (parsed.event === "done") {
+          state.sawDone = true;
+        }
+        if (parsed.event === "error") {
+          state.sawError = true;
+        }
         onEvent(parsed.event, parsed.payload);
       }
     }
@@ -234,12 +252,20 @@ async function readStream(
       if (buffer.trim()) {
         const parsed = parseSSEBlock(buffer);
         if (parsed) {
+          if (parsed.event === "done") {
+            state.sawDone = true;
+          }
+          if (parsed.event === "error") {
+            state.sawError = true;
+          }
           onEvent(parsed.event, parsed.payload);
         }
       }
       break;
     }
   }
+
+  return state;
 }
 
 function detectAttachmentKind(mimeType: string, fileName: string): ChatAttachmentKind {
@@ -455,6 +481,46 @@ function buildMessagesFromHistory(job?: AIJob | null, artifacts: AIJobArtifact[]
 }
 
 function summarizeHistory(job: AIJob) {
+  const sanitizeHistoryLine = (value: string) =>
+    value
+      .replace(/^Sender\s*\(untrusted metadata\):\s*/i, "")
+      .replace(/^```[\w-]*$/g, "")
+      .replace(/^\[[^\]]+\]\s*/, "")
+      .replace(/^[>\-*]\s+/, "")
+      .replace(/^[`]+|[`]+$/g, "")
+      .trim();
+
+  const isMetadataLikeLine = (value: string) => {
+    const normalized = value.trim();
+    if (!normalized) {
+      return true;
+    }
+    if (/^(json|yaml|xml|markdown)$/i.test(normalized)) {
+      return true;
+    }
+    if (/^[{}\[\],:]+$/.test(normalized)) {
+      return true;
+    }
+    if (/^"[^"]+"\s*:/.test(normalized)) {
+      return true;
+    }
+    if (/^[\[{].*[\]}]$/.test(normalized) && normalized.length < 120) {
+      return true;
+    }
+    return false;
+  };
+
+  const summarizeText = (value: string) => {
+    const cleaned = value
+      .split(/\r?\n+/)
+      .map(sanitizeHistoryLine)
+      .filter((line) => line && !isMetadataLikeLine(line));
+    if (cleaned.length === 0) {
+      return "";
+    }
+    return cleaned.join(" ").replace(/\s+/g, " ").trim();
+  };
+
   const inputPayload = (job.inputPayload || {}) as Record<string, unknown>;
   const rawMessages = Array.isArray(inputPayload.messages) ? inputPayload.messages : [];
   const lastUser = [...rawMessages]
@@ -462,13 +528,16 @@ function summarizeHistory(job: AIJob) {
     .find((item) => item && typeof item === "object" && (item as Record<string, unknown>).role === "user");
 
   if (lastUser && typeof lastUser === "object") {
-    const content = extractDisplayText((lastUser as Record<string, unknown>).content);
-    if (content.trim()) {
-      return content.trim();
+    const content = summarizeText(extractDisplayText((lastUser as Record<string, unknown>).content));
+    if (content) {
+      return content;
     }
   }
   if (job.prompt?.trim()) {
-    return job.prompt.trim();
+    const prompt = summarizeText(job.prompt);
+    if (prompt) {
+      return prompt;
+    }
   }
   return `${job.modelName} 对话`;
 }
@@ -478,6 +547,18 @@ function attachmentIcon(kind: ChatAttachmentKind) {
     return ImageIcon;
   }
   return FileText;
+}
+
+function appendStreamError(existingContent: string, nextError: string) {
+  const normalizedContent = existingContent.trim();
+  const normalizedError = nextError.trim();
+  if (!normalizedContent) {
+    return normalizedError;
+  }
+  if (normalizedContent.includes(normalizedError)) {
+    return normalizedContent;
+  }
+  return `${normalizedContent}\n\n[流式连接已中断] ${normalizedError}`;
 }
 
 function AttachmentList({
@@ -494,31 +575,34 @@ function AttachmentList({
   }
 
   return (
-    <div className={cn("mt-3 flex flex-wrap gap-2", compact && "mt-2")}>
+    <div
+      className={cn(
+        "mt-3",
+        compact ? "mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3" : "flex flex-wrap gap-2",
+      )}
+    >
       {attachments.map((attachment) => {
         const Icon = attachmentIcon(attachment.kind);
         const href = attachment.publicUrl || attachment.dataUrl;
         return (
           <div
             key={attachment.id}
-            className="group flex items-center gap-2 rounded-2xl border border-border/80 bg-background/60 px-2.5 py-2 text-left"
+            className={cn(
+              "group flex min-w-0 items-center gap-2 rounded-2xl border border-border/80 bg-background/60 px-2.5 py-2 text-left",
+              compact && "w-full bg-background/45",
+            )}
           >
             {attachment.kind === "image" && href ? (
               <a href={href} target="_blank" rel="noreferrer" className="shrink-0">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={href}
-                  alt={attachment.fileName}
-                  className="h-10 w-10 rounded-xl object-cover"
-                />
+                <AttachmentThumbnail href={href} fileName={attachment.fileName} />
               </a>
             ) : (
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10 text-text-muted">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/10 text-text-muted">
                 <Icon className="h-4 w-4" />
               </div>
             )}
 
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               {href ? (
                 <a
                   href={href}
@@ -549,6 +633,28 @@ function AttachmentList({
         );
       })}
     </div>
+  );
+}
+
+function AttachmentThumbnail({ href, fileName }: { href: string; fileName: string }) {
+  const [failed, setFailed] = useState(false);
+
+  if (failed) {
+    return (
+      <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/10 text-text-muted">
+        <ImageIcon className="h-4 w-4" />
+      </div>
+    );
+  }
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={href}
+      alt=""
+      className="h-11 w-11 rounded-xl object-cover"
+      onError={() => setFailed(true)}
+    />
   );
 }
 
@@ -713,6 +819,8 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<ChatAttachment[]>([]);
+  const [pendingHydrationJobId, setPendingHydrationJobId] = useState("");
+  const [autoSelectLatestHistory, setAutoSelectLatestHistory] = useState(true);
 
   const {
     data: rawModels = [],
@@ -772,23 +880,26 @@ export default function ChatPage() {
   }, [chatModels, selectedModelName]);
 
   useEffect(() => {
-    if (!selectedJobId && historyJobs.length > 0 && !sending) {
+    if (autoSelectLatestHistory && !selectedJobId && historyJobs.length > 0 && !sending) {
       setSelectedJobId(historyJobs[0].id);
+      setPendingHydrationJobId(historyJobs[0].id);
+      setAutoSelectLatestHistory(false);
     }
-  }, [historyJobs, selectedJobId, sending]);
+  }, [autoSelectLatestHistory, historyJobs, selectedJobId, sending]);
 
   useEffect(() => {
-    if (!selectedJob || sending) {
+    if (!selectedJob || sending || pendingHydrationJobId !== selectedJob.id) {
       return;
     }
     setMessages(buildMessagesFromHistory(selectedJob, selectedJobArtifacts));
     setDraft("");
     setDraftAttachments([]);
     setSubmitError("");
+    setPendingHydrationJobId("");
     if (selectedJob.modelName) {
       setSelectedModelName(selectedJob.modelName);
     }
-  }, [selectedJob, selectedJobArtifacts, sending]);
+  }, [selectedJob, selectedJobArtifacts, pendingHydrationJobId, sending]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -886,12 +997,15 @@ export default function ChatPage() {
     streamAbortRef.current = controller;
 
     const outboundAttachments = serializeAttachments(draftAttachments);
+    const requestedMaxTokens =
+      draftAttachments.length > 0 ? ATTACHMENT_HEAVY_CHAT_MAX_TOKENS : DEFAULT_CHAT_MAX_TOKENS;
     setDraft("");
     setDraftAttachments([]);
     setSubmitError("");
     setSending(true);
     setMessages((previous) => [...previous, userMessage, assistantMessage]);
 
+    let createdJobId = "";
     try {
       const response = await fetch(`${API_BASE_URL}/ai/chat/stream`, {
         method: "POST",
@@ -905,7 +1019,7 @@ export default function ChatPage() {
           inputPayload: {
             prompt: nextUserMessage,
             temperature: 0.5,
-            maxTokens: 1200,
+            maxTokens: requestedMaxTokens,
             messages: buildConversationMessages(messages, nextUserMessage),
             attachments: outboundAttachments,
           },
@@ -930,12 +1044,12 @@ export default function ChatPage() {
       }
 
       let receivedText = "";
-      let createdJobId = "";
-      await readStream(response.body, (event, payload) => {
+      const streamState = await readStream(response.body, (event, payload) => {
         if (event === "meta") {
           if (payload.jobId) {
             createdJobId = payload.jobId;
             setSelectedJobId(payload.jobId);
+            setPendingHydrationJobId("");
           }
           return;
         }
@@ -1002,8 +1116,8 @@ export default function ChatPage() {
               item.id === assistantMessageId
                 ? {
                     ...item,
-                    content: nextMessage,
-                    rawContent: nextMessage,
+                    content: appendStreamError(item.content, nextMessage),
+                    rawContent: appendStreamError(String(item.rawContent || item.content || ""), nextMessage),
                     state: "error",
                     timestamp: new Date().toISOString(),
                     jobId: createdJobId || item.jobId,
@@ -1013,6 +1127,13 @@ export default function ChatPage() {
           );
         }
       });
+      if (!streamState.sawDone && !streamState.sawError) {
+        throw new Error(
+          receivedText.trim()
+            ? "聊天流意外中断，当前回复只收到了一部分，请重新发送或继续追问。"
+            : "聊天流未正常结束，请稍后重试。",
+        );
+      }
     } catch (error) {
       if ((error as Error)?.name === "AbortError") {
         setMessages((previous) =>
@@ -1036,10 +1157,11 @@ export default function ChatPage() {
             item.id === assistantMessageId
               ? {
                   ...item,
-                  content: nextError,
-                  rawContent: nextError,
+                  content: appendStreamError(item.content, nextError),
+                  rawContent: appendStreamError(String(item.rawContent || item.content || ""), nextError),
                   state: "error",
                   timestamp: new Date().toISOString(),
+                  jobId: createdJobId || item.jobId,
                 }
               : item,
           ),
@@ -1051,9 +1173,10 @@ export default function ChatPage() {
         streamAbortRef.current = null;
       }
       void queryClient.invalidateQueries({ queryKey: ["aiJobs", "chat", "history"] });
-      if (selectedJobId) {
-        void queryClient.invalidateQueries({ queryKey: ["aiJob", selectedJobId] });
-        void queryClient.invalidateQueries({ queryKey: ["aiJobArtifacts", selectedJobId] });
+      const historyJobId = createdJobId || selectedJobId;
+      if (historyJobId) {
+        void queryClient.invalidateQueries({ queryKey: ["aiJob", historyJobId] });
+        void queryClient.invalidateQueries({ queryKey: ["aiJobArtifacts", historyJobId] });
       }
     }
   }
@@ -1071,6 +1194,8 @@ export default function ChatPage() {
 
   function startNewConversation() {
     setSelectedJobId("");
+    setPendingHydrationJobId("");
+    setAutoSelectLatestHistory(false);
     setMessages(INITIAL_MESSAGES);
     setDraft("");
     setDraftAttachments([]);
@@ -1148,7 +1273,7 @@ export default function ChatPage() {
               {historyJobs.map((job) => {
                 const active = selectedJobId === job.id;
                 return (
-                  <button key={job.id} type="button" onClick={() => setSelectedJobId(job.id)} className={cn("group w-full rounded-xl px-3 py-2.5 text-left transition-all", active ? "bg-accent/10 border border-accent/30 shadow-sm shadow-accent/10" : "border border-transparent hover:bg-surface-hover/80")}>
+                  <button key={job.id} type="button" onClick={() => { setAutoSelectLatestHistory(false); setSelectedJobId(job.id); setPendingHydrationJobId(job.id); }} className={cn("group w-full rounded-xl px-3 py-2.5 text-left transition-all", active ? "bg-accent/10 border border-accent/30 shadow-sm shadow-accent/10" : "border border-transparent hover:bg-surface-hover/80")}>
                     <div className="line-clamp-2 text-sm font-medium leading-5 text-text-primary">{summarizeHistory(job)}</div>
                     <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-text-muted">
                       <Clock3 className="h-3 w-3" />
@@ -1180,7 +1305,7 @@ export default function ChatPage() {
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
-          <div className="mx-auto flex h-full w-full max-w-4xl flex-col">
+          <div className="flex h-full w-full flex-col">
             <div className="space-y-4">
               {messages.map((message) => (
                 <motion.div key={message.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: "easeOut" }} className={cn("flex gap-3", message.role === "user" ? "justify-end" : "justify-start")}>
@@ -1189,7 +1314,7 @@ export default function ChatPage() {
                       {message.state === "pending" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bot className="h-3.5 w-3.5" />}
                     </div>
                   )}
-                  <div className={cn("max-w-[80%] rounded-2xl px-4 py-3 shadow-sm", message.role === "user" ? "rounded-tr-md bg-gradient-to-r from-accent to-cyan text-background" : "rounded-tl-md border border-border bg-surface-hover text-text-primary", message.state === "error" && "border-red-500/30 bg-red-500/10 text-red-100")}>
+                  <div className={cn("max-w-[90%] rounded-2xl px-4 py-3 shadow-sm", message.role === "user" ? "rounded-tr-md bg-gradient-to-r from-accent to-cyan text-background" : "rounded-tl-md border border-border bg-surface-hover text-text-primary", message.state === "error" && "border-red-500/30 bg-red-500/10 text-red-100")}>
                     {message.state === "pending" ? (
                       <div className="flex items-center gap-1.5 px-1 py-1">
                         <span className="h-2 w-2 animate-bounce rounded-full bg-accent/90 [animation-delay:-0.2s]" />
@@ -1224,7 +1349,7 @@ export default function ChatPage() {
         </div>
 
         <div className="border-t border-border px-6 py-4">
-          <div className="mx-auto max-w-4xl">
+          <div>
             <input ref={fileInputRef} type="file" multiple accept={ACCEPTED_FILE_TYPES} className="hidden" onChange={handleFilesSelected} />
             <AttachmentList attachments={draftAttachments} onRemove={removeDraftAttachment} />
             <div className="flex items-end gap-2 rounded-2xl border border-border bg-background/80 px-3 py-2.5 shadow-sm transition-colors focus-within:border-accent/40 focus-within:shadow-accent/10">

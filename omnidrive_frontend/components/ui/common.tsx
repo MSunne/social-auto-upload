@@ -158,7 +158,7 @@ const statusLabels: Record<string, string> = {
   generating: "生成中",
   storyboarding: "优化分镜中",
   publishing: "发布中",
-  queued_generation: "待生成",
+  queued_generation: "等待生成",
   pending_payment: "待支付",
   scheduled: "未开始",
   publish_queued: "待发布",

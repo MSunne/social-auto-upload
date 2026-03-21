@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
-  Clock3,
   Cpu,
   FileText,
   Image as ImageIcon,
@@ -18,6 +17,7 @@ import {
 } from "lucide-react";
 import {
   createSkill,
+  deleteSkill,
   deleteSkillAsset,
   listAIModels,
   listSkillAssets,
@@ -27,7 +27,6 @@ import {
 import type { AIModel, Skill, SkillAsset } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
-  formatDateTime,
   getModelReferenceLimit,
   mapSkillOutputToModelCategory,
   normalizeSkillOutputLabel,
@@ -47,10 +46,16 @@ type SkillFormState = {
   promptTemplate: string;
   outputType: string;
   modelName: string;
-  executionTime: string;
-  repeatDaily: boolean;
   storyboardEnabled: boolean;
   isEnabled: boolean;
+};
+
+type UploadAssetType = "reference_image" | "reference_text";
+
+type UploadingAsset = {
+  id: string;
+  assetType: UploadAssetType;
+  file: File;
 };
 
 type OutputOption = {
@@ -91,53 +96,23 @@ const EMPTY_FORM: SkillFormState = {
   promptTemplate: "",
   outputType: "图文模式",
   modelName: "",
-  executionTime: "",
-  repeatDaily: false,
   storyboardEnabled: true,
   isEnabled: true,
 };
 
-function toTimeOfDayValue(value?: string | null) {
-  if (!value) {
-    return "";
+function buildSkillFormState(skill?: Skill | null): SkillFormState {
+  if (!skill) {
+    return EMPTY_FORM;
   }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-  const offset = date.getTimezoneOffset();
-  const normalized = new Date(date.getTime() - offset * 60 * 1000);
-  return normalized.toISOString().slice(11, 19);
-}
-
-function buildNextExecutionISOString(timeOfDay?: string | null) {
-  const value = (timeOfDay || "").trim();
-  if (!value) {
-    return null;
-  }
-  const parts = value.split(":").map((item) => Number(item));
-  const [hours, minutes, seconds = 0] = parts;
-  if ([hours, minutes, seconds].some((item) => Number.isNaN(item))) {
-    return null;
-  }
-  const target = new Date();
-  target.setHours(hours, minutes, seconds, 0);
-  if (target.getTime() <= Date.now()) {
-    target.setDate(target.getDate() + 1);
-  }
-  return target.toISOString();
-}
-
-function formatTimeOfDayLabel(value?: string | null) {
-  const normalized = (value || "").trim();
-  if (!normalized) {
-    return "未设置";
-  }
-  const parts = normalized.split(":");
-  if (parts.length === 2) {
-    return `${parts[0]}:${parts[1]}:00`;
-  }
-  return normalized;
+  return {
+    name: skill.name || "",
+    description: skill.description || "",
+    promptTemplate: skill.promptTemplate || "",
+    outputType: normalizeSkillOutputLabel(skill.outputType),
+    modelName: skill.modelName || "",
+    storyboardEnabled: skill.storyboardEnabled !== false,
+    isEnabled: Boolean(skill.isEnabled),
+  };
 }
 
 function isImageAsset(asset: SkillAsset) {
@@ -157,34 +132,12 @@ export function SkillEditorModal({
   onSaved,
 }: SkillEditorModalProps) {
   const queryClient = useQueryClient();
-  const [form, setForm] = useState<SkillFormState>(EMPTY_FORM);
-  const [pendingImages, setPendingImages] = useState<File[]>([]);
-  const [pendingTexts, setPendingTexts] = useState<File[]>([]);
-
-  useEffect(() => {
-    if (!isOpen) {
-      return;
-    }
-    if (!skill) {
-      setForm(EMPTY_FORM);
-      setPendingImages([]);
-      setPendingTexts([]);
-      return;
-    }
-    setForm({
-      name: skill.name || "",
-      description: skill.description || "",
-      promptTemplate: skill.promptTemplate || "",
-      outputType: normalizeSkillOutputLabel(skill.outputType),
-      modelName: skill.modelName || "",
-      executionTime: toTimeOfDayValue(skill.executionTime),
-      repeatDaily: Boolean(skill.repeatDaily),
-      storyboardEnabled: skill.storyboardEnabled !== false,
-      isEnabled: Boolean(skill.isEnabled),
-    });
-    setPendingImages([]);
-    setPendingTexts([]);
-  }, [isOpen, skill]);
+  const [form, setForm] = useState<SkillFormState>(() => buildSkillFormState(skill));
+  const [draftSkillId, setDraftSkillId] = useState<string | null>(null);
+  const [draftNeedsCleanup, setDraftNeedsCleanup] = useState(false);
+  const [uploadingAssets, setUploadingAssets] = useState<UploadingAsset[]>([]);
+  const draftCreationRef = useRef<Promise<Skill> | null>(null);
+  const currentSkillId = skill?.id ?? draftSkillId;
 
   const modelCategory = mapSkillOutputToModelCategory(form.outputType);
   const { data: models = [], isLoading: modelsLoading } = useQuery<AIModel[]>({
@@ -194,9 +147,9 @@ export function SkillEditorModal({
   });
 
   const { data: assets = [], isLoading: assetsLoading } = useQuery<SkillAsset[]>({
-    queryKey: ["skillAssets", skill?.id],
-    queryFn: () => listSkillAssets(skill!.id),
-    enabled: isOpen && Boolean(skill?.id),
+    queryKey: ["skillAssets", currentSkillId],
+    queryFn: () => listSkillAssets(currentSkillId!),
+    enabled: isOpen && Boolean(currentSkillId),
   });
 
   const availableModels = useMemo(
@@ -214,48 +167,116 @@ export function SkillEditorModal({
 
   const imageAssets = useMemo(() => assets.filter(isImageAsset), [assets]);
   const textAssets = useMemo(() => assets.filter(isTextAsset), [assets]);
+  const uploadingImages = useMemo(
+    () => uploadingAssets.filter((item) => item.assetType === "reference_image"),
+    [uploadingAssets],
+  );
+  const uploadingTexts = useMemo(
+    () => uploadingAssets.filter((item) => item.assetType === "reference_text"),
+    [uploadingAssets],
+  );
   const imageLimit = getModelReferenceLimit(form.outputType, selectedModel ?? undefined);
-  const totalImageCount = imageAssets.length + pendingImages.length;
-  const totalTextCount = textAssets.length + pendingTexts.length;
+  const totalImageCount = imageAssets.length + uploadingImages.length;
+  const totalTextCount = textAssets.length + uploadingTexts.length;
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    setForm(buildSkillFormState(skill));
+    setDraftSkillId(null);
+    setDraftNeedsCleanup(false);
+    setUploadingAssets([]);
+    draftCreationRef.current = null;
+  }, [isOpen, skill]);
+
+  const buildSkillPayload = () => ({
+    name: form.name.trim(),
+    description: form.description.trim(),
+    outputType: form.outputType,
+    modelName: form.modelName.trim(),
+    deviceId,
+    promptTemplate: form.promptTemplate.trim() || null,
+    storyboardEnabled: form.storyboardEnabled,
+    isEnabled: form.isEnabled,
+  });
+
+  const ensureSkillPayloadReady = (payload: ReturnType<typeof buildSkillPayload>) => {
+    if (!payload.name || !payload.description || !payload.outputType || !payload.modelName) {
+      throw new Error("请先填写完整的技能名称、说明、输出格式和模型，再上传素材");
+    }
+  };
+
+  const invalidateSkillQueries = async (skillId: string) => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["skills"] }),
+      queryClient.invalidateQueries({ queryKey: ["skills", deviceId] }),
+      queryClient.invalidateQueries({ queryKey: ["skillAssets", skillId] }),
+    ]);
+  };
+
+  const ensureUploadTargetSkillId = async () => {
+    if (currentSkillId) {
+      return currentSkillId;
+    }
+    if (draftCreationRef.current) {
+      const draft = await draftCreationRef.current;
+      return draft.id;
+    }
+
+    const payload = buildSkillPayload();
+    ensureSkillPayloadReady(payload);
+
+    const createPromise = createSkill(payload);
+    draftCreationRef.current = createPromise;
+    try {
+      const createdSkill = await createPromise;
+      setDraftSkillId(createdSkill.id);
+      setDraftNeedsCleanup(true);
+      return createdSkill.id;
+    } finally {
+      draftCreationRef.current = null;
+    }
+  };
+
+  const uploadFiles = async (files: File[], assetType: UploadAssetType) => {
+    if (files.length === 0) {
+      return;
+    }
+
+    const nextUploads = files.map((file) => ({
+      id: `${assetType}-${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
+      assetType,
+      file,
+    }));
+    setUploadingAssets((current) => [...current, ...nextUploads]);
+
+    try {
+      const skillId = await ensureUploadTargetSkillId();
+      for (const entry of nextUploads) {
+        await uploadSkillAsset(skillId, entry.file, assetType);
+      }
+      await invalidateSkillQueries(skillId);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "上传素材失败，请稍后重试");
+    } finally {
+      const uploadIds = new Set(nextUploads.map((item) => item.id));
+      setUploadingAssets((current) => current.filter((item) => !uploadIds.has(item.id)));
+    }
+  };
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const payload = {
-        name: form.name.trim(),
-        description: form.description.trim(),
-        outputType: form.outputType,
-        modelName: form.modelName.trim(),
-        deviceId,
-        promptTemplate: form.promptTemplate.trim() || null,
-        executionTime: buildNextExecutionISOString(form.executionTime),
-        repeatDaily: Boolean(form.executionTime && form.repeatDaily),
-        storyboardEnabled: form.storyboardEnabled,
-        isEnabled: form.isEnabled,
-      };
-
-      if (!payload.name || !payload.description || !payload.outputType || !payload.modelName) {
-        throw new Error("请先填写完整的技能名称、说明、输出格式和模型");
-      }
-
-      const savedSkill = skill?.id
-        ? await updateSkill(skill.id, payload)
-        : await createSkill(payload);
-
-      for (const file of pendingImages) {
-        await uploadSkillAsset(savedSkill.id, file, "reference_image");
-      }
-      for (const file of pendingTexts) {
-        await uploadSkillAsset(savedSkill.id, file, "reference_text");
-      }
-
-      return savedSkill;
+      const payload = buildSkillPayload();
+      ensureSkillPayloadReady(payload);
+      return currentSkillId
+        ? updateSkill(currentSkillId, payload)
+        : createSkill(payload);
     },
     onSuccess: async (savedSkill) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["skills"] }),
-        queryClient.invalidateQueries({ queryKey: ["skills", deviceId] }),
-        queryClient.invalidateQueries({ queryKey: ["skillAssets", savedSkill.id] }),
-      ]);
+      setDraftSkillId(savedSkill.id);
+      setDraftNeedsCleanup(false);
+      await invalidateSkillQueries(savedSkill.id);
       onSaved();
       onClose();
     },
@@ -266,16 +287,16 @@ export function SkillEditorModal({
 
   const deleteAssetMutation = useMutation({
     mutationFn: async (asset: SkillAsset) => {
-      if (!skill?.id) {
+      if (!currentSkillId) {
         throw new Error("技能尚未创建，无法删除已上传素材");
       }
-      await deleteSkillAsset(skill.id, asset.id);
+      await deleteSkillAsset(currentSkillId, asset.id);
     },
     onSuccess: async () => {
-      if (!skill?.id) {
+      if (!currentSkillId) {
         return;
       }
-      await queryClient.invalidateQueries({ queryKey: ["skillAssets", skill.id] });
+      await queryClient.invalidateQueries({ queryKey: ["skillAssets", currentSkillId] });
     },
     onError: (error) => {
       window.alert(error instanceof Error ? error.message : "删除素材失败，请稍后重试");
@@ -285,6 +306,25 @@ export function SkillEditorModal({
   if (!isOpen) {
     return null;
   }
+
+  const isBusy = saveMutation.isPending || uploadingAssets.length > 0;
+
+  const handleClose = async () => {
+    if (isBusy) {
+      window.alert("素材还在上传或技能正在保存，请稍候片刻。");
+      return;
+    }
+    if (!skill?.id && draftNeedsCleanup && draftSkillId) {
+      try {
+        await deleteSkill(draftSkillId);
+        await queryClient.invalidateQueries({ queryKey: ["skills", deviceId] });
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : "清理未完成的技能失败，请稍后重试");
+        return;
+      }
+    }
+    onClose();
+  };
 
   const handleOutputChange = (nextOutputType: string) => {
     const nextCategory = mapSkillOutputToModelCategory(nextOutputType);
@@ -311,7 +351,7 @@ export function SkillEditorModal({
     if (accepted.length < nextFiles.length) {
       window.alert(`当前模型最多支持 ${imageLimit} 张参考图，已仅保留前 ${accepted.length} 张。`);
     }
-    setPendingImages((current) => [...current, ...accepted]);
+    void uploadFiles(accepted, "reference_image");
   };
 
   const handleTextSelection = (fileList: FileList | null) => {
@@ -319,7 +359,7 @@ export function SkillEditorModal({
     if (nextFiles.length === 0) {
       return;
     }
-    setPendingTexts((current) => [...current, ...nextFiles]);
+    void uploadFiles(nextFiles, "reference_text");
   };
 
   const flowSteps = form.storyboardEnabled
@@ -327,17 +367,13 @@ export function SkillEditorModal({
         "客户输入图文和提示词",
         "系统先做分镜优化",
         selectedModel?.modelName || "最终模型待选择",
-        form.executionTime
-          ? `每天 ${formatTimeOfDayLabel(form.executionTime)} 发布`
-          : "手动触发",
+        "由账号任务安排发布时间",
       ]
     : [
         "客户输入图文和提示词",
         "跳过分镜，直接执行",
         selectedModel?.modelName || "最终模型待选择",
-        form.executionTime
-          ? `每天 ${formatTimeOfDayLabel(form.executionTime)} 发布`
-          : "手动触发",
+        "由账号任务安排发布时间",
       ];
 
   return (
@@ -361,7 +397,7 @@ export function SkillEditorModal({
                     {skill ? "编辑技能" : "新增技能"}
                   </h3>
                   <p className="mt-2 max-w-3xl text-sm leading-6 text-text-secondary">
-                    先选产出和模型，再决定是否开启分镜，最后补时间和素材。
+                    先选产出和模型，再决定是否开启分镜，发布时间改到账号任务页单独安排。
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -373,7 +409,10 @@ export function SkillEditorModal({
 
               <button
                 type="button"
-                onClick={onClose}
+                onClick={() => {
+                  void handleClose();
+                }}
+                disabled={isBusy}
                 className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-text-muted transition-all hover:border-white/20 hover:bg-white/10 hover:text-white"
               >
                 <X className="h-5 w-5" />
@@ -485,7 +524,7 @@ export function SkillEditorModal({
                       />
                       <SwitchCard
                         title="技能状态"
-                        description="关闭后保留配置，但不会进入自动调度。"
+                        description="关闭后保留配置，但账号侧不能继续用这条技能创建新任务。"
                         enabled={form.isEnabled}
                         enabledLabel="已启用"
                         disabledLabel="已暂停"
@@ -561,58 +600,24 @@ export function SkillEditorModal({
                   </SectionCard>
 
                   <SectionCard
-                    title="执行时间"
-                    description="这里只填时分秒。重复的意思就是每天这个时间执行。"
+                    title="发布时间配置"
+                    description="技能本身不带执行时间，发布时间统一在使用技能的账号任务里配置。"
                   >
-                    <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
-                      <label className="space-y-2.5">
-                        <span className="text-sm font-medium text-white">每天执行时间</span>
-                        <input
-                          type="time"
-                          step={1}
-                          value={form.executionTime}
-                          onChange={(event) =>
-                            setForm((current) => ({ ...current, executionTime: event.target.value }))
-                          }
-                          className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white outline-none transition-all focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
-                        />
-                        <p className="text-xs leading-5 text-text-secondary">
-                          不填就是手动触发。填写后，系统会自动计算下一次执行时间。
-                        </p>
-                      </label>
+                    <div className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
+                      <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-5">
+                        <p className="text-sm font-medium text-white">新的使用方式</p>
+                        <div className="mt-3 space-y-2 text-sm leading-6 text-text-secondary">
+                          <p>1. 在这里维护技能内容、模型、分镜和参考素材。</p>
+                          <p>2. 到 OmniBull 账号任务页选择这条技能。</p>
+                          <p>3. 每个账号分别设置发布时间，也支持后续单独修改。</p>
+                        </div>
+                      </div>
 
-                      <div className="space-y-4">
-                        <SwitchCard
-                          title="每天按时执行"
-                          description="开启后每天这个时间执行；关闭则只跑下一次。"
-                          enabled={form.repeatDaily}
-                          enabledLabel="每日执行"
-                          disabledLabel="只执行一次"
-                          accent="cyan"
-                          disabled={!form.executionTime}
-                          onToggle={() =>
-                            setForm((current) => ({ ...current, repeatDaily: !current.repeatDaily }))
-                          }
-                        />
-                        <div className="rounded-[24px] border border-white/10 bg-[#0d1729] p-4">
-                          <div className="flex items-center gap-2 text-sm font-medium text-white">
-                            <Clock3 className="h-4 w-4 text-accent" />
-                            当前时间策略
-                          </div>
-                          <div className="mt-3 space-y-2 text-sm leading-6 text-text-secondary">
-                            {form.executionTime ? (
-                              <>
-                                <p>执行时间：{formatTimeOfDayLabel(form.executionTime)}</p>
-                                <p>
-                                  {form.repeatDaily
-                                    ? "系统会每天按这个时间执行，OmniDrive 提前 30 分钟生成。"
-                                    : "系统会按下一个到来的这个时间执行一次，OmniDrive 提前 30 分钟生成。"}
-                                </p>
-                              </>
-                            ) : (
-                              <p>当前未设置执行时间，这条技能只会作为手动执行能力存在。</p>
-                            )}
-                          </div>
+                      <div className="rounded-[24px] border border-cyan/20 bg-cyan/10 p-5">
+                        <p className="text-sm font-medium text-white">为什么改成账号侧配置时间</p>
+                        <div className="mt-3 space-y-2 text-sm leading-6 text-text-secondary">
+                          <p>同一条技能可能会被多个账号复用，不同账号往往对应不同平台和投放时段。</p>
+                          <p>把时间放到账号任务里后，每个账号都能独立安排和修改发布时间，技能本身只负责产出逻辑。</p>
                         </div>
                       </div>
                     </div>
@@ -638,14 +643,17 @@ export function SkillEditorModal({
                               <Upload className="h-5 w-5" />
                             </div>
                             <p className="mt-3 text-sm font-semibold text-white">上传图片</p>
-                            <p className="mt-1 text-xs text-text-secondary">支持多张，保存时一起提交。</p>
+                            <p className="mt-1 text-xs text-text-secondary">支持多张，选中后立即上传到云端。</p>
                           </div>
                           <input
                             type="file"
                             accept="image/*"
                             multiple
                             className="hidden"
-                            onChange={(event) => handleImageSelection(event.target.files)}
+                            onChange={(event) => {
+                              handleImageSelection(event.target.files);
+                              event.target.value = "";
+                            }}
                           />
                         </label>
 
@@ -660,22 +668,18 @@ export function SkillEditorModal({
                               onDelete={() => deleteAssetMutation.mutate(asset)}
                             />
                           ))}
-                          {pendingImages.map((file) => (
+                          {uploadingImages.map((item) => (
                             <PendingRow
-                              key={`${file.name}-${file.size}`}
-                              label={file.name}
+                              key={item.id}
+                              label={item.file.name}
                               icon={<ImageIcon className="h-4 w-4 text-cyan" />}
-                              file={file}
-                              onDelete={() =>
-                                setPendingImages((current) =>
-                                  current.filter(
-                                    (item) => item.name !== file.name || item.size !== file.size,
-                                  ),
-                                )
-                              }
+                              file={item.file}
+                              helperText="正在上传到云端..."
+                              onDelete={() => undefined}
+                              hideDelete
                             />
                           ))}
-                          {!imageAssets.length && !pendingImages.length ? (
+                          {!imageAssets.length && !uploadingImages.length ? (
                             <EmptyUploadState label="还没有图片素材。" />
                           ) : null}
                         </div>
@@ -703,7 +707,10 @@ export function SkillEditorModal({
                             accept=".txt,.md,.json,.csv,.xml,text/plain,text/markdown,application/json"
                             multiple
                             className="hidden"
-                            onChange={(event) => handleTextSelection(event.target.files)}
+                            onChange={(event) => {
+                              handleTextSelection(event.target.files);
+                              event.target.value = "";
+                            }}
                           />
                         </label>
 
@@ -717,22 +724,18 @@ export function SkillEditorModal({
                               onDelete={() => deleteAssetMutation.mutate(asset)}
                             />
                           ))}
-                          {pendingTexts.map((file) => (
+                          {uploadingTexts.map((item) => (
                             <PendingRow
-                              key={`${file.name}-${file.size}`}
-                              label={file.name}
+                              key={item.id}
+                              label={item.file.name}
                               icon={<FileText className="h-4 w-4 text-amber-200" />}
-                              file={file}
-                              onDelete={() =>
-                                setPendingTexts((current) =>
-                                  current.filter(
-                                    (item) => item.name !== file.name || item.size !== file.size,
-                                  ),
-                                )
-                              }
+                              file={item.file}
+                              helperText="正在上传到云端..."
+                              onDelete={() => undefined}
+                              hideDelete
                             />
                           ))}
-                          {!textAssets.length && !pendingTexts.length ? (
+                          {!textAssets.length && !uploadingTexts.length ? (
                             <EmptyUploadState label="还没有文本资料。" />
                           ) : null}
                         </div>
@@ -748,7 +751,7 @@ export function SkillEditorModal({
                     <div className="grid gap-3">
                       <SummaryLine label="输出类型" value={selectedOutput.label} />
                       <SummaryLine label="最终模型" value={selectedModel?.modelName || "未选择"} />
-                      <SummaryLine label="执行时间" value={form.executionTime ? formatTimeOfDayLabel(form.executionTime) : "手动触发"} />
+                      <SummaryLine label="发布时间" value="由账号任务配置" />
                       <SummaryLine label="参考素材" value={`${totalImageCount} 图 / ${totalTextCount} 文`} />
                     </div>
                     <div className="mt-4 space-y-3">
@@ -762,15 +765,6 @@ export function SkillEditorModal({
                       ))}
                     </div>
                   </SidebarCard>
-
-                  {skill?.nextRunAt ? (
-                    <SidebarCard title="当前技能进度" icon={<Clock3 className="h-4 w-4 text-amber-200" />}>
-                      <p className="text-sm leading-6 text-text-secondary">
-                        下次执行时间是 <span className="font-medium text-white">{formatDateTime(skill.nextRunAt)}</span>，
-                        系统会在这个时间点前 30 分钟进入生成链路。
-                      </p>
-                    </SidebarCard>
-                  ) : null}
                 </div>
               </aside>
             </div>
@@ -779,7 +773,10 @@ export function SkillEditorModal({
           <div className="flex items-center justify-end gap-3 border-t border-white/10 bg-[#091221]/92 px-6 py-4 sm:px-8">
             <button
               type="button"
-              onClick={onClose}
+              onClick={() => {
+                void handleClose();
+              }}
+              disabled={isBusy}
               className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-text-primary transition-all hover:border-white/20 hover:bg-white/8 hover:text-white"
             >
               取消
@@ -787,11 +784,11 @@ export function SkillEditorModal({
             <button
               type="button"
               onClick={() => saveMutation.mutate()}
-              disabled={saveMutation.isPending}
+              disabled={isBusy}
               className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-accent via-pink to-cyan px-5 py-2.5 text-sm font-semibold text-white shadow-[0_16px_40px_rgba(177,73,255,0.22)] transition-all hover:scale-[1.01] hover:shadow-[0_20px_48px_rgba(177,73,255,0.28)] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {saveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {skill ? "保存技能" : "创建技能"}
+              {isBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {skill || draftSkillId ? "保存技能" : "创建技能"}
             </button>
           </div>
         </div>
@@ -1106,24 +1103,31 @@ function PendingRow({
   label,
   icon,
   file,
+  helperText,
+  hideDelete,
   onDelete,
 }: {
   label: string;
   icon: React.ReactNode;
   file?: File;
+  helperText?: string;
+  hideDelete?: boolean;
   onDelete: () => void;
 }) {
-  const [preview, setPreview] = useState<string | null>(null);
+  const preview = useMemo(() => {
+    if (!file || !file.type.startsWith("image/")) {
+      return null;
+    }
+    return URL.createObjectURL(file);
+  }, [file]);
 
   useEffect(() => {
-    if (!file || !file.type.startsWith("image/")) {
-      setPreview(null);
-      return;
-    }
-    const url = URL.createObjectURL(file);
-    setPreview(url);
-    return () => URL.revokeObjectURL(url);
-  }, [file]);
+    return () => {
+      if (preview) {
+        URL.revokeObjectURL(preview);
+      }
+    };
+  }, [preview]);
 
   return (
     <div className="flex items-center justify-between rounded-[22px] border border-dashed border-white/12 bg-white/[0.03] px-4 py-3">
@@ -1140,17 +1144,23 @@ function PendingRow({
         )}
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-white">{label}</p>
-          <p className="mt-1 text-xs text-text-secondary">待上传，保存技能后会一并提交。</p>
+          <p className="mt-1 text-xs text-text-secondary">{helperText || "正在上传到云端..."}</p>
         </div>
       </div>
 
-      <button
-        type="button"
-        onClick={onDelete}
-        className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-text-muted transition-all hover:border-danger hover:bg-danger/10 hover:text-danger"
-      >
-        <Trash2 className="h-4 w-4" />
-      </button>
+      {hideDelete ? (
+        <div className="inline-flex h-10 min-w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-3 text-[11px] font-medium text-text-secondary">
+          上传中
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={onDelete}
+          className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-text-muted transition-all hover:border-danger hover:bg-danger/10 hover:text-danger"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      )}
     </div>
   );
 }

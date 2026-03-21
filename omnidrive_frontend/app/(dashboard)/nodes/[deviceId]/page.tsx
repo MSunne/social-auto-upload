@@ -18,7 +18,6 @@ import { SkillEditorModal } from "@/components/ui/skill-editor-modal";
 import { deleteSkill, getDevice, listSkillAssets, listSkills } from "@/lib/services";
 import type { Device, Skill, SkillAsset } from "@/lib/types";
 import {
-  formatDateTime,
   formatSkillSchedule,
   normalizeSkillOutputLabel,
 } from "@/lib/workflow";
@@ -246,7 +245,7 @@ export default function NodeDetailPage({
                             {formatSkillSchedule(skill)}
                           </div>
                           <p className="text-xs text-text-secondary">
-                            {skill.nextRunAt ? `下次发布时间：${formatDateTime(skill.nextRunAt)}` : "尚未进入定时发布"}
+                            使用这个技能时，请到对应账号的任务页单独安排发布时间。
                           </p>
                           <p className="text-xs text-text-secondary">
                             {skill.storyboardEnabled ? "AI 分镜优化已启用" : "AI 分镜优化已关闭，执行时直接使用客户提交内容"}
@@ -257,7 +256,7 @@ export default function NodeDetailPage({
                         <div className="space-y-2">
                           <StatusBadge status={skill.isEnabled ? "active" : "inactive"} />
                           <p className="text-xs text-text-secondary">
-                            {skill.repeatDaily ? "每天按时执行" : "按下一个时间点执行一次或手动执行"}
+                            发布时间在 OmniBull 账号任务中单独设置和修改
                           </p>
                         </div>
                       </td>
@@ -296,6 +295,7 @@ export default function NodeDetailPage({
       )}
 
       <SkillEditorModal
+        key={editingSkill?.id || (creating ? "create" : "closed")}
         isOpen={creating || Boolean(editingSkill)}
         deviceId={deviceId}
         skill={editingSkill}

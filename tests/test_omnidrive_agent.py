@@ -2,6 +2,7 @@ import json
 import sqlite3
 import shutil
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -123,6 +124,23 @@ class OmniDriveBridgeTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = Path(tempfile.mkdtemp(prefix="omnidrive-agent-test-"))
         self.addCleanup(lambda: shutil.rmtree(self.temp_dir, ignore_errors=True))
+
+    @staticmethod
+    def ensure_user_info_table(db_path):
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_info (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    type INTEGER NOT NULL,
+                    filePath TEXT NOT NULL,
+                    userName TEXT NOT NULL,
+                    status INTEGER DEFAULT 0
+                )
+                """
+            )
+            conn.commit()
 
     def make_bridge(self, publish_task_manager=None, ai_task_manager=None):
         publish_task_manager = publish_task_manager or DummyPublishTaskManager()
@@ -301,7 +319,75 @@ class OmniDriveBridgeTests(unittest.TestCase):
         self.assertEqual(lease["last_synced_status"], "cancelled")
         self.assertEqual(lease["last_synced_updated_at"], "2026-03-16 03:20:44")
 
-    def test_import_remote_ai_job_creates_local_record_and_publish_tasks_for_targets(self):
+    def test_sync_local_publish_tasks_stops_retrying_final_task_after_status_transition_conflict(self):
+        publish_task_manager = DummyPublishTaskManager(worker_count=2)
+        publish_task_manager.tasks["local-bridge-transition-task"] = {
+            "taskUuid": "local-bridge-transition-task",
+            "source": "local_api",
+            "platformName": "抖音",
+            "accountName": "RetryAccount",
+            "title": "Retry Publish Task",
+            "status": "needs_verify",
+            "message": "requires manual verification",
+            "updatedAt": "2026-03-21 16:06:51",
+            "payload": {
+                "tags": ["verify"],
+                "publishDate": 0,
+                "isDraft": False,
+                "productLink": "",
+                "productTitle": "",
+            },
+        }
+        bridge = self.make_bridge(publish_task_manager=publish_task_manager)
+        request_calls = []
+
+        def fake_request(method, path, *, params=None, payload=None):
+            request_calls.append((method, path, payload))
+            if method == "POST" and path == "/api/v1/agent/publish-tasks/sync":
+                raise make_http_error(409, {"error": "Publish task status transition is not allowed"})
+            raise AssertionError(f"unexpected request {method} {path}")
+
+        with mock.patch.object(bridge, "_request", side_effect=fake_request):
+            bridge._sync_local_publish_tasks()
+            bridge._sync_local_publish_tasks()
+
+        self.assertEqual(len(request_calls), 1)
+        lease = bridge._get_lease("local-bridge-transition-task")
+        self.assertIsNotNone(lease)
+        self.assertEqual(lease["last_synced_status"], "needs_verify")
+        self.assertEqual(lease["last_synced_updated_at"], "2026-03-21 16:06:51")
+
+    def test_resolve_ai_publish_target_falls_back_to_local_account_when_cookie_path_is_missing(self):
+        bridge = self.make_bridge()
+        self.ensure_user_info_table(bridge.db_path)
+        with sqlite3.connect(bridge.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO user_info (type, filePath, userName, status)
+                VALUES (?, ?, ?, ?)
+                """,
+                (4, "ks-real.json", "测试快手_乔总", 1),
+            )
+            conn.commit()
+
+        resolved = bridge._resolve_ai_publish_target(
+            platform_value="快手",
+            account_name="测试快手_乔总",
+            account_file_path="missing-mock.json",
+        )
+
+        self.assertEqual(
+            resolved,
+            {
+                "platformType": 4,
+                "platformName": "快手",
+                "accountName": "测试快手_乔总",
+                "accountFilePath": "ks-real.json",
+            },
+        )
+
+    def test_import_remote_account_skill_job_falls_back_to_cloud_job_id_and_creates_publish_tasks(self):
         publish_task_manager = DummyPublishTaskManager(worker_count=2)
         ai_task_manager = DummyAITaskManager()
         bridge = self.make_bridge(
@@ -316,9 +402,8 @@ class OmniDriveBridgeTests(unittest.TestCase):
                     {
                         "job": {
                             "id": "cloud-job-1",
-                            "localTaskId": "local-ai-1",
                             "status": "success",
-                            "source": "omnibull_local",
+                            "source": "account_skill_binding",
                             "jobType": "video",
                             "modelName": "veo",
                             "prompt": "生成春季广告视频",
@@ -344,8 +429,8 @@ class OmniDriveBridgeTests(unittest.TestCase):
         artifact_refs = [
             {
                 "root": "generated",
-                "path": "local-ai-1/video.mp4",
-                "absolutePath": str(self.temp_dir / "generated" / "local-ai-1" / "video.mp4"),
+                "path": "cloud-job-1/video.mp4",
+                "absolutePath": str(self.temp_dir / "generated" / "cloud-job-1" / "video.mp4"),
                 "name": "video.mp4",
                 "role": "media",
             }
@@ -353,12 +438,16 @@ class OmniDriveBridgeTests(unittest.TestCase):
 
         with mock.patch.object(bridge, "_request", side_effect=fake_request):
             with mock.patch.object(bridge, "_download_ai_artifacts", return_value=artifact_refs):
-                with mock.patch.object(
-                    bridge,
-                    "_resolve_local_account_file_path",
-                    side_effect=lambda platform, account: f"/tmp/{platform}-{account}.json",
-                ):
-                    imported = bridge._import_remote_ai_jobs()
+                with mock.patch.object(bridge, "_sync_materials"):
+                    with mock.patch.object(
+                        bridge,
+                        "_load_local_account_by_name",
+                        side_effect=lambda platform, account: {
+                            "filePath": f"/tmp/{platform}-{account}.json",
+                            "userName": account,
+                        },
+                    ):
+                        imported = bridge._import_remote_ai_jobs()
 
         self.assertEqual(imported, 1)
         self.assertEqual(len(publish_task_manager.enqueued_specs), 2)
@@ -375,7 +464,7 @@ class OmniDriveBridgeTests(unittest.TestCase):
             "cloud-job-1",
         )
         self.assertEqual(
-            ai_task_manager.get_task("local-ai-1")["linkedPublishTaskUuid"],
+            ai_task_manager.get_task("cloud-job-1")["linkedPublishTaskUuid"],
             publish_task_manager.enqueued_specs[0]["taskUuid"],
         )
         self.assertEqual(delivery_updates[0]["status"], "publish_queued")
@@ -383,6 +472,71 @@ class OmniDriveBridgeTests(unittest.TestCase):
             delivery_updates[0]["localPublishTaskId"],
             publish_task_manager.enqueued_specs[0]["taskUuid"],
         )
+
+    def test_import_remote_ai_job_syncs_generated_materials_before_enqueue(self):
+        publish_task_manager = DummyPublishTaskManager(worker_count=2)
+        ai_task_manager = DummyAITaskManager()
+        bridge = self.make_bridge(
+            publish_task_manager=publish_task_manager,
+            ai_task_manager=ai_task_manager,
+        )
+        ai_task_manager.tasks["local-ai-1"] = {
+            "taskUuid": "local-ai-1",
+            "source": "omnibull_local",
+            "jobType": "video",
+            "modelName": "veo",
+            "prompt": "生成春季广告视频",
+            "status": "output_ready",
+            "message": "ready",
+            "payload": {
+                "publishPayload": {
+                    "title": "春季广告",
+                    "contentText": "新品上新",
+                    "platform": "快手",
+                    "accountName": "账号A",
+                }
+            },
+            "cloudJobId": "cloud-job-1",
+        }
+        delivery_updates = []
+
+        def fake_request(method, path, *, params=None, payload=None):
+            if method == "GET" and path == "/api/v1/agent/ai-jobs/device-1":
+                return [
+                    {
+                        "job": {
+                            "id": "cloud-job-1",
+                            "localTaskId": "local-ai-1",
+                            "status": "success",
+                            "message": "done",
+                        },
+                        "artifacts": [{"artifactKey": "video-1", "artifactType": "video"}],
+                    }
+                ]
+            if method == "POST" and path == "/api/v1/agent/ai-jobs/cloud-job-1/delivery":
+                delivery_updates.append(payload)
+                return {"ok": True}
+            raise AssertionError(f"unexpected request {method} {path}")
+
+        artifact_refs = [
+            {
+                "root": bridge.generated_root_name,
+                "path": "local-ai-1/video.mp4",
+                "absolutePath": str(self.temp_dir / "generated" / "local-ai-1" / "video.mp4"),
+                "name": "video.mp4",
+                "role": "media",
+            }
+        ]
+
+        with mock.patch.object(bridge, "_request", side_effect=fake_request):
+            with mock.patch.object(bridge, "_download_ai_artifacts", return_value=artifact_refs):
+                with mock.patch.object(bridge, "_sync_materials") as sync_materials:
+                    with mock.patch.object(bridge, "_enqueue_publish_from_ai_task", return_value="publish-1"):
+                        imported = bridge._import_remote_ai_jobs()
+
+        self.assertEqual(imported, 1)
+        sync_materials.assert_called_once()
+        self.assertEqual(delivery_updates[0]["status"], "publish_queued")
 
     def test_sync_local_ai_tasks_skips_non_syncable_sources(self):
         ai_task_manager = DummyAITaskManager()
@@ -526,6 +680,284 @@ class PublishTaskManagerDatetimeTests(unittest.TestCase):
         self.assertEqual(repaired_task["message"], "等待 AI 产物定时发布")
         self.assertIsNone(repaired_task["startedAt"])
         self.assertIsNone(repaired_task["finishedAt"])
+
+    def test_publish_task_manager_requeues_running_tasks_after_restart(self):
+        temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-recover-"))
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "database.db"
+
+        manager = PublishTaskManager(db_path=db_path, material_roots={})
+        manager.init_db()
+
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO publish_tasks (
+                    task_uuid, source, platform_type, platform_name, account_name, account_file_path,
+                    file_name, file_path, title, run_at, platform_publish_at, status, message, payload_json,
+                    worker_name, started_at, finished_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (
+                    "publish-running-1",
+                    "omnidrive_ai",
+                    4,
+                    "快手",
+                    "测试快手_乔总",
+                    "cookies/demo.json",
+                    "video.mp4",
+                    "generated:job-1/video.mp4",
+                    "restart recover",
+                    None,
+                    None,
+                    "running",
+                    "任务执行中",
+                    json.dumps({}, ensure_ascii=False),
+                    "worker-1",
+                ),
+            )
+            conn.commit()
+
+        manager.init_db()
+        recovered_task = manager.get_task("publish-running-1")
+
+        self.assertEqual(recovered_task["status"], "pending")
+        self.assertEqual(recovered_task["message"], "OmniBull 重启后已恢复待执行")
+        self.assertIsNone(recovered_task["workerName"])
+        self.assertIsNone(recovered_task["startedAt"])
+        self.assertIsNone(recovered_task["finishedAt"])
+
+    def test_publish_task_manager_keeps_historical_failed_tasks_stopped_after_restart(self):
+        temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-no-replay-"))
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "database.db"
+
+        manager = PublishTaskManager(db_path=db_path, material_roots={})
+        manager.init_db()
+
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO publish_tasks (
+                    task_uuid, source, platform_type, platform_name, account_name, account_file_path,
+                    file_name, file_path, title, run_at, platform_publish_at, status, message, payload_json,
+                    worker_name, started_at, finished_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (
+                    "publish-failed-history-1",
+                    "local_api",
+                    3,
+                    "抖音",
+                    "历史任务账号",
+                    "cookies/demo.json",
+                    "video.mp4",
+                    "generated:history/video.mp4",
+                    "historical failed task",
+                    None,
+                    None,
+                    "failed",
+                    "OmniBull 重启导致任务中断，请按需重试",
+                    json.dumps({}, ensure_ascii=False),
+                    "worker-2",
+                ),
+            )
+            conn.commit()
+
+        manager.init_db()
+        historical_task = manager.get_task("publish-failed-history-1")
+
+        self.assertEqual(historical_task["status"], "failed")
+        self.assertEqual(historical_task["message"], "OmniBull 重启导致任务中断，请按需重试")
+        self.assertEqual(historical_task["workerName"], "worker-2")
+        self.assertIsNotNone(historical_task["startedAt"])
+        self.assertIsNotNone(historical_task["finishedAt"])
+
+class OmniDriveAITaskManagerRecoveryTests(unittest.TestCase):
+    def test_ai_task_manager_recovers_inflight_publish_state_after_restart(self):
+        temp_dir = Path(tempfile.mkdtemp(prefix="ai-task-manager-recover-"))
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "database.db"
+
+        publish_manager = PublishTaskManager(db_path=db_path, material_roots={})
+        publish_manager.init_db()
+
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO publish_tasks (
+                    task_uuid, source, platform_type, platform_name, account_name, account_file_path,
+                    file_name, file_path, title, run_at, platform_publish_at, status, message, payload_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "publish-ai-1",
+                    "omnidrive_ai",
+                    4,
+                    "快手",
+                    "测试快手_乔总",
+                    "cookies/demo.json",
+                    "video.mp4",
+                    "generated:job-1/video.mp4",
+                    "recover linked ai task",
+                    None,
+                    None,
+                    "running",
+                    "任务执行中",
+                    json.dumps({}, ensure_ascii=False),
+                ),
+            )
+            conn.commit()
+
+        publish_manager.init_db()
+        ai_manager = OmniDriveAITaskManager(db_path)
+        ai_manager.init_db()
+
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO omnidrive_ai_tasks (
+                    task_uuid, source, job_type, model_name, skill_id, prompt, status, message,
+                    payload_json, cloud_job_id, cloud_status, linked_publish_task_uuid, artifact_refs_json, finished_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "local-ai-1",
+                    "omnibull_local",
+                    "video",
+                    "veo-3.1-fast-fl",
+                    None,
+                    "生成玩具视频",
+                    "publishing",
+                    "发布执行中",
+                    json.dumps({}, ensure_ascii=False),
+                    "cloud-ai-1",
+                    "success",
+                    "publish-ai-1",
+                    json.dumps([], ensure_ascii=False),
+                    None,
+                ),
+            )
+            conn.commit()
+
+        ai_manager.init_db()
+        recovered_task = ai_manager.get_task("local-ai-1")
+
+        self.assertEqual(recovered_task["status"], "publish_pending")
+        self.assertEqual(recovered_task["message"], "OmniBull 重启后已恢复待执行")
+        self.assertIsNone(recovered_task["finishedAt"])
+
+    def test_publish_task_manager_worker_loop_accepts_serialized_account_file_path(self):
+        temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-worker-"))
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "database.db"
+        manager = PublishTaskManager(db_path=db_path, material_roots={})
+
+        claimed_task = {
+            "taskUuid": "publish-worker-1",
+            "accountFilePath": "cookies/demo.json",
+        }
+        claim_count = {"value": 0}
+
+        def fake_claim(_worker_name):
+            if claim_count["value"] == 0:
+                claim_count["value"] += 1
+                return claimed_task
+            manager._stop_event.set()
+            return None
+
+        with mock.patch.object(manager, "_claim_next_ready_task", side_effect=fake_claim):
+            with mock.patch.object(manager, "_run_task") as run_task:
+                with mock.patch("utils.publish_task_manager.time.sleep", return_value=None):
+                    manager._worker_loop("worker-1")
+
+        run_task.assert_called_once_with(claimed_task)
+
+    def test_publish_task_manager_worker_loop_keeps_running_after_worker_error(self):
+        temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-worker-recover-"))
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "database.db"
+        manager = PublishTaskManager(db_path=db_path, material_roots={})
+        lock = threading.Lock()
+
+        first_task = {
+            "taskUuid": "publish-worker-err",
+            "accountFilePath": "cookies/one.json",
+        }
+        second_task = {
+            "taskUuid": "publish-worker-ok",
+            "accountFilePath": "cookies/two.json",
+        }
+        claims = iter([first_task, second_task, None])
+
+        def fake_claim(_worker_name):
+            task = next(claims)
+            if task is None:
+                manager._stop_event.set()
+            return task
+
+        run_calls = []
+
+        def fake_run(task):
+            run_calls.append(task["taskUuid"])
+            if task["taskUuid"] == "publish-worker-err":
+                raise RuntimeError("boom")
+
+        with mock.patch.object(manager, "_claim_next_ready_task", side_effect=fake_claim):
+            with mock.patch.object(manager, "_get_account_lock", return_value=lock):
+                with mock.patch.object(manager, "_run_task", side_effect=fake_run):
+                    with mock.patch("utils.publish_task_manager.time.sleep", return_value=None):
+                        manager._worker_loop("worker-1")
+
+        self.assertEqual(run_calls, ["publish-worker-err", "publish-worker-ok"])
+
+    def test_publish_task_manager_rejects_account_platform_mismatch(self):
+        temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-account-mismatch-"))
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "database.db"
+        manager = PublishTaskManager(db_path=db_path, material_roots={})
+
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                CREATE TABLE user_info (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    type INTEGER NOT NULL,
+                    filePath TEXT NOT NULL,
+                    userName TEXT NOT NULL,
+                    status INTEGER DEFAULT 0
+                )
+                """
+            )
+            cursor.execute(
+                """
+                INSERT INTO user_info (type, filePath, userName, status)
+                VALUES (?, ?, ?, ?)
+                """,
+                (4, "kuaishou-account.json", "测试快手_乔总", 1),
+            )
+            conn.commit()
+
+        with self.assertRaisesRegex(ValueError, "账号与平台不匹配"):
+            manager._build_task_specs(
+                {
+                    "type": 3,
+                    "title": "错误的平台组合",
+                    "tags": [],
+                    "accountList": ["kuaishou-account.json"],
+                    "fileList": ["demo/video.mp4"],
+                },
+                source="omnidrive_ai",
+            )
 
 
 def make_http_error(status_code, payload):

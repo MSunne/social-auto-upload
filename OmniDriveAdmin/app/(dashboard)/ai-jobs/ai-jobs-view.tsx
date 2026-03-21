@@ -118,7 +118,7 @@ function JobRow({
         <div className="space-y-1">
           <p className="text-sm text-[var(--color-text-primary)]">{row.skill?.name || "未绑定技能"}</p>
           <p className="text-xs text-[var(--color-text-secondary)]">
-            积分 {row.job.costCredits.toLocaleString()} · 产物 {row.artifactCount} · 发布 {row.publishTaskCount}
+            积分 {row.job.costCredits.toLocaleString()} · 产物 {row.artifactCount} · 关联发布任务 {row.publishTaskCount}
           </p>
           <p className="text-xs text-[var(--color-text-secondary)]">投递 {row.job.deliveryStatus || "—"}</p>
         </div>

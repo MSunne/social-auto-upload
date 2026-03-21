@@ -2,14 +2,13 @@
 from datetime import datetime
 
 from playwright.async_api import Playwright, async_playwright
-import os
 import asyncio
 
 from conf import LOCAL_CHROME_HEADLESS
+from utils.account_storage import account_storage_exists, load_account_storage_state, update_account_storage_state
 from utils.base_social_media import set_init_script
 from utils.browser_hook import get_browser_options
 from utils.creator_popup import dismiss_platform_popups
-from utils.files_times import get_absolute_path
 from utils.log import tencent_logger
 from utils.publish_verification import PublishManualVerificationRequired, ensure_no_publish_verification
 
@@ -35,9 +34,12 @@ def format_str_for_short_title(origin_title: str) -> str:
 
 
 async def cookie_auth(account_file):
+    storage_state = load_account_storage_state(account_file)
+    if storage_state is None:
+        return False
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(**get_browser_options())
-        context = await browser.new_context(storage_state=account_file)
+        context = await browser.new_context(storage_state=storage_state)
         context = await set_init_script(context)
         # 创建一个新的页面
         page = await context.new_page()
@@ -64,12 +66,11 @@ async def get_tencent_cookie(account_file):
         await page.goto("https://channels.weixin.qq.com")
         await page.pause()
         # 点击调试器的继续，保存cookie
-        await context.storage_state(path=account_file)
+        update_account_storage_state(account_file, await context.storage_state())
 
 
 async def weixin_setup(account_file, handle=False):
-    account_file = get_absolute_path(account_file, "tencent_uploader")
-    if not os.path.exists(account_file) or not await cookie_auth(account_file):
+    if not account_storage_exists(account_file) or not await cookie_auth(account_file):
         if not handle:
             # Todo alert message
             return False
@@ -137,7 +138,11 @@ class TencentVideo(object):
             **get_browser_options(headless=self.headless, extra_args=['--lang=en-GB'])
         )
         # 创建一个浏览器上下文，使用指定的 cookie 文件
-        context = await browser.new_context(storage_state=f"{self.account_file}")
+        storage_state = load_account_storage_state(self.account_file)
+        if storage_state is None:
+            await browser.close()
+            raise FileNotFoundError(f"账号登录态不存在: {self.account_file}")
+        context = await browser.new_context(storage_state=storage_state)
         context = await set_init_script(context)
 
         try:
@@ -161,7 +166,7 @@ class TencentVideo(object):
 
             await self.click_publish(page)
 
-            await context.storage_state(path=f"{self.account_file}")
+            update_account_storage_state(self.account_file, await context.storage_state())
             tencent_logger.success('  [-]cookie更新完毕！')
             await asyncio.sleep(2)
         finally:

@@ -3,19 +3,21 @@ import re
 from datetime import datetime
 
 from playwright.async_api import Playwright, async_playwright
-import os
 import asyncio
 from uploader.tk_uploader.tk_config import Tk_Locator
+from utils.account_storage import account_storage_exists, load_account_storage_state, update_account_storage_state
 from utils.base_social_media import set_init_script
-from utils.files_times import get_absolute_path
 from utils.log import tiktok_logger
 from conf import LOCAL_CHROME_HEADLESS
 
 
 async def cookie_auth(account_file):
+    storage_state = load_account_storage_state(account_file)
+    if storage_state is None:
+        return False
     async with async_playwright() as playwright:
         browser = await playwright.firefox.launch(headless=LOCAL_CHROME_HEADLESS)
-        context = await browser.new_context(storage_state=account_file)
+        context = await browser.new_context(storage_state=storage_state)
         context = await set_init_script(context)
         # 创建一个新的页面
         page = await context.new_page()
@@ -39,8 +41,7 @@ async def cookie_auth(account_file):
 
 
 async def tiktok_setup(account_file, handle=False):
-    account_file = get_absolute_path(account_file, "tk_uploader")
-    if not os.path.exists(account_file) or not await cookie_auth(account_file):
+    if not account_storage_exists(account_file) or not await cookie_auth(account_file):
         if not handle:
             return False
         tiktok_logger.info('[+] cookie file is not existed or expired. Now open the browser auto. Please login with your way(gmail phone, whatever, the cookie file will generated after login')
@@ -66,7 +67,7 @@ async def get_tiktok_cookie(account_file):
         await page.goto("https://www.tiktok.com/login?lang=en")
         await page.pause()
         # 点击调试器的继续，保存cookie
-        await context.storage_state(path=account_file)
+        update_account_storage_state(account_file, await context.storage_state())
 
 
 class TiktokVideo(object):
@@ -143,7 +144,11 @@ class TiktokVideo(object):
 
     async def upload(self, playwright: Playwright) -> None:
         browser = await playwright.firefox.launch(headless=self.headless)
-        context = await browser.new_context(storage_state=f"{self.account_file}")
+        storage_state = load_account_storage_state(self.account_file)
+        if storage_state is None:
+            await browser.close()
+            raise FileNotFoundError(f"账号登录态不存在: {self.account_file}")
+        context = await browser.new_context(storage_state=storage_state)
         context = await set_init_script(context)
         page = await context.new_page()
 
@@ -177,7 +182,7 @@ class TiktokVideo(object):
 
         await self.click_publish(page)
 
-        await context.storage_state(path=f"{self.account_file}")  # save cookie
+        update_account_storage_state(self.account_file, await context.storage_state())
         tiktok_logger.info('  [-] update cookie！')
         await asyncio.sleep(2)  # close delay for look the video status
         # close all
@@ -264,4 +269,3 @@ class TiktokVideo(object):
     async def main(self):
         async with async_playwright() as playwright:
             await self.upload(playwright)
-

@@ -1,16 +1,14 @@
 import asyncio
 import base64
-import sqlite3
 import sys
 import uuid
-from pathlib import Path
 from queue import Empty
 
 from playwright.async_api import async_playwright
 
 from myUtils.auth import check_cookie
+from utils.account_storage import upsert_login_account
 from utils.base_social_media import set_init_script
-from conf import BASE_DIR
 from utils.browser_hook import get_browser_options
 from utils.log import login_logger
 
@@ -107,65 +105,15 @@ class LoginCancelled(Exception):
     pass
 
 
-def save_login_account(account_type, user_name, file_name, status=1):
-    """同平台同账号只保留一条记录，新的 cookie 会覆盖旧记录。"""
-    cookie_paths_to_delete = []
-
-    with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute(
-            '''
-            SELECT id, filePath
-            FROM user_info
-            WHERE type = ? AND userName = ?
-            ORDER BY id ASC
-            ''',
-            (account_type, user_name)
-        )
-        existing_rows = cursor.fetchall()
-
-        if existing_rows:
-            primary_row = existing_rows[0]
-            duplicate_ids = [row["id"] for row in existing_rows[1:]]
-            cookie_paths_to_delete = [
-                row["filePath"]
-                for row in existing_rows
-                if row["filePath"] and row["filePath"] != file_name
-            ]
-
-            cursor.execute(
-                '''
-                UPDATE user_info
-                SET type = ?, filePath = ?, userName = ?, status = ?
-                WHERE id = ?
-                ''',
-                (account_type, file_name, user_name, status, primary_row["id"])
-            )
-
-            if duplicate_ids:
-                cursor.executemany(
-                    'DELETE FROM user_info WHERE id = ?',
-                    [(duplicate_id,) for duplicate_id in duplicate_ids]
-                )
-        else:
-            cursor.execute(
-                '''
-                INSERT INTO user_info (type, filePath, userName, status)
-                VALUES (?, ?, ?, ?)
-                ''',
-                (account_type, file_name, user_name, status)
-            )
-
-        conn.commit()
-
-    for cookie_path in cookie_paths_to_delete:
-        cookie_file = Path(BASE_DIR / "cookiesFile" / cookie_path)
-        if cookie_file.exists():
-            try:
-                cookie_file.unlink()
-            except OSError:
-                pass
+def save_login_account(account_type, user_name, file_name, status=1, storage_state=None):
+    """同平台同账号只保留一条记录，登录态以数据库为主存。"""
+    return upsert_login_account(
+        account_type,
+        user_name,
+        file_name=file_name,
+        status=status,
+        storage_state=storage_state,
+    )
 
 
 async def locator_to_data_url(locator):
@@ -887,9 +835,6 @@ async def persist_login_state_with_retry(
 ):
     uuid_v1 = uuid.uuid1()
     file_name = f"{uuid_v1}.json"
-    cookies_dir = Path(BASE_DIR / "cookiesFile")
-    cookies_dir.mkdir(exist_ok=True)
-    cookie_path = cookies_dir / file_name
     settle_deadline = asyncio.get_running_loop().time() + 1.5
     while asyncio.get_running_loop().time() < settle_deadline:
         await drain_remote_actions(page, command_queue, status_queue)
@@ -915,9 +860,9 @@ async def persist_login_state_with_retry(
                 continue
         last_verification_signature = None
         try:
-            await context.storage_state(path=cookie_path)
-            if await check_cookie(account_type, file_name):
-                save_login_account(account_type, account_name, file_name, 1)
+            storage_state = await context.storage_state()
+            if await check_cookie(account_type, storage_state):
+                save_login_account(account_type, account_name, file_name, 1, storage_state=storage_state)
                 login_logger.info(
                     "{} login cookie saved account_name={} cookie_file={} attempts={}",
                     platform_label,
@@ -948,7 +893,6 @@ async def persist_login_state_with_retry(
             await drain_remote_actions(page, command_queue, status_queue)
             await asyncio.sleep(0.2)
 
-    cookie_path.unlink(missing_ok=True)
     login_logger.error(
         "{} login cookie verify failed account_name={} attempts={} last_error={}",
         platform_label,

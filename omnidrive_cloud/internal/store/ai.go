@@ -20,7 +20,7 @@ const aiJobSelectColumns = `
 	delivery_status, delivery_message, local_publish_task_id, run_at, created_at, updated_at, delivered_at, finished_at
 `
 
-const executableAIJobSourcesSQL = "'omnidrive_cloud', 'omnibull_local', 'openclaw_skill', 'openclaw_main_chat'"
+const executableAIJobSourcesSQL = "'omnidrive_cloud', 'omnibull_local', 'account_skill_binding', 'openclaw_skill', 'openclaw_main_chat'"
 
 type aiModelPricingPayload struct {
 	ChatInputRawRate        *float64 `json:"chatInputRawRate,omitempty"`
@@ -683,6 +683,82 @@ func (s *Store) ListAIJobsBySkill(ctx context.Context, ownerUserID string, skill
 	return items, rows.Err()
 }
 
+func (s *Store) HasActiveAIJobsBySkillAndSource(ctx context.Context, ownerUserID string, skillID string, source string) (bool, error) {
+	var exists bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM ai_jobs
+			WHERE owner_user_id = $1
+			  AND skill_id = $2
+			  AND source = $3
+			  AND status IN ('scheduled', 'queued', 'pending', 'running')
+		)
+	`, ownerUserID, skillID, source).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+func (s *Store) ListRecurringAccountSkillTemplateJobs(ctx context.Context, limit int) ([]domain.AIJob, error) {
+	query := `
+		SELECT ` + aiJobSelectColumns + `
+		FROM (
+			SELECT DISTINCT ON (COALESCE(input_payload->'scheduleConfig'->>'scheduleKey', ''))
+				` + aiJobSelectColumns + `
+			FROM ai_jobs
+			WHERE source = 'account_skill_binding'
+			  AND COALESCE(input_payload->'scheduleConfig'->>'scheduleKey', '') <> ''
+			  AND COALESCE(input_payload->'scheduleConfig'->>'repeatDaily', 'false') = 'true'
+			ORDER BY COALESCE(input_payload->'scheduleConfig'->>'scheduleKey', ''), updated_at DESC, created_at DESC
+		) recurring_jobs
+		ORDER BY updated_at DESC, created_at DESC
+	`
+	args := []any{}
+	if limit > 0 {
+		query += ` LIMIT $1`
+		args = append(args, limit)
+	}
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.AIJob, 0)
+	for rows.Next() {
+		job, scanErr := scanAIJob(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *job)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) FindActiveAccountSkillJobByScheduleKey(ctx context.Context, scheduleKey string) (*domain.AIJob, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT `+aiJobSelectColumns+`
+		FROM ai_jobs
+		WHERE source = 'account_skill_binding'
+		  AND COALESCE(input_payload->'scheduleConfig'->>'scheduleKey', '') = $1
+		  AND status IN ('scheduled', 'queued', 'running')
+		ORDER BY run_at ASC NULLS FIRST, created_at DESC
+		LIMIT 1
+	`, strings.TrimSpace(scheduleKey))
+
+	job, err := scanAIJob(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return job, nil
+}
+
 func (s *Store) ListPendingAIJobsByDevice(ctx context.Context, deviceID string) ([]domain.AIJob, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+aiJobSelectColumns+`
@@ -710,7 +786,7 @@ func (s *Store) ListPendingAIJobsByDevice(ctx context.Context, deviceID string) 
 	return items, rows.Err()
 }
 
-func (s *Store) ListAgentAIJobsByDevice(ctx context.Context, deviceID string, source string, limit int) ([]domain.AIJob, error) {
+func (s *Store) ListAgentAIJobsByDevice(ctx context.Context, deviceID string, sources []string, limit int) ([]domain.AIJob, error) {
 	query := `
 		SELECT ` + aiJobSelectColumns + `
 		FROM ai_jobs
@@ -718,9 +794,17 @@ func (s *Store) ListAgentAIJobsByDevice(ctx context.Context, deviceID string, so
 	`
 	args := []any{deviceID}
 	argIndex := 2
-	if strings.TrimSpace(source) != "" {
-		query += fmt.Sprintf(" AND source = $%d", argIndex)
-		args = append(args, source)
+	normalizedSources := make([]string, 0, len(sources))
+	for _, source := range sources {
+		trimmed := strings.TrimSpace(source)
+		if trimmed == "" {
+			continue
+		}
+		normalizedSources = append(normalizedSources, trimmed)
+	}
+	if len(normalizedSources) > 0 {
+		query += fmt.Sprintf(" AND source = ANY($%d)", argIndex)
+		args = append(args, normalizedSources)
 		argIndex++
 	}
 	query += ` ORDER BY updated_at DESC`

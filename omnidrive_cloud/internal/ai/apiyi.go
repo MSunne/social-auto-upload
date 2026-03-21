@@ -54,6 +54,10 @@ func NewAPIYIProvider(cfg config.Config) (*APIYIProvider, error) {
 }
 
 func (p *APIYIProvider) GenerateChat(ctx context.Context, req ChatRequest) (*ChatResult, error) {
+	req, err := p.normalizeChatRequest(ctx, req)
+	if err != nil {
+		return nil, err
+	}
 	payload := buildChatPayload(req, false)
 
 	data, err := json.Marshal(payload)
@@ -94,6 +98,10 @@ func (p *APIYIProvider) GenerateChat(ctx context.Context, req ChatRequest) (*Cha
 }
 
 func (p *APIYIProvider) GenerateChatStream(ctx context.Context, req ChatRequest, onChunk func(ChatStreamChunk) error) (*ChatResult, error) {
+	req, err := p.normalizeChatRequest(ctx, req)
+	if err != nil {
+		return nil, err
+	}
 	payload := buildChatPayload(req, true)
 
 	data, err := json.Marshal(payload)
@@ -131,6 +139,7 @@ func (p *APIYIProvider) GenerateChatStream(ctx context.Context, req ChatRequest,
 	result := &ChatResult{Role: "assistant"}
 	var fullText strings.Builder
 	var rawResponse bytes.Buffer
+	sawDoneMarker := false
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
 
@@ -146,6 +155,7 @@ func (p *APIYIProvider) GenerateChatStream(ctx context.Context, req ChatRequest,
 		rawResponse.WriteString("\n\n")
 
 		if strings.TrimSpace(payloadText) == "[DONE]" {
+			sawDoneMarker = true
 			return nil
 		}
 
@@ -233,6 +243,9 @@ func (p *APIYIProvider) GenerateChatStream(ctx context.Context, req ChatRequest,
 	if err := dispatchEvent(); err != nil {
 		return nil, err
 	}
+	if !sawDoneMarker && strings.TrimSpace(result.FinishReason) == "" {
+		return nil, fmt.Errorf("provider stream ended before terminal event")
+	}
 
 	result.Text = fullText.String()
 	result.RawResponse = rawResponse.Bytes()
@@ -270,6 +283,137 @@ func buildChatPayload(req ChatRequest, stream bool) map[string]any {
 		}
 	}
 	return payload
+}
+
+func (p *APIYIProvider) normalizeChatRequest(ctx context.Context, req ChatRequest) (ChatRequest, error) {
+	if !usesMaxCompletionTokens(req.Model) || len(req.Messages) == 0 {
+		return req, nil
+	}
+
+	normalized := req
+	normalized.Messages = make([]ChatMessage, 0, len(req.Messages))
+	for _, message := range req.Messages {
+		content, err := p.normalizeChatMessageContent(ctx, message.Content)
+		if err != nil {
+			return ChatRequest{}, err
+		}
+		message.Content = content
+		normalized.Messages = append(normalized.Messages, message)
+	}
+	return normalized, nil
+}
+
+func (p *APIYIProvider) normalizeChatMessageContent(ctx context.Context, content any) (any, error) {
+	switch typed := content.(type) {
+	case []map[string]any:
+		return p.normalizeStructuredChatParts(ctx, typed)
+	case []any:
+		parts := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			part, ok := item.(map[string]any)
+			if !ok {
+				return content, nil
+			}
+			parts = append(parts, part)
+		}
+		return p.normalizeStructuredChatParts(ctx, parts)
+	default:
+		return content, nil
+	}
+}
+
+func (p *APIYIProvider) normalizeStructuredChatParts(ctx context.Context, parts []map[string]any) ([]map[string]any, error) {
+	if len(parts) == 0 {
+		return parts, nil
+	}
+
+	normalized := make([]map[string]any, 0, len(parts))
+	for _, part := range parts {
+		nextPart := cloneMap(part)
+		partType := strings.TrimSpace(stringValueFromMap(nextPart, "type"))
+		if partType != "image_url" {
+			normalized = append(normalized, nextPart)
+			continue
+		}
+
+		imageURLValue, ok := nextPart["image_url"]
+		if !ok {
+			normalized = append(normalized, nextPart)
+			continue
+		}
+
+		imageURLPayload, ok := imageURLValue.(map[string]any)
+		if !ok {
+			normalized = append(normalized, nextPart)
+			continue
+		}
+
+		sourceURL := strings.TrimSpace(stringValueFromMap(imageURLPayload, "url"))
+		if sourceURL == "" {
+			normalized = append(normalized, nextPart)
+			continue
+		}
+
+		inlineURL, err := p.chatImageURLToDataURL(ctx, sourceURL)
+		if err != nil {
+			return nil, err
+		}
+		nextPart["image_url"] = mergeChatImageURLPayload(imageURLPayload, inlineURL)
+		normalized = append(normalized, nextPart)
+	}
+	return normalized, nil
+}
+
+func (p *APIYIProvider) chatImageURLToDataURL(ctx context.Context, sourceURL string) (string, error) {
+	sourceURL = strings.TrimSpace(sourceURL)
+	if sourceURL == "" {
+		return "", fmt.Errorf("chat image url is required")
+	}
+
+	var (
+		data     []byte
+		mimeType string
+		err      error
+	)
+	if strings.HasPrefix(sourceURL, "data:") {
+		mimeType, data, err = decodeDataURL(sourceURL)
+		if err != nil {
+			return "", err
+		}
+	} else {
+		artifact, downloadErr := p.downloadBinary(ctx, sourceURL, "", "")
+		if downloadErr != nil {
+			return "", downloadErr
+		}
+		data = artifact.Data
+		mimeType = artifact.MIMEType
+	}
+
+	mimeType = strings.TrimSpace(mimeType)
+	if mimeType == "" {
+		mimeType = http.DetectContentType(data)
+	}
+	if mimeType == "" {
+		mimeType = "image/png"
+	}
+	return fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(data)), nil
+}
+
+func mergeChatImageURLPayload(payload map[string]any, nextURL string) map[string]any {
+	cloned := cloneMap(payload)
+	cloned["url"] = nextURL
+	return cloned
+}
+
+func cloneMap(input map[string]any) map[string]any {
+	if len(input) == 0 {
+		return map[string]any{}
+	}
+	cloned := make(map[string]any, len(input))
+	for key, value := range input {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func (p *APIYIProvider) GenerateImage(ctx context.Context, req ImageRequest) (*ImageResult, error) {

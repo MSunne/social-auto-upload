@@ -12,6 +12,7 @@ from conf import BASE_DIR
 from uploader.douyin_uploader.main import DouYinVideo
 from uploader.ks_uploader.main import KSVideo
 from uploader.tencent_uploader.main import TencentVideo
+from utils.account_storage import account_storage_exists
 from utils.constant import TencentZoneTypes
 from utils.files_times import generate_schedule_time_next_day
 from utils.log import log_throttled, task_logger
@@ -32,6 +33,9 @@ FINISHED_STATUSES = {
     "needs_verify",
     "cancelled",
 }
+RESTART_INTERRUPTED_MESSAGE = "OmniBull 重启导致任务中断，请按需重试"
+RECOVERED_SCHEDULED_MESSAGE = "OmniBull 重启后已恢复等待定时发布"
+RECOVERED_PENDING_MESSAGE = "OmniBull 重启后已恢复待执行"
 
 
 class PublishTaskManager:
@@ -111,23 +115,41 @@ class PublishTaskManager:
                 )
                 '''
             )
+            recovered = self._recover_interrupted_tasks(cursor)
             repaired = self._repair_omnidrive_ai_schedule_drift(cursor)
-            cursor.execute(
-                '''
-                UPDATE publish_tasks
-                SET status = 'failed',
-                    message = 'OmniBull 重启导致任务中断，请按需重试',
-                    finished_at = COALESCE(finished_at, CURRENT_TIMESTAMP),
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE status = 'running'
-                '''
-            )
             conn.commit()
+        if recovered:
+            task_logger.info(
+                "publish task startup recovery requeued_count={}",
+                recovered,
+            )
         if repaired:
             task_logger.info(
                 "publish task startup repair rescheduled_count={} source=omnidrive_ai",
                 repaired,
             )
+
+    def _recover_interrupted_tasks(self, cursor):
+        cursor.execute(
+                '''
+                UPDATE publish_tasks
+                SET status = CASE
+                    WHEN run_at IS NOT NULL AND run_at != '' AND run_at > CURRENT_TIMESTAMP THEN 'scheduled'
+                    ELSE 'pending'
+                END,
+                message = CASE
+                    WHEN run_at IS NOT NULL AND run_at != '' AND run_at > CURRENT_TIMESTAMP THEN ?
+                    ELSE ?
+                END,
+                worker_name = NULL,
+                started_at = NULL,
+                finished_at = NULL,
+                updated_at = CURRENT_TIMESTAMP
+                WHERE status = 'running'
+            ''',
+            (RECOVERED_SCHEDULED_MESSAGE, RECOVERED_PENDING_MESSAGE),
+        )
+        return cursor.rowcount
 
     def enqueue_from_request(self, data, source="local_api"):
         tasks = self._build_task_specs(data, source=source)
@@ -312,7 +334,12 @@ class PublishTaskManager:
 
             for account_file_path in account_paths:
                 account_record = account_lookup.get(account_file_path, {})
-                account_name = account_record.get("userName") or account_file_path
+                resolved_account_file_path, account_name, _ = self._resolve_account_binding(
+                    platform_type,
+                    platform_name,
+                    account_file_path,
+                    account_record.get("userName") or account_file_path,
+                )
                 task_uuid = uuid.uuid4().hex
                 payload = {
                     "platformType": platform_type,
@@ -320,7 +347,7 @@ class PublishTaskManager:
                     "title": title,
                     "tags": tags,
                     "filePath": file_input.get("filePath") or stored_file_path,
-                    "accountFilePath": account_file_path,
+                    "accountFilePath": resolved_account_file_path,
                     "accountName": account_name,
                     "publishDate": publish_date_str or 0,
                     "category": data.get("category"),
@@ -342,7 +369,7 @@ class PublishTaskManager:
                         "platformType": platform_type,
                         "platformName": platform_name,
                         "accountName": account_name,
-                        "accountFilePath": account_file_path,
+                        "accountFilePath": resolved_account_file_path,
                         "fileName": file_name,
                         "filePath": stored_file_path,
                         "title": title,
@@ -397,17 +424,97 @@ class PublishTaskManager:
             return {}
         return {row["filePath"]: dict(row) for row in rows}
 
+    def _find_account_record_by_name(self, platform_type, account_name):
+        normalized_name = str(account_name or "").strip()
+        if not platform_type or not normalized_name:
+            return None
+
+        try:
+            with self._connect() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT *
+                    FROM user_info
+                    WHERE type = ? AND userName = ?
+                    ORDER BY status DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (int(platform_type), normalized_name),
+                )
+                row = cursor.fetchone()
+        except sqlite3.OperationalError:
+            return None
+        return dict(row) if row else None
+
+    def _resolve_account_binding(self, platform_type, platform_name, account_file_path, account_name=None):
+        normalized_path = str(account_file_path or "").strip()
+        normalized_name = str(account_name or "").strip()
+        record_by_path = None
+
+        if normalized_path:
+            record_by_path = self._load_account_records([normalized_path]).get(normalized_path)
+            if record_by_path and int(record_by_path.get("type") or 0) == int(platform_type):
+                return (
+                    str(record_by_path.get("filePath") or normalized_path).strip(),
+                    str(record_by_path.get("userName") or normalized_name or normalized_path).strip(),
+                    record_by_path,
+                )
+
+        record_by_name = self._find_account_record_by_name(platform_type, normalized_name)
+        if record_by_name:
+            return (
+                str(record_by_name.get("filePath") or "").strip(),
+                str(record_by_name.get("userName") or normalized_name).strip(),
+                record_by_name,
+            )
+
+        if record_by_path:
+            actual_platform = PLATFORM_LABELS.get(int(record_by_path.get("type") or 0)) or str(record_by_path.get("type") or "")
+            actual_name = str(record_by_path.get("userName") or normalized_path).strip()
+            raise ValueError(f"账号与平台不匹配: {actual_name} 属于 {actual_platform}，不能用于 {platform_name}")
+
+        if normalized_name:
+            raise ValueError(f"本地未找到账号: {platform_name} / {normalized_name}")
+        raise ValueError(f"账号文件不存在或未登记: {normalized_path}")
+
     def _worker_loop(self, worker_name):
         task_logger.debug("publish worker started worker_name={}", worker_name)
         while not self._stop_event.is_set():
-            task = self._claim_next_ready_task(worker_name)
-            if not task:
-                time.sleep(1)
-                continue
+            try:
+                task = self._claim_next_ready_task(worker_name)
+                if not task:
+                    time.sleep(1)
+                    continue
 
-            account_lock = self._get_account_lock(task["account_file_path"])
-            with account_lock:
-                self._run_task(task)
+                account_file_path = str(
+                    task.get("accountFilePath") or task.get("account_file_path") or ""
+                ).strip()
+                if not account_file_path:
+                    self._update_task(
+                        task["taskUuid"],
+                        status="failed",
+                        message="发布任务缺少账号文件，无法执行",
+                        finished=True,
+                    )
+                    task_logger.error(
+                        "publish worker missing account file task_uuid={} worker_name={}",
+                        task.get("taskUuid"),
+                        worker_name,
+                    )
+                    continue
+
+                account_lock = self._get_account_lock(account_file_path)
+                with account_lock:
+                    self._run_task(task)
+            except Exception as exc:
+                task_logger.exception(
+                    "publish worker loop crashed worker_name={} error={}",
+                    worker_name,
+                    exc,
+                )
+                time.sleep(1)
 
     def _cleanup_loop(self):
         while not self._stop_event.is_set():
@@ -539,7 +646,19 @@ class PublishTaskManager:
         platform_type = int(payload["platformType"])
         title = payload["title"]
         file_path = self._resolve_payload_file_path(payload)
-        account_file = Path(BASE_DIR / "cookiesFile" / payload["accountFilePath"])
+        platform_name = PLATFORM_LABELS.get(platform_type) or str(payload.get("platformName") or platform_type)
+        resolved_account_file_path, resolved_account_name, _ = self._resolve_account_binding(
+            platform_type,
+            platform_name,
+            payload.get("accountFilePath"),
+            payload.get("accountName"),
+        )
+        payload["accountFilePath"] = resolved_account_file_path
+        if resolved_account_name:
+            payload["accountName"] = resolved_account_name
+        account_file = resolved_account_file_path
+        if not account_storage_exists(account_file):
+            raise FileNotFoundError(f"账号登录态不存在: {resolved_account_file_path}")
         tags = payload.get("tags") or []
         publish_date = self._parse_publish_date(payload.get("publishDate"))
 
@@ -724,7 +843,7 @@ class PublishTaskManager:
                 or ai_payload.get("publishAt")
             ) or intended_run_at
 
-            if row["status"] == "failed" and row["message"] != "OmniBull 重启导致任务中断，请按需重试":
+            if row["status"] == "failed" and row["message"] != RESTART_INTERRUPTED_MESSAGE:
                 continue
 
             if not self._is_future_datetime(intended_run_at):

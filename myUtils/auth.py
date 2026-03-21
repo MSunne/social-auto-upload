@@ -1,15 +1,12 @@
 import asyncio
 
 from playwright.async_api import async_playwright
-from xhs import XhsClient
 
-from conf import BASE_DIR
 from utils.base_social_media import set_init_script
+from utils.account_storage import resolve_account_storage_state
 from utils.browser_hook import get_browser_options
 from utils.log import tencent_logger, kuaishou_logger, douyin_logger, xiaohongshu_logger
-from pathlib import Path
 from utils.publish_verification import detect_publish_verification
-from uploader.xhs_uploader.main import sign_local
 
 
 LOGIN_PAGE_HINTS = {
@@ -96,11 +93,19 @@ async def validate_cookie_page(page, platform_type):
     return True
 
 
-async def cookie_auth_douyin(account_file):
+def _load_storage_state(account_ref):
+    storage_state = resolve_account_storage_state(account_ref)
+    if storage_state is None:
+        raise FileNotFoundError(f"账号登录态不存在: {account_ref}")
+    return storage_state
+
+
+async def cookie_auth_douyin(account_ref):
+    storage_state = _load_storage_state(account_ref)
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(**get_browser_options())
         try:
-            context = await browser.new_context(storage_state=account_file)
+            context = await browser.new_context(storage_state=storage_state)
             context = await set_init_script(context)
             page = await context.new_page()
             await page.goto("https://creator.douyin.com/creator-micro/content/upload")
@@ -109,11 +114,12 @@ async def cookie_auth_douyin(account_file):
             await browser.close()
 
 
-async def cookie_auth_tencent(account_file):
+async def cookie_auth_tencent(account_ref):
+    storage_state = _load_storage_state(account_ref)
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(**get_browser_options(extra_args=['--lang=en-GB']))
         try:
-            context = await browser.new_context(storage_state=account_file)
+            context = await browser.new_context(storage_state=storage_state)
             context = await set_init_script(context)
             page = await context.new_page()
             await page.goto("https://channels.weixin.qq.com/platform/post/create")
@@ -122,11 +128,12 @@ async def cookie_auth_tencent(account_file):
             await browser.close()
 
 
-async def cookie_auth_ks(account_file):
+async def cookie_auth_ks(account_ref):
+    storage_state = _load_storage_state(account_ref)
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(**get_browser_options(extra_args=['--lang=en-GB']))
         try:
-            context = await browser.new_context(storage_state=account_file)
+            context = await browser.new_context(storage_state=storage_state)
             context = await set_init_script(context)
             page = await context.new_page()
             await page.goto("https://cp.kuaishou.com/article/publish/video")
@@ -135,11 +142,12 @@ async def cookie_auth_ks(account_file):
             await browser.close()
 
 
-async def cookie_auth_xhs(account_file):
+async def cookie_auth_xhs(account_ref):
+    storage_state = _load_storage_state(account_ref)
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(**get_browser_options(extra_args=['--lang=en-GB']))
         try:
-            context = await browser.new_context(storage_state=account_file)
+            context = await browser.new_context(storage_state=storage_state)
             context = await set_init_script(context)
             page = await context.new_page()
             await page.goto("https://creator.xiaohongshu.com/creator-micro/content/upload")
@@ -148,22 +156,25 @@ async def cookie_auth_xhs(account_file):
             await browser.close()
 
 
-async def check_cookie(type, file_path):
-    match type:
-        # 小红书
-        case 1:
-            return await cookie_auth_xhs(Path(BASE_DIR / "cookiesFile" / file_path))
-        # 视频号
-        case 2:
-            return await cookie_auth_tencent(Path(BASE_DIR / "cookiesFile" / file_path))
-        # 抖音
-        case 3:
-            return await cookie_auth_douyin(Path(BASE_DIR / "cookiesFile" / file_path))
-        # 快手
-        case 4:
-            return await cookie_auth_ks(Path(BASE_DIR / "cookiesFile" / file_path))
-        case _:
-            return False
+async def check_cookie(type, account_ref):
+    try:
+        match type:
+            # 小红书
+            case 1:
+                return await cookie_auth_xhs(account_ref)
+            # 视频号
+            case 2:
+                return await cookie_auth_tencent(account_ref)
+            # 抖音
+            case 3:
+                return await cookie_auth_douyin(account_ref)
+            # 快手
+            case 4:
+                return await cookie_auth_ks(account_ref)
+            case _:
+                return False
+    except FileNotFoundError:
+        return False
 
 # a = asyncio.run(check_cookie(1,"3a6cfdc0-3d51-11f0-8507-44e51723d63c.json"))
 # print(a)

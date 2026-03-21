@@ -2,18 +2,21 @@
 from datetime import datetime
 
 from playwright.async_api import Playwright, async_playwright, Page
-import os
 import asyncio
 
 from conf import LOCAL_CHROME_PATH, LOCAL_CHROME_HEADLESS
+from utils.account_storage import account_storage_exists, load_account_storage_state, update_account_storage_state
 from utils.base_social_media import set_init_script
 from utils.log import xiaohongshu_logger
 
 
 async def cookie_auth(account_file):
+    storage_state = load_account_storage_state(account_file)
+    if storage_state is None:
+        return False
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(headless=LOCAL_CHROME_HEADLESS)
-        context = await browser.new_context(storage_state=account_file)
+        context = await browser.new_context(storage_state=storage_state)
         context = await set_init_script(context)
         # 创建一个新的页面
         page = await context.new_page()
@@ -36,7 +39,7 @@ async def cookie_auth(account_file):
 
 
 async def xiaohongshu_setup(account_file, handle=False):
-    if not os.path.exists(account_file) or not await cookie_auth(account_file):
+    if not account_storage_exists(account_file) or not await cookie_auth(account_file):
         if not handle:
             # Todo alert message
             return False
@@ -60,7 +63,7 @@ async def xiaohongshu_cookie_gen(account_file):
         await page.goto("https://creator.xiaohongshu.com/")
         await page.pause()
         # 点击调试器的继续，保存cookie
-        await context.storage_state(path=account_file)
+        update_account_storage_state(account_file, await context.storage_state())
 
 
 class XiaoHongShuVideo(object):
@@ -113,9 +116,13 @@ class XiaoHongShuVideo(object):
         else:
             browser = await playwright.chromium.launch(headless=self.headless)
         # 创建一个浏览器上下文，使用指定的 cookie 文件
+        storage_state = load_account_storage_state(self.account_file)
+        if storage_state is None:
+            await browser.close()
+            raise FileNotFoundError(f"账号登录态不存在: {self.account_file}")
         context = await browser.new_context(
             viewport={"width": 1600, "height": 900},
-            storage_state=f"{self.account_file}"
+            storage_state=storage_state
         )
         context = await set_init_script(context)
 
@@ -236,7 +243,7 @@ class XiaoHongShuVideo(object):
                 await page.screenshot(full_page=True)
                 await asyncio.sleep(0.5)
 
-        await context.storage_state(path=self.account_file)  # 保存cookie
+        update_account_storage_state(self.account_file, await context.storage_state())
         xiaohongshu_logger.success('  [-]cookie更新完毕！')
         await asyncio.sleep(2)  # 这里延迟是为了方便眼睛直观的观看
         # 关闭浏览器上下文和浏览器实例
@@ -364,5 +371,3 @@ class XiaoHongShuVideo(object):
     async def main(self):
         async with async_playwright() as playwright:
             await self.upload(playwright)
-
-

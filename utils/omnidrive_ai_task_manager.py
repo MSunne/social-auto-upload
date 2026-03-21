@@ -9,6 +9,8 @@ from utils.log import ai_logger
 
 
 FINAL_AI_TASK_STATUSES = {"success", "failed", "cancelled", "needs_verify"}
+RECOVERED_PUBLISH_PENDING_MESSAGE = "OmniBull 重启后已恢复等待发布"
+RECOVERED_PUBLISHING_MESSAGE = "OmniBull 重启后已恢复发布执行"
 
 
 class OmniDriveAITaskManager:
@@ -51,7 +53,10 @@ class OmniDriveAITaskManager:
                 )
                 """
             )
+            recovered = self._recover_interrupted_tasks(cursor)
             conn.commit()
+        if recovered:
+            ai_logger.info("omnidrive ai task startup recovery requeued_count={}", recovered)
 
     def create_task(self, data, source="local_ui"):
         job_type = str(data.get("jobType") or "").strip()
@@ -398,6 +403,81 @@ class OmniDriveAITaskManager:
 
     def _connect(self):
         return sqlite3.connect(self.db_path)
+
+    def _recover_interrupted_tasks(self, cursor):
+        recovered = 0
+        try:
+            cursor.execute(
+                """
+                SELECT task_uuid, status, message, linked_publish_task_uuid
+                FROM omnidrive_ai_tasks
+                WHERE status IN ('publish_pending', 'publishing')
+                """
+            )
+            rows = cursor.fetchall()
+        except sqlite3.OperationalError:
+            return 0
+
+        for row in rows:
+            current_status = str(row[1] or "").strip()
+            current_message = str(row[2] or "").strip()
+            linked_publish_task_uuid = str(row[3] or "").strip()
+
+            next_status = ""
+            next_message = ""
+            if linked_publish_task_uuid:
+                try:
+                    cursor.execute(
+                        """
+                        SELECT status, message
+                        FROM publish_tasks
+                        WHERE task_uuid = ?
+                        LIMIT 1
+                        """,
+                        (linked_publish_task_uuid,),
+                    )
+                    publish_row = cursor.fetchone()
+                except sqlite3.OperationalError:
+                    publish_row = None
+
+                if publish_row:
+                    publish_status = str(publish_row[0] or "").strip()
+                    publish_message = str(publish_row[1] or "").strip()
+                    status_map = {
+                        "pending": "publish_pending",
+                        "scheduled": "publish_pending",
+                        "running": "publishing",
+                        "success": "success",
+                        "needs_verify": "needs_verify",
+                        "failed": "failed",
+                        "cancelled": "cancelled",
+                    }
+                    next_status = status_map.get(publish_status, "")
+                    if publish_status in {"pending", "scheduled"}:
+                        next_message = publish_message or RECOVERED_PUBLISH_PENDING_MESSAGE
+                    elif publish_status == "running":
+                        next_message = publish_message or RECOVERED_PUBLISHING_MESSAGE
+                    elif publish_status in {"success", "needs_verify", "failed", "cancelled"}:
+                        next_message = publish_message
+
+            if not next_status or (next_status == current_status and (not next_message or next_message == current_message)):
+                continue
+
+            finished_at = self._finished_at_for_status(next_status)
+            cursor.execute(
+                """
+                UPDATE omnidrive_ai_tasks
+                SET status = ?,
+                    message = COALESCE(?, message),
+                    finished_at = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE task_uuid = ?
+                """,
+                (next_status, next_message, finished_at, str(row[0] or "").strip()),
+            )
+            recovered += cursor.rowcount
+
+        return recovered
 
     @staticmethod
     def _serialize_row(row):
