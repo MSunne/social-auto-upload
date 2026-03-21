@@ -31,8 +31,7 @@ flowchart LR
   subgraph CLOUD["云端侧: OmniDrive / Demo"]
     ODC["omnidrive_cloud<br/>云端控制面"]
     ODF["omnidrive_frontend<br/>用户控制台"]
-    ODA["OmniDriveAdmin<br/>管理前端 A"]
-    ODB["omnidrive_admin_frontend<br/>管理前端 B"]
+    ODA["OmniDriveAdmin<br/>管理前端"]
     DEMO["cloud_demo<br/>扫码登录 Demo"]
   end
 
@@ -56,7 +55,6 @@ flowchart LR
 
   ODF -->|"/api/v1/*"| ODC
   ODA -->|"/api/admin/v1/*"| ODC
-  ODB -->|"/api/admin/v1/*"| ODC
 
   OAG -->|"/api/v1/agent/*"| ODC
   CAG -->|"/api/agents/* /api/sessions/*"| DEMO
@@ -146,8 +144,7 @@ sequenceDiagram
 flowchart LR
   subgraph USER_SIDE["用户与运营入口"]
     CFE["omnidrive_frontend<br/>云端用户控制台"]
-    ADM1["OmniDriveAdmin<br/>管理前端 A"]
-    ADM2["omnidrive_admin_frontend<br/>管理前端 B"]
+    ADM1["OmniDriveAdmin<br/>管理前端"]
     CLAW["OpenClaw"]
   end
 
@@ -170,7 +167,6 @@ flowchart LR
 
   CFE --> UAPI
   ADM1 --> MAPI
-  ADM2 --> MAPI
 
   AGT -->|"heartbeat / accounts sync / materials sync"| AAPI
   AGT -->|"skills sync / AI sync / publish task sync"| AAPI
@@ -193,8 +189,7 @@ flowchart LR
 | SAU / OmniBull 本地执行器 | `sau_backend.py` `sau_frontend` `uploader` `myUtils` `utils` `db` | 本地账号、素材、发布、登录、任务调度执行 | 现行主链路 |
 | OmniDrive Cloud | `omnidrive_cloud` | 云端控制面，统一提供用户 API、Agent API、Admin API | 现行主链路 |
 | OmniDrive 用户前端 | `omnidrive_frontend` | 云端用户控制台 | 现行主链路，但默认带 mock fallback |
-| OmniDrive 管理前端 A | `OmniDriveAdmin` | 云端管理后台 | 并行前端 |
-| OmniDrive 管理前端 B | `omnidrive_admin_frontend` | 云端管理后台另一套实现 | 并行前端 |
+| OmniDrive 管理前端 | `OmniDriveAdmin` | 云端管理后台 | 现行前端 |
 | OpenClaw -> OmniBull 插件 | `openclaw_extensions/omnibull` | 让 OpenClaw 调本地 OmniBull / SAU | 现行主链路 |
 | OpenClaw -> OmniDrive 插件 | `openclaw_extensions/omnidrive` | 让 OpenClaw 调云端 OmniDrive AI | 现行主链路 |
 | Cloud QR Demo | `cloud_demo` | 早期远端扫码登录 demo | 历史原型，但本地仍保留兼容代码 |
@@ -244,7 +239,7 @@ flowchart LR
       v              v              v          v         v               v
   user_info      登录/校验      publish_tasks  用户前端   本地 OmniBull Agent  管理前端
   file_records   平台发布       AI 本地任务    omnidrive_  utils/omnidrive_     OmniDriveAdmin
-  publish_tasks                                 frontend    agent.py            omnidrive_admin_frontend
+  publish_tasks                                 frontend    agent.py
 ```
 
 ## 3. 现行主链路
@@ -272,9 +267,6 @@ flowchart LR
     -> omnidrive_cloud /api/v1/*
 
 [OmniDriveAdmin]
-    -> omnidrive_cloud /api/admin/v1/*
-
-[omnidrive_admin_frontend]
     -> omnidrive_cloud /api/admin/v1/*
 ```
 
@@ -352,7 +344,6 @@ flowchart LR
          v                            v                             v
   omnidrive_frontend          本地 OmniBull Agent              管理后台前端
                               utils/omnidrive_agent.py         OmniDriveAdmin
-                                                               omnidrive_admin_frontend
 ```
 
 ### Agent API 在做什么
@@ -410,18 +401,15 @@ utils/omnidrive_agent.py
 
 ## 7. 需要明确标注的并行模块
 
-### 7.1 两个管理前端
+### 7.1 管理前端
 
-仓库里有两套都指向同一类后台接口的管理前端：
+当前管理前端统一以 `OmniDriveAdmin` 为准。
 
-- `OmniDriveAdmin`
-- `omnidrive_admin_frontend`
-
-它们都面向：
+它面向：
 
 - `omnidrive_cloud /api/admin/v1/*`
 
-所以目前更合理的理解不是“两个不同的后台系统”，而是“两个并行中的管理台前端实现”。
+讨论后台管理界面时，默认都应落到这一个工程上。
 
 ### 7.2 `projects` 不是业务层
 
@@ -461,7 +449,7 @@ OmniDrive = 云端控制面
 
 - `omnidrive_cloud`
 - `omnidrive_frontend`
-- 管理前端（`OmniDriveAdmin` / `omnidrive_admin_frontend`）
+- 管理前端（`OmniDriveAdmin`）
 
 ### 智能代理侧
 
@@ -478,7 +466,7 @@ OpenClaw = 本地智能代理，通过插件同时接本地 OmniBull 和云端 O
 
 - 把 `sau_frontend` 当成“系统真相”，但很多真实能力其实定义在 `sau_backend.py` 和 `utils/*`。
 - 把 `cloud_demo` 当成现在的主云端，其实它更像早期 demo。
-- 把 `OmniDriveAdmin` 和 `omnidrive_admin_frontend` 当成两个不同后台，其实它们都指向同一类 admin API。
+- 把历史脚手架或文档草稿误判成现行管理前端，当前应以 `OmniDriveAdmin` 为准。
 - 把 `projects/` 当成业务层目录，它其实只是入口集合。
 - 忽略 `openclaw_extensions/omnidrive` 对本地 OmniBull 的依赖，以为它只连云端。
 

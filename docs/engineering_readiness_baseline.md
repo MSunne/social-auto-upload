@@ -30,7 +30,6 @@
    - `omnidrive_frontend`
 3. `OmniDrive` 管理后台
    - `OmniDriveAdmin`
-   - `omnidrive_admin_frontend`
 4. `OpenClaw` 集成面
    - `openclaw_extensions/omnibull`
    - `openclaw_extensions/omnidrive`
@@ -62,8 +61,7 @@ flowchart LR
   subgraph Cloud["云端控制面: OmniDrive"]
     OD_API["omnidrive_cloud<br/>Go API / Store / Worker / Scheduler"]
     OD_FE["omnidrive_frontend<br/>用户前端"]
-    OD_ADMIN_A["OmniDriveAdmin<br/>管理前端 A"]
-    OD_ADMIN_B["omnidrive_admin_frontend<br/>管理前端 B"]
+    OD_ADMIN["OmniDriveAdmin<br/>管理前端"]
   end
 
   subgraph Tooling["OpenClaw / 插件"]
@@ -85,8 +83,7 @@ flowchart LR
   AI_LOCAL --> SAU_DB
 
   OD_FE -->|" /api/v1/* "| OD_API
-  OD_ADMIN_A -->|" /api/admin/v1/* "| OD_API
-  OD_ADMIN_B -->|" /api/admin/v1/* "| OD_API
+  OD_ADMIN -->|" /api/admin/v1/* "| OD_API
 
   OMB_AGENT -->|" /api/v1/agent/* "| OD_API
   OCB -->|" /api/skill/* "| SAU_BE
@@ -168,8 +165,7 @@ flowchart LR
 | 本地云桥接 | `utils/omnidrive_agent.py` | 账号/素材/技能/任务同步，拉取云任务 | 现行主链路 |
 | 云端后端 | `omnidrive_cloud/cmd/omnidrive-api` | 用户 API、Agent API、Admin API | 现行主链路 |
 | 用户云前端 | `omnidrive_frontend/app` | 云端用户控制台 | 现行前端 |
-| 管理前端 A | `OmniDriveAdmin/app` | 运营/管理后台 | 并行前端 |
-| 管理前端 B | `omnidrive_admin_frontend/app` | 运营/管理后台另一实现 | 并行前端 |
+| 管理前端 | `OmniDriveAdmin/app` | 运营/管理后台 | 现行前端 |
 | OpenClaw 本地插件 | `openclaw_extensions/omnibull` | 暴露本地账号/素材/发布能力 | 现行主链路 |
 | OpenClaw 云插件 | `openclaw_extensions/omnidrive` | 暴露云端技能/AI/任务能力 | 现行主链路 |
 

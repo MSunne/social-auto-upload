@@ -37,7 +37,6 @@
     - `omnidrive_cloud/`
     - `omnidrive_frontend/`
     - `OmniDriveAdmin/`
-    - `omnidrive_admin_frontend/`
 - `OmniSkill`
   - 图里是 `OmniDrive <-> OpenClaw` 之间的技能能力通道。
   - 当前主要落在：

@@ -38,7 +38,7 @@ This admin system is for internal operators, finance staff, customer support, an
 
 ### Frontend
 
-- new project directory: `omnidrive_admin_frontend`
+- frontend project directory: `OmniDriveAdmin`
 - Next.js App Router
 - React 19
 - TypeScript
@@ -83,7 +83,7 @@ Backend tasks:
 
 Frontend tasks:
 
-- create `omnidrive_admin_frontend`
+- create `OmniDriveAdmin`
 - establish route groups and layout shell
 - create Claude handoff doc with page map and UI expectations
 

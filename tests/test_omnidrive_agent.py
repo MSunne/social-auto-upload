@@ -1,13 +1,17 @@
 import json
+import sqlite3
 import shutil
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
 import requests
 
 from utils import omnidrive_agent as agent_module
+from utils.omnidrive_ai_task_manager import OmniDriveAITaskManager
+from utils.publish_task_manager import PublishTaskManager
 
 
 class DummyPublishTaskManager:
@@ -417,6 +421,111 @@ class OmniDriveBridgeTests(unittest.TestCase):
         self.assertEqual(mirrored, 1)
         self.assertEqual(len(sync_payloads), 1)
         self.assertEqual(sync_payloads[0]["id"], "local-ai-1")
+
+    def test_bridge_datetime_helpers_preserve_cloud_schedule_in_local_time(self):
+        remote_run_at = "2026-03-20T13:34:45Z"
+        expected_local = (
+            datetime.fromisoformat("2026-03-20T13:34:45+00:00")
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M:%S")
+        )
+        expected_rfc3339 = (
+            datetime.strptime(expected_local, "%Y-%m-%d %H:%M:%S")
+            .replace(tzinfo=datetime.now().astimezone().tzinfo or timezone.utc)
+            .astimezone(timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+
+        self.assertEqual(agent_module.OmniDriveBridge._normalize_datetime(remote_run_at), expected_local)
+        self.assertEqual(agent_module.OmniDriveBridge._to_rfc3339(expected_local), expected_rfc3339)
+
+
+class PublishTaskManagerDatetimeTests(unittest.TestCase):
+    def test_publish_task_manager_keeps_timezone_aware_publish_times_local(self):
+        remote_run_at = "2026-03-20T13:34:45Z"
+        expected_local = (
+            datetime.fromisoformat("2026-03-20T13:34:45+00:00")
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M:%S")
+        )
+
+        normalized = PublishTaskManager._normalize_datetime(remote_run_at)
+        parsed = PublishTaskManager._parse_publish_date(remote_run_at)
+
+        self.assertEqual(normalized, expected_local)
+        self.assertEqual(parsed.strftime("%Y-%m-%d %H:%M:%S"), expected_local)
+        self.assertIsNone(parsed.tzinfo)
+
+    def test_publish_task_manager_repairs_future_omnidrive_ai_tasks_after_restart(self):
+        temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-test-"))
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "database.db"
+
+        ai_manager = OmniDriveAITaskManager(db_path)
+        ai_manager.init_db()
+        future_publish_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=1)
+        ai_manager.import_remote_task(
+            {
+                "taskUuid": "local-ai-1",
+                "jobType": "video",
+                "modelName": "veo",
+                "prompt": "future publish",
+                "status": "publish_pending",
+                "cloudStatus": "publish_pending",
+                "payload": {
+                    "publishAt": future_publish_at.isoformat().replace("+00:00", "Z"),
+                    "publishPayload": {
+                        "runAt": future_publish_at.isoformat().replace("+00:00", "Z"),
+                        "requestedRun": future_publish_at.isoformat().replace("+00:00", "Z"),
+                    },
+                },
+            }
+        )
+
+        manager = PublishTaskManager(db_path=db_path, material_roots={})
+        manager.init_db()
+
+        broken_local_run_at = future_publish_at.strftime("%Y-%m-%d %H:%M:%S")
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO publish_tasks (
+                    task_uuid, source, platform_type, platform_name, account_name, account_file_path,
+                    file_name, file_path, title, run_at, platform_publish_at, status, message, payload_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "publish-1",
+                    "omnidrive_ai",
+                    3,
+                    "抖音",
+                    "测试账号",
+                    "cookies/demo.json",
+                    "video.mp4",
+                    "generated:local-ai-1/video.mp4",
+                    "future publish",
+                    broken_local_run_at,
+                    broken_local_run_at,
+                    "failed",
+                    "OmniBull 重启导致任务中断，请按需重试",
+                    json.dumps({"omnidriveAITaskUuid": "local-ai-1"}, ensure_ascii=False),
+                ),
+            )
+            conn.commit()
+
+        manager.init_db()
+        repaired_task = manager.get_task("publish-1")
+        expected_local_run_at = future_publish_at.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+        self.assertEqual(repaired_task["status"], "scheduled")
+        self.assertEqual(repaired_task["runAt"], expected_local_run_at)
+        self.assertEqual(repaired_task["platformPublishAt"], expected_local_run_at)
+        self.assertEqual(repaired_task["message"], "等待 AI 产物定时发布")
+        self.assertIsNone(repaired_task["startedAt"])
+        self.assertIsNone(repaired_task["finishedAt"])
 
 
 def make_http_error(status_code, payload):
