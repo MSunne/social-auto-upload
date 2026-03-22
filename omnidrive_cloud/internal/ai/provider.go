@@ -102,14 +102,15 @@ type VideoSubmission struct {
 }
 
 type VideoStatus struct {
-	ID          string         `json:"id"`
-	Model       string         `json:"model"`
-	Status      string         `json:"status"`
-	FailureCode string         `json:"failureCode,omitempty"`
-	Message     string         `json:"message,omitempty"`
-	ContentURL  string         `json:"contentUrl,omitempty"`
-	CreatedAt   *time.Time     `json:"createdAt,omitempty"`
-	UpdatedAt   *time.Time     `json:"updatedAt,omitempty"`
-	RawResponse []byte         `json:"rawResponse,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
+	ID              string         `json:"id"`
+	Model           string         `json:"model"`
+	Status          string         `json:"status"`
+	ProgressPercent *int           `json:"progressPercent,omitempty"`
+	FailureCode     string         `json:"failureCode,omitempty"`
+	Message         string         `json:"message,omitempty"`
+	ContentURL      string         `json:"contentUrl,omitempty"`
+	CreatedAt       *time.Time     `json:"createdAt,omitempty"`
+	UpdatedAt       *time.Time     `json:"updatedAt,omitempty"`
+	RawResponse     []byte         `json:"rawResponse,omitempty"`
+	Metadata        map[string]any `json:"metadata,omitempty"`
 }

@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import mimetypes
@@ -75,6 +76,8 @@ FINAL_LOGIN_STATUSES = {"success", "failed", "cancelled"}
 LOGIN_PENDING_STALE_SECONDS = 90
 LOGIN_RUNNING_STALE_SECONDS = 60
 LOGIN_VERIFICATION_STALE_SECONDS = 180
+ACCOUNT_VALIDATION_INTERVAL_SECONDS = 300
+ACCOUNT_VALIDATION_BATCH_SIZE = 2
 
 
 class OmniDriveBridge:
@@ -348,22 +351,11 @@ class OmniDriveBridge:
         return data
 
     def _sync_accounts(self):
-        rows = self._load_local_accounts()
+        rows = self._refresh_local_account_health(self._load_local_accounts())
         mirrored = 0
         for row in rows:
-            platform_name = PLATFORM_NAME_BY_TYPE.get(int(row["type"]))
-            if not platform_name:
-                continue
-            status = "active" if int(row["status"] or 0) == 1 else "inactive"
-            payload = {
-                "deviceCode": self.device_code,
-                "platform": platform_name,
-                "accountName": row["userName"],
-                "status": status,
-                "lastMessage": None if status == "active" else "本地 cookie 当前不可用",
-            }
-            self._request("POST", "/api/v1/agent/accounts/sync", payload=payload)
-            mirrored += 1
+            if self._sync_account_row(row):
+                mirrored += 1
 
         self._update_state(
             mirroredAccounts=mirrored,
@@ -380,6 +372,121 @@ class OmniDriveBridge:
                 "omnidrive bridge account sync idle device_code={}",
                 self.device_code,
             )
+
+    def _sync_account_row(self, row):
+        platform_name = PLATFORM_NAME_BY_TYPE.get(int(row["type"]))
+        if not platform_name:
+            return False
+        status = "active" if int(row["status"] or 0) == 1 else "inactive"
+        last_message = None
+        if status != "active":
+            last_message = self._trim_message(row.get("lastValidationMessage")) or "本地 cookie 当前不可用"
+        payload = {
+            "deviceCode": self.device_code,
+            "platform": platform_name,
+            "accountName": row["userName"],
+            "status": status,
+            "lastMessage": last_message,
+            "lastAuthenticatedAt": self._sqlite_time_to_rfc3339(row.get("storageStateUpdatedAt")),
+        }
+        self._request("POST", "/api/v1/agent/accounts/sync", payload=payload)
+        return True
+
+    def _sync_local_account_by_target(self, platform, account_name):
+        try:
+            row = self._load_local_account_by_name(platform, account_name)
+        except Exception:
+            return False
+        return self._sync_account_row(row)
+
+    def _refresh_local_account_health(self, rows):
+        normalized_rows = [dict(row) for row in rows]
+        active_target = self._build_login_target_key_from_worker(self._get_active_login_worker())
+        refreshed = 0
+        for index, row in enumerate(normalized_rows):
+            if refreshed >= ACCOUNT_VALIDATION_BATCH_SIZE:
+                break
+            if int(row.get("status") or 0) != 1:
+                continue
+            if not self._is_account_validation_stale(row):
+                continue
+
+            target_key = self._build_login_target_key(
+                {
+                    "platform": PLATFORM_NAME_BY_TYPE.get(int(row.get("type") or 0)),
+                    "accountName": row.get("userName"),
+                }
+            )
+            if active_target and target_key and target_key == active_target:
+                continue
+
+            refreshed_row = self._validate_local_account_row(row)
+            normalized_rows[index] = refreshed_row
+            refreshed += 1
+
+        return normalized_rows
+
+    def _validate_local_account_row(self, row):
+        from myUtils.auth import check_cookie_detail
+        from utils.account_storage import update_account_runtime_status
+
+        status = int(row.get("status") or 0)
+        message = self._trim_message(row.get("lastValidationMessage"))
+        try:
+            result = asyncio.run(check_cookie_detail(int(row["type"]), row["filePath"], headless=True))
+            status = 1 if result.get("ok") else 0
+            message = None if status == 1 else self._trim_message(result.get("message")) or "本地 cookie 当前不可用"
+            updated = update_account_runtime_status(row["id"], status, message, db_path=self.db_path)
+            if updated:
+                return updated
+        except Exception as exc:
+            agent_logger.warning(
+                "omnidrive bridge account health check failed account_name={} platform_type={} error={}",
+                row.get("userName"),
+                row.get("type"),
+                exc,
+            )
+        row["status"] = status
+        row["lastValidationMessage"] = message
+        row["lastValidationAt"] = datetime.now().astimezone().isoformat()
+        return row
+
+    def _is_account_validation_stale(self, row):
+        reference = row.get("lastValidationAt") or row.get("storageStateUpdatedAt")
+        parsed = self._parse_local_datetime(reference)
+        if parsed is None:
+            return True
+        return (time.time() - parsed.timestamp()) >= ACCOUNT_VALIDATION_INTERVAL_SECONDS
+
+    def _parse_local_datetime(self, value):
+        if value in (None, "", 0, "0"):
+            return None
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            normalized = str(value).strip()
+            if not normalized:
+                return None
+            normalized = normalized.replace("Z", "+00:00")
+            try:
+                parsed = datetime.fromisoformat(normalized)
+            except ValueError:
+                try:
+                    parsed = datetime.strptime(normalized, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    try:
+                        parsed = datetime.strptime(normalized, "%Y-%m-%d %H:%M:%S.%f")
+                    except ValueError:
+                        return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc).astimezone()
+        return parsed.astimezone()
+
+    def _sqlite_time_to_rfc3339(self, value):
+        parsed = self._parse_local_datetime(value)
+        if parsed is None:
+            return None
+        return parsed.isoformat()
 
     def _sync_materials(self):
         roots = list_material_roots(self.material_roots)
@@ -1120,6 +1227,7 @@ class OmniDriveBridge:
                     message=message,
                     qr_data=qr_data or worker.get("lastQRData"),
                 )
+                self._sync_local_account_by_target(worker.get("platform"), worker.get("accountName"))
                 return
             if event_type == "qr_expired":
                 qr_data = payload.get("qrData") or worker.get("lastQRData")
@@ -1132,6 +1240,7 @@ class OmniDriveBridge:
                     message=message,
                     qr_data=qr_data,
                 )
+                self._sync_local_account_by_target(worker.get("platform"), worker.get("accountName"))
                 return
             if event_type == "verification_required":
                 signature = self._derive_login_verification_signature(payload)
@@ -1145,6 +1254,16 @@ class OmniDriveBridge:
                     message=self._trim_message(payload.get("message")) or f"{platform_label} 登录需要额外验证",
                     verification_payload=payload,
                 )
+                self._sync_local_account_by_target(worker.get("platform"), worker.get("accountName"))
+                return
+            if event_type == "login_failed":
+                message = self._trim_message(payload.get("message")) or f"{platform_label} 账号登录失败，请检查本地 SAU 日志"
+                self._post_login_event(
+                    session_id,
+                    status="failed",
+                    message=message,
+                )
+                self._sync_local_account_by_target(worker.get("platform"), worker.get("accountName"))
                 return
             if event_type == "log":
                 message = self._trim_message(payload.get("message"))
@@ -1169,7 +1288,7 @@ class OmniDriveBridge:
                 message=f"{platform_label} 账号登录成功，本地 SAU 已保存最新 Cookie",
             )
             try:
-                self._sync_accounts()
+                self._sync_local_account_by_target(worker.get("platform"), worker.get("accountName"))
             except Exception as exc:
                 agent_logger.warning(
                     "omnidrive bridge immediate account sync failed session_id={} account_name={} error={}",
@@ -1185,6 +1304,7 @@ class OmniDriveBridge:
                 status="failed",
                 message=f"{platform_label} 账号登录失败，请检查本地 SAU 日志",
             )
+            self._sync_local_account_by_target(worker.get("platform"), worker.get("accountName"))
             return
 
         if message == "CANCELLED":
@@ -1193,6 +1313,7 @@ class OmniDriveBridge:
                 status="cancelled",
                 message=f"{platform_label} 登录会话已取消，本地 SAU 已停止当前登录流程",
             )
+            self._sync_local_account_by_target(worker.get("platform"), worker.get("accountName"))
             return
 
         if message.startswith("data:image"):
@@ -2020,6 +2141,39 @@ class OmniDriveBridge:
         row = self._load_local_account_by_name(platform_name, account_name)
         return row["filePath"]
 
+    @staticmethod
+    def _local_account_select_sql():
+        return """
+                SELECT id, type, filePath, userName, status,
+                       storageStateUpdatedAt, lastValidationAt, lastValidationMessage
+                FROM user_info
+                """
+
+    @staticmethod
+    def _legacy_local_account_select_sql():
+        return """
+                SELECT id, type, filePath, userName, status,
+                       NULL AS storageStateUpdatedAt,
+                       NULL AS lastValidationAt,
+                       NULL AS lastValidationMessage
+                FROM user_info
+                """
+
+    def _query_local_accounts(self, suffix_sql="", params=(), fetchall=False):
+        query = f"{self._local_account_select_sql()}\n{suffix_sql}"
+        legacy_query = f"{self._legacy_local_account_select_sql()}\n{suffix_sql}"
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            try:
+                cursor.execute(query, params)
+            except sqlite3.OperationalError as exc:
+                if "no such column" not in str(exc):
+                    raise
+                cursor.execute(legacy_query, params)
+            return cursor.fetchall() if fetchall else cursor.fetchone()
+
     def _load_local_account_by_name(self, platform_name, account_name):
         platform_type = PLATFORM_TYPE_BY_NAME.get(platform_name)
         normalized_name = str(account_name or "").strip()
@@ -2028,20 +2182,14 @@ class OmniDriveBridge:
         if not normalized_name:
             raise ValueError(f"本地未找到账号: {platform_name} / {normalized_name}")
 
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT id, type, filePath, userName, status
-                FROM user_info
+        row = self._query_local_accounts(
+            """
                 WHERE type = ? AND userName = ?
                 ORDER BY status DESC, id DESC
                 LIMIT 1
                 """,
-                (platform_type, normalized_name),
-            )
-            row = cursor.fetchone()
+            (platform_type, normalized_name),
+        )
         if not row:
             raise ValueError(f"本地未找到账号: {platform_name} / {normalized_name}")
         return dict(row)
@@ -2051,34 +2199,23 @@ class OmniDriveBridge:
         if not normalized_path:
             return None
 
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT id, type, filePath, userName, status
-                FROM user_info
+        row = self._query_local_accounts(
+            """
                 WHERE filePath = ?
                 ORDER BY status DESC, id DESC
                 LIMIT 1
                 """,
-                (normalized_path,),
-            )
-            row = cursor.fetchone()
+            (normalized_path,),
+        )
         return dict(row) if row else None
 
     def _load_local_accounts(self):
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT id, type, filePath, userName, status
-                FROM user_info
+        return self._query_local_accounts(
+            """
                 ORDER BY id DESC
-                """
-            )
-            return cursor.fetchall()
+                """,
+            fetchall=True,
+        )
 
     def _extract_material_refs_from_package(self, package):
         refs = []

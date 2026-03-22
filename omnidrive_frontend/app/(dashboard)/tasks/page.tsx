@@ -102,6 +102,7 @@ export default function TasksPage() {
         accountLabel: job.localPublishTaskId ? `已生成本地发布任务 ${job.localPublishTaskId}` : "尚未进入发布",
         modelLabel: job.modelName,
         updatedAt: job.updatedAt,
+        href: `/tasks/ai/${job.id}`,
       };
     });
 

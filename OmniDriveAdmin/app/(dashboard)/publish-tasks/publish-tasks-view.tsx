@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { usePublishTasks, useBulkActionPublishTasks } from "@/lib/hooks/usePublishTasks";
 import { PageHeader } from "@/components/ui/common";
 import { Search, Loader2, RefreshCw, XCircle, RotateCcw, Zap } from "lucide-react";
@@ -39,13 +39,20 @@ export function PublishTasksView() {
 
   const { data, isLoading, error, refetch } = usePublishTasks({ page, pageSize: 20, query: query || undefined, status: status || undefined });
   const bulkAction = useBulkActionPublishTasks();
+  const rows = useMemo(() => {
+    return [...(data?.items || [])].sort((left, right) => {
+      const leftTime = new Date(left.task.updatedAt || left.task.createdAt || 0).getTime();
+      const rightTime = new Date(right.task.updatedAt || right.task.createdAt || 0).getTime();
+      return rightTime - leftTime;
+    });
+  }, [data?.items]);
 
   const handleSearch = (e: React.FormEvent) => { e.preventDefault(); setQuery(searchInput); setPage(1); setSelected(new Set()); };
 
   const toggleSelect = (id: string) => setSelected(prev => { const n = new Set(prev); if (n.has(id)) { n.delete(id); } else { n.add(id); } return n; });
   const toggleSelectAll = () => {
-    if (!data) return;
-    const all = data.items.map(r => r.task.id);
+    if (!rows.length) return;
+    const all = rows.map(r => r.task.id);
     setSelected(selected.size === all.length ? new Set() : new Set(all));
   };
 
@@ -99,7 +106,7 @@ export function PublishTasksView() {
             <thead className="text-xs text-[var(--color-text-secondary)] uppercase bg-[var(--color-bg-secondary)] border-b border-[var(--color-border)]">
               <tr>
                 <th className="px-4 py-3.5">
-                  <input type="checkbox" className="rounded" checked={data ? selected.size === data.items.length && data.items.length > 0 : false} onChange={toggleSelectAll} />
+                  <input type="checkbox" className="rounded" checked={rows.length > 0 ? selected.size === rows.length : false} onChange={toggleSelectAll} />
                 </th>
                 <th className="px-4 py-3.5 font-medium">任务标题 / 平台</th>
                 <th className="px-4 py-3.5 font-medium">归属用户</th>
@@ -117,8 +124,8 @@ export function PublishTasksView() {
                 </td></tr>
               )}
               {error && <tr><td colSpan={7} className="px-6 py-10 text-center text-red-500 text-sm">加载失败，请重试</td></tr>}
-              {data && data.items.length === 0 && <tr><td colSpan={7} className="px-6 py-12 text-center text-[var(--color-text-secondary)] text-sm">无任务记录</td></tr>}
-              {data && data.items.map(row => (
+              {data && rows.length === 0 && <tr><td colSpan={7} className="px-6 py-12 text-center text-[var(--color-text-secondary)] text-sm">无任务记录</td></tr>}
+              {data && rows.map(row => (
                 <tr key={row.task.id} className={`hover:bg-[var(--color-bg-secondary)]/50 transition-colors ${selected.has(row.task.id) ? "bg-[var(--color-primary)]/5" : ""}`}>
                   <td className="px-4 py-3.5">
                     <input type="checkbox" className="rounded" checked={selected.has(row.task.id)} onChange={() => toggleSelect(row.task.id)} />

@@ -14,7 +14,7 @@ from urllib import request as urllib_request
 from pathlib import Path
 from queue import Empty, Queue
 import conf as app_conf
-from myUtils.auth import check_cookie
+from myUtils.auth import check_cookie_detail
 from flask import Flask, request, jsonify, Response, render_template, send_from_directory
 from conf import BASE_DIR
 from myUtils.login import get_tencent_cookie, douyin_cookie_gen, get_ks_cookie, xiaohongshu_cookie_gen
@@ -27,6 +27,7 @@ from utils.account_storage import (
     get_cookie_dir,
     has_persisted_storage_state,
     import_account_storage_state,
+    update_account_runtime_status,
 )
 from utils.cloud_agent import CloudAgent
 from utils.cloud_qr_bridge import CloudLoginBridge
@@ -312,6 +313,8 @@ def serialize_account_detail(row, status=None):
         "status": row_status,
         "cookieExists": cookie_exists,
         "storageBackend": storage_backend,
+        "lastValidationAt": row["lastValidationAt"] if "lastValidationAt" in row.keys() else None,
+        "lastValidationMessage": row["lastValidationMessage"] if "lastValidationMessage" in row.keys() else None,
     }
 
 
@@ -320,18 +323,20 @@ async def validate_account_rows(conn, rows):
     updates = []
 
     for row in rows:
-        is_valid = await check_cookie(row['type'], row['filePath'])
-        status = 1 if is_valid else 0
+        result = await check_cookie_detail(row['type'], row['filePath'], headless=True)
+        status = 1 if result.get("ok") else 0
+        message = None if status == 1 else str(result.get("message") or "").strip() or "本地 cookie 当前不可用"
         validated_rows.append(serialize_account_row(row, status))
-        if row['status'] != status:
-            updates.append((status, row['id']))
+        updates.append((status, message, row['id']))
 
     if updates:
         cursor = conn.cursor()
         cursor.executemany(
             '''
             UPDATE user_info
-            SET status = ?
+            SET status = ?,
+                lastValidationAt = CURRENT_TIMESTAMP,
+                lastValidationMessage = ?
             WHERE id = ?
             ''',
             updates
@@ -557,6 +562,12 @@ def relay_remote_login_status(status_queue, bridge):
                     if payload.get("message"):
                         bridge.push_log(payload["message"])
                     continue
+
+                if event_type == "login_failed":
+                    message = str(payload.get("message") or "").strip() or "本地登录失败"
+                    login_logger.warning("remote login relay login failed session_id={} message={}", bridge.session_id, message)
+                    bridge.push_login_failed(message)
+                    break
 
                 if event_type == "log" and payload.get("message"):
                     bridge.push_log(payload["message"])
@@ -3060,12 +3071,18 @@ def run_async_function(type,id,status_queue,command_queue=None):
                 row = cursor.fetchone()
                 
                 if row:
-                    from myUtils.auth import check_cookie
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
-                    is_valid = loop.run_until_complete(check_cookie(int(type), row['filePath']))
+                    result = loop.run_until_complete(check_cookie_detail(int(type), row['filePath'], headless=True))
                     loop.close()
-                    
+                    is_valid = bool(result.get("ok"))
+                    failure_message = str(result.get("message") or "").strip() or "本地 cookie 当前不可用"
+                    update_account_runtime_status(
+                        row["id"],
+                        1 if is_valid else 0,
+                        None if is_valid else failure_message,
+                    )
+
                     if is_valid:
                         print(f"✅ {id} 本地 Cookie 验证成功！直接进入等效登录完成状态。")
                         if status_queue is not None:
@@ -3073,6 +3090,8 @@ def run_async_function(type,id,status_queue,command_queue=None):
                         return
                     else:
                         print(f"⚠️ {id} 本地 Cookie 验证失效或需二次认证，进入扫码登录流程...")
+                        if status_queue is not None and failure_message:
+                            status_queue.put(failure_message)
         except Exception as precheck_exc:
             print(f"预先检查本地 Cookie 失效: {precheck_exc}")
 

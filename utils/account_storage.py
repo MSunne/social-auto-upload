@@ -9,6 +9,8 @@ from conf import BASE_DIR
 USER_INFO_STORAGE_COLUMNS = {
     "storageStateJson": "TEXT",
     "storageStateUpdatedAt": "DATETIME",
+    "lastValidationAt": "DATETIME",
+    "lastValidationMessage": "TEXT",
 }
 
 
@@ -91,6 +93,11 @@ def parse_storage_state(storage_state):
     if not isinstance(normalized, dict):
         raise ValueError("storage_state 必须是对象")
     return normalized
+
+
+def normalize_validation_message(message):
+    text = str(message or "").strip()
+    return text or None
 
 
 def is_storage_state_payload(value):
@@ -232,6 +239,29 @@ def update_account_storage_state(account_ref, storage_state, db_path=None, base_
     return get_account_row(row, db_path=db_path, base_dir=base_dir)
 
 
+def update_account_runtime_status(account_ref, status, validation_message=None, db_path=None, base_dir=None):
+    row = get_account_row(account_ref, db_path=db_path, base_dir=base_dir)
+    if not row:
+        raise ValueError("账号不存在，无法更新状态")
+
+    ensure_account_storage_schema(db_path=db_path)
+    normalized_message = normalize_validation_message(validation_message)
+    with sqlite3.connect(db_path or get_account_db_path(base_dir)) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE user_info
+            SET status = ?,
+                lastValidationAt = CURRENT_TIMESTAMP,
+                lastValidationMessage = ?
+            WHERE id = ?
+            """,
+            (int(status), normalized_message, int(row["id"])),
+        )
+        conn.commit()
+    return get_account_row(row, db_path=db_path, base_dir=base_dir)
+
+
 def upsert_login_account(account_type, user_name, file_name=None, status=1, storage_state=None, db_path=None, base_dir=None):
     ensure_account_storage_schema(db_path=db_path)
     serialized = dumps_storage_state(storage_state) if storage_state is not None else None
@@ -258,17 +288,28 @@ def upsert_login_account(account_type, user_name, file_name=None, status=1, stor
                 cursor.execute(
                     """
                     UPDATE user_info
-                    SET type = ?, filePath = ?, userName = ?, status = ?
+                    SET type = ?, filePath = ?, userName = ?, status = ?,
+                        lastValidationAt = CURRENT_TIMESTAMP,
+                        lastValidationMessage = CASE WHEN ? = 1 THEN NULL ELSE lastValidationMessage END
                     WHERE id = ?
                     """,
-                    (int(account_type), storage_key, str(user_name).strip(), int(status), int(primary["id"])),
+                    (
+                        int(account_type),
+                        storage_key,
+                        str(user_name).strip(),
+                        int(status),
+                        int(status),
+                        int(primary["id"]),
+                    ),
                 )
             else:
                 cursor.execute(
                     """
                     UPDATE user_info
                     SET type = ?, filePath = ?, userName = ?, status = ?,
-                        storageStateJson = ?, storageStateUpdatedAt = CURRENT_TIMESTAMP
+                        storageStateJson = ?, storageStateUpdatedAt = CURRENT_TIMESTAMP,
+                        lastValidationAt = CURRENT_TIMESTAMP,
+                        lastValidationMessage = CASE WHEN ? = 1 THEN NULL ELSE lastValidationMessage END
                     WHERE id = ?
                     """,
                     (
@@ -277,6 +318,7 @@ def upsert_login_account(account_type, user_name, file_name=None, status=1, stor
                         str(user_name).strip(),
                         int(status),
                         serialized,
+                        int(status),
                         int(primary["id"]),
                     ),
                 )
@@ -286,8 +328,17 @@ def upsert_login_account(account_type, user_name, file_name=None, status=1, stor
             storage_key = fallback_key
             cursor.execute(
                 """
-                INSERT INTO user_info (type, filePath, userName, status, storageStateJson, storageStateUpdatedAt)
-                VALUES (?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END)
+                INSERT INTO user_info (
+                    type, filePath, userName, status,
+                    storageStateJson, storageStateUpdatedAt,
+                    lastValidationAt, lastValidationMessage
+                )
+                VALUES (
+                    ?, ?, ?, ?, ?,
+                    CASE WHEN ? IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END,
+                    CURRENT_TIMESTAMP,
+                    CASE WHEN ? = 1 THEN NULL ELSE ? END
+                )
                 """,
                 (
                     int(account_type),
@@ -296,6 +347,8 @@ def upsert_login_account(account_type, user_name, file_name=None, status=1, stor
                     int(status),
                     serialized,
                     serialized,
+                    int(status),
+                    normalize_validation_message("本地 cookie 当前不可用"),
                 ),
             )
         conn.commit()

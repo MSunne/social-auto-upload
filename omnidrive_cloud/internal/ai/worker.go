@@ -29,6 +29,18 @@ type Worker struct {
 	sem               chan struct{}
 }
 
+type requeueExecutionError struct {
+	Message       string
+	OutputPayload []byte
+}
+
+func (e *requeueExecutionError) Error() string {
+	if e == nil || strings.TrimSpace(e.Message) == "" {
+		return "execution should be requeued"
+	}
+	return strings.TrimSpace(e.Message)
+}
+
 func NewWorker(app *appstate.App) (*Worker, error) {
 	if app == nil {
 		return nil, fmt.Errorf("app is required")
@@ -196,6 +208,20 @@ func (w *Worker) processJob(ctx context.Context, job domain.AIJob) {
 	}
 	if ctx.Err() != nil {
 		w.app.Logger.Info("ai worker interrupted while processing ai job", "job_id", claimed.ID, "error", ctx.Err())
+		return
+	}
+
+	var requeueErr *requeueExecutionError
+	if errors.As(execErr, &requeueErr) {
+		message := strings.TrimSpace(requeueErr.Message)
+		if message == "" {
+			message = "AI 云端任务已重新排队"
+		}
+		if _, err := w.requeueJob(ctx, claimed.ID, leaseToken, message, requeueErr.OutputPayload); err != nil {
+			w.app.Logger.Error("ai worker failed to requeue ai job", "job_id", claimed.ID, "error", err)
+			return
+		}
+		w.app.Logger.Info("ai worker requeued ai job for follow-up polling", "job_id", claimed.ID, "job_type", claimed.JobType, "message", message)
 		return
 	}
 
@@ -414,9 +440,6 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 	}
 
 	deadline := state.SubmittedAt.Add(w.videoTimeout)
-	if deadline.Before(time.Now().UTC()) {
-		return fmt.Errorf("video generation timeout before polling started")
-	}
 
 	for {
 		if ctx.Err() != nil {
@@ -433,6 +456,7 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 			return err
 		}
 		state.RemoteStatus = strings.TrimSpace(status.Status)
+		state.ProgressPercent = status.ProgressPercent
 		state.ContentURL = strings.TrimSpace(status.ContentURL)
 		state.UpdatedAt = firstNonNilTime(status.UpdatedAt, time.Now().UTC())
 		if status.Message != "" {
@@ -496,7 +520,12 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 			return fmt.Errorf("video generation failed")
 		default:
 			if time.Now().UTC().After(deadline) {
-				return fmt.Errorf("video generation timed out after %s", w.videoTimeout)
+				message := fmt.Sprintf("AI 视频生成超过 %s，继续后台回查云端结果", w.videoTimeout)
+				runningPayload := buildVideoOutputPayload(job, state, nil)
+				return &requeueExecutionError{
+					Message:       message,
+					OutputPayload: runningPayload,
+				}
 			}
 			message := "AI 视频生成中"
 			if strings.TrimSpace(state.Message) != "" {
@@ -623,6 +652,16 @@ func (w *Worker) failJob(ctx context.Context, jobID string, leaseToken string, m
 	})
 }
 
+func (w *Worker) requeueJob(ctx context.Context, jobID string, leaseToken string, message string, outputPayload []byte) (*domain.AIJob, error) {
+	status := "queued"
+	return w.app.Store.SyncCloudAIJobExecution(ctx, jobID, leaseToken, store.UpdateAIJobInput{
+		Status:        &status,
+		Message:       stringPtr(message),
+		OutputPayload: outputPayload,
+		OutputTouched: len(outputPayload) > 0,
+	})
+}
+
 func (w *Worker) saveBinaryArtifact(ctx context.Context, job *domain.AIJob, artifactType string, artifactKey string, source string, artifact BinaryArtifact) (store.UpsertAIJobArtifactInput, error) {
 	fileName := safeFileName(artifact.FileName)
 	if fileName == "" {
@@ -726,34 +765,41 @@ func (w *Worker) applyUsageBilling(ctx context.Context, job *domain.AIJob, input
 }
 
 type videoExecutionState struct {
-	BaseURL       string
-	RemoteVideoID string
-	RemoteStatus  string
-	ContentURL    string
-	Message       string
-	FailureCode   string
-	SubmittedAt   time.Time
-	UpdatedAt     time.Time
+	BaseURL         string
+	RemoteVideoID   string
+	RemoteStatus    string
+	ProgressPercent *int
+	ContentURL      string
+	Message         string
+	FailureCode     string
+	SubmittedAt     time.Time
+	UpdatedAt       time.Time
 }
 
 func buildVideoOutputPayload(job *domain.AIJob, state videoExecutionState, artifacts []domain.AIJobArtifact) []byte {
-	return mustJSON(map[string]any{
-		"provider": "apiyi",
-		"kind":     "video",
-		"model":    job.ModelName,
-		"baseUrl":  state.BaseURL,
-		"video": map[string]any{
-			"baseUrl":     state.BaseURL,
-			"id":          state.RemoteVideoID,
-			"status":      state.RemoteStatus,
-			"contentUrl":  state.ContentURL,
-			"message":     state.Message,
-			"failureCode": state.FailureCode,
-			"submittedAt": state.SubmittedAt.Format(time.RFC3339),
-			"updatedAt":   state.UpdatedAt.Format(time.RFC3339),
-		},
+	videoPayload := map[string]any{
+		"baseUrl":     state.BaseURL,
+		"id":          state.RemoteVideoID,
+		"status":      state.RemoteStatus,
+		"contentUrl":  state.ContentURL,
+		"message":     state.Message,
+		"failureCode": state.FailureCode,
+		"submittedAt": state.SubmittedAt.Format(time.RFC3339),
+		"updatedAt":   state.UpdatedAt.Format(time.RFC3339),
+	}
+	payload := map[string]any{
+		"provider":  "apiyi",
+		"kind":      "video",
+		"model":     job.ModelName,
+		"baseUrl":   state.BaseURL,
+		"video":     videoPayload,
 		"artifacts": summarizeArtifacts(artifacts),
-	})
+	}
+	if state.ProgressPercent != nil {
+		videoPayload["progressPercent"] = *state.ProgressPercent
+		payload["progressPercent"] = *state.ProgressPercent
+	}
+	return mustJSON(payload)
 }
 
 func mergeBillingIntoPayload(raw []byte, billing *store.ApplyUsageBillingResult) []byte {
@@ -807,6 +853,10 @@ func parseVideoExecutionState(raw []byte) videoExecutionState {
 		stringValue(payload["message"]),
 		stringValue(videoPayload["message"]),
 	))
+	state.ProgressPercent = firstNonNilInt(
+		extractProgressPercentValue(payload, 0),
+		extractProgressPercentValue(videoPayload, 0),
+	)
 	state.FailureCode = strings.TrimSpace(firstNonEmptyString(
 		stringValue(payload["failureCode"]),
 		stringValue(videoPayload["failureCode"]),

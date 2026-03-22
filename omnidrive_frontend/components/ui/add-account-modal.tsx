@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Smartphone, QrCode, ShieldCheck, Loader2, CheckCircle2 } from "lucide-react";
 import Image from "next/image";
@@ -14,6 +14,23 @@ interface AddAccountModalProps {
   initialSession?: LoginSession | null;
 }
 
+type ModalStep = "form" | "waiting" | "qr" | "verification" | "success" | "error";
+
+type VerificationPayload = {
+  title?: string;
+  message?: string;
+  options?: string[];
+  inputHints?: string[];
+  supportsTextInput?: boolean;
+  screenshotData?: string | null;
+};
+
+type RetryTarget = {
+  deviceId: string;
+  platform: string;
+  accountName: string;
+};
+
 const PLATFORMS = [
   { id: "douyin", name: "抖音", icon: "🎵", color: "from-gray-800 to-black", border: "border-gray-700" },
   { id: "xiaohongshu", name: "小红书", icon: "📕", color: "from-red-500 to-red-700", border: "border-red-500/50" },
@@ -21,84 +38,120 @@ const PLATFORMS = [
   { id: "wechat_channel", name: "视频号", icon: "💬", color: "from-emerald-400 to-emerald-600", border: "border-emerald-500/50" },
 ];
 
+function resolveStepFromSession(session: LoginSession | null): ModalStep {
+  if (!session) {
+    return "form";
+  }
+  if (session.status === "pending" || session.status === "running") {
+    return session.qrData ? "qr" : "waiting";
+  }
+  if (session.status === "verification_required") {
+    return "verification";
+  }
+  if (session.status === "success") {
+    return "success";
+  }
+  return "error";
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (typeof error === "object" && error !== null && "message" in error) {
+    const message = String((error as { message?: string }).message || "").trim();
+    if (message) {
+      return message;
+    }
+  }
+  return fallback;
+}
+
 export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = null }: AddAccountModalProps) {
-  const [step, setStep] = useState<"form" | "waiting" | "qr" | "verification" | "success" | "error">(
-    initialSession ? "waiting" : "form"
-  );
+  const [step, setStep] = useState<ModalStep>("form");
   const [selectedPlatform, setSelectedPlatform] = useState<string>("douyin");
   const [accountName, setAccountName] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [verificationInput, setVerificationInput] = useState("");
   const [sessionActionLoading, setSessionActionLoading] = useState<string | null>(null);
-  
-  const [session, setSession] = useState<LoginSession | null>(null);
+  const [liveSession, setLiveSession] = useState<LoginSession | null>(null);
+  const [retryTarget, setRetryTarget] = useState<RetryTarget | null>(
+    initialSession
+      ? {
+          deviceId: initialSession.deviceId,
+          platform: initialSession.platform,
+          accountName: initialSession.accountName,
+        }
+      : null
+  );
+  const [retryLoading, setRetryLoading] = useState(false);
 
-  // Reset state on open
-  useEffect(() => {
-    if (isOpen) {
-      if (initialSession) {
-        setSession(initialSession);
-        if (initialSession.status === "pending" || initialSession.status === "running") setStep("waiting");
-        else if (initialSession.status === "verification_required") setStep("verification");
-        else if (initialSession.status === "success") setStep("success");
-        else setStep("error");
-      } else {
-        setStep("form");
-        setAccountName("");
-        setErrorMsg("");
-        setVerificationInput("");
-        setSessionActionLoading(null);
-        setSession(null);
-      }
+  const session = liveSession ?? initialSession ?? null;
+  const currentStep = liveSession ? step : initialSession ? resolveStepFromSession(initialSession) : step;
+
+  const resetModalState = useCallback(() => {
+    setStep("form");
+    setAccountName("");
+    setErrorMsg("");
+    setVerificationInput("");
+    setSessionActionLoading(null);
+    setLiveSession(null);
+    setRetryLoading(false);
+    setRetryTarget(null);
+  }, []);
+
+  const handleClose = useCallback(() => {
+    const shouldReload = currentStep === "success";
+    resetModalState();
+    onClose();
+    if (shouldReload) {
+      window.setTimeout(() => {
+        window.location.reload();
+      }, 300);
     }
-  }, [isOpen, initialSession]);
+  }, [currentStep, onClose, resetModalState]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    if (initialSession) {
+      setRetryTarget({
+        deviceId: initialSession.deviceId,
+        platform: initialSession.platform,
+        accountName: initialSession.accountName,
+      });
+      setAccountName(initialSession.accountName || "");
+    }
+  }, [initialSession, isOpen]);
 
   // Polling logic
   useEffect(() => {
-    if (!session?.id || step === "success" || step === "error" || step === "form") return;
+    if (!session?.id || currentStep === "success" || currentStep === "error" || currentStep === "form") return;
 
     let mounted = true;
-    let pollTimeout: NodeJS.Timeout;
+    let pollTimeout: ReturnType<typeof setTimeout>;
 
     const poll = async () => {
       try {
         const updatedSession = await getLoginSession(session.id);
         if (!mounted) return;
 
-        setSession(updatedSession);
+        setLiveSession(updatedSession);
         
         // Clear loading state when session updates
         if (updatedSession.updatedAt !== session.updatedAt) {
           setSessionActionLoading(null);
         }
 
-        switch (updatedSession.status) {
-          case "pending":
-          case "running":
-            if (updatedSession.qrData) {
-              setStep("qr");
-            } else {
-              setStep("waiting");
-            }
-            break;
-          case "verification_required":
-            setStep("verification");
-            break;
-          case "success":
-            setStep("success");
-            break;
-          case "failed":
-          case "cancelled":
-            setErrorMsg(updatedSession.message || "登录流程已终止");
-            setStep("error");
-            break;
+        const nextStep = resolveStepFromSession(updatedSession);
+        setStep(nextStep);
+        if (nextStep === "error") {
+          setErrorMsg(updatedSession.message || "登录流程已终止");
         }
 
         // Continue polling if not in a final state
         if (!["success", "failed", "cancelled"].includes(updatedSession.status)) {
           pollTimeout = setTimeout(poll, 2000);
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error("Polling error:", err);
         // Don't kill the flow on single network errors, try again
         pollTimeout = setTimeout(poll, 3000);
@@ -111,7 +164,7 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
       mounted = false;
       clearTimeout(pollTimeout);
     };
-  }, [session?.id, step]);
+  }, [currentStep, session?.id, session?.updatedAt]);
 
   const handleStartLogin = async () => {
     if (!accountName.trim()) {
@@ -124,15 +177,79 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
       setErrorMsg("");
       setVerificationInput("");
       const platformName = PLATFORMS.find(p => p.id === selectedPlatform)?.name || selectedPlatform;
+      const target = {
+        deviceId,
+        platform: platformName,
+        accountName: accountName.trim(),
+      };
+      setRetryTarget(target);
+      setLiveSession((prev) => ({
+        id: prev?.id || "",
+        deviceId: target.deviceId,
+        userId: prev?.userId || "",
+        platform: target.platform,
+        accountName: target.accountName,
+        status: "pending",
+        qrData: null,
+        verificationPayload: null,
+        message: "等待目标设备重新拉起登录流程",
+        createdAt: prev?.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }));
       const newSession = await createRemoteLogin({
-        deviceId, 
-        platform: platformName, 
-        accountName: accountName.trim()
+        deviceId: target.deviceId,
+        platform: target.platform,
+        accountName: target.accountName,
       });
-      setSession(newSession);
-    } catch (err: any) {
-      setErrorMsg(err.message || "创建登录会话失败");
+      setLiveSession(newSession);
+      setStep(resolveStepFromSession(newSession));
+    } catch (err: unknown) {
+      setErrorMsg(getErrorMessage(err, "创建登录会话失败"));
       setStep("error");
+    }
+  };
+
+  const handleRetryLogin = async () => {
+    const target = liveSession
+      ? {
+          deviceId: liveSession.deviceId || deviceId,
+          platform: liveSession.platform,
+          accountName: liveSession.accountName,
+        }
+      : retryTarget;
+
+    if (!target?.platform || !target.accountName) {
+      setStep("form");
+      return;
+    }
+
+    try {
+      setRetryLoading(true);
+      setErrorMsg("");
+      setVerificationInput("");
+      setStep("waiting");
+      setRetryTarget(target);
+      setLiveSession((prev) => ({
+        id: prev?.id || "",
+        deviceId: target.deviceId,
+        userId: prev?.userId || "",
+        platform: target.platform,
+        accountName: target.accountName,
+        status: "pending",
+        qrData: null,
+        verificationPayload: null,
+        message: "等待目标设备重新拉起登录流程",
+        createdAt: prev?.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }));
+      const newSession = await createRemoteLogin(target);
+      setLiveSession(newSession);
+      setStep(resolveStepFromSession(newSession));
+    } catch (err: unknown) {
+      setErrorMsg(getErrorMessage(err, "重新发起登录失败"));
+      setStep("error");
+    } finally {
+      setRetryLoading(false);
     }
   };
 
@@ -144,8 +261,8 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
         actionType: "select_option",
         payload: { optionText },
       });
-    } catch (err: any) {
-      setErrorMsg(err.message || "选择认证方式失败");
+    } catch (err: unknown) {
+      setErrorMsg(getErrorMessage(err, "选择认证方式失败"));
       setSessionActionLoading(null);
     }
   };
@@ -158,30 +275,21 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
         actionType,
         payload: { text: verificationInput.trim() },
       });
-    } catch (err: any) {
-      setErrorMsg(err.message || "发送输入内容失败");
+    } catch (err: unknown) {
+      setErrorMsg(getErrorMessage(err, "发送输入内容失败"));
       setSessionActionLoading(null);
-    }
-  };
-
-  const handleClose = () => {
-    onClose();
-    if (step === "success") {
-      window.setTimeout(() => {
-        window.location.reload();
-      }, 300); // Give modal fade-out time before hard reload
     }
   };
 
   // Auto close on success
   useEffect(() => {
-    if (step === "success") {
+    if (currentStep === "success") {
       const timer = setTimeout(() => {
         handleClose();
       }, 3000);
       return () => clearTimeout(timer);
     }
-  }, [step]);
+  }, [currentStep, handleClose]);
 
 
   if (!isOpen) return null;
@@ -224,7 +332,7 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
           </div>
 
           <div className="p-6">
-            {step === "form" && (
+            {currentStep === "form" && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
                 <div>
                   <label className="mb-2 block text-sm font-bold text-text-primary">
@@ -277,7 +385,7 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
               </motion.div>
             )}
 
-            {step === "waiting" && (
+            {currentStep === "waiting" && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center py-10 space-y-6">
                 <div className="relative">
                   <div className="absolute inset-0 rounded-full bg-accent/20 blur-xl animate-pulse" />
@@ -300,7 +408,7 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
               </motion.div>
             )}
 
-            {step === "qr" && session?.qrData && (
+            {currentStep === "qr" && session?.qrData && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center text-center space-y-5">
                 <div className="rounded-2xl border border-white/10 bg-white p-4 shadow-xl">
                   <Image 
@@ -332,10 +440,10 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
               </motion.div>
             )}
 
-            {step === "verification" && session?.verificationPayload && (() => {
-              const payload = session.verificationPayload as any;
-              const options = (payload.options as string[]) || [];
-              const hints = (payload.inputHints as string[]) || [];
+            {currentStep === "verification" && session?.verificationPayload && (() => {
+              const payload = (session.verificationPayload || {}) as VerificationPayload;
+              const options = payload.options || [];
+              const hints = payload.inputHints || [];
               const canAssistTextInput = Boolean(payload.supportsTextInput || hints.length > 0);
               
               return (
@@ -435,7 +543,7 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
               </motion.div>
             )})()}
 
-            {step === "success" && (
+            {currentStep === "success" && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center py-8 space-y-4">
                 <div className="flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500/20 border border-emerald-500/30">
                   <CheckCircle2 className="h-10 w-10 text-emerald-400" />
@@ -453,7 +561,7 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
               </motion.div>
             )}
 
-            {step === "error" && (
+            {currentStep === "error" && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center py-8 space-y-4 text-center">
                 <div className="flex h-16 w-16 items-center justify-center rounded-full bg-red-500/20 border border-red-500/30">
                   <X className="h-8 w-8 text-red-400" />
@@ -463,9 +571,11 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
                   <p className="text-sm text-red-300 px-4">{errorMsg}</p>
                 </div>
                 <button
-                  onClick={() => setStep("form")}
-                  className="mt-4 w-full rounded-xl bg-white/10 p-3.5 text-sm font-bold text-white transition-colors hover:bg-white/20"
+                  onClick={handleRetryLogin}
+                  disabled={retryLoading}
+                  className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-white/10 p-3.5 text-sm font-bold text-white transition-colors hover:bg-white/20 disabled:opacity-50"
                 >
+                  {retryLoading && <Loader2 className="h-4 w-4 animate-spin" />}
                   重新尝试
                 </button>
               </motion.div>

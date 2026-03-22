@@ -289,6 +289,10 @@ func scheduledSkillGenerationTime(publishAt time.Time) time.Time {
 }
 
 func (s *SkillScheduler) buildJobPayload(ctx context.Context, skill domain.ProductSkill, generateAt time.Time, publishAt time.Time, jobType string) ([]byte, error) {
+	model, err := s.app.Store.GetAIModelByName(ctx, strings.TrimSpace(skill.ModelName))
+	if err != nil {
+		return nil, fmt.Errorf("failed to load skill model: %w", err)
+	}
 	accounts, err := s.app.Store.ListAccountsByOwner(ctx, skill.OwnerUserID, stringValue(skill.DeviceID))
 	if err != nil {
 		return nil, err
@@ -306,7 +310,7 @@ func (s *SkillScheduler) buildJobPayload(ctx context.Context, skill domain.Produ
 		})
 	}
 
-	return BuildSkillAIJobPayload(ctx, s.app, skill, generateAt, publishAt, jobType, targets)
+	return BuildSkillAIJobPayload(ctx, s.app, skill, model, generateAt, publishAt, jobType, targets)
 }
 
 func accountAllowedForAutoPublish(status string) bool {

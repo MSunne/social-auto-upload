@@ -420,16 +420,6 @@ func (h *AccountHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existingSession, err := findReusableLoginSession(r.Context(), h.app.Store, user.ID, account.DeviceID, account.Platform, account.AccountName)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to inspect active validation session")
-		return
-	}
-	if existingSession != nil {
-		render.JSON(w, http.StatusOK, existingSession)
-		return
-	}
-
 	message := "等待本地 OmniBull 重新验证账号"
 	session, err := h.app.Store.CreateLoginSession(r.Context(), store.CreateLoginSessionInput{
 		ID:          uuid.NewString(),
@@ -490,16 +480,6 @@ func (h *AccountHandler) CreateRemoteLogin(w http.ResponseWriter, r *http.Reques
 	}
 	if !device.IsEnabled {
 		render.Error(w, http.StatusConflict, "Device is disabled")
-		return
-	}
-
-	existingSession, err := findReusableLoginSession(r.Context(), h.app.Store, user.ID, payload.DeviceID, payload.Platform, payload.AccountName)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to inspect active login session")
-		return
-	}
-	if existingSession != nil {
-		render.JSON(w, http.StatusOK, existingSession)
 		return
 	}
 

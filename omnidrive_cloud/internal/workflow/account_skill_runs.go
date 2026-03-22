@@ -179,6 +179,7 @@ func PrepareAccountSkillRun(
 		ctx,
 		app,
 		skill,
+		model,
 		generateAt,
 		publishAt,
 		jobType,

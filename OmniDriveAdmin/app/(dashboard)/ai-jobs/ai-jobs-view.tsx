@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Cpu, Loader2, RefreshCw, RotateCcw, Search, XCircle } from "lucide-react";
 import { PageHeader } from "@/components/ui/common";
 import { useAdminAIJobs, useBulkActionAIJobs } from "@/lib/hooks/useAdminAIJobs";
@@ -162,6 +162,13 @@ export function AIJobsView() {
     status: status || undefined,
   });
   const bulkAction = useBulkActionAIJobs();
+  const rows = useMemo(() => {
+    return [...(data?.items || [])].sort((left, right) => {
+      const leftTime = new Date(left.job.createdAt || 0).getTime();
+      const rightTime = new Date(right.job.createdAt || 0).getTime();
+      return rightTime - leftTime;
+    });
+  }, [data?.items]);
 
   const handleSearch = (event: React.FormEvent) => {
     event.preventDefault();
@@ -182,10 +189,10 @@ export function AIJobsView() {
     });
 
   const toggleSelectAll = () => {
-    if (!data) {
+    if (!rows.length) {
       return;
     }
-    const ids = data.items.map((item) => item.job.id);
+    const ids = rows.map((item) => item.job.id);
     setSelected(selected.size === ids.length ? new Set() : new Set(ids));
   };
 
@@ -288,7 +295,7 @@ export function AIJobsView() {
                   <input
                     type="checkbox"
                     className="rounded"
-                    checked={Boolean(data && data.items.length > 0 && selected.size === data.items.length)}
+                    checked={Boolean(rows.length > 0 && selected.size === rows.length)}
                     onChange={toggleSelectAll}
                   />
                 </th>
@@ -313,14 +320,14 @@ export function AIJobsView() {
                     读取失败，请刷新后重试。
                   </td>
                 </tr>
-              ) : data && data.items.length === 0 ? (
+              ) : data && rows.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-14 text-center text-sm text-[var(--color-text-secondary)]">
                     当前没有匹配的 AI 作业。
                   </td>
                 </tr>
               ) : (
-                data?.items.map((row) => (
+                rows.map((row) => (
                   <JobRow
                     key={row.job.id}
                     row={row}

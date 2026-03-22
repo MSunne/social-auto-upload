@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +16,18 @@ type PublishTarget struct {
 	AccountID   *string
 	Platform    string
 	AccountName string
+}
+
+const (
+	defaultSkillVideoAspectRatio     = "16:9"
+	defaultSkillVideoResolution      = "1280x720"
+	defaultSkillVideoDurationSeconds = 8
+)
+
+type skillVideoGenerationOptions struct {
+	AspectRatio     string
+	Resolution      string
+	DurationSeconds *int
 }
 
 func ScheduledSkillGenerationTime(publishAt time.Time) time.Time {
@@ -58,6 +71,7 @@ func BuildSkillAIJobPayload(
 	ctx context.Context,
 	app *appstate.App,
 	skill domain.ProductSkill,
+	model *domain.AIModel,
 	generateAt time.Time,
 	publishAt time.Time,
 	jobType string,
@@ -116,6 +130,18 @@ func BuildSkillAIJobPayload(
 			"prompt":     storyboardPrompt,
 			"references": storyboardReferences,
 		},
+	}
+	if jobType == "video" {
+		videoOptions := resolveSkillVideoGenerationOptions(skill, model)
+		if strings.TrimSpace(videoOptions.AspectRatio) != "" {
+			payload["aspectRatio"] = strings.TrimSpace(videoOptions.AspectRatio)
+		}
+		if strings.TrimSpace(videoOptions.Resolution) != "" {
+			payload["resolution"] = strings.TrimSpace(videoOptions.Resolution)
+		}
+		if videoOptions.DurationSeconds != nil && *videoOptions.DurationSeconds > 0 {
+			payload["durationSeconds"] = *videoOptions.DurationSeconds
+		}
 	}
 
 	if len(referenceImages) > 0 || len(referenceTexts) > 0 {
@@ -233,4 +259,181 @@ func optionalStringValue(value *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*value)
+}
+
+func resolveSkillVideoGenerationOptions(skill domain.ProductSkill, model *domain.AIModel) skillVideoGenerationOptions {
+	maps := decodeSkillReferencePayloadMaps(skill.ReferencePayload)
+	resolution := firstStringValueFromMaps(maps, "resolution", "videoSize", "size")
+	aspectRatio := firstStringValueFromMaps(maps, "aspectRatio", "ratio")
+	durationSeconds, _ := firstIntValueFromMaps(maps, "durationSeconds", "duration")
+
+	if strings.TrimSpace(resolution) == "" && model != nil {
+		resolution = firstSupportedSkillVideoResolution(model.VideoSupportedResolutions)
+	}
+	if strings.TrimSpace(resolution) == "" {
+		resolution = defaultSkillVideoResolution
+	}
+
+	if strings.TrimSpace(aspectRatio) == "" {
+		aspectRatio = skillAspectRatioFromResolution(resolution)
+	}
+	if strings.TrimSpace(aspectRatio) == "" {
+		aspectRatio = defaultSkillVideoAspectRatio
+	}
+
+	if durationSeconds <= 0 && model != nil {
+		durationSeconds = firstSupportedSkillVideoDurationSeconds(model.VideoSupportedDurations)
+	}
+	if durationSeconds <= 0 {
+		durationSeconds = defaultSkillVideoDurationSeconds
+	}
+
+	return skillVideoGenerationOptions{
+		AspectRatio:     strings.TrimSpace(aspectRatio),
+		Resolution:      strings.TrimSpace(resolution),
+		DurationSeconds: intPtr(durationSeconds),
+	}
+}
+
+func decodeSkillReferencePayloadMaps(raw []byte) []map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil
+	}
+
+	result := make([]map[string]any, 0, 4)
+	for _, key := range []string{"videoSettings", "generationOptions", "video", "settings"} {
+		nested, ok := payload[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		result = append(result, nested)
+	}
+	result = append(result, payload)
+	return result
+}
+
+func firstStringValueFromMaps(maps []map[string]any, keys ...string) string {
+	for _, item := range maps {
+		for _, key := range keys {
+			raw, ok := item[key]
+			if !ok {
+				continue
+			}
+			value := strings.TrimSpace(fmt.Sprintf("%v", raw))
+			if value != "" && value != "<nil>" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+func firstIntValueFromMaps(maps []map[string]any, keys ...string) (int, bool) {
+	for _, item := range maps {
+		for _, key := range keys {
+			raw, ok := item[key]
+			if !ok {
+				continue
+			}
+			if value, ok := numericJSONInt(raw); ok {
+				return value, true
+			}
+			if typed, ok := raw.(string); ok {
+				parsed, parsedOK := parseSkillVideoDurationSeconds(typed)
+				if parsedOK {
+					return parsed, true
+				}
+			}
+		}
+	}
+	return 0, false
+}
+
+func firstSupportedSkillVideoResolution(values []string) string {
+	for _, item := range values {
+		resolution, _ := parseSkillVideoResolutionOption(item)
+		if resolution != "" {
+			return resolution
+		}
+	}
+	return ""
+}
+
+func firstSupportedSkillVideoDurationSeconds(values []string) int {
+	for _, item := range values {
+		seconds, ok := parseSkillVideoDurationSeconds(item)
+		if ok {
+			return seconds
+		}
+	}
+	return 0
+}
+
+func parseSkillVideoResolutionOption(value string) (string, string) {
+	normalized := strings.TrimSpace(strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(value, "×", "x"), "*", "x")))
+	parts := strings.Split(normalized, "x")
+	if len(parts) != 2 {
+		return "", ""
+	}
+	width, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil || width <= 0 {
+		return "", ""
+	}
+	height, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil || height <= 0 {
+		return "", ""
+	}
+	return fmt.Sprintf("%dx%d", width, height), skillAspectRatioFromDimensions(width, height)
+}
+
+func parseSkillVideoDurationSeconds(value string) (int, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.TrimSuffix(normalized, "s")
+	normalized = strings.TrimSpace(normalized)
+	if normalized == "" {
+		return 0, false
+	}
+	parsed, err := strconv.Atoi(normalized)
+	if err != nil || parsed <= 0 {
+		return 0, false
+	}
+	return parsed, true
+}
+
+func skillAspectRatioFromResolution(value string) string {
+	_, aspectRatio := parseSkillVideoResolutionOption(value)
+	return aspectRatio
+}
+
+func skillAspectRatioFromDimensions(width int, height int) string {
+	divisor := skillGreatestCommonDivisor(width, height)
+	if divisor <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d:%d", width/divisor, height/divisor)
+}
+
+func skillGreatestCommonDivisor(left int, right int) int {
+	for right != 0 {
+		left, right = right, left%right
+	}
+	if left < 0 {
+		return -left
+	}
+	if left == 0 {
+		return 1
+	}
+	return left
+}
+
+func intPtr(value int) *int {
+	if value <= 0 {
+		return nil
+	}
+	result := value
+	return &result
 }

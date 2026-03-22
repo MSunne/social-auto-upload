@@ -37,6 +37,16 @@ const PLATFORMS = [
   { key: "Bilibili", color: "text-sky-400", bg: "bg-sky-500/10" },
 ];
 
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (typeof error === "object" && error !== null && "message" in error) {
+    const message = String((error as { message?: string }).message || "").trim();
+    if (message) {
+      return message;
+    }
+  }
+  return fallback;
+}
+
 export default function DeviceAccountsPage({
   params,
 }: {
@@ -82,8 +92,8 @@ export default function DeviceAccountsPage({
       await deleteAccount(accountId);
       queryClient.invalidateQueries({ queryKey: ["accounts", deviceId] });
       queryClient.invalidateQueries({ queryKey: ["device", deviceId] });
-    } catch (err: any) {
-      alert(err.message || "删除失败");
+    } catch (err: unknown) {
+      alert(getErrorMessage(err, "删除失败"));
     } finally {
       setIsDeleting(null);
     }
@@ -93,10 +103,11 @@ export default function DeviceAccountsPage({
     try {
       setIsValidating(accountId);
       const session = await validateAccount(accountId);
+      queryClient.invalidateQueries({ queryKey: ["accounts", deviceId] });
       setValidationSession(session);
       setIsAccountModalOpen(true);
-    } catch (err: any) {
-      alert(err.message || "发起重新认证失败");
+    } catch (err: unknown) {
+      alert(getErrorMessage(err, "发起重新认证失败"));
     } finally {
       setIsValidating(null);
     }
@@ -312,6 +323,8 @@ export default function DeviceAccountsPage({
                   const platformCfg = PLATFORMS.find(
                     (p) => p.key === acc.platform
                   );
+                  const hasActiveLoginSession = (acc.load?.activeLoginSessionCount || 0) > 0;
+                  const needsAttention = acc.status !== "active" || hasActiveLoginSession;
                   return (
                     <motion.tr
                       key={acc.id}
@@ -347,7 +360,24 @@ export default function DeviceAccountsPage({
 
                       {/* Status */}
                       <td className="px-6 py-4">
-                        <StatusBadge status={acc.status} />
+                        <div className="space-y-1">
+                          <StatusBadge status={acc.status} />
+                          {hasActiveLoginSession && (
+                            <div className="text-xs text-amber-400">
+                              正在重新认证，等待二维码或二次认证
+                            </div>
+                          )}
+                          {acc.lastMessage && (
+                            <div
+                              className={`max-w-xs truncate text-xs ${
+                                needsAttention ? "text-amber-300" : "text-text-muted"
+                              }`}
+                              title={acc.lastMessage}
+                            >
+                              {acc.lastMessage}
+                            </div>
+                          )}
+                        </div>
                       </td>
 
                       {/* Heartbeat Time */}
@@ -378,15 +408,15 @@ export default function DeviceAccountsPage({
                       {/* Actions */}
                       <td className="px-6 py-4">
                         <div className="flex items-center justify-center gap-2">
-                          {acc.status === "invalid" ? (
+                          {needsAttention ? (
                             <button
                               onClick={() => handleValidate(acc.id)}
                               disabled={isValidating === acc.id}
                               className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-400 cursor-pointer transition-all hover:border-amber-400/60 hover:bg-amber-500/20 hover:shadow-[0_0_10px_rgba(245,158,11,0.25)] hover:-translate-y-px disabled:opacity-50"
-                              title="重新认证 (账号已失效)"
+                              title={hasActiveLoginSession ? "重新打开认证流程" : "重新认证 (账号已失效或待确认)"}
                             >
                               {isValidating === acc.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <KeyRound className="h-3 w-3" />}
-                              重新认证
+                              {hasActiveLoginSession ? "重新打开认证" : "重新认证"}
                             </button>
                           ) : (
                             <button
@@ -456,6 +486,8 @@ export default function DeviceAccountsPage({
         onClose={() => {
           setIsAccountModalOpen(false);
           setValidationSession(null);
+          queryClient.invalidateQueries({ queryKey: ["accounts", deviceId] });
+          queryClient.invalidateQueries({ queryKey: ["device", deviceId] });
         }}
         deviceId={deviceId}
         initialSession={validationSession}

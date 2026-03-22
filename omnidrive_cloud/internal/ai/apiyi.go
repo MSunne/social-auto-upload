@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -571,10 +572,14 @@ func (p *APIYIProvider) GetVideo(ctx context.Context, videoID string, model stri
 	}
 
 	var response struct {
-		ID     string `json:"id"`
-		Model  string `json:"model"`
-		Status string `json:"status"`
-		Error  *struct {
+		ID              string `json:"id"`
+		Model           string `json:"model"`
+		Status          string `json:"status"`
+		Progress        any    `json:"progress"`
+		ProgressPercent any    `json:"progress_percent"`
+		Percent         any    `json:"percent"`
+		Percentage      any    `json:"percentage"`
+		Error           *struct {
 			Code    string `json:"code"`
 			Message string `json:"message"`
 		} `json:"error"`
@@ -597,6 +602,13 @@ func (p *APIYIProvider) GetVideo(ctx context.Context, videoID string, model stri
 		ContentURL:  firstNonEmptyString(response.Content, response.OutputURL, response.VideoURL, stringValue(response.Output["url"]), stringValue(response.Output["content_url"]), stringValue(response.Output["video_url"])),
 		RawResponse: body,
 	}
+	status.ProgressPercent = firstNonNilInt(
+		normalizePercentValue(response.ProgressPercent),
+		normalizePercentValue(response.Progress),
+		normalizePercentValue(response.Percent),
+		normalizePercentValue(response.Percentage),
+		extractProgressPercentValue(response.Output, 0),
+	)
 	if response.Error != nil {
 		status.FailureCode = strings.TrimSpace(response.Error.Code)
 		status.Message = strings.TrimSpace(response.Error.Message)
@@ -1065,6 +1077,104 @@ func firstNonZeroInt64(values ...int64) int64 {
 		}
 	}
 	return 0
+}
+
+func firstNonNilInt(values ...*int) *int {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func normalizePercentValue(value any) *int {
+	switch typed := value.(type) {
+	case nil:
+		return nil
+	case int:
+		return clampPercentValue(float64(typed))
+	case int32:
+		return clampPercentValue(float64(typed))
+	case int64:
+		return clampPercentValue(float64(typed))
+	case float32:
+		return clampPercentValue(float64(typed))
+	case float64:
+		return clampPercentValue(typed)
+	case json.Number:
+		parsed, err := typed.Float64()
+		if err != nil {
+			return nil
+		}
+		return clampPercentValue(parsed)
+	case string:
+		trimmed := strings.TrimSpace(strings.TrimSuffix(typed, "%"))
+		if trimmed == "" {
+			return nil
+		}
+		parsed, err := strconv.ParseFloat(trimmed, 64)
+		if err != nil {
+			return nil
+		}
+		return clampPercentValue(parsed)
+	default:
+		return nil
+	}
+}
+
+func clampPercentValue(value float64) *int {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return nil
+	}
+	if value >= 0 && value <= 1 {
+		value *= 100
+	}
+	rounded := int(math.Round(value))
+	if rounded < 0 {
+		rounded = 0
+	}
+	if rounded > 100 {
+		rounded = 100
+	}
+	return &rounded
+}
+
+func extractProgressPercentValue(value any, depth int) *int {
+	if value == nil || depth > 4 {
+		return nil
+	}
+
+	record, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	progressKeys := []string{
+		"progress",
+		"progressPercent",
+		"progress_percent",
+		"progressPercentage",
+		"percent",
+		"percentage",
+		"pct",
+		"completionPercent",
+		"completionPercentage",
+	}
+	for _, key := range progressKeys {
+		if parsed := normalizePercentValue(record[key]); parsed != nil {
+			return parsed
+		}
+	}
+
+	nestedKeys := []string{"video", "metadata", "data", "result", "payload", "state", "status", "output"}
+	for _, key := range nestedKeys {
+		if parsed := extractProgressPercentValue(record[key], depth+1); parsed != nil {
+			return parsed
+		}
+	}
+
+	return nil
 }
 
 func (p *APIYIProvider) newRetryableRequest(ctx context.Context, method string, targetURL string, body []byte, applyHeaders func(*http.Request)) (*http.Request, error) {

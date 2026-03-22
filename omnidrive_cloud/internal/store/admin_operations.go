@@ -986,7 +986,7 @@ func (s *Store) ListAdminAIJobs(ctx context.Context, filter AdminAIJobListFilter
 			COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.id = aj.local_publish_task_id OR (pt.media_payload ->> 'aiJobId') = aj.id), 0)::BIGINT
 		%s
 		%s
-		ORDER BY aj.updated_at DESC
+		ORDER BY aj.created_at DESC
 		LIMIT $%d OFFSET $%d
 	`, adminAIJobSelectColumns, fromClause, whereClause, argIndex, argIndex+1), append(args, pageSize, offset)...)
 	if err != nil {

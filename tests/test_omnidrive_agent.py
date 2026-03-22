@@ -538,6 +538,63 @@ class OmniDriveBridgeTests(unittest.TestCase):
         sync_materials.assert_called_once()
         self.assertEqual(delivery_updates[0]["status"], "publish_queued")
 
+    def test_enqueue_publish_from_ai_task_runs_immediately_when_publish_time_has_passed(self):
+        publish_task_manager = DummyPublishTaskManager(worker_count=2)
+        bridge = self.make_bridge(publish_task_manager=publish_task_manager)
+        self.ensure_user_info_table(bridge.db_path)
+
+        with sqlite3.connect(bridge.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO user_info (type, filePath, userName, status)
+                VALUES (?, ?, ?, ?)
+                """,
+                (4, "kuaishou-real.json", "测试快手_乔总", 1),
+            )
+            conn.commit()
+
+        overdue_publish_at = (datetime.now(timezone.utc) - timedelta(minutes=20)).replace(microsecond=0)
+        overdue_publish_rfc3339 = overdue_publish_at.isoformat().replace("+00:00", "Z")
+        local_task = {
+            "taskUuid": "local-ai-overdue",
+            "cloudJobId": "cloud-ai-overdue",
+            "payload": {
+                "publishPayload": {
+                    "title": "晚到也要发布",
+                    "targets": [
+                        {
+                            "platform": "快手",
+                            "accountName": "测试快手_乔总",
+                        }
+                    ],
+                    "runAt": overdue_publish_rfc3339,
+                    "requestedRun": overdue_publish_rfc3339,
+                    "publishDate": overdue_publish_rfc3339,
+                }
+            },
+        }
+        artifact_refs = [
+            {
+                "root": bridge.generated_root_name,
+                "path": "local-ai-overdue/video.mp4",
+                "absolutePath": str(self.temp_dir / "generated" / "local-ai-overdue" / "video.mp4"),
+                "name": "video.mp4",
+                "role": "media",
+            }
+        ]
+
+        publish_task_uuid = bridge._enqueue_publish_from_ai_task(local_task, artifact_refs)
+
+        self.assertIsNotNone(publish_task_uuid)
+        self.assertEqual(len(publish_task_manager.enqueued_specs), 1)
+        spec = publish_task_manager.enqueued_specs[0]
+        expected_local_run_at = bridge._normalize_datetime(overdue_publish_rfc3339)
+        self.assertEqual(spec["status"], "pending")
+        self.assertEqual(spec["runAt"], expected_local_run_at)
+        self.assertEqual(spec["platformPublishAt"], expected_local_run_at)
+        self.assertEqual(spec["payload"]["publishDate"], expected_local_run_at)
+
     def test_sync_local_ai_tasks_skips_non_syncable_sources(self):
         ai_task_manager = DummyAITaskManager()
         ai_task_manager.tasks["remote-ai-1"] = {
@@ -680,6 +737,105 @@ class PublishTaskManagerDatetimeTests(unittest.TestCase):
         self.assertEqual(repaired_task["message"], "等待 AI 产物定时发布")
         self.assertIsNone(repaired_task["startedAt"])
         self.assertIsNone(repaired_task["finishedAt"])
+
+    def test_publish_task_manager_uses_local_schedule_for_enable_timer_tasks(self):
+        temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-local-schedule-"))
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "database.db"
+
+        manager = PublishTaskManager(db_path=db_path, material_roots={})
+        OmniDriveBridgeTests.ensure_user_info_table(db_path)
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO user_info (type, filePath, userName, status)
+                VALUES (?, ?, ?, ?)
+                """,
+                (3, "douyin-real.json", "抖音测试号", 1),
+            )
+            conn.commit()
+
+        scheduled_publish_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=2)
+        expected_local_run_at = PublishTaskManager._normalize_datetime(scheduled_publish_at)
+        with mock.patch(
+            "utils.publish_task_manager.generate_schedule_time_next_day",
+            return_value=[scheduled_publish_at],
+        ):
+            specs = manager._build_task_specs(
+                {
+                    "type": 3,
+                    "title": "本地定时发布",
+                    "tags": ["测试"],
+                    "fileList": ["demo/video.mp4"],
+                    "accountList": ["douyin-real.json"],
+                    "enableTimer": 1,
+                    "videosPerDay": 1,
+                    "dailyTimes": ["16:30"],
+                    "startDays": 0,
+                },
+                source="local_api",
+            )
+
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0]["status"], "scheduled")
+        self.assertEqual(specs[0]["runAt"], expected_local_run_at)
+        self.assertEqual(specs[0]["platformPublishAt"], expected_local_run_at)
+        self.assertEqual(specs[0]["payload"]["publishDate"], expected_local_run_at)
+
+    def test_publish_task_manager_executes_platform_publish_immediately(self):
+        temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-immediate-publish-"))
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "database.db"
+
+        manager = PublishTaskManager(db_path=db_path, material_roots={})
+        captured = {}
+
+        class FakeDouYinVideo:
+            def __init__(self, title, file_path, tags, publish_date, account_file, thumbnail_path, product_link, product_title):
+                captured["title"] = title
+                captured["filePath"] = file_path
+                captured["tags"] = tags
+                captured["publishDate"] = publish_date
+                captured["accountFile"] = account_file
+                captured["thumbnailPath"] = thumbnail_path
+                captured["productLink"] = product_link
+                captured["productTitle"] = product_title
+
+            async def main(self):
+                return None
+
+        payload = {
+            "platformType": 3,
+            "platformName": "抖音",
+            "title": "立即发布测试",
+            "tags": ["即时"],
+            "filePath": "generated:job-1/video.mp4",
+            "accountFilePath": "douyin-real.json",
+            "accountName": "抖音测试号",
+            "publishDate": "2026-03-22 18:30:00",
+            "fileSourceMode": "material",
+            "materialRoot": "generated",
+            "materialPath": "job-1/video.mp4",
+            "sourceAbsolutePath": "/tmp/video.mp4",
+            "thumbnailSourceMode": "material",
+            "thumbnailRoot": "generated",
+            "thumbnailPath": "job-1/thumb.png",
+            "thumbnailAbsolutePath": "/tmp/thumb.png",
+            "productLink": "https://example.com/product",
+            "productTitle": "商品标题",
+        }
+
+        with mock.patch.object(manager, "_resolve_account_binding", return_value=("douyin-real.json", "抖音测试号", {})):
+            with mock.patch.object(manager, "_resolve_payload_file_path", return_value="/tmp/video.mp4"):
+                with mock.patch.object(manager, "_resolve_thumbnail_path", return_value="/tmp/thumb.png"):
+                    with mock.patch("utils.publish_task_manager.account_storage_exists", return_value=True):
+                        with mock.patch("utils.publish_task_manager.DouYinVideo", FakeDouYinVideo):
+                            manager._execute_payload(payload)
+
+        self.assertEqual(captured["title"], "立即发布测试")
+        self.assertEqual(captured["publishDate"], 0)
+        self.assertEqual(captured["accountFile"], "douyin-real.json")
 
     def test_publish_task_manager_requeues_running_tasks_after_restart(self):
         temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-recover-"))

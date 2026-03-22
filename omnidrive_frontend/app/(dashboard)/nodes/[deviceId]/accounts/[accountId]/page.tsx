@@ -323,6 +323,7 @@ export default function AccountTaskPage({
       status: toTimelineStatus(job, "ai_job"),
       scheduledAt: getAIJobPublishAt(job),
       updatedAt: job.updatedAt,
+      href: `/tasks/ai/${job.id}`,
       label: "技能生成",
     }));
     const publishItems: TimelineItem[] = tasks.map((task) => ({

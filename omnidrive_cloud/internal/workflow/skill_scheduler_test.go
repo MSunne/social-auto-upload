@@ -121,3 +121,52 @@ func TestParseAccountSkillScheduleConfigInfersLegacyGenerationLead(t *testing.T)
 		t.Fatalf("GenerationLeadMinutes = %d, want 30", config.GenerationLeadMinutes)
 	}
 }
+
+func TestResolveSkillVideoGenerationOptionsUsesModelDefaults(t *testing.T) {
+	model := &domain.AIModel{
+		ModelName:                 "veo-3.1-fast-fl",
+		VideoSupportedResolutions: []string{"720x1280", "1280x720"},
+		VideoSupportedDurations:   []string{"12s", "8s"},
+	}
+
+	got := resolveSkillVideoGenerationOptions(domain.ProductSkill{}, model)
+
+	if got.Resolution != "720x1280" {
+		t.Fatalf("Resolution = %q, want %q", got.Resolution, "720x1280")
+	}
+	if got.AspectRatio != "9:16" {
+		t.Fatalf("AspectRatio = %q, want %q", got.AspectRatio, "9:16")
+	}
+	if got.DurationSeconds == nil || *got.DurationSeconds != 12 {
+		t.Fatalf("DurationSeconds = %#v, want 12", got.DurationSeconds)
+	}
+}
+
+func TestResolveSkillVideoGenerationOptionsAllowsSkillOverrides(t *testing.T) {
+	referencePayload, err := json.Marshal(map[string]any{
+		"videoSettings": map[string]any{
+			"aspectRatio":     "16:9",
+			"resolution":      "1280x720",
+			"durationSeconds": 8,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal reference payload: %v", err)
+	}
+
+	got := resolveSkillVideoGenerationOptions(domain.ProductSkill{ReferencePayload: referencePayload}, &domain.AIModel{
+		ModelName:                 "veo-3.1-fast-fl",
+		VideoSupportedResolutions: []string{"720x1280"},
+		VideoSupportedDurations:   []string{"12s"},
+	})
+
+	if got.Resolution != "1280x720" {
+		t.Fatalf("Resolution = %q, want %q", got.Resolution, "1280x720")
+	}
+	if got.AspectRatio != "16:9" {
+		t.Fatalf("AspectRatio = %q, want %q", got.AspectRatio, "16:9")
+	}
+	if got.DurationSeconds == nil || *got.DurationSeconds != 8 {
+		t.Fatalf("DurationSeconds = %#v, want 8", got.DurationSeconds)
+	}
+}

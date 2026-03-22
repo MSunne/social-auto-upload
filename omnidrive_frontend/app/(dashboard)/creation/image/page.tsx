@@ -430,7 +430,7 @@ export default function ImageCreationPage() {
     if (selectedJobId) {
       return mergedJobs.find((item) => item.id === selectedJobId) || null;
     }
-    return mergedJobs[0] || null;
+    return null;
   }, [currentJob, mergedJobs, selectedJobId]);
 
   const {
@@ -454,9 +454,13 @@ export default function ImageCreationPage() {
   }, [selectedJob, selectedJobArtifacts]);
 
   const selectedPreviewItem = selectedPreviewItems[previewIndex] || selectedPreviewItems[0] || null;
-  const progress = buildProgress(currentJob || selectedJob);
+  const activeJob = useMemo(() => {
+    return currentJob && !isTerminalJob(currentJob) ? currentJob : null;
+  }, [currentJob]);
+  const currentProgress = buildProgress(activeJob || currentJob);
+  const selectedProgress = buildProgress(selectedJob);
   const optimizeProgress = buildProgress(currentOptimizeJob);
-  const generating = submitting || Boolean(currentJob && !isTerminalJob(currentJob));
+  const hasRunningJob = Boolean(activeJob);
   const optimizing = optimizingPrompt || Boolean(currentOptimizeJob && !isTerminalJob(currentOptimizeJob));
 
   useEffect(() => {
@@ -478,12 +482,6 @@ export default function ImageCreationPage() {
       setSelectedSize(sizeOptions[0].resolution);
     }
   }, [selectedSize, sizeOptions]);
-
-  useEffect(() => {
-    if (!selectedJobId && mergedJobs.length > 0) {
-      setSelectedJobId(mergedJobs[0].id);
-    }
-  }, [mergedJobs, selectedJobId]);
 
   useEffect(() => {
     if (!selectedPreviewItems.length) {
@@ -717,16 +715,16 @@ export default function ImageCreationPage() {
                   initial={{ opacity: 0, scale: 0.8 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.8 }}
-                  className="group relative aspect-square rounded-lg border border-border bg-surface-hover"
+                  className="group relative aspect-square"
                 >
-                  <div className="h-full w-full overflow-hidden rounded-lg">
+                  <div className="h-full w-full overflow-hidden rounded-lg border border-border bg-surface-hover">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={image.previewUrl} alt={image.fileName} className="h-full w-full object-cover" />
                   </div>
                   <button
                     type="button"
                     onClick={() => removeRefImage(image.id)}
-                    className="absolute -right-2 -top-2 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-danger text-white opacity-0 shadow-md transition-opacity group-hover:opacity-100"
+                    className="absolute right-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-danger text-white opacity-100 shadow-md transition-opacity md:opacity-0 md:group-hover:opacity-100"
                   >
                     <X className="h-3 w-3" />
                   </button>
@@ -995,7 +993,7 @@ export default function ImageCreationPage() {
             <div className="mb-3 flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">任务进度</span>
               {currentJob ? (
-                <span className="text-[11px] text-text-secondary">{progress.label}</span>
+                <span className="text-[11px] text-text-secondary">{currentProgress.label}</span>
               ) : null}
             </div>
 
@@ -1005,16 +1003,16 @@ export default function ImageCreationPage() {
                   <div
                     className={cn(
                       "h-full rounded-full transition-all duration-500",
-                      progress.tone === "success" && "bg-gradient-to-r from-emerald-400 to-cyan",
-                      progress.tone === "danger" && "bg-gradient-to-r from-rose-500 to-orange-400",
-                      progress.tone === "progress" && "bg-gradient-to-r from-cyan to-accent",
-                      progress.tone === "idle" && "bg-border",
+                      currentProgress.tone === "success" && "bg-gradient-to-r from-emerald-400 to-cyan",
+                      currentProgress.tone === "danger" && "bg-gradient-to-r from-rose-500 to-orange-400",
+                      currentProgress.tone === "progress" && "bg-gradient-to-r from-cyan to-accent",
+                      currentProgress.tone === "idle" && "bg-border",
                     )}
-                    style={{ width: `${progress.value}%` }}
+                    style={{ width: `${currentProgress.value}%` }}
                   />
                 </div>
                 <div className="mt-3 space-y-2 text-sm">
-                  <p className="font-medium text-text-primary">{progress.hint}</p>
+                  <p className="font-medium text-text-primary">{currentProgress.hint}</p>
                   <p className="text-xs text-text-secondary">任务 ID: {currentJob.id}</p>
                   {currentJob.message ? (
                     <p className="text-xs text-text-muted">{currentJob.message}</p>
@@ -1040,12 +1038,12 @@ export default function ImageCreationPage() {
           transition={{ delay: 0.25 }}
           type="button"
           onClick={handleGenerate}
-          disabled={!prompt.trim() || !activeModel || generating}
+          disabled={!prompt.trim() || !activeModel || submitting}
           className="group relative mt-2 w-full shrink-0 overflow-hidden rounded-2xl bg-gradient-to-r from-accent via-pink to-cyan py-5 text-sm font-bold transition-all hover:scale-[1.02] hover:shadow-[0_0_40px_rgba(177,73,255,0.5),0_0_80px_rgba(0,245,212,0.25)] active:scale-[0.98] disabled:opacity-40"
         >
           <div className="absolute inset-[1px] rounded-2xl bg-background/60 backdrop-blur-xl" />
           <div className="relative z-10">
-            {generating ? (
+            {submitting ? (
               <div className="flex items-center justify-center gap-2 text-white">
                 <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                 <span className="tracking-wider">生成中...</span>
@@ -1060,6 +1058,9 @@ export default function ImageCreationPage() {
             )}
           </div>
         </motion.button>
+        <p className="mt-2 text-center text-[10px] text-text-muted">
+          {submitting ? currentProgress.hint : hasRunningJob ? `后台仍有任务在执行：${currentProgress.hint}` : "提交到真实后端并同步图片结果"}
+        </p>
       </div>
 
       <div
@@ -1096,7 +1097,7 @@ export default function ImageCreationPage() {
                     )}
                   />
                   <span className="text-xs font-medium text-white">
-                    {selectedJob ? `${selectedJob.modelName} • ${progress.label}` : "预览结果"}
+                    {selectedJob ? `${selectedJob.modelName} • ${selectedProgress.label}` : "预览结果"}
                   </span>
                 </div>
 
@@ -1144,14 +1145,14 @@ export default function ImageCreationPage() {
                     Rendering
                   </h3>
                   <div className="flex flex-col items-center gap-2">
-                    <p className="text-xs tracking-wider text-text-muted">{progress.hint}</p>
+                    <p className="text-xs tracking-wider text-text-muted">{selectedProgress.hint}</p>
                     <div className="h-1 w-56 overflow-hidden rounded-full bg-surface">
                       <div
                         className="h-full rounded-full bg-gradient-to-r from-cyan to-accent shadow-[0_0_10px_rgba(177,73,255,0.5)] transition-all duration-500"
-                        style={{ width: `${progress.value}%` }}
+                        style={{ width: `${selectedProgress.value}%` }}
                       />
                     </div>
-                    <span className="text-xs text-text-secondary">{progress.value}%</span>
+                    <span className="text-xs text-text-secondary">{selectedProgress.value}%</span>
                   </div>
                 </div>
               </motion.div>

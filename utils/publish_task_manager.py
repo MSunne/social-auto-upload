@@ -301,9 +301,7 @@ class PublishTaskManager:
             [0 for _ in file_inputs]
         )
 
-        run_at = self._normalize_datetime(data.get("runAt") or data.get("executeAt"))
-        task_status = "scheduled" if self._is_future_datetime(run_at) else "pending"
-        task_message = "等待定时执行" if task_status == "scheduled" else "等待执行"
+        base_run_at = self._normalize_datetime(data.get("runAt") or data.get("executeAt"))
 
         thumbnail_item = self._normalize_thumbnail_item(data.get("thumbnailItem"))
         thumbnail_payload = None
@@ -331,6 +329,9 @@ class PublishTaskManager:
                 stored_file_path = file_input["displayPath"]
             publish_date = publish_dates[file_index]
             publish_date_str = self._normalize_datetime(publish_date)
+            run_at = publish_date_str or base_run_at
+            task_status = "scheduled" if self._is_future_datetime(run_at) else "pending"
+            task_message = "等待定时执行" if task_status == "scheduled" else "等待执行"
 
             for account_file_path in account_paths:
                 account_record = account_lookup.get(account_file_path, {})
@@ -660,7 +661,7 @@ class PublishTaskManager:
         if not account_storage_exists(account_file):
             raise FileNotFoundError(f"账号登录态不存在: {resolved_account_file_path}")
         tags = payload.get("tags") or []
-        publish_date = self._parse_publish_date(payload.get("publishDate"))
+        publish_date = self._executor_publish_date(payload)
 
         if platform_type == 2:
             app = TencentVideo(
@@ -690,6 +691,12 @@ class PublishTaskManager:
             raise ValueError(f"当前不支持的平台类型: {platform_type}")
 
         asyncio.run(app.main(), debug=False)
+
+    @staticmethod
+    def _executor_publish_date(payload):
+        # OmniBull already owns execution timing via runAt, so the third-party
+        # platform should always publish immediately once this worker starts.
+        return 0
 
     def _update_task(self, task_uuid, status, message, verification_data=None, artifact_path=None, finished=False):
         verification_json = json.dumps(verification_data, ensure_ascii=False) if verification_data else None

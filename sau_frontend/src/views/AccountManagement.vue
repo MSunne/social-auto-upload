@@ -155,7 +155,7 @@ const platformTagType = (p) => ({ '抖音': 'danger', '快手': 'success', '视�
 const fetchAccounts = async () => {
   loading.value = true
   try {
-    const res = await accountApi.getAccounts()
+    const res = await accountApi.getValidAccounts()
     if (res?.data) accountStore.setAccounts(res.data)
   } catch { ElMessage.error('获取账号失败') }
   loading.value = false
@@ -166,8 +166,8 @@ const validateOne = async (id) => {
   if (acc) acc._validating = true
   try {
     const res = await accountApi.validateAccount(id)
-    const row = Array.isArray(res?.data) ? res.data : null
-    const isValid = row?.[4] === 1
+    const row = res?.data || null
+    const isValid = Number(row?.status) === 1
     ElMessage[isValid ? 'success' : 'warning'](isValid ? '验证成功' : '账号状态异常，需要重新登录')
     fetchAccounts()
   } catch { ElMessage.error('验证失败') }

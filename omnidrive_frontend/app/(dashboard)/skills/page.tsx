@@ -1,29 +1,60 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
   Layers,
   Plus,
-  Pencil,
   Trash2,
   FileImage,
   Video,
   Settings2,
   Eye,
+  MessageSquareText,
 } from "lucide-react";
-import { listSkills } from "@/lib/services";
+import { deleteSkill, listSkills } from "@/lib/services";
 import type { Skill } from "@/lib/types";
 import { PageHeader, EmptyState, StatusBadge } from "@/components/ui/common";
+import { SkillEditorModal } from "@/components/ui/skill-editor-modal";
 
 export default function SkillsPage() {
+  const queryClient = useQueryClient();
   const { data: skills = [] } = useQuery<Skill[]>({
     queryKey: ["skills"],
     queryFn: () => listSkills(),
   });
 
   const [search, setSearch] = useState("");
+  const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  const deleteMutation = useMutation({
+    mutationFn: async (skill: Skill) => {
+      await deleteSkill(skill.id);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["skills"] });
+    },
+    onError: (error) => {
+      window.alert(error instanceof Error ? error.message : "删除技能失败，请稍后重试");
+    },
+  });
+
+  const openEditModal = (skill: Skill) => {
+    setEditingSkill(skill);
+    setCreating(false);
+  };
+
+  const openCreateModal = () => {
+    setEditingSkill(null);
+    setCreating(true);
+  };
+
+  const closeModal = () => {
+    setEditingSkill(null);
+    setCreating(false);
+  };
 
   const filteredSkills = skills.filter((s) =>
     s.name.toLowerCase().includes(search.toLowerCase())
@@ -42,7 +73,10 @@ export default function SkillsPage() {
               placeholder="搜索技能名称..."
               className="w-48 rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none focus:border-accent/50 focus:ring-2 focus:ring-accent/20"
             />
-            <button className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-accent to-cyan px-4 py-2 text-sm font-semibold text-background transition-all hover:shadow-lg hover:shadow-accent/25">
+            <button
+              onClick={openCreateModal}
+              className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-accent to-cyan px-4 py-2 text-sm font-semibold text-background transition-all hover:shadow-lg hover:shadow-accent/25"
+            >
               <Plus className="h-4 w-4" />
               新建技能
             </button>
@@ -64,8 +98,10 @@ export default function SkillsPage() {
               <div className="flex items-start justify-between border-b border-border/50 bg-surface-hover/30 p-5">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/10">
-                    {skill.outputType === "video_text" ? (
+                    {skill.outputType === "video_text" || skill.outputType === "视文模式" ? (
                       <Video className="h-5 w-5 text-accent" />
+                    ) : skill.outputType === "文本格式" ? (
+                      <MessageSquareText className="h-5 w-5 text-amber-200" />
                     ) : (
                       <FileImage className="h-5 w-5 text-cyan" />
                     )}
@@ -100,8 +136,10 @@ export default function SkillsPage() {
                       产出类型
                     </p>
                     <p className="text-sm font-medium text-text-primary">
-                      {skill.outputType === "video_text"
+                      {skill.outputType === "video_text" || skill.outputType === "视文模式"
                         ? "视频 + 图文"
+                        : skill.outputType === "文本格式"
+                        ? "纯文本"
                         : "图片 + 图文"}
                     </p>
                   </div>
@@ -123,19 +161,28 @@ export default function SkillsPage() {
                 </span>
                 <div className="flex items-center gap-2">
                   <button
-                    title="预览提示词"
+                    title="查看详情"
+                    onClick={() => openEditModal(skill)}
                     className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-cyan"
                   >
                     <Eye className="h-4 w-4" />
                   </button>
                   <button
                     title="编辑技能"
+                    onClick={() => openEditModal(skill)}
                     className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-accent"
                   >
                     <Settings2 className="h-4 w-4" />
                   </button>
                   <button
                     title="删除"
+                    onClick={() => {
+                      if (!window.confirm(`确认删除技能「${skill.name}」吗？此操作不可恢复。`)) {
+                        return;
+                      }
+                      deleteMutation.mutate(skill);
+                    }}
+                    disabled={deleteMutation.isPending}
                     className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-danger/10 hover:text-danger"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -152,6 +199,17 @@ export default function SkillsPage() {
           description="暂时没有配置任何能力模版，点击上方按钮新建。"
         />
       )}
+
+      <SkillEditorModal
+        key={editingSkill?.id || (creating ? "create" : "closed")}
+        isOpen={creating || Boolean(editingSkill)}
+        deviceId={editingSkill?.deviceId || ""}
+        skill={editingSkill}
+        onClose={closeModal}
+        onSaved={() => {
+          queryClient.invalidateQueries({ queryKey: ["skills"] });
+        }}
+      />
     </>
   );
 }

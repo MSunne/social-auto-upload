@@ -73,6 +73,10 @@ type VideoPreviewSurfaceInnerProps = {
   compact?: boolean;
 };
 
+type ProgressTone = "idle" | "progress" | "success" | "danger";
+
+const VIDEO_CURRENT_JOB_STORAGE_KEY = "omnidrive.creation.video.currentJobId";
+
 const DEFAULT_DURATION_OPTIONS: VideoDurationOption[] = [
   { label: "8s", seconds: 8 },
   { label: "12s", seconds: 12 },
@@ -320,8 +324,144 @@ function getPrimaryVideoPreviewItem(job?: AIJob | null) {
   return extractVideoArtifactsFromPayload(job)[0] || null;
 }
 
-function sortJobsByUpdatedAt(items: AIJob[]) {
+function clampPercent(value: number, min = 0, max = 100) {
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function toNumericPercent(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (value >= 0 && value <= 1) {
+      return clampPercent(value * 100);
+    }
+    return clampPercent(value);
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const percentMatch = trimmed.match(/(-?\d+(?:\.\d+)?)\s*%/);
+  if (percentMatch) {
+    const parsed = Number(percentMatch[1]);
+    return Number.isFinite(parsed) ? clampPercent(parsed) : null;
+  }
+
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  if (parsed >= 0 && parsed <= 1 && trimmed.includes(".")) {
+    return clampPercent(parsed * 100);
+  }
+  return clampPercent(parsed);
+}
+
+function extractPercentFromText(value?: string | null) {
+  if (!value) {
+    return null;
+  }
+  const matched = value.match(/(\d+(?:\.\d+)?)\s*%/);
+  if (!matched) {
+    return null;
+  }
+  const parsed = Number(matched[1]);
+  return Number.isFinite(parsed) ? clampPercent(parsed) : null;
+}
+
+function extractProgressFromPayload(value: unknown, depth = 0): number | null {
+  if (!value || depth > 4 || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const progressKeys = [
+    "progress",
+    "progressPercent",
+    "progressPercentage",
+    "percent",
+    "percentage",
+    "pct",
+    "completionPercent",
+    "completionPercentage",
+  ];
+  for (const key of progressKeys) {
+    const parsed = toNumericPercent(record[key]);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  const nestedKeys = ["video", "metadata", "data", "result", "payload", "state", "status", "output"];
+  for (const key of nestedKeys) {
+    const nested = extractProgressFromPayload(record[key], depth + 1);
+    if (nested !== null) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
+function extractJobProgress(job?: AIJob | null) {
+  if (!job) {
+    return null;
+  }
+  const payloadProgress = extractProgressFromPayload(job.outputPayload);
+  if (payloadProgress !== null) {
+    return payloadProgress;
+  }
+  return extractPercentFromText(job.message);
+}
+
+function normalizeVideoProgress(stageKey: string, rawProgress: number | null) {
+  if (rawProgress === null) {
+    switch (stageKey) {
+      case "scheduled":
+        return 8;
+      case "queued_generation":
+        return 14;
+      case "storyboarding":
+        return 28;
+      case "generating":
+        return 38;
+      default:
+        return 24;
+    }
+  }
+
+  const clamped = clampPercent(rawProgress, 0, 99);
+  switch (stageKey) {
+    case "scheduled":
+      return clampPercent(clamped, 5, 12);
+    case "queued_generation":
+      return clampPercent(clamped, 10, 24);
+    case "storyboarding":
+      return clampPercent(clamped, 18, 45);
+    case "generating":
+      return clampPercent(clamped, 20, 92);
+    default:
+      return clampPercent(clamped, 5, 92);
+  }
+}
+
+function getJobTimelineTimestamp(job: AIJob) {
+  const createdAt = new Date(job.createdAt || 0).getTime();
+  if (Number.isFinite(createdAt) && createdAt > 0) {
+    return createdAt;
+  }
+  return new Date(job.updatedAt || 0).getTime();
+}
+
+function sortJobsByTime(items: AIJob[]) {
   return [...items].sort((left, right) => {
+    const timeDiff = getJobTimelineTimestamp(right) - getJobTimelineTimestamp(left);
+    if (timeDiff !== 0) {
+      return timeDiff;
+    }
     return new Date(right.updatedAt || 0).getTime() - new Date(left.updatedAt || 0).getTime();
   });
 }
@@ -337,35 +477,36 @@ function buildVideoProgress(job?: AIJob | null) {
   }
 
   const stage = resolveAIJobStage(job);
+  const actualProgress = extractJobProgress(job);
   if (stage.key === "scheduled") {
     return {
-      value: 10,
+      value: normalizeVideoProgress(stage.key, actualProgress),
       label: stage.label,
-      tone: "progress" as const,
+      tone: "progress" as ProgressTone,
       hint: stage.description || "任务已排队，等待开始执行。",
     };
   }
   if (stage.key === "queued_generation") {
     return {
-      value: 18,
+      value: normalizeVideoProgress(stage.key, actualProgress),
       label: stage.label,
-      tone: "progress" as const,
+      tone: "progress" as ProgressTone,
       hint: stage.description || "任务已创建，等待到易侧接收。",
     };
   }
   if (stage.key === "storyboarding") {
     return {
-      value: 40,
+      value: normalizeVideoProgress(stage.key, actualProgress),
       label: stage.label,
-      tone: "progress" as const,
+      tone: "progress" as ProgressTone,
       hint: stage.description || "正在优化脚本和镜头描述。",
     };
   }
   if (stage.key === "generating") {
     return {
-      value: 76,
+      value: normalizeVideoProgress(stage.key, actualProgress),
       label: stage.label,
-      tone: "progress" as const,
+      tone: "progress" as ProgressTone,
       hint: stage.description || "到易正在合成视频镜头，请稍候。",
     };
   }
@@ -395,11 +536,38 @@ function buildVideoProgress(job?: AIJob | null) {
   }
 
   return {
-    value: 35,
+    value: normalizeVideoProgress(stage.key, actualProgress),
     label: stage.label,
-    tone: "progress" as const,
+    tone: "progress" as ProgressTone,
     hint: stage.description || job.message || "正在处理任务。",
   };
+}
+
+function readStoredVideoCurrentJobId() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const value = window.sessionStorage.getItem(VIDEO_CURRENT_JOB_STORAGE_KEY);
+    return value?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredVideoCurrentJobId(jobId?: string | null) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    if (jobId?.trim()) {
+      window.sessionStorage.setItem(VIDEO_CURRENT_JOB_STORAGE_KEY, jobId.trim());
+      return;
+    }
+    window.sessionStorage.removeItem(VIDEO_CURRENT_JOB_STORAGE_KEY);
+  } catch {
+    // Ignore storage failures so the page still works in restricted browsers.
+  }
 }
 
 function extractDurationLabel(job?: AIJob | null) {
@@ -472,14 +640,15 @@ export default function VideoCreationPage() {
     refetch: refetchVideoJobs,
   } = useQuery<AIJob[]>({
     queryKey: ["aiJobs", "video"],
-    queryFn: () => listAIJobs({ jobType: "video", limit: 20 }),
+    queryFn: () => listAIJobs({ jobType: "video", limit: 50 }),
     refetchInterval: currentJobId ? 4000 : false,
   });
 
-  const { data: currentJob } = useQuery<AIJob>({
+  const { data: currentJob, error: currentJobError } = useQuery<AIJob>({
     queryKey: ["aiJob", "video", currentJobId],
     queryFn: () => getAIJob(currentJobId as string),
     enabled: Boolean(currentJobId),
+    retry: false,
     refetchInterval: (query) => {
       const job = query.state.data as AIJob | undefined;
       return currentJobId && !isTerminalJob(job) ? 3000 : false;
@@ -488,9 +657,9 @@ export default function VideoCreationPage() {
 
   const mergedJobs = useMemo(() => {
     if (!currentJob) {
-      return sortJobsByUpdatedAt(videoJobs);
+      return sortJobsByTime(videoJobs);
     }
-    return sortJobsByUpdatedAt([currentJob, ...videoJobs.filter((item) => item.id !== currentJob.id)]);
+    return sortJobsByTime([currentJob, ...videoJobs.filter((item) => item.id !== currentJob.id)]);
   }, [currentJob, videoJobs]);
 
   const selectedJob = useMemo(() => {
@@ -500,7 +669,7 @@ export default function VideoCreationPage() {
     if (selectedJobId) {
       return mergedJobs.find((item) => item.id === selectedJobId) || null;
     }
-    return mergedJobs[0] || null;
+    return null;
   }, [currentJob, mergedJobs, selectedJobId]);
 
   const { data: selectedJobArtifacts = [] } = useQuery<AIJobArtifact[]>({
@@ -522,8 +691,12 @@ export default function VideoCreationPage() {
   }, [selectedJob, selectedJobArtifacts]);
 
   const selectedPreviewItem = selectedPreviewItems[previewIndex] || selectedPreviewItems[0] || null;
-  const progress = buildVideoProgress(currentJob || selectedJob);
-  const generating = submitting || Boolean(currentJob && !isTerminalJob(currentJob));
+  const activeJob = useMemo(() => {
+    return currentJob && !isTerminalJob(currentJob) ? currentJob : null;
+  }, [currentJob]);
+  const currentProgress = buildVideoProgress(activeJob || currentJob);
+  const selectedProgress = buildVideoProgress(selectedJob);
+  const hasRunningJob = Boolean(activeJob);
   const submitDisabledReason = useMemo(() => {
     if (!prompt.trim()) {
       return "请先输入视频描述";
@@ -533,8 +706,35 @@ export default function VideoCreationPage() {
     }
     return "";
   }, [activeModel, modelsLoading, prompt]);
-  const submitButtonDisabled = Boolean(submitDisabledReason) || generating;
+  const submitButtonDisabled = Boolean(submitDisabledReason) || submitting;
   const submitHelperText = submitDisabledReason || "提交到真实后端并同步到到易视频引擎";
+
+  useEffect(() => {
+    const storedJobId = readStoredVideoCurrentJobId();
+    if (!storedJobId) {
+      return;
+    }
+    setCurrentJobId((previous) => previous || storedJobId);
+    setSelectedJobId((previous) => previous || storedJobId);
+  }, []);
+
+  useEffect(() => {
+    if (activeJob?.id) {
+      writeStoredVideoCurrentJobId(activeJob.id);
+      return;
+    }
+    if (currentJob && isTerminalJob(currentJob)) {
+      writeStoredVideoCurrentJobId(null);
+    }
+  }, [activeJob, currentJob]);
+
+  useEffect(() => {
+    if (!currentJobError) {
+      return;
+    }
+    writeStoredVideoCurrentJobId(null);
+    setCurrentJobId(null);
+  }, [currentJobError]);
 
   useEffect(() => {
     if (!selectedModel && videoModels.length > 0) {
@@ -569,12 +769,6 @@ export default function VideoCreationPage() {
       setSelectedResolution(resolutionOptions[0].resolution);
     }
   }, [resolutionOptions, selectedResolution]);
-
-  useEffect(() => {
-    if (!selectedJobId && mergedJobs.length > 0) {
-      setSelectedJobId(mergedJobs[0].id);
-    }
-  }, [mergedJobs, selectedJobId]);
 
   useEffect(() => {
     if (!selectedPreviewItems.length) {
@@ -640,6 +834,7 @@ export default function VideoCreationPage() {
       setCurrentJobId(job.id);
       setSelectedJobId(job.id);
       setPreviewIndex(0);
+      writeStoredVideoCurrentJobId(job.id);
       await refetchVideoJobs();
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "视频生成请求失败");
@@ -710,14 +905,16 @@ export default function VideoCreationPage() {
                   initial={{ opacity: 0, scale: 0.8 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.8 }}
-                  className="group relative aspect-square overflow-hidden rounded-lg border border-border bg-surface-hover"
+                  className="group relative aspect-square"
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={image.previewUrl} alt={image.fileName} className="h-full w-full object-cover" />
+                  <div className="h-full overflow-hidden rounded-lg border border-border bg-surface-hover">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={image.previewUrl} alt={image.fileName} className="h-full w-full object-cover" />
+                  </div>
                   <button
                     type="button"
                     onClick={() => removeReferenceFrame(image.id)}
-                    className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-danger text-white opacity-0 shadow-md transition-opacity group-hover:opacity-100"
+                    className="absolute right-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-danger text-white opacity-100 shadow-md transition-opacity md:opacity-0 md:group-hover:opacity-100"
                   >
                     <X className="h-3 w-3" />
                   </button>
@@ -911,7 +1108,7 @@ export default function VideoCreationPage() {
           >
             <div className="mb-3 flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">任务进度</span>
-              {currentJob ? <span className="text-[11px] text-text-secondary">{progress.label}</span> : null}
+              {currentJob ? <span className="text-[11px] text-text-secondary">{currentProgress.label}</span> : null}
             </div>
 
             {currentJob ? (
@@ -920,16 +1117,16 @@ export default function VideoCreationPage() {
                   <div
                     className={cn(
                       "h-full rounded-full transition-all duration-500",
-                      progress.tone === "success" && "bg-gradient-to-r from-emerald-400 to-cyan",
-                      progress.tone === "danger" && "bg-gradient-to-r from-rose-500 to-orange-400",
-                      progress.tone === "progress" && "bg-gradient-to-r from-cyan to-accent",
-                      progress.tone === "idle" && "bg-border",
+                      currentProgress.tone === "success" && "bg-gradient-to-r from-emerald-400 to-cyan",
+                      currentProgress.tone === "danger" && "bg-gradient-to-r from-rose-500 to-orange-400",
+                      currentProgress.tone === "progress" && "bg-gradient-to-r from-cyan to-accent",
+                      currentProgress.tone === "idle" && "bg-border",
                     )}
-                    style={{ width: `${progress.value}%` }}
+                    style={{ width: `${currentProgress.value}%` }}
                   />
                 </div>
                 <div className="mt-3 space-y-2 text-sm">
-                  <p className="font-medium text-text-primary">{progress.hint}</p>
+                  <p className="font-medium text-text-primary">{currentProgress.hint}</p>
                   <p className="text-xs text-text-secondary">任务 ID: {currentJob.id}</p>
                   {currentJob.message ? <p className="text-xs text-text-muted">{currentJob.message}</p> : null}
                 </div>
@@ -958,7 +1155,7 @@ export default function VideoCreationPage() {
         >
           <div className="absolute inset-[1px] rounded-2xl bg-background/60 backdrop-blur-xl" />
           <div className="relative z-10 flex h-full items-center justify-center">
-            {generating ? (
+            {submitting ? (
               <div className="flex items-center justify-center gap-2 text-white">
                 <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                 <span className="tracking-wider">视频合成中...</span>
@@ -973,7 +1170,9 @@ export default function VideoCreationPage() {
             )}
           </div>
         </motion.button>
-        <p className="mt-2 text-center text-[10px] text-text-muted">{generating ? progress.hint : submitHelperText}</p>
+        <p className="mt-2 text-center text-[10px] text-text-muted">
+          {submitting ? currentProgress.hint : hasRunningJob ? `后台仍有任务在执行：${currentProgress.hint}` : submitHelperText}
+        </p>
       </div>
 
       <div
@@ -1010,7 +1209,7 @@ export default function VideoCreationPage() {
                     )}
                   />
                   <span className="text-xs font-medium text-white">
-                    {selectedJob ? `${selectedJob.modelName} • ${progress.label}` : "视频预览"}
+                    {selectedJob ? `${selectedJob.modelName} • ${selectedProgress.label}` : "视频预览"}
                   </span>
                 </div>
 
@@ -1047,14 +1246,14 @@ export default function VideoCreationPage() {
                     Rendering
                   </h3>
                   <div className="flex flex-col items-center gap-2">
-                    <p className="text-xs tracking-wider text-text-muted">{progress.hint}</p>
+                    <p className="text-xs tracking-wider text-text-muted">{selectedProgress.hint}</p>
                     <div className="h-1 w-56 overflow-hidden rounded-full bg-surface">
                       <div
                         className="h-full rounded-full bg-gradient-to-r from-cyan to-accent shadow-[0_0_10px_rgba(0,245,212,0.5)] transition-all duration-500"
-                        style={{ width: `${progress.value}%` }}
+                        style={{ width: `${selectedProgress.value}%` }}
                       />
                     </div>
-                    <span className="text-xs text-text-secondary">{progress.value}%</span>
+                    <span className="text-xs text-text-secondary">{selectedProgress.value}%</span>
                   </div>
                 </div>
               </motion.div>
@@ -1175,7 +1374,7 @@ export default function VideoCreationPage() {
                         </span>
                       )}
                     </div>
-                    <p className="mt-1 text-[9px] text-text-muted">{formatDateTime(job.updatedAt)}</p>
+                    <p className="mt-1 text-[9px] text-text-muted">{formatDateTime(job.createdAt || job.updatedAt)}</p>
                   </div>
                 </button>
               );

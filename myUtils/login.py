@@ -6,7 +6,7 @@ from queue import Empty
 
 from playwright.async_api import async_playwright
 
-from myUtils.auth import check_cookie
+from myUtils.auth import check_cookie_detail, validate_active_page_detail
 from utils.account_storage import upsert_login_account
 from utils.base_social_media import set_init_script
 from utils.browser_hook import get_browser_options
@@ -102,6 +102,10 @@ VERIFICATION_INPUT_HINT_KEYWORDS = [
 
 
 class LoginCancelled(Exception):
+    pass
+
+
+class LoginPersistFailed(Exception):
     pass
 
 
@@ -476,6 +480,18 @@ def push_structured_status(status_queue, command_queue, event_type, payload):
             "type": event_type,
             "payload": payload,
         })
+
+
+def push_login_failed_status(status_queue, command_queue, message):
+    normalized_message = str(message or "").strip() or "登录失败，请重试"
+    push_structured_status(
+        status_queue,
+        command_queue,
+        "login_failed",
+        {
+            "message": normalized_message,
+        },
+    )
 
 
 async def detect_login_qr_state(page, qr_locator=None, qr_action_root=None):
@@ -861,7 +877,28 @@ async def persist_login_state_with_retry(
         last_verification_signature = None
         try:
             storage_state = await context.storage_state()
-            if await check_cookie(account_type, storage_state):
+            if page is not None and not page.is_closed():
+                live_result = await validate_active_page_detail(
+                    account_type,
+                    page,
+                    settle_seconds=0.8,
+                    retries=2,
+                    retry_delay_seconds=0.8,
+                )
+                if bool(live_result.get("ok")):
+                    save_login_account(account_type, account_name, file_name, 1, storage_state=storage_state)
+                    login_logger.info(
+                        "{} login cookie saved from active page account_name={} cookie_file={} attempts={}",
+                        platform_label,
+                        account_name,
+                        file_name,
+                        attempt,
+                    )
+                    return file_name
+                last_error = str(live_result.get("message") or "").strip() or last_error
+
+            cookie_result = await check_cookie_detail(account_type, storage_state, headless=True)
+            if bool(cookie_result.get("ok")):
                 save_login_account(account_type, account_name, file_name, 1, storage_state=storage_state)
                 login_logger.info(
                     "{} login cookie saved account_name={} cookie_file={} attempts={}",
@@ -871,12 +908,13 @@ async def persist_login_state_with_retry(
                     attempt,
                 )
                 return file_name
-            last_error = "cookie_invalid"
+            last_error = str(cookie_result.get("message") or "").strip() or "cookie_invalid"
             login_logger.warning(
-                "{} login detected but cookie not ready account_name={} attempt={}",
+                "{} login detected but cookie not ready account_name={} attempt={} message={}",
                 platform_label,
                 account_name,
                 attempt,
+                last_error,
             )
         except Exception as exc:
             last_error = str(exc)
@@ -900,7 +938,9 @@ async def persist_login_state_with_retry(
         attempt,
         last_error,
     )
-    return None
+    raise LoginPersistFailed(
+        f"{platform_label} 登录后未能确认本地登录态已生效: {str(last_error or '等待超时').strip()}"
+    )
 
 # 抖音登录
 async def douyin_cookie_gen(id,status_queue, command_queue=None):
@@ -973,8 +1013,9 @@ async def douyin_cookie_gen(id,status_queue, command_queue=None):
             await browser.close()
             status_queue.put("CANCELLED")
             return None
-        if not saved_file:
-            status_queue.put("500")
+        except LoginPersistFailed as exc:
+            login_logger.warning("douyin login state persist failed account_name={} error={}", id, exc)
+            push_login_failed_status(status_queue, command_queue, str(exc))
             await page.close()
             await context.close()
             await browser.close()
@@ -1053,6 +1094,7 @@ async def get_tencent_cookie(id,status_queue, command_queue=None):
                 2,
                 id,
                 "tencent",
+                verify_timeout=60,
                 page=page,
                 status_queue=status_queue,
                 command_queue=command_queue,
@@ -1064,8 +1106,9 @@ async def get_tencent_cookie(id,status_queue, command_queue=None):
             await browser.close()
             status_queue.put("CANCELLED")
             return None
-        if not saved_file:
-            status_queue.put("500")
+        except LoginPersistFailed as exc:
+            login_logger.warning("tencent login state persist failed account_name={} error={}", id, exc)
+            push_login_failed_status(status_queue, command_queue, str(exc))
             await page.close()
             await context.close()
             await browser.close()
@@ -1150,8 +1193,9 @@ async def get_ks_cookie(id,status_queue, command_queue=None):
             await browser.close()
             status_queue.put("CANCELLED")
             return None
-        if not saved_file:
-            status_queue.put("500")
+        except LoginPersistFailed as exc:
+            login_logger.warning("kuaishou login state persist failed account_name={} error={}", id, exc)
+            push_login_failed_status(status_queue, command_queue, str(exc))
             await page.close()
             await context.close()
             await browser.close()
@@ -1236,8 +1280,9 @@ async def xiaohongshu_cookie_gen(id,status_queue, command_queue=None):
             await browser.close()
             status_queue.put("CANCELLED")
             return None
-        if not saved_file:
-            status_queue.put("500")
+        except LoginPersistFailed as exc:
+            login_logger.warning("xiaohongshu login state persist failed account_name={} error={}", id, exc)
+            push_login_failed_status(status_queue, command_queue, str(exc))
             await page.close()
             await context.close()
             await browser.close()
