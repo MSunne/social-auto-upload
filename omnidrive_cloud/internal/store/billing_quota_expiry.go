@@ -51,7 +51,6 @@ func (s *Store) ExpireDueQuotaAccounts(ctx context.Context, limit int) (*ExpireD
 	defer rows.Close()
 
 	items := make([]expiringQuotaAccountRecord, 0, limit)
-	quotaMeterCodes := make(map[string]struct{})
 	for rows.Next() {
 		var item expiringQuotaAccountRecord
 		if scanErr := rows.Scan(
@@ -66,9 +65,6 @@ func (s *Store) ExpireDueQuotaAccounts(ctx context.Context, limit int) (*ExpireD
 			return nil, scanErr
 		}
 		items = append(items, item)
-		if item.RemainingTotal > 0 {
-			quotaMeterCodes[item.MeterCode] = struct{}{}
-		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -78,11 +74,6 @@ func (s *Store) ExpireDueQuotaAccounts(ctx context.Context, limit int) (*ExpireD
 			return nil, err
 		}
 		return &ExpireDueQuotaAccountsResult{}, nil
-	}
-
-	quotaUnitCredits, err := loadQuotaUnitCreditMapTx(ctx, tx, quotaMeterCodes)
-	if err != nil {
-		return nil, err
 	}
 
 	now := time.Now().UTC()
@@ -102,14 +93,12 @@ func (s *Store) ExpireDueQuotaAccounts(ctx context.Context, limit int) (*ExpireD
 			return nil, err
 		}
 
-		releaseCredits := item.RemainingTotal * quotaUnitCredits[item.MeterCode]
 		payload := mustJSONBytes(map[string]any{
-			"expiredAt":                  now.Format(time.RFC3339),
-			"meterCode":                  item.MeterCode,
-			"clearedQuota":               item.RemainingTotal,
-			"distributionReleaseCredits": releaseCredits,
-			"sourceType":                 valueOrEmpty(item.SourceType),
-			"sourceId":                   valueOrEmpty(item.SourceID),
+			"expiredAt":    now.Format(time.RFC3339),
+			"meterCode":    item.MeterCode,
+			"clearedQuota": item.RemainingTotal,
+			"sourceType":   valueOrEmpty(item.SourceType),
+			"sourceId":     valueOrEmpty(item.SourceID),
 		})
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO billing_quota_ledgers (
@@ -121,15 +110,8 @@ func (s *Store) ExpireDueQuotaAccounts(ctx context.Context, limit int) (*ExpireD
 			return nil, err
 		}
 
-		if releaseCredits > 0 {
-			if err := s.releaseDistributionCommissionForUsageTx(ctx, tx, item.UserID, "quota_expiration", item.ID, releaseCredits); err != nil {
-				return nil, err
-			}
-		}
-
 		result.ExpiredCount++
 		result.ClearedQuotaTotal += item.RemainingTotal
-		result.DistributionReleaseCredits += releaseCredits
 	}
 
 	if err := tx.Commit(ctx); err != nil {

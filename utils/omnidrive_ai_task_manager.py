@@ -258,15 +258,37 @@ class OmniDriveAITaskManager:
             rows = cursor.fetchall()
         return [self._serialize_row(row) for row in rows]
 
-    def update_cloud_binding(self, task_uuid, cloud_job_id, cloud_status, message=None):
+    def update_cloud_binding(
+        self,
+        task_uuid,
+        cloud_job_id,
+        cloud_status,
+        message=None,
+        *,
+        source=None,
+        job_type=None,
+        model_name=None,
+        skill_id=None,
+        prompt=None,
+        payload=None,
+    ):
         local_status = self._map_cloud_to_local_status(cloud_status, current_status="queued_cloud")
         finished_at = self._finished_at_for_status(local_status)
+        payload_json = None
+        if payload is not None:
+            payload_json = json.dumps(payload, ensure_ascii=False)
         with self._connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
                 UPDATE omnidrive_ai_tasks
-                SET cloud_job_id = ?,
+                SET source = COALESCE(?, source),
+                    job_type = COALESCE(?, job_type),
+                    model_name = COALESCE(?, model_name),
+                    skill_id = COALESCE(?, skill_id),
+                    prompt = COALESCE(?, prompt),
+                    payload_json = COALESCE(?, payload_json),
+                    cloud_job_id = ?,
                     cloud_status = ?,
                     status = ?,
                     message = COALESCE(?, message),
@@ -274,7 +296,20 @@ class OmniDriveAITaskManager:
                     updated_at = CURRENT_TIMESTAMP
                 WHERE task_uuid = ?
                 """,
-                (cloud_job_id, cloud_status, local_status, message, finished_at, task_uuid),
+                (
+                    source,
+                    job_type,
+                    model_name,
+                    skill_id,
+                    prompt,
+                    payload_json,
+                    cloud_job_id,
+                    cloud_status,
+                    local_status,
+                    message,
+                    finished_at,
+                    task_uuid,
+                ),
             )
             conn.commit()
         ai_logger.debug(

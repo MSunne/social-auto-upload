@@ -6,11 +6,11 @@ from queue import Empty
 
 from playwright.async_api import async_playwright
 
-from myUtils.auth import check_cookie_detail, validate_active_page_detail, validate_login_completion_detail
+from myUtils.auth import check_cookie_detail, validate_login_completion_detail
 from utils.account_storage import upsert_login_account
 from utils.base_social_media import set_init_script
 from utils.browser_hook import get_browser_options
-from utils.log import login_logger
+from utils.log import login_logger, log_throttled
 
 VERIFICATION_TITLE_TEXTS = [
     "身份验证",
@@ -92,6 +92,14 @@ QR_REFRESH_TEXTS = [
 ]
 
 QR_SNAPSHOT_MIN_INTERVAL_SECONDS = 2.0
+TRANSIENT_LOGIN_ERROR_HINTS = (
+    "execution context was destroyed",
+    "most likely because of a navigation",
+    "target page, context or browser has been closed",
+    "frame was detached",
+    "navigation interrupted",
+    "cannot find context with specified id",
+)
 VERIFICATION_INPUT_HINT_KEYWORDS = [
     "验证码",
     "短信",
@@ -107,6 +115,13 @@ class LoginCancelled(Exception):
 
 class LoginPersistFailed(Exception):
     pass
+
+
+def is_transient_login_page_error(exc):
+    message = str(exc or "").strip().lower()
+    if not message:
+        return False
+    return any(hint in message for hint in TRANSIENT_LOGIN_ERROR_HINTS)
 
 
 def save_login_account(account_type, user_name, file_name, status=1, storage_state=None):
@@ -795,20 +810,38 @@ async def wait_for_login_result(
             login_logger.info("login page closed after qr flow original_url={}", original_url)
             return "cancelled"
 
-        qr_state = await sync_login_qr_state(
-            status_queue,
-            command_queue,
-            page,
-            qr_locator=qr_locator,
-            qr_action_root=qr_action_root,
-            tracker=qr_tracker,
-        )
-        qr_visible = await is_locator_visible(qr_locator)
-        qr_phase_waiting_scan = bool(
-            qr_locator is not None and qr_visible and not qr_state.get("isScanned") and not qr_state.get("isExpired")
-        )
+        try:
+            qr_state = await sync_login_qr_state(
+                status_queue,
+                command_queue,
+                page,
+                qr_locator=qr_locator,
+                qr_action_root=qr_action_root,
+                tracker=qr_tracker,
+            )
+            qr_visible = await is_locator_visible(qr_locator)
+            qr_phase_waiting_scan = bool(
+                qr_locator is not None and qr_visible and not qr_state.get("isScanned") and not qr_state.get("isExpired")
+            )
 
-        challenge = None if qr_phase_waiting_scan else await detect_verification_challenge(page)
+            challenge = None if qr_phase_waiting_scan else await detect_verification_challenge(page)
+        except Exception as exc:
+            if is_transient_login_page_error(exc):
+                deadline = max(deadline, loop.time() + 10)
+                log_throttled(
+                    login_logger,
+                    "INFO",
+                    f"login.wait.transient:{id(page)}",
+                    5,
+                    "login page changed during verification original_url={} current_url={} waiting_for_page_settle=true error={}",
+                    original_url,
+                    page.url if not page.is_closed() else "closed",
+                    exc,
+                )
+                await asyncio.sleep(0.3)
+                continue
+            raise
+
         if challenge:
             verification_observed = True
             if verification_started_at is None:
@@ -953,26 +986,37 @@ async def persist_login_state_with_retry(
     attempt = 0
     last_error = None
     last_verification_signature = None
+    page_closed_logged = False
 
     while asyncio.get_running_loop().time() < deadline:
         attempt += 1
-        await drain_remote_actions(page, command_queue, status_queue)
-        if page is not None and page.is_closed():
-            raise LoginCancelled()
-        if page is not None and not page.is_closed():
-            challenge = await detect_verification_challenge(page)
-            if challenge:
-                deadline = max(deadline, asyncio.get_running_loop().time() + 120)
-                if challenge["signature"] != last_verification_signature:
-                    push_structured_status(status_queue, command_queue, "verification_required", challenge["payload"])
-                    last_verification_signature = challenge["signature"]
-                await asyncio.sleep(0.5)
-                continue
-        last_verification_signature = None
         try:
+            await drain_remote_actions(page, command_queue, status_queue)
+            page_available = page is not None and not page.is_closed()
+            if page is not None and not page_available:
+                if not page_closed_logged:
+                    login_logger.warning(
+                        "{} login page closed before storage verification completed account_name={} attempt={} continuing_with_storage_state=true",
+                        platform_label,
+                        account_name,
+                        attempt,
+                    )
+                    page_closed_logged = True
+                page = None
+            if page_available:
+                challenge = await detect_verification_challenge(page)
+                if challenge:
+                    deadline = max(deadline, asyncio.get_running_loop().time() + 120)
+                    if challenge["signature"] != last_verification_signature:
+                        push_structured_status(status_queue, command_queue, "verification_required", challenge["payload"])
+                        last_verification_signature = challenge["signature"]
+                    await asyncio.sleep(0.5)
+                    continue
+            last_verification_signature = None
+
             storage_state = await context.storage_state()
             if page is not None and not page.is_closed():
-                live_result = await validate_active_page_detail(
+                live_result = await validate_login_completion_detail(
                     account_type,
                     page,
                     settle_seconds=0.8,
@@ -1011,6 +1055,21 @@ async def persist_login_state_with_retry(
                 last_error,
             )
         except Exception as exc:
+            if is_transient_login_page_error(exc):
+                deadline = max(deadline, asyncio.get_running_loop().time() + 10)
+                log_throttled(
+                    login_logger,
+                    "INFO",
+                    f"login.persist.transient:{platform_label}:{account_name}",
+                    5,
+                    "{} login page changed while persisting state account_name={} attempt={} waiting_for_page_settle=true error={}",
+                    platform_label,
+                    account_name,
+                    attempt,
+                    exc,
+                )
+                await asyncio.sleep(0.3)
+                continue
             last_error = str(exc)
             login_logger.warning(
                 "{} login cookie verify error account_name={} attempt={} error={}",

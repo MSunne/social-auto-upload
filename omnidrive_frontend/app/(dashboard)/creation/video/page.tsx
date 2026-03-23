@@ -85,6 +85,7 @@ type VideoPreviewSurfaceInnerProps = {
 type ProgressTone = "idle" | "progress" | "success" | "danger";
 
 const VIDEO_CURRENT_JOB_STORAGE_KEY = "omnidrive.creation.video.currentJobId";
+const VIDEO_CREATION_SOURCE = "omnidrive_cloud";
 
 const DEFAULT_DURATION_OPTIONS: VideoDurationOption[] = [
   { label: "8s", seconds: 8 },
@@ -830,7 +831,12 @@ export default function VideoCreationPage() {
   const { data: videoJobs = [], refetch: refetchVideoJobs } = useQuery<AIJob[]>(
     {
       queryKey: ["aiJobs", "video"],
-      queryFn: () => listAIJobs({ jobType: "video", limit: 50 }),
+      queryFn: () =>
+        listAIJobs({
+          jobType: "video",
+          source: VIDEO_CREATION_SOURCE,
+          limit: 50,
+        }),
       refetchInterval: currentJobId ? 4000 : false,
     },
   );
@@ -1088,7 +1094,7 @@ export default function VideoCreationPage() {
         jobType: "video",
         modelName: activeModel.modelName,
         prompt: prompt.trim(),
-        source: "omnidrive_cloud",
+        source: VIDEO_CREATION_SOURCE,
         inputPayload: {
           prompt: prompt.trim(),
           aspectRatio: selectedResolutionOption.aspectRatio,

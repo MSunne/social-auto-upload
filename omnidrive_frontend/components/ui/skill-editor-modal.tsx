@@ -374,13 +374,11 @@ export function SkillEditorModal({
         "客户输入图文和提示词",
         "系统先做分镜优化",
         selectedModel?.modelName || "最终模型待选择",
-        "由账号任务安排发布时间",
       ]
     : [
         "客户输入图文和提示词",
         "跳过分镜，直接执行",
         selectedModel?.modelName || "最终模型待选择",
-        "由账号任务安排发布时间",
       ];
 
   return (
@@ -390,8 +388,8 @@ export function SkillEditorModal({
         <div className="absolute bottom-[-8%] right-[-5%] h-64 w-64 rounded-full bg-cyan/12 blur-3xl" />
       </div>
 
-      <div className="relative mx-auto flex min-h-[calc(100vh-2rem)] max-w-[1260px] items-center">
-        <div className="w-full overflow-hidden rounded-[30px] border border-white/10 bg-[#08111f]/96 shadow-[0_28px_100px_rgba(0,0,0,0.52)]">
+      <div className="relative mx-auto flex h-[calc(100vh-2rem)] max-w-[1260px]">
+        <div className="flex w-full flex-col overflow-hidden rounded-[30px] border border-white/10 bg-[#08111f]/96 shadow-[0_28px_100px_rgba(0,0,0,0.52)]">
           <div className="border-b border-white/10 bg-[linear-gradient(135deg,rgba(177,73,255,0.14),rgba(0,245,212,0.05)_40%,rgba(8,17,31,0)_72%)] px-6 py-6 sm:px-8">
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-3">
@@ -427,105 +425,101 @@ export function SkillEditorModal({
             </div>
           </div>
 
-          <div className="max-h-[calc(100vh-14rem)] overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_292px]">
               <div className="px-6 py-6 sm:px-8">
-                <div className="space-y-5">
+                <div className="space-y-6">
                   <SectionCard
                     title="基础设定"
                     description="先把这条技能的目标和最终产出说清楚。"
                   >
-                    <div className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
-                      <label className="space-y-2.5">
-                        <span className="text-sm font-medium text-white">技能名称</span>
-                        <input
-                          value={form.name}
-                          onChange={(event) =>
-                            setForm((current) => ({ ...current, name: event.target.value }))
-                          }
-                          placeholder="例如：新品种草短视频"
-                          className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
-                        />
-                      </label>
+                    <label className="space-y-2.5">
+                      <span className="text-sm font-medium text-white">技能名称</span>
+                      <input
+                        value={form.name}
+                        onChange={(event) =>
+                          setForm((current) => ({ ...current, name: event.target.value }))
+                        }
+                        placeholder="例如：新品种草短视频"
+                        className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
+                      />
+                    </label>
 
-                      <div className="space-y-2.5">
-                        <span className="text-sm font-medium text-white">输出类型</span>
-                        <div className="grid gap-3 sm:grid-cols-3">
-                          {OUTPUT_OPTIONS.map((option) => {
-                            const Icon = option.icon;
-                            const selected = option.value === form.outputType;
-                            return (
-                              <button
-                                key={option.value}
-                                type="button"
-                                onClick={() => handleOutputChange(option.value)}
-                                className={cn(
-                                  "rounded-2xl border px-4 py-4 text-left transition-all",
-                                  selected
-                                    ? "border-accent/45 bg-accent/12 shadow-[0_12px_35px_rgba(177,73,255,0.16)]"
-                                    : "border-white/10 bg-white/[0.04] hover:border-white/18 hover:bg-white/[0.06]",
-                                )}
-                              >
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className={cn("flex h-9 w-9 items-center justify-center rounded-2xl bg-white/8", option.tone)}>
-                                    <Icon className="h-4 w-4" />
-                                  </div>
-                                  <SelectionBadge selected={selected} />
+                    <div className="space-y-2.5">
+                      <span className="text-sm font-medium text-white">输出类型</span>
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        {OUTPUT_OPTIONS.map((option) => {
+                          const Icon = option.icon;
+                          const selected = option.value === form.outputType;
+                          return (
+                            <button
+                              key={option.value}
+                              type="button"
+                              onClick={() => handleOutputChange(option.value)}
+                              className={cn(
+                                "rounded-2xl border px-4 py-4 text-left transition-all",
+                                selected
+                                  ? "border-accent/45 bg-accent/12 shadow-[0_12px_35px_rgba(177,73,255,0.16)]"
+                                  : "border-white/10 bg-white/[0.04] hover:border-white/18 hover:bg-white/[0.06]",
+                              )}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className={cn("flex h-9 w-9 items-center justify-center rounded-2xl bg-white/8", option.tone)}>
+                                  <Icon className="h-4 w-4" />
                                 </div>
-                                <p className="mt-3 text-sm font-semibold text-white">{option.label}</p>
-                                <p className="mt-1 text-xs leading-5 text-text-secondary">{option.hint}</p>
-                              </button>
-                            );
-                          })}
-                        </div>
+                                <SelectionBadge selected={selected} />
+                              </div>
+                              <p className="mt-3 text-sm font-semibold text-white">{option.label}</p>
+                              <p className="mt-1 text-xs leading-5 text-text-secondary">{option.hint}</p>
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
 
-	                    <div className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
-	                      <label className="space-y-2.5">
-	                        <span className="text-sm font-medium text-white">技能说明</span>
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <label className="space-y-2.5">
+                        <span className="text-sm font-medium text-white">技能说明</span>
                         <textarea
                           value={form.description}
                           onChange={(event) =>
                             setForm((current) => ({ ...current, description: event.target.value }))
                           }
-                          rows={5}
+                          rows={4}
                           placeholder="描述内容目标、受众、语气、场景和限制。"
-                          className="w-full rounded-[24px] border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
-	                        />
-	                      </label>
+                          className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
+                        />
+                      </label>
 
-	                      <div className="space-y-4">
-	                        <label className="space-y-2.5">
-	                          <span className="text-sm font-medium text-white">任务提示词</span>
-	                          <textarea
-	                            value={form.promptTemplate}
-	                            onChange={(event) =>
-	                              setForm((current) => ({ ...current, promptTemplate: event.target.value }))
-	                            }
-	                            rows={5}
-	                            placeholder="告诉系统重点表达什么，比如镜头感、文案节奏、品牌边界和禁用词。"
-	                            className="w-full rounded-[24px] border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
-	                          />
-	                        </label>
+                      <label className="space-y-2.5">
+                        <span className="text-sm font-medium text-white">任务提示词</span>
+                        <textarea
+                          value={form.promptTemplate}
+                          onChange={(event) =>
+                            setForm((current) => ({ ...current, promptTemplate: event.target.value }))
+                          }
+                          rows={4}
+                          placeholder="告诉系统重点表达什么，比如镜头感、文案节奏、品牌边界和禁用词。"
+                          className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
+                        />
+                      </label>
+                    </div>
 
-	                        <label className="space-y-2.5">
-	                          <span className="text-sm font-medium text-white">默认话题</span>
-	                          <textarea
-	                            value={form.topicsText}
-	                            onChange={(event) =>
-	                              setForm((current) => ({ ...current, topicsText: event.target.value }))
-	                            }
-	                            rows={3}
-	                            placeholder="例如：春季穿搭，新品开箱，玩具测评。多个话题可用空格、逗号或换行分隔。"
-	                            className="w-full rounded-[24px] border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
-	                          />
-	                          <p className="text-xs leading-5 text-text-secondary">
-	                            这些话题会跟随技能进入账号发布任务，并继续传给 SAU 上传器。
-	                          </p>
-	                        </label>
-	                      </div>
-	                    </div>
+                    <label className="space-y-2.5">
+                      <span className="text-sm font-medium text-white">默认话题</span>
+                      <textarea
+                        value={form.topicsText}
+                        onChange={(event) =>
+                          setForm((current) => ({ ...current, topicsText: event.target.value }))
+                        }
+                        rows={2}
+                        placeholder="例如：春季穿搭，新品开箱，玩具测评。多个话题可用空格、逗号或换行分隔。"
+                        className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
+                      />
+                      <p className="text-xs leading-5 text-text-secondary">
+                        这些话题会跟随技能进入账号发布任务，并继续传给 SAU 上传器。
+                      </p>
+                    </label>
 	                  </SectionCard>
 
                   <SectionCard
@@ -624,29 +618,6 @@ export function SkillEditorModal({
                     )}
                   </SectionCard>
 
-                  <SectionCard
-                    title="发布时间配置"
-                    description="技能本身不带执行时间，发布时间统一在使用技能的账号任务里配置。"
-                  >
-                    <div className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
-                      <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-5">
-                        <p className="text-sm font-medium text-white">新的使用方式</p>
-                        <div className="mt-3 space-y-2 text-sm leading-6 text-text-secondary">
-                          <p>1. 在这里维护技能内容、模型、分镜和参考素材。</p>
-                          <p>2. 到 OmniBull 账号任务页选择这条技能。</p>
-                          <p>3. 每个账号分别设置发布时间，也支持后续单独修改。</p>
-                        </div>
-                      </div>
-
-                      <div className="rounded-[24px] border border-cyan/20 bg-cyan/10 p-5">
-                        <p className="text-sm font-medium text-white">为什么改成账号侧配置时间</p>
-                        <div className="mt-3 space-y-2 text-sm leading-6 text-text-secondary">
-                          <p>同一条技能可能会被多个账号复用，不同账号往往对应不同平台和投放时段。</p>
-                          <p>把时间放到账号任务里后，每个账号都能独立安排和修改发布时间，技能本身只负责产出逻辑。</p>
-                        </div>
-                      </div>
-                    </div>
-                  </SectionCard>
 
                   <SectionCard
                     title="参考素材"
@@ -776,7 +747,6 @@ export function SkillEditorModal({
                     <div className="grid gap-3">
                       <SummaryLine label="输出类型" value={selectedOutput.label} />
                       <SummaryLine label="最终模型" value={selectedModel?.modelName || "未选择"} />
-                      <SummaryLine label="发布时间" value="由账号任务配置" />
                       <SummaryLine label="参考素材" value={`${totalImageCount} 图 / ${totalTextCount} 文`} />
                     </div>
                     <div className="mt-4 space-y-3">
@@ -795,7 +765,7 @@ export function SkillEditorModal({
             </div>
           </div>
 
-          <div className="flex items-center justify-end gap-3 border-t border-white/10 bg-[#091221]/92 px-6 py-4 sm:px-8">
+          <div className="flex shrink-0 items-center justify-end gap-3 border-t border-white/10 bg-[#091221]/92 px-6 py-4 sm:px-8">
             <button
               type="button"
               onClick={() => {

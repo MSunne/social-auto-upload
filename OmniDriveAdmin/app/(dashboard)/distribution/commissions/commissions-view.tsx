@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import { useDistributionCommissions } from "@/lib/hooks/useDistribution";
+import { Fragment, useState } from "react";
+import { ChevronDown, ChevronUp, Search, Loader2, RefreshCw, HandCoins, ArrowDownToLine, CheckCircle2, Clock } from "lucide-react";
+import { useAdminCommissionReleases, useDistributionCommissions } from "@/lib/hooks/useDistribution";
 import { PageHeader } from "@/components/ui/common";
-import { Search, Loader2, RefreshCw, HandCoins, ArrowDownToLine, CheckCircle2, Clock } from "lucide-react";
+import type { AdminCommissionReleaseEvent } from "@/lib/types";
 
 const STATUS_TABS = [
   { id: "", label: "全部佣金" },
@@ -12,11 +13,122 @@ const STATUS_TABS = [
   { id: "settled", label: "已结算" },
 ];
 
+function formatCurrency(amountCents: number) {
+  return `¥ ${(amountCents / 100).toFixed(2)}`;
+}
+
+function extractReleaseTitle(item: AdminCommissionReleaseEvent) {
+  const snapshot = item.sourceSnapshot;
+  if (snapshot && typeof snapshot === "object") {
+    const title = snapshot.title;
+    if (typeof title === "string" && title.trim()) {
+      return title.trim();
+    }
+    const publishTask = snapshot.publishTask;
+    if (publishTask && typeof publishTask === "object") {
+      const publishTitle = (publishTask as Record<string, unknown>).title;
+      if (typeof publishTitle === "string" && publishTitle.trim()) {
+        return publishTitle.trim();
+      }
+    }
+  }
+  return item.sourceType === "ai_job" ? "AI 任务" : item.sourceType;
+}
+
+function extractReleaseMeta(item: AdminCommissionReleaseEvent) {
+  const metadata = item.metadata;
+  if (!metadata || typeof metadata !== "object") {
+    return [];
+  }
+  const values: string[] = [];
+  const meterCode = metadata.meterCode;
+  if (typeof meterCode === "string" && meterCode.trim()) {
+    values.push(meterCode.trim());
+  }
+  const quantity = metadata.quantity;
+  if (typeof quantity === "number" && quantity > 0) {
+    values.push(`数量 ${quantity}`);
+  }
+  const debitedCredits = metadata.debitedCredits;
+  if (typeof debitedCredits === "number" && debitedCredits > 0) {
+    values.push(`扣减 ${debitedCredits} 积分`);
+  }
+  const quotaUsed = metadata.quotaUsed;
+  if (typeof quotaUsed === "number" && quotaUsed > 0) {
+    values.push(`套餐抵扣 ${quotaUsed}`);
+  }
+  return values;
+}
+
+function CommissionTracePanel({ commissionId }: { commissionId: string }) {
+  const { data, isLoading, error } = useAdminCommissionReleases(commissionId, true);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 px-1 py-6 text-sm text-[var(--color-text-secondary)]">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        正在读取精确释放轨迹...
+      </div>
+    );
+  }
+
+  if (error) {
+    return <div className="px-1 py-4 text-sm text-red-500">追溯数据加载失败，请稍后重试</div>;
+  }
+
+  if (!data || data.length === 0) {
+    return <div className="px-1 py-4 text-sm text-[var(--color-text-secondary)]">该佣金还没有释放记录</div>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {data.map((item) => (
+        <div key={item.id} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <div className="text-sm font-medium text-[var(--color-text-primary)]">{extractReleaseTitle(item)}</div>
+              <div className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                {item.rechargeOrderNo || item.rechargeOrderId} · {new Date(item.createdAt).toLocaleString("zh-CN")}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-[var(--color-text-secondary)]">
+                {extractReleaseMeta(item).map((value) => (
+                  <span key={value} className="rounded-full border border-[var(--color-border)] px-2 py-1">
+                    {value}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="grid min-w-[180px] grid-cols-2 gap-2 text-right text-xs">
+              <div className="rounded-lg bg-[var(--color-bg-secondary)] px-3 py-2">
+                <div className="text-[var(--color-text-secondary)]">释放积分</div>
+                <div className="mt-1 font-semibold text-[var(--color-text-primary)]">{item.consumedCreditsDelta}</div>
+              </div>
+              <div className="rounded-lg bg-[var(--color-bg-secondary)] px-3 py-2">
+                <div className="text-[var(--color-text-secondary)]">新增佣金</div>
+                <div className="mt-1 font-semibold text-[var(--color-primary)]">{formatCurrency(item.releasedAmountDeltaCents)}</div>
+              </div>
+              <div className="rounded-lg bg-[var(--color-bg-secondary)] px-3 py-2">
+                <div className="text-[var(--color-text-secondary)]">累计消耗</div>
+                <div className="mt-1 font-semibold text-[var(--color-text-primary)]">{item.commissionItemConsumedCredits}</div>
+              </div>
+              <div className="rounded-lg bg-[var(--color-bg-secondary)] px-3 py-2">
+                <div className="text-[var(--color-text-secondary)]">累计释放</div>
+                <div className="mt-1 font-semibold text-blue-400">{formatCurrency(item.commissionItemReleasedAmountCents)}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function CommissionsView() {
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [statusParam, setStatusParam] = useState("");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const { data, isLoading, error, refetch } = useDistributionCommissions({ 
     page, 
@@ -94,48 +206,78 @@ export function CommissionsView() {
                 <th className="px-5 py-3.5 font-medium">获佣推广员</th>
                 <th className="px-5 py-3.5 font-medium">成单受邀人</th>
                 <th className="px-5 py-3.5 font-medium text-right">成金基数 / 比例</th>
-                <th className="px-5 py-3.5 font-medium text-right">获得佣金</th>
+                <th className="px-5 py-3.5 font-medium text-right">佣金 / 已释放</th>
+                <th className="px-5 py-3.5 font-medium text-right">积分释放进度</th>
                 <th className="px-5 py-3.5 font-medium">状态</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
               {isLoading && (
-                <tr><td colSpan={6} className="px-6 py-12 text-center">
+                <tr><td colSpan={7} className="px-6 py-12 text-center">
                   <Loader2 className="h-6 w-6 animate-spin mx-auto text-[var(--color-text-secondary)]" />
                   <p className="mt-2 text-sm text-[var(--color-text-secondary)]">加载佣金明细...</p>
                 </td></tr>
               )}
-              {error && <tr><td colSpan={6} className="px-6 py-10 text-center text-red-500 text-sm">加载失败，请重试</td></tr>}
-              {data && data.items.length === 0 && <tr><td colSpan={6} className="px-6 py-12 text-center text-[var(--color-text-secondary)] text-sm">暂无符合条件的佣金流水</td></tr>}
-              {data && data.items.map(row => (
-                <tr key={row.id} className="hover:bg-[var(--color-bg-secondary)]/50 transition-colors">
-                  <td className="px-5 py-3.5 whitespace-nowrap">
-                    <div className="font-mono text-xs text-[var(--color-text-secondary)] mb-1">{row.id}</div>
-                    <div className="text-xs">{new Date(row.createdAt).toLocaleString("zh-CN")}</div>
-                  </td>
-                  <td className="px-5 py-3.5">
-                    <div className="text-sm font-medium">{row.promoter.name}</div>
-                    <div className="text-xs text-[var(--color-text-secondary)]">{row.promoter.email}</div>
-                  </td>
-                  <td className="px-5 py-3.5">
-                    <div className="text-sm font-medium">{row.invitee.name}</div>
-                    <div className="text-xs text-[var(--color-text-secondary)]">{row.invitee.email}</div>
-                  </td>
-                  <td className="px-5 py-3.5 text-right">
-                    <div className="text-sm">¥ {(row.commissionBaseAmountCents / 100).toFixed(2)}</div>
-                    <div className="text-xs text-[var(--color-text-secondary)]">{row.commissionRate * 100}%</div>
-                  </td>
-                  <td className="px-5 py-3.5 text-right font-medium text-[var(--color-primary)] text-lg">
-                    ¥ {(row.amountCents / 100).toFixed(2)}
-                  </td>
-                  <td className="px-5 py-3.5 space-y-1">
-                    {renderStatus(row.status)}
-                    {row.status === "settled" && row.settledAt && (
-                      <div className="text-[10px] text-[var(--color-text-secondary)]">于 {new Date(row.settledAt).toLocaleDateString()} 结算</div>
+              {error && <tr><td colSpan={7} className="px-6 py-10 text-center text-red-500 text-sm">加载失败，请重试</td></tr>}
+              {data && data.items.length === 0 && <tr><td colSpan={7} className="px-6 py-12 text-center text-[var(--color-text-secondary)] text-sm">暂无符合条件的佣金流水</td></tr>}
+              {data && data.items.map(row => {
+                const isExpanded = expandedId === row.id;
+                const releasePercent = row.totalGrantedCredits > 0 ? Math.min(100, (row.consumedCredits / row.totalGrantedCredits) * 100) : 0;
+
+                return (
+                  <Fragment key={row.id}>
+                    <tr className="hover:bg-[var(--color-bg-secondary)]/50 transition-colors">
+                      <td className="px-5 py-3.5 whitespace-nowrap">
+                        <button
+                          onClick={() => setExpandedId(current => current === row.id ? null : row.id)}
+                          className="mb-2 inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] px-2 py-1 text-[11px] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-secondary)]"
+                        >
+                          {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                          精确追溯
+                        </button>
+                        <div className="font-mono text-xs text-[var(--color-text-secondary)] mb-1">{row.rechargeOrderNo || row.id}</div>
+                        <div className="text-xs">{new Date(row.createdAt).toLocaleString("zh-CN")}</div>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <div className="text-sm font-medium">{row.promoter.name}</div>
+                        <div className="text-xs text-[var(--color-text-secondary)]">{row.promoter.email}</div>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <div className="text-sm font-medium">{row.invitee.name}</div>
+                        <div className="text-xs text-[var(--color-text-secondary)]">{row.invitee.email}</div>
+                      </td>
+                      <td className="px-5 py-3.5 text-right">
+                        <div className="text-sm">{formatCurrency(row.commissionBaseAmountCents)}</div>
+                        <div className="text-xs text-[var(--color-text-secondary)]">{(row.commissionRate * 100).toFixed(2)}%</div>
+                      </td>
+                      <td className="px-5 py-3.5 text-right">
+                        <div className="text-lg font-medium text-[var(--color-primary)]">{formatCurrency(row.amountCents)}</div>
+                        <div className="text-xs text-blue-400">已释放 {formatCurrency(row.releasedAmountCents)}</div>
+                      </td>
+                      <td className="px-5 py-3.5 text-right">
+                        <div className="text-sm font-medium">{row.consumedCredits} / {row.totalGrantedCredits}</div>
+                        <div className="mt-2 h-2 overflow-hidden rounded-full bg-[var(--color-bg-secondary)]">
+                          <div className="h-full rounded-full bg-[var(--color-primary)]" style={{ width: `${releasePercent}%` }} />
+                        </div>
+                        <div className="mt-1 text-[10px] text-[var(--color-text-secondary)]">{releasePercent.toFixed(1)}% · {row.releaseEventCount} 条释放事件</div>
+                      </td>
+                      <td className="px-5 py-3.5 space-y-1">
+                        {renderStatus(row.status)}
+                        {row.status === "settled" && row.settledAt && (
+                          <div className="text-[10px] text-[var(--color-text-secondary)]">于 {new Date(row.settledAt).toLocaleDateString()} 结算</div>
+                        )}
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <tr className="bg-[var(--color-bg-secondary)]/35">
+                        <td colSpan={7} className="px-5 py-5">
+                          <CommissionTracePanel commissionId={row.id} />
+                        </td>
+                      </tr>
                     )}
-                  </td>
-                </tr>
-              ))}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>

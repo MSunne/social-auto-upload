@@ -277,6 +277,10 @@ func (s *Store) CreditSupportRecharge(ctx context.Context, orderID string, input
 	servicePayload["nextAction"] = "completed"
 
 	grants, expiresAt, packageName := buildSupportRechargeGrantPlan(order, now)
+	commissionItem, commissionSnapshot, err := s.ensureDistributionCommissionForRechargeOrderTx(ctx, tx, order)
+	if err != nil {
+		return nil, err
+	}
 	referenceType := stringPtr("support_recharge")
 	referenceID := &order.ID
 	entryType := "recharge"
@@ -328,30 +332,36 @@ func (s *Store) CreditSupportRecharge(ctx context.Context, orderID string, input
 
 		if entitlement.MeterCode == "wallet_credit" {
 			if err := s.grantWalletCreditsTx(ctx, tx, GrantWalletCreditsInput{
-				UserID:               order.UserID,
-				Amount:               entitlement.GrantAmount,
-				EntryType:            &entryType,
-				Description:          description,
-				ReferenceType:        referenceType,
-				ReferenceID:          referenceID,
-				RechargeOrderID:      &order.ID,
-				PaymentTransactionID: paymentTransactionID,
-				Metadata:             grantMetadata,
+				UserID:                       order.UserID,
+				Amount:                       entitlement.GrantAmount,
+				EntryType:                    &entryType,
+				Description:                  description,
+				ReferenceType:                referenceType,
+				ReferenceID:                  referenceID,
+				RechargeOrderID:              &order.ID,
+				PaymentTransactionID:         paymentTransactionID,
+				DistributionCommissionItemID: stringPtr(valueOrEmptyDistributionCommissionID(commissionItem)),
+				ReleaseUnitCredits:           1,
+				Metadata:                     grantMetadata,
 			}); err != nil {
 				return nil, err
 			}
 		} else {
+			releaseUnitCredits := commissionSnapshot.QuotaUnitCredits[strings.TrimSpace(entitlement.MeterCode)]
 			if err := s.grantQuotaTx(ctx, tx, GrantQuotaInput{
-				UserID:        order.UserID,
-				MeterCode:     entitlement.MeterCode,
-				Amount:        entitlement.GrantAmount,
-				ExpiresAt:     expiresAt,
-				SourceType:    referenceType,
-				SourceID:      referenceID,
-				Description:   description,
-				ReferenceType: referenceType,
-				ReferenceID:   referenceID,
-				Payload:       grantMetadata,
+				UserID:                       order.UserID,
+				MeterCode:                    entitlement.MeterCode,
+				Amount:                       entitlement.GrantAmount,
+				ExpiresAt:                    expiresAt,
+				SourceType:                   referenceType,
+				SourceID:                     referenceID,
+				RechargeOrderID:              &order.ID,
+				DistributionCommissionItemID: stringPtr(valueOrEmptyDistributionCommissionID(commissionItem)),
+				ReleaseUnitCredits:           releaseUnitCredits,
+				Description:                  description,
+				ReferenceType:                referenceType,
+				ReferenceID:                  referenceID,
+				Payload:                      grantMetadata,
 			}); err != nil {
 				return nil, err
 			}
@@ -433,14 +443,17 @@ func (s *Store) CreditSupportRecharge(ctx context.Context, orderID string, input
 		return nil, err
 	}
 
-	if err := s.ensureDistributionCommissionForRechargeOrderTx(ctx, tx, order); err != nil {
-		return nil, err
-	}
-
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return s.getRechargeOrderByIDAnyUser(ctx, order.ID)
+}
+
+func valueOrEmptyDistributionCommissionID(item *distributionCommissionItemRecord) string {
+	if item == nil {
+		return ""
+	}
+	return strings.TrimSpace(item.ID)
 }
 
 func (s *Store) RejectSupportRecharge(ctx context.Context, orderID string, input RejectSupportRechargeInput) (*domain.RechargeOrder, error) {

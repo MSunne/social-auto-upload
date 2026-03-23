@@ -92,6 +92,7 @@ func (w *Worker) Start(parent context.Context) func() {
 
 	go func() {
 		defer wg.Done()
+		w.recoverInterruptedJobsOnStartup(ctx)
 		w.run(ctx)
 	}()
 
@@ -100,6 +101,18 @@ func (w *Worker) Start(parent context.Context) func() {
 		wg.Wait()
 		w.app.Logger.Info("ai worker stopped")
 	}
+}
+
+func (w *Worker) recoverInterruptedJobsOnStartup(ctx context.Context) {
+	recovered, err := w.app.Store.RecoverInterruptedExecutableAIJobs(logctx.WithOperation(ctx, "ai_worker_startup_recovery"))
+	if err != nil {
+		w.app.Logger.Error("ai worker failed to recover interrupted ai jobs on startup", "error", err)
+		return
+	}
+	if len(recovered) == 0 {
+		return
+	}
+	w.app.Logger.Info("ai worker recovered interrupted ai jobs on startup", "count", len(recovered))
 }
 
 func (w *Worker) run(ctx context.Context) {

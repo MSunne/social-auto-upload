@@ -997,6 +997,41 @@ func (s *Store) RecoverExpiredExecutableAIJobLeases(ctx context.Context) ([]doma
 	return items, rows.Err()
 }
 
+func (s *Store) RecoverInterruptedExecutableAIJobs(ctx context.Context) ([]domain.AIJob, error) {
+	rows, err := s.pool.Query(ctx, `
+		UPDATE ai_jobs
+		SET status = 'queued',
+		    message = CASE
+		        WHEN job_type = 'video' AND COALESCE(output_payload->'video'->>'id', '') <> '' THEN 'AI worker 重启后已恢复视频任务，继续回查云端结果'
+		        ELSE 'AI worker 重启后已恢复任务，重新进入执行队列'
+		    END,
+		    lease_owner_device_id = NULL,
+		    lease_token = NULL,
+		    lease_expires_at = NULL,
+		    finished_at = NULL,
+		    updated_at = NOW()
+		WHERE source IN (`+executableAIJobSourcesSQL+`)
+		  AND status = 'running'
+		  AND lease_owner_device_id IS NULL
+		  AND lease_token IS NOT NULL
+		RETURNING `+aiJobSelectColumns+`
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.AIJob, 0)
+	for rows.Next() {
+		job, scanErr := scanAIJob(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *job)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) ClaimAIJobLease(ctx context.Context, jobID string, deviceID string, leaseToken string, leaseExpiresAt time.Time) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE ai_jobs

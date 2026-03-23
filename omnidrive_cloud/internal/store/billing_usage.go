@@ -63,10 +63,22 @@ type pricingRuleRecord struct {
 }
 
 type quotaAccountRecord struct {
-	ID             string
-	MeterCode      string
-	RemainingTotal int64
-	ExpiresAt      *time.Time
+	ID                           string
+	MeterCode                    string
+	RemainingTotal               int64
+	ExpiresAt                    *time.Time
+	RechargeOrderID              *string
+	DistributionCommissionItemID *string
+	ReleaseUnitCredits           int64
+}
+
+type walletLotRecord struct {
+	ID                           string
+	RechargeOrderID              *string
+	DistributionCommissionItemID *string
+	RemainingCredits             int64
+	ConsumedCredits              int64
+	ReleaseUnitCredits           int64
 }
 
 type walletLedgerPlan struct {
@@ -79,13 +91,16 @@ type walletLedgerPlan struct {
 }
 
 type quotaLedgerPlan struct {
-	accountID     string
-	meterCode     string
-	amountDelta   int64
-	description   string
-	referenceType *string
-	referenceID   *string
-	payload       []byte
+	accountID                    string
+	meterCode                    string
+	amountDelta                  int64
+	description                  string
+	referenceType                *string
+	referenceID                  *string
+	payload                      []byte
+	rechargeOrderID              *string
+	distributionCommissionItemID *string
+	releaseUnitCredits           int64
 }
 
 type usageLedgerRefs struct {
@@ -151,7 +166,18 @@ func (s *Store) ApplyUsageBilling(ctx context.Context, input ApplyUsageBillingIn
 	if err != nil {
 		return nil, err
 	}
+	if err := s.backfillDistributionGrantTrackingTx(ctx, tx, input.UserID); err != nil {
+		return nil, err
+	}
 	quotaAccounts, err := loadQuotaAccountsForUsageTx(ctx, tx, input.UserID, quotaMeterCodes)
+	if err != nil {
+		return nil, err
+	}
+	walletLots, err := loadWalletLotsForUsageTx(ctx, tx, input.UserID)
+	if err != nil {
+		return nil, err
+	}
+	sourceSnapshot, err := buildDistributionSourceSnapshotTx(ctx, tx, input.SourceType, input.SourceID)
 	if err != nil {
 		return nil, err
 	}
@@ -219,6 +245,20 @@ func (s *Store) ApplyUsageBilling(ctx context.Context, input ApplyUsageBillingIn
 		if err != nil {
 			return nil, err
 		}
+		if plan.distributionCommissionItemID != nil && strings.TrimSpace(*plan.distributionCommissionItemID) != "" && plan.releaseUnitCredits > 0 {
+			if err := s.applyDistributionCommissionReleaseTx(ctx, tx, distributionCommissionReleaseInput{
+				CommissionItemID:     strings.TrimSpace(*plan.distributionCommissionItemID),
+				SourceType:           input.SourceType,
+				SourceID:             input.SourceID,
+				SourceSnapshot:       sourceSnapshot,
+				QuotaAccountID:       &plan.accountID,
+				QuotaLedgerID:        stringPtr(ledgerID),
+				ConsumedCreditsDelta: absInt64(plan.amountDelta) * plan.releaseUnitCredits,
+				Metadata:             plan.payload,
+			}); err != nil {
+				return nil, err
+			}
+		}
 		appendMeterReference(refs.quotaAccountIDs, plan.meterCode, plan.accountID)
 		if ledgerID != "" {
 			appendMeterReference(refs.quotaLedgerIDs, plan.meterCode, ledgerID)
@@ -234,14 +274,13 @@ func (s *Store) ApplyUsageBilling(ctx context.Context, input ApplyUsageBillingIn
 		if err != nil {
 			return nil, err
 		}
+		if err := s.applyWalletLotConsumptionsTx(ctx, tx, input.UserID, input.SourceType, input.SourceID, sourceSnapshot, plan, ledgerID, walletLots); err != nil {
+			return nil, err
+		}
 		currentBalance = nextBalance
 		if ledgerID != "" {
 			appendMeterReference(refs.walletLedgerIDs, plan.meterCode, ledgerID)
 		}
-	}
-
-	if err := s.releaseDistributionCommissionForUsageTx(ctx, tx, input.UserID, input.SourceType, input.SourceID, result.DistributionReleaseCredits); err != nil {
-		return nil, err
 	}
 
 	if err := insertBilledUsageEventsTx(ctx, tx, input, result.Details, refs); err != nil {
@@ -489,7 +528,7 @@ func loadQuotaAccountsForUsageTx(ctx context.Context, tx pgx.Tx, userID string, 
 	}
 
 	rows, err := tx.Query(ctx, `
-		SELECT id, meter_code, remaining_total, expires_at
+		SELECT id, meter_code, remaining_total, expires_at, recharge_order_id, distribution_commission_item_id, release_unit_credits
 		FROM billing_quota_accounts
 		WHERE user_id = $1
 		  AND meter_code = ANY($2)
@@ -506,12 +545,38 @@ func loadQuotaAccountsForUsageTx(ctx context.Context, tx pgx.Tx, userID string, 
 
 	for rows.Next() {
 		item := &quotaAccountRecord{}
-		if scanErr := rows.Scan(&item.ID, &item.MeterCode, &item.RemainingTotal, &item.ExpiresAt); scanErr != nil {
+		if scanErr := rows.Scan(&item.ID, &item.MeterCode, &item.RemainingTotal, &item.ExpiresAt, &item.RechargeOrderID, &item.DistributionCommissionItemID, &item.ReleaseUnitCredits); scanErr != nil {
 			return nil, scanErr
 		}
 		result[item.MeterCode] = append(result[item.MeterCode], item)
 	}
 	return result, rows.Err()
+}
+
+func loadWalletLotsForUsageTx(ctx context.Context, tx pgx.Tx, userID string) ([]*walletLotRecord, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT id, recharge_order_id, distribution_commission_item_id, remaining_credits, consumed_credits, release_unit_credits
+		FROM billing_wallet_lots
+		WHERE user_id = $1
+		  AND status = 'active'
+		  AND remaining_credits > 0
+		ORDER BY created_at ASC
+		FOR UPDATE
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]*walletLotRecord, 0)
+	for rows.Next() {
+		item := &walletLotRecord{}
+		if scanErr := rows.Scan(&item.ID, &item.RechargeOrderID, &item.DistributionCommissionItemID, &item.RemainingCredits, &item.ConsumedCredits, &item.ReleaseUnitCredits); scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func planUsageCharge(metric ApplyUsageMetricInput, rule pricingRuleRecord, walletBalance int64, quotaAccounts map[string][]*quotaAccountRecord) (UsageBillingDetail, walletLedgerPlan, []quotaLedgerPlan, bool) {
@@ -576,17 +641,22 @@ func planUsageCharge(metric ApplyUsageMetricInput, rule pricingRuleRecord, walle
 				remainingUnits -= used
 				detail.QuotaUsed += used
 				quotaPlans = append(quotaPlans, quotaLedgerPlan{
-					accountID:   account.ID,
-					meterCode:   quotaMeterCode,
-					amountDelta: -used,
-					description: fmt.Sprintf("AI %s 套餐抵扣", detail.MeterCode),
+					accountID:                    account.ID,
+					meterCode:                    quotaMeterCode,
+					amountDelta:                  -used,
+					description:                  fmt.Sprintf("AI %s 套餐抵扣", detail.MeterCode),
+					rechargeOrderID:              account.RechargeOrderID,
+					distributionCommissionItemID: account.DistributionCommissionItemID,
+					releaseUnitCredits:           maxInt64(account.ReleaseUnitCredits, 0),
 					payload: mustJSONMap(map[string]any{
-						"meterCode": metric.MeterCode,
-						"quantity":  detail.Quantity,
-						"units":     detail.Units,
-						"quotaUsed": used,
+						"meterCode":  metric.MeterCode,
+						"quantity":   detail.Quantity,
+						"units":      detail.Units,
+						"quotaUsed":  used,
+						"chargeMode": rule.ChargeMode,
 					}),
 				})
+				detail.DistributionReleaseCredits += used * maxInt64(account.ReleaseUnitCredits, 0)
 			}
 		}
 		if remainingUnits > 0 {
@@ -598,7 +668,7 @@ func planUsageCharge(metric ApplyUsageMetricInput, rule pricingRuleRecord, walle
 			}
 			walletPlan.debitCredits = detail.DebitCredits
 		}
-		detail.DistributionReleaseCredits = detail.DebitCredits + (detail.QuotaUsed * rule.WalletDebitAmount)
+		detail.DistributionReleaseCredits += detail.DebitCredits
 	default:
 		detail.BillStatus = "failed"
 		detail.BillMessage = "unsupported charge mode"
@@ -674,6 +744,88 @@ func applyWalletLedgerPlanTx(ctx context.Context, tx pgx.Tx, userID string, curr
 	}
 
 	return ledgerID, nextBalance, nil
+}
+
+func (s *Store) applyWalletLotConsumptionsTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	userID string,
+	sourceType string,
+	sourceID string,
+	sourceSnapshot []byte,
+	plan walletLedgerPlan,
+	walletLedgerID string,
+	walletLots []*walletLotRecord,
+) error {
+	remainingCredits := plan.debitCredits
+	if remainingCredits <= 0 || len(walletLots) == 0 {
+		return nil
+	}
+
+	for _, lot := range walletLots {
+		if remainingCredits <= 0 {
+			break
+		}
+		if lot == nil || lot.RemainingCredits <= 0 {
+			continue
+		}
+
+		usedCredits := minInt64(lot.RemainingCredits, remainingCredits)
+		nextRemaining := lot.RemainingCredits - usedCredits
+		nextConsumed := lot.ConsumedCredits + usedCredits
+		status := "active"
+		if nextRemaining <= 0 {
+			nextRemaining = 0
+			status = "consumed"
+		}
+
+		if _, err := tx.Exec(ctx, `
+			UPDATE billing_wallet_lots
+			SET consumed_credits = $2,
+			    remaining_credits = $3,
+			    status = $4,
+			    updated_at = NOW()
+			WHERE id = $1
+		`, lot.ID, nextConsumed, nextRemaining, status); err != nil {
+			return err
+		}
+
+		consumptionMetadata := mustJSONMap(map[string]any{
+			"meterCode":      plan.meterCode,
+			"debitedCredits": usedCredits,
+			"quantity":       plan.quantity,
+			"description":    plan.description,
+		})
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO billing_wallet_lot_consumptions (
+				id, wallet_lot_id, user_id, source_type, source_id, meter_code, debited_credits, wallet_ledger_id, metadata
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`, uuid.NewString(), lot.ID, userID, strings.TrimSpace(sourceType), nullableString(strings.TrimSpace(sourceID)), nullableString(strings.TrimSpace(plan.meterCode)), usedCredits, nullableString(strings.TrimSpace(walletLedgerID)), consumptionMetadata); err != nil {
+			return err
+		}
+
+		if lot.DistributionCommissionItemID != nil && strings.TrimSpace(*lot.DistributionCommissionItemID) != "" {
+			if err := s.applyDistributionCommissionReleaseTx(ctx, tx, distributionCommissionReleaseInput{
+				CommissionItemID:     strings.TrimSpace(*lot.DistributionCommissionItemID),
+				SourceType:           sourceType,
+				SourceID:             sourceID,
+				SourceSnapshot:       sourceSnapshot,
+				WalletLotID:          &lot.ID,
+				WalletLedgerID:       nullableString(strings.TrimSpace(walletLedgerID)),
+				ConsumedCreditsDelta: usedCredits * maxInt64(lot.ReleaseUnitCredits, 1),
+				Metadata:             consumptionMetadata,
+			}); err != nil {
+				return err
+			}
+		}
+
+		lot.RemainingCredits = nextRemaining
+		lot.ConsumedCredits = nextConsumed
+		remainingCredits -= usedCredits
+	}
+
+	return nil
 }
 
 func insertBilledUsageEventsTx(ctx context.Context, tx pgx.Tx, input ApplyUsageBillingInput, details []UsageBillingDetail, refs usageLedgerRefs) error {
@@ -756,6 +908,13 @@ func minInt64(a int64, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+func absInt64(value int64) int64 {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func maxInt64(a int64, b int64) int64 {

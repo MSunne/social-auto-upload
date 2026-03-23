@@ -34,7 +34,7 @@ func TestPlanUsageChargeQuotaFallbackUsesQuotaBeforeWallet(t *testing.T) {
 	quotaCode := "image_generation_quota"
 	quotaAccounts := map[string][]*quotaAccountRecord{
 		quotaCode: {
-			{ID: "quota-1", MeterCode: quotaCode, RemainingTotal: 1},
+			{ID: "quota-1", MeterCode: quotaCode, RemainingTotal: 1, ReleaseUnitCredits: 80},
 		},
 	}
 

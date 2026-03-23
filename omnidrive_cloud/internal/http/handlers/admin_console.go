@@ -153,6 +153,39 @@ func (h *AdminConsoleHandler) ListWalletLedgers(w http.ResponseWriter, r *http.R
 	})
 }
 
+func (h *AdminConsoleHandler) ListBillingActivities(w http.ResponseWriter, r *http.Request) {
+	page := parseAdminPageQuery(r)
+	items, total, summary, err := h.app.Store.ListAdminBillingActivities(r.Context(), store.AdminBillingActivityListFilter{
+		Query:      strings.TrimSpace(r.URL.Query().Get("query")),
+		Kind:       strings.TrimSpace(r.URL.Query().Get("kind")),
+		Status:     strings.TrimSpace(r.URL.Query().Get("status")),
+		EntryType:  strings.TrimSpace(r.URL.Query().Get("entryType")),
+		SourceType: strings.TrimSpace(r.URL.Query().Get("sourceType")),
+		JobType:    strings.TrimSpace(r.URL.Query().Get("jobType")),
+		Channel:    strings.TrimSpace(r.URL.Query().Get("channel")),
+		ModelName:  strings.TrimSpace(r.URL.Query().Get("modelName")),
+		AdminPageFilter: store.AdminPageFilter{
+			Page:     page.Page,
+			PageSize: page.PageSize,
+		},
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load admin billing activities")
+		return
+	}
+
+	renderAdminList(w, page, total, items, summary, map[string]any{
+		"query":      strings.TrimSpace(r.URL.Query().Get("query")),
+		"kind":       strings.TrimSpace(r.URL.Query().Get("kind")),
+		"status":     strings.TrimSpace(r.URL.Query().Get("status")),
+		"entryType":  strings.TrimSpace(r.URL.Query().Get("entryType")),
+		"sourceType": strings.TrimSpace(r.URL.Query().Get("sourceType")),
+		"jobType":    strings.TrimSpace(r.URL.Query().Get("jobType")),
+		"channel":    strings.TrimSpace(r.URL.Query().Get("channel")),
+		"modelName":  strings.TrimSpace(r.URL.Query().Get("modelName")),
+	})
+}
+
 func (h *AdminConsoleHandler) ListUsageEvents(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, summary, err := h.app.Store.ListAdminBillingUsageEvents(r.Context(), store.AdminBillingUsageEventListFilter{

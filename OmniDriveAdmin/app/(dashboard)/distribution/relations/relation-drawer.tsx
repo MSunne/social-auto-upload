@@ -12,8 +12,8 @@ interface RelationDrawerProps {
 
 export function RelationDrawer({ isOpen, onClose, onSuccess }: RelationDrawerProps) {
   const [formData, setFormData] = useState({
-    promoterEmail: "",
-    inviteeEmail: "",
+    promoterIdentifier: "",
+    inviteeIdentifier: "",
     notes: "",
   });
 
@@ -24,8 +24,8 @@ export function RelationDrawer({ isOpen, onClose, onSuccess }: RelationDrawerPro
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.promoterEmail || !formData.inviteeEmail) {
-      alert("推广员和受邀人邮箱均为必填项");
+    if (!formData.promoterIdentifier || !formData.inviteeIdentifier) {
+      alert("推广员和受邀人的用户 ID / 邮箱 / 手机号均为必填项");
       return;
     }
     
@@ -59,21 +59,21 @@ export function RelationDrawer({ isOpen, onClose, onSuccess }: RelationDrawerPro
           <div className="mb-6 p-4 rounded-xl border border-blue-500/20 bg-blue-500/5">
             <h3 className="text-sm font-medium text-blue-400 mb-1">管理员操作提示</h3>
             <p className="text-xs text-[var(--color-text-secondary)]">
-              此功能用于在控制台手动为用户补绑上下级关系。操作生效后，后续受邀人的交易将开始计算佣金给推广员。
+              此功能用于在控制台手动为用户补绑上下级关系。支持输入用户 ID、邮箱或手机号。操作生效后，后续受邀人的交易将开始计算佣金给推广员。
             </p>
           </div>
 
           <form id="relation-form" onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="block text-sm font-medium mb-1.5">推广员 (上级) 邮箱</label>
-              <input type="email" required value={formData.promoterEmail} onChange={e => setFormData({ ...formData, promoterEmail: e.target.value })}
+              <label className="block text-sm font-medium mb-1.5">推广员 (上级) 用户 ID / 邮箱 / 手机号</label>
+              <input type="text" required value={formData.promoterIdentifier} onChange={e => setFormData({ ...formData, promoterIdentifier: e.target.value })}
                 className="w-full px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors"
                 placeholder="promoter@example.com" />
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1.5">受邀人 (下级) 邮箱</label>
-              <input type="email" required value={formData.inviteeEmail} onChange={e => setFormData({ ...formData, inviteeEmail: e.target.value })}
+              <label className="block text-sm font-medium mb-1.5">受邀人 (下级) 用户 ID / 邮箱 / 手机号</label>
+              <input type="text" required value={formData.inviteeIdentifier} onChange={e => setFormData({ ...formData, inviteeIdentifier: e.target.value })}
                 className="w-full px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg text-sm focus:outline-none focus:border-[var(--color-primary)] transition-colors"
                 placeholder="invitee@example.com" />
             </div>

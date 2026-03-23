@@ -3119,7 +3119,7 @@ def run_async_function(type,id,status_queue,command_queue=None):
             case _:
                 raise ValueError(f"unsupported login type: {type}")
     except Exception as exc:
-        print(f"登录线程执行失败: {exc}")
+        login_logger.exception("login thread execution failed platform_type={} account_name={} error={}", type, id, exc)
         if status_queue is not None:
             status_queue.put("500")
 
@@ -3128,7 +3128,6 @@ if should_boot_background_services():
     ensure_publish_task_manager_started()
     ensure_cloud_agent_started()
     ensure_omnidrive_agent_started()
-
 # SSE 流生成器函数
 def sse_stream(status_queue):
     while True:

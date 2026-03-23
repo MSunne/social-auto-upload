@@ -123,28 +123,33 @@ type CreateRechargeOrderInput struct {
 }
 
 type GrantWalletCreditsInput struct {
-	UserID               string
-	Amount               int64
-	EntryType            *string
-	Description          *string
-	ReferenceType        *string
-	ReferenceID          *string
-	RechargeOrderID      *string
-	PaymentTransactionID *string
-	Metadata             []byte
+	UserID                       string
+	Amount                       int64
+	EntryType                    *string
+	Description                  *string
+	ReferenceType                *string
+	ReferenceID                  *string
+	RechargeOrderID              *string
+	PaymentTransactionID         *string
+	DistributionCommissionItemID *string
+	ReleaseUnitCredits           int64
+	Metadata                     []byte
 }
 
 type GrantQuotaInput struct {
-	UserID        string
-	MeterCode     string
-	Amount        int64
-	ExpiresAt     *time.Time
-	SourceType    *string
-	SourceID      *string
-	Description   *string
-	ReferenceType *string
-	ReferenceID   *string
-	Payload       []byte
+	UserID                       string
+	MeterCode                    string
+	Amount                       int64
+	ExpiresAt                    *time.Time
+	SourceType                   *string
+	SourceID                     *string
+	RechargeOrderID              *string
+	DistributionCommissionItemID *string
+	ReleaseUnitCredits           int64
+	Description                  *string
+	ReferenceType                *string
+	ReferenceID                  *string
+	Payload                      []byte
 }
 
 type SubmitManualRechargeInput struct {

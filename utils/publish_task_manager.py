@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import sqlite3
+import shutil
 import threading
 import time
 import uuid
@@ -54,6 +55,7 @@ class PublishTaskManager:
         self._account_locks_lock = threading.Lock()
         self._artifact_dir = Path(BASE_DIR / "taskArtifacts" / "publish_verify")
         self._artifact_dir.mkdir(parents=True, exist_ok=True)
+        self._generated_root_paths = self._discover_generated_root_paths()
 
     def start(self):
         with self._start_lock:
@@ -118,6 +120,7 @@ class PublishTaskManager:
             recovered = self._recover_interrupted_tasks(cursor)
             repaired = self._repair_omnidrive_ai_schedule_drift(cursor)
             conn.commit()
+        cleaned = self._cleanup_published_generated_materials()
         if recovered:
             task_logger.info(
                 "publish task startup recovery requeued_count={}",
@@ -127,6 +130,11 @@ class PublishTaskManager:
             task_logger.info(
                 "publish task startup repair rescheduled_count={} source=omnidrive_ai",
                 repaired,
+            )
+        if cleaned:
+            task_logger.info(
+                "publish task startup cleaned downloaded generated materials count={}",
+                cleaned,
             )
 
     def _recover_interrupted_tasks(self, cursor):
@@ -258,6 +266,61 @@ class PublishTaskManager:
             )
             changed = cursor.rowcount == 1
             conn.commit()
+        if changed:
+            self._sync_task(task_uuid)
+        return changed
+
+    def realign_omnidrive_ai_task(self, task_uuid, intended_run_at, intended_publish_at=None):
+        task = self.get_task(task_uuid)
+        if not task or str(task.get("source") or "").strip() != "omnidrive_ai":
+            return False
+
+        intended_run_at = self._normalize_datetime(intended_run_at)
+        intended_publish_at = self._normalize_datetime(intended_publish_at) or intended_run_at
+        if not intended_run_at:
+            return False
+
+        next_status = "scheduled" if self._is_future_datetime(intended_run_at) else "pending"
+        next_message = "等待 AI 产物定时发布" if next_status == "scheduled" else "等待 AI 产物发布"
+        if (
+            task.get("status") == next_status
+            and task.get("runAt") == intended_run_at
+            and (task.get("platformPublishAt") or task.get("runAt")) == intended_publish_at
+            and task.get("message") == next_message
+        ):
+            return False
+
+        if str(task.get("status") or "").strip() not in {"pending", "scheduled", "failed"}:
+            return False
+
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                UPDATE publish_tasks
+                SET run_at = ?,
+                    platform_publish_at = ?,
+                    status = ?,
+                    message = ?,
+                    worker_name = NULL,
+                    started_at = NULL,
+                    finished_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE task_uuid = ?
+                  AND source = 'omnidrive_ai'
+                  AND status IN ('pending', 'scheduled', 'failed')
+                ''',
+                (
+                    intended_run_at,
+                    intended_publish_at,
+                    next_status,
+                    next_message,
+                    task_uuid,
+                ),
+            )
+            changed = cursor.rowcount == 1
+            conn.commit()
+
         if changed:
             self._sync_task(task_uuid)
         return changed
@@ -615,7 +678,14 @@ class PublishTaskManager:
                 message="发布任务执行成功",
                 finished=True,
             )
+            cleaned = self._cleanup_downloaded_materials_for_task(task_uuid)
             task_logger.info("publish task succeeded task_uuid={}", task_uuid)
+            if cleaned:
+                task_logger.info(
+                    "publish task cleaned downloaded generated materials task_uuid={} removed_count={}",
+                    task_uuid,
+                    cleaned,
+                )
         except PublishManualVerificationRequired as exc:
             verification_payload = dict(exc.payload or {})
             artifact_path = self._save_artifact(task_uuid, verification_payload.get("screenshotData"))
@@ -791,6 +861,189 @@ class PublishTaskManager:
     def _connect(self):
         return sqlite3.connect(self.db_path, timeout=30)
 
+    def _cleanup_downloaded_materials_for_task(self, task_uuid):
+        task = self.get_task(task_uuid)
+        if not task:
+            return 0
+        payload = task.get("payload") or {}
+        ai_task_uuid = str(payload.get("omnidriveAITaskUuid") or "").strip()
+        if task.get("source") != "omnidrive_ai" or task.get("status") != "success" or not ai_task_uuid:
+            return 0
+
+        related_tasks = self._list_tasks_by_ai_task_uuid(ai_task_uuid)
+        if not related_tasks or any(str(item.get("status") or "").strip() != "success" for item in related_tasks):
+            return 0
+        return self._cleanup_generated_materials_from_payloads(
+            [item.get("payload") or {} for item in related_tasks]
+        )
+
+    def _cleanup_published_generated_materials(self):
+        groups = self._list_successful_generated_payload_groups()
+        cleaned = 0
+        for payloads in groups.values():
+            cleaned += self._cleanup_generated_materials_from_payloads(payloads)
+        return cleaned
+
+    def _list_tasks_by_ai_task_uuid(self, ai_task_uuid):
+        if not ai_task_uuid:
+            return []
+
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                SELECT *
+                FROM publish_tasks
+                WHERE source = 'omnidrive_ai'
+                ORDER BY created_at ASC, id ASC
+                '''
+            )
+            rows = cursor.fetchall()
+
+        matched = []
+        for row in rows:
+            serialized = self._serialize_row(row)
+            payload = serialized.get("payload") or {}
+            if str(payload.get("omnidriveAITaskUuid") or "").strip() == ai_task_uuid:
+                matched.append(serialized)
+        return matched
+
+    def _list_successful_generated_payload_groups(self):
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                SELECT status, payload_json
+                FROM publish_tasks
+                WHERE source = 'omnidrive_ai'
+                '''
+            )
+            rows = cursor.fetchall()
+
+        grouped = {}
+        status_map = {}
+        for row in rows:
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except json.JSONDecodeError:
+                continue
+            ai_task_uuid = str(payload.get("omnidriveAITaskUuid") or "").strip()
+            if not ai_task_uuid:
+                continue
+            grouped.setdefault(ai_task_uuid, []).append(payload)
+            status_map.setdefault(ai_task_uuid, []).append(str(row["status"] or "").strip())
+
+        return {
+            ai_task_uuid: payloads
+            for ai_task_uuid, payloads in grouped.items()
+            if payloads and status_map.get(ai_task_uuid) and all(status == "success" for status in status_map[ai_task_uuid])
+        }
+
+    def _cleanup_generated_materials_from_payloads(self, payloads):
+        if not payloads:
+            return 0
+
+        removable_dirs = set()
+        removable_files = set()
+        for payload in payloads:
+            for candidate in self._iter_generated_cleanup_paths(payload):
+                target = Path(candidate).resolve()
+                if self._is_within_generated_root(target):
+                    removable_files.add(target)
+                    removable_dirs.add(self._generated_cleanup_anchor(target))
+
+        deleted_count = 0
+        for target in sorted(removable_files, key=lambda item: len(item.parts), reverse=True):
+            try:
+                if target.exists() and target.is_file():
+                    target.unlink()
+                    deleted_count += 1
+            except FileNotFoundError:
+                continue
+
+        for target_dir in sorted(removable_dirs, key=lambda item: len(item.parts), reverse=True):
+            if target_dir in self._generated_root_paths:
+                continue
+            if target_dir.exists():
+                before_exists = target_dir.exists()
+                shutil.rmtree(target_dir, ignore_errors=True)
+                if before_exists:
+                    deleted_count += 1
+
+        self._prune_empty_generated_directories()
+        return deleted_count
+
+    def _iter_generated_cleanup_paths(self, payload):
+        refs = payload.get("omnidriveMaterialRefs") or []
+        for item in refs:
+            if not isinstance(item, dict):
+                continue
+            resolved = self._resolve_generated_material_ref(item)
+            if resolved:
+                yield resolved
+
+        for direct_path in (payload.get("sourceAbsolutePath"), payload.get("thumbnailAbsolutePath")):
+            if direct_path:
+                yield direct_path
+
+    def _resolve_generated_material_ref(self, item):
+        try:
+            resolved = resolve_material_reference(
+                self.material_roots,
+                root_name=item.get("root"),
+                relative_path=item.get("path"),
+                absolute_path=item.get("absolutePath"),
+            )
+        except Exception:
+            return None
+        return resolved.get("absolutePath")
+
+    def _is_within_generated_root(self, target):
+        for root_path in self._generated_root_paths:
+            try:
+                target.relative_to(root_path)
+                return True
+            except ValueError:
+                continue
+        return False
+
+    def _generated_cleanup_anchor(self, target):
+        for root_path in self._generated_root_paths:
+            try:
+                relative = target.relative_to(root_path)
+            except ValueError:
+                continue
+            if not relative.parts:
+                return root_path
+            return root_path / relative.parts[0]
+        return target.parent
+
+    def _prune_empty_generated_directories(self):
+        for root_path in self._generated_root_paths:
+            if not root_path.exists():
+                continue
+            for child in root_path.iterdir():
+                if not child.is_dir():
+                    continue
+                try:
+                    next(child.iterdir())
+                except StopIteration:
+                    child.rmdir()
+
+    def _discover_generated_root_paths(self):
+        candidates = []
+        for root_name, root_path in (self.material_roots or {}).items():
+            normalized_name = str(root_name or "").strip().lower()
+            resolved_path = Path(root_path).expanduser().resolve()
+            if normalized_name.endswith("generated") or resolved_path.name.lower() == "generated":
+                candidates.append(resolved_path)
+
+        if candidates:
+            return tuple(dict.fromkeys(candidates))
+        return ((Path(BASE_DIR) / "omnidriveSync" / "generated").resolve(),)
+
     def _repair_omnidrive_ai_schedule_drift(self, cursor):
         try:
             cursor.execute(
@@ -853,11 +1106,8 @@ class PublishTaskManager:
             if row["status"] == "failed" and row["message"] != RESTART_INTERRUPTED_MESSAGE:
                 continue
 
-            if not self._is_future_datetime(intended_run_at):
-                continue
-
-            next_status = "scheduled"
-            next_message = "等待 AI 产物定时发布"
+            next_status = "scheduled" if self._is_future_datetime(intended_run_at) else "pending"
+            next_message = "等待 AI 产物定时发布" if next_status == "scheduled" else "等待 AI 产物发布"
             if row["status"] in {"pending", "scheduled"} and intended_run_at == row["run_at"] and intended_publish_at == row["platform_publish_at"]:
                 continue
 

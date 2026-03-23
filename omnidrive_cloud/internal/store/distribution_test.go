@@ -76,12 +76,15 @@ func TestCalculateDistributionGrantCreditsFromEntitlements(t *testing.T) {
 		{MeterCode: "video_generation_quota", GrantAmount: 1},
 	}
 
-	total := calculateDistributionGrantCreditsFromEntitlements(entitlements, map[string]int64{
+	total, walletGrantCredits := calculateDistributionGrantCreditsFromEntitlements(entitlements, map[string]int64{
 		"image_generation_quota": 80,
 		"video_generation_quota": 400,
 	})
 
 	if total != 1840 {
 		t.Fatalf("expected total grant credits 1840, got %d", total)
+	}
+	if walletGrantCredits != 1200 {
+		t.Fatalf("expected wallet grant credits 1200, got %d", walletGrantCredits)
 	}
 }

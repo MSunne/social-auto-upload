@@ -44,6 +44,19 @@ class DummyPublishTaskManager:
         task["message"] = message
         return True
 
+    def realign_omnidrive_ai_task(self, task_uuid, intended_run_at, intended_publish_at=None):
+        task = self.tasks.get(task_uuid)
+        if not task:
+            return False
+        normalized_run_at = PublishTaskManager._normalize_datetime(intended_run_at)
+        normalized_publish_at = PublishTaskManager._normalize_datetime(intended_publish_at) or normalized_run_at
+        task["runAt"] = normalized_run_at
+        task["platformPublishAt"] = normalized_publish_at
+        is_future = agent_module.OmniDriveBridge._is_future_datetime(normalized_run_at)
+        task["status"] = "scheduled" if is_future else "pending"
+        task["message"] = "等待 AI 产物定时发布" if is_future else "等待 AI 产物发布"
+        return True
+
 
 class DummyAITaskManager:
     def __init__(self):
@@ -74,10 +87,22 @@ class DummyAITaskManager:
         self.tasks[task["taskUuid"]] = task
         return task
 
-    def update_cloud_binding(self, task_uuid, cloud_job_id, cloud_status, message=None):
+    def update_cloud_binding(self, task_uuid, cloud_job_id, cloud_status, message=None, **kwargs):
         task = self.tasks[task_uuid]
         task["cloudJobId"] = cloud_job_id
         task["cloudStatus"] = cloud_status
+        if "source" in kwargs and kwargs["source"] is not None:
+            task["source"] = kwargs["source"]
+        if "job_type" in kwargs and kwargs["job_type"] is not None:
+            task["jobType"] = kwargs["job_type"]
+        if "model_name" in kwargs and kwargs["model_name"] is not None:
+            task["modelName"] = kwargs["model_name"]
+        if "skill_id" in kwargs:
+            task["skillId"] = kwargs["skill_id"]
+        if "prompt" in kwargs and kwargs["prompt"] is not None:
+            task["prompt"] = kwargs["prompt"]
+        if "payload" in kwargs and kwargs["payload"] is not None:
+            task["payload"] = kwargs["payload"]
         if message:
             task["message"] = message
         return task
@@ -664,6 +689,97 @@ class OmniDriveBridgeTests(unittest.TestCase):
         self.assertEqual(spec["platformPublishAt"], expected_local_run_at)
         self.assertEqual(spec["payload"]["publishDate"], expected_local_run_at)
 
+    def test_import_remote_ai_jobs_refreshes_payload_before_realigning_linked_publish_task(self):
+        publish_task_manager = DummyPublishTaskManager(worker_count=2)
+        ai_task_manager = DummyAITaskManager()
+        bridge = self.make_bridge(
+            publish_task_manager=publish_task_manager,
+            ai_task_manager=ai_task_manager,
+        )
+
+        ai_task_manager.tasks["cloud-job-2"] = {
+            "taskUuid": "cloud-job-2",
+            "source": "account_skill_binding",
+            "jobType": "video",
+            "modelName": "veo",
+            "skillId": "skill-old",
+            "prompt": "旧任务",
+            "status": "publish_pending",
+            "message": "旧消息",
+            "payload": {
+                "runAt": "2099-01-02T09:25:01Z",
+                "publishAt": "2099-01-02T09:30:01Z",
+                "publishPayload": {
+                    "title": "酒馆的介绍视频",
+                    "runAt": "2099-01-02T09:30:01Z",
+                    "requestedRun": "2099-01-02T09:30:01Z",
+                    "targets": [{"platform": "抖音", "accountName": "光001"}],
+                },
+            },
+            "cloudJobId": "cloud-job-2",
+            "cloudStatus": "scheduled",
+            "linkedPublishTaskUuid": "publish-task-1",
+            "artifactRefs": [],
+        }
+        publish_task_manager.tasks["publish-task-1"] = {
+            "taskUuid": "publish-task-1",
+            "source": "omnidrive_ai",
+            "status": "scheduled",
+            "message": "等待 AI 产物定时发布",
+            "runAt": "2099-01-02 17:30:01",
+            "platformPublishAt": "2099-01-02 17:30:01",
+        }
+
+        fresh_payload = {
+            "runAt": "2099-01-01T11:45:19Z",
+            "publishAt": "2099-01-01T11:48:19Z",
+            "publishPayload": {
+                "title": "酒馆的介绍视频",
+                "runAt": "2099-01-01T11:48:19Z",
+                "requestedRun": "2099-01-01T11:48:19Z",
+                "targets": [{"platform": "抖音", "accountName": "光001"}],
+            },
+        }
+
+        def fake_request(method, path, *, params=None, payload=None):
+            if method == "GET" and path == "/api/v1/agent/ai-jobs/device-1":
+                return [
+                    {
+                        "job": {
+                            "id": "cloud-job-2",
+                            "status": "success",
+                            "source": "account_skill_binding",
+                            "jobType": "video",
+                            "modelName": "veo-updated",
+                            "skillId": "skill-new",
+                            "prompt": "新任务",
+                            "message": "AI 视频生成完成",
+                            "inputPayload": fresh_payload,
+                            "localPublishTaskId": "publish-task-1",
+                        },
+                        "artifacts": [],
+                    }
+                ]
+            raise AssertionError(f"unexpected request {method} {path}")
+
+        with mock.patch.object(bridge, "_request", side_effect=fake_request):
+            imported = bridge._import_remote_ai_jobs()
+
+        self.assertEqual(imported, 0)
+        self.assertEqual(
+            ai_task_manager.tasks["cloud-job-2"]["payload"]["publishPayload"]["runAt"],
+            "2099-01-01T11:48:19Z",
+        )
+        self.assertEqual(ai_task_manager.tasks["cloud-job-2"]["modelName"], "veo-updated")
+        self.assertEqual(
+            publish_task_manager.tasks["publish-task-1"]["runAt"],
+            "2099-01-01 19:48:19",
+        )
+        self.assertEqual(
+            publish_task_manager.tasks["publish-task-1"]["platformPublishAt"],
+            "2099-01-01 19:48:19",
+        )
+
     def test_sync_local_ai_tasks_skips_non_syncable_sources(self):
         ai_task_manager = DummyAITaskManager()
         ai_task_manager.tasks["remote-ai-1"] = {
@@ -1001,6 +1117,160 @@ class PublishTaskManagerDatetimeTests(unittest.TestCase):
         self.assertEqual(historical_task["workerName"], "worker-2")
         self.assertIsNotNone(historical_task["startedAt"])
         self.assertIsNotNone(historical_task["finishedAt"])
+
+    def test_publish_task_manager_cleans_generated_materials_when_all_related_tasks_succeed(self):
+        temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-clean-generated-"))
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "database.db"
+        generated_root = temp_dir / "omnidriveSync" / "generated"
+        generated_dir = generated_root / "ai-task-1"
+        generated_dir.mkdir(parents=True, exist_ok=True)
+        (generated_dir / "video.mp4").write_bytes(b"video")
+        (generated_dir / "cover.png").write_bytes(b"cover")
+
+        manager = PublishTaskManager(
+            db_path=db_path,
+            material_roots={"omnidriveGenerated": generated_root},
+        )
+        manager.init_db()
+
+        payload = {
+            "omnidriveAITaskUuid": "ai-task-1",
+            "omnidriveMaterialRefs": [
+                {"root": "omnidriveGenerated", "path": "ai-task-1/video.mp4", "absolutePath": str(generated_dir / "video.mp4")},
+                {"root": "omnidriveGenerated", "path": "ai-task-1/cover.png", "absolutePath": str(generated_dir / "cover.png")},
+            ],
+            "sourceAbsolutePath": str(generated_dir / "video.mp4"),
+            "thumbnailAbsolutePath": str(generated_dir / "cover.png"),
+        }
+
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.executemany(
+                """
+                INSERT INTO publish_tasks (
+                    task_uuid, source, platform_type, platform_name, account_name, account_file_path,
+                    file_name, file_path, title, run_at, platform_publish_at, status, message, payload_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        "publish-1",
+                        "omnidrive_ai",
+                        3,
+                        "抖音",
+                        "账号A",
+                        "cookies/a.json",
+                        "video.mp4",
+                        "omnidriveGenerated:ai-task-1/video.mp4",
+                        "发布A",
+                        None,
+                        None,
+                        "success",
+                        "ok",
+                        json.dumps(payload, ensure_ascii=False),
+                    ),
+                    (
+                        "publish-2",
+                        "omnidrive_ai",
+                        4,
+                        "快手",
+                        "账号B",
+                        "cookies/b.json",
+                        "video.mp4",
+                        "omnidriveGenerated:ai-task-1/video.mp4",
+                        "发布B",
+                        None,
+                        None,
+                        "success",
+                        "ok",
+                        json.dumps(payload, ensure_ascii=False),
+                    ),
+                ],
+            )
+            conn.commit()
+
+        cleaned = manager._cleanup_published_generated_materials()
+
+        self.assertGreaterEqual(cleaned, 1)
+        self.assertFalse(generated_dir.exists())
+
+    def test_publish_task_manager_keeps_generated_materials_when_related_tasks_not_all_success(self):
+        temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-keep-generated-"))
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "database.db"
+        generated_root = temp_dir / "omnidriveSync" / "generated"
+        generated_dir = generated_root / "ai-task-2"
+        generated_dir.mkdir(parents=True, exist_ok=True)
+        media_path = generated_dir / "video.mp4"
+        media_path.write_bytes(b"video")
+
+        manager = PublishTaskManager(
+            db_path=db_path,
+            material_roots={"omnidriveGenerated": generated_root},
+        )
+        manager.init_db()
+
+        payload = {
+            "omnidriveAITaskUuid": "ai-task-2",
+            "omnidriveMaterialRefs": [
+                {"root": "omnidriveGenerated", "path": "ai-task-2/video.mp4", "absolutePath": str(media_path)},
+            ],
+            "sourceAbsolutePath": str(media_path),
+        }
+
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.executemany(
+                """
+                INSERT INTO publish_tasks (
+                    task_uuid, source, platform_type, platform_name, account_name, account_file_path,
+                    file_name, file_path, title, run_at, platform_publish_at, status, message, payload_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        "publish-3",
+                        "omnidrive_ai",
+                        3,
+                        "抖音",
+                        "账号A",
+                        "cookies/a.json",
+                        "video.mp4",
+                        "omnidriveGenerated:ai-task-2/video.mp4",
+                        "发布A",
+                        None,
+                        None,
+                        "success",
+                        "ok",
+                        json.dumps(payload, ensure_ascii=False),
+                    ),
+                    (
+                        "publish-4",
+                        "omnidrive_ai",
+                        4,
+                        "快手",
+                        "账号B",
+                        "cookies/b.json",
+                        "video.mp4",
+                        "omnidriveGenerated:ai-task-2/video.mp4",
+                        "发布B",
+                        None,
+                        None,
+                        "pending",
+                        "waiting",
+                        json.dumps(payload, ensure_ascii=False),
+                    ),
+                ],
+            )
+            conn.commit()
+
+        cleaned = manager._cleanup_published_generated_materials()
+
+        self.assertEqual(cleaned, 0)
+        self.assertTrue(media_path.exists())
 
 class OmniDriveAITaskManagerRecoveryTests(unittest.TestCase):
     def test_ai_task_manager_recovers_inflight_publish_state_after_restart(self):

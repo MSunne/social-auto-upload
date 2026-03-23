@@ -181,9 +181,6 @@ func defaultCORSAllowedOrigins(environment string) []string {
 }
 
 func defaultLogLevel(environment string) string {
-	if strings.EqualFold(strings.TrimSpace(environment), "development") {
-		return "debug"
-	}
 	return "info"
 }
 

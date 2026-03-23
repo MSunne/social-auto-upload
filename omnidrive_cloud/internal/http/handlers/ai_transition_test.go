@@ -27,6 +27,12 @@ func TestIsAllowedAIJobTransition(t *testing.T) {
 			next:    "scheduled",
 			want:    false,
 		},
+		{
+			name:    "running_can_requeue_after_restart",
+			current: "running",
+			next:    "queued",
+			want:    true,
+		},
 	}
 
 	for _, tc := range tests {

@@ -105,6 +105,45 @@ type commissionSettlementCandidate struct {
 	SettlementThresholdCents int64
 }
 
+type distributionGrantSnapshot struct {
+	TotalGrantedCredits int64
+	WalletGrantCredits  int64
+	QuotaUnitCredits    map[string]int64
+}
+
+type distributionCommissionItemRecord struct {
+	ID                        string
+	ReferralID                *string
+	RuleID                    *string
+	PromoterUserID            string
+	InviteeUserID             string
+	RechargeOrderID           string
+	Status                    string
+	CommissionRateBasisPoint  int
+	SettlementThresholdCents  int64
+	CommissionBaseAmountCents int64
+	AmountCents               int64
+	TotalGrantedCredits       int64
+	ConsumedCredits           int64
+	ReleasedAmountCents       int64
+	SettledAmountCents        int64
+	ReleasedAt                *time.Time
+	SettledAt                 *time.Time
+}
+
+type distributionCommissionReleaseInput struct {
+	CommissionItemID     string
+	SourceType           string
+	SourceID             string
+	SourceSnapshot       []byte
+	WalletLotID          *string
+	QuotaAccountID       *string
+	WalletLedgerID       *string
+	QuotaLedgerID        *string
+	ConsumedCreditsDelta int64
+	Metadata             []byte
+}
+
 func loadQuotaUnitCreditMapTx(ctx context.Context, tx pgx.Tx, meterCodes map[string]struct{}) (map[string]int64, error) {
 	result := make(map[string]int64)
 	if len(meterCodes) == 0 {
@@ -150,8 +189,9 @@ func loadQuotaUnitCreditMapTx(ctx context.Context, tx pgx.Tx, meterCodes map[str
 	return result, rows.Err()
 }
 
-func calculateDistributionGrantCreditsFromEntitlements(entitlements []domain.BillingPackageEntitlement, quotaUnitCredits map[string]int64) int64 {
+func calculateDistributionGrantCreditsFromEntitlements(entitlements []domain.BillingPackageEntitlement, quotaUnitCredits map[string]int64) (int64, int64) {
 	var total int64
+	var walletGrantCredits int64
 	for _, entitlement := range entitlements {
 		if entitlement.GrantAmount <= 0 {
 			continue
@@ -160,27 +200,35 @@ func calculateDistributionGrantCreditsFromEntitlements(entitlements []domain.Bil
 		switch meterCode {
 		case "", "wallet_credit":
 			total += entitlement.GrantAmount
+			walletGrantCredits += entitlement.GrantAmount
 		default:
 			if unitCredits := quotaUnitCredits[meterCode]; unitCredits > 0 {
 				total += entitlement.GrantAmount * unitCredits
 			}
 		}
 	}
-	return total
+	return total, walletGrantCredits
 }
 
-func (s *Store) distributionGrantCreditsForRechargeOrderTx(ctx context.Context, tx pgx.Tx, order *domain.RechargeOrder) (int64, error) {
+func (s *Store) distributionGrantSnapshotForRechargeOrderTx(ctx context.Context, tx pgx.Tx, order *domain.RechargeOrder) (distributionGrantSnapshot, error) {
+	snapshot := distributionGrantSnapshot{
+		QuotaUnitCredits: make(map[string]int64),
+	}
 	if order == nil {
-		return 0, nil
+		return snapshot, nil
 	}
 
 	entitlements, _, _ := buildSupportRechargeGrantPlan(order, time.Now().UTC())
 	if len(entitlements) == 0 {
-		totalGrantedCredits := order.CreditAmount + order.ManualBonusCreditAmount
-		if totalGrantedCredits < 0 {
-			return 0, nil
+		snapshot.TotalGrantedCredits = order.CreditAmount + order.ManualBonusCreditAmount
+		snapshot.WalletGrantCredits = order.CreditAmount + order.ManualBonusCreditAmount
+		if snapshot.TotalGrantedCredits < 0 {
+			snapshot.TotalGrantedCredits = 0
 		}
-		return totalGrantedCredits, nil
+		if snapshot.WalletGrantCredits < 0 {
+			snapshot.WalletGrantCredits = 0
+		}
+		return snapshot, nil
 	}
 
 	quotaMeterCodes := make(map[string]struct{})
@@ -194,17 +242,24 @@ func (s *Store) distributionGrantCreditsForRechargeOrderTx(ctx context.Context, 
 
 	quotaUnitCredits, err := loadQuotaUnitCreditMapTx(ctx, tx, quotaMeterCodes)
 	if err != nil {
-		return 0, err
+		return snapshot, err
 	}
+	snapshot.QuotaUnitCredits = quotaUnitCredits
 
-	totalGrantedCredits := calculateDistributionGrantCreditsFromEntitlements(entitlements, quotaUnitCredits)
+	totalGrantedCredits, walletGrantCredits := calculateDistributionGrantCreditsFromEntitlements(entitlements, quotaUnitCredits)
 	if totalGrantedCredits <= 0 {
 		totalGrantedCredits = order.CreditAmount + order.ManualBonusCreditAmount
+		walletGrantCredits = totalGrantedCredits
 	}
 	if totalGrantedCredits < 0 {
 		totalGrantedCredits = 0
 	}
-	return totalGrantedCredits, nil
+	if walletGrantCredits < 0 {
+		walletGrantCredits = 0
+	}
+	snapshot.TotalGrantedCredits = totalGrantedCredits
+	snapshot.WalletGrantCredits = walletGrantCredits
+	return snapshot, nil
 }
 
 func calculateCommissionRateBasisPoints(rate float64) (int, error) {
@@ -644,6 +699,421 @@ func getDistributionReferralByInviteeUserIDTx(ctx context.Context, tx pgx.Tx, in
 	return &item, nil
 }
 
+func scanDistributionCommissionItem(scan scanFn) (*distributionCommissionItemRecord, error) {
+	var item distributionCommissionItemRecord
+	if err := scan(
+		&item.ID,
+		&item.ReferralID,
+		&item.RuleID,
+		&item.PromoterUserID,
+		&item.InviteeUserID,
+		&item.RechargeOrderID,
+		&item.Status,
+		&item.CommissionRateBasisPoint,
+		&item.SettlementThresholdCents,
+		&item.CommissionBaseAmountCents,
+		&item.AmountCents,
+		&item.TotalGrantedCredits,
+		&item.ConsumedCredits,
+		&item.ReleasedAmountCents,
+		&item.SettledAmountCents,
+		&item.ReleasedAt,
+		&item.SettledAt,
+	); err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func getDistributionCommissionItemByRechargeOrderTx(ctx context.Context, tx pgx.Tx, rechargeOrderID string) (*distributionCommissionItemRecord, error) {
+	row := tx.QueryRow(ctx, `
+		SELECT
+			id,
+			referral_id,
+			rule_id,
+			promoter_user_id,
+			invitee_user_id,
+			recharge_order_id,
+			status,
+			commission_rate_basis_points,
+			settlement_threshold_cents,
+			commission_base_amount_cents,
+			amount_cents,
+			total_granted_credits,
+			consumed_credits,
+			released_amount_cents,
+			settled_amount_cents,
+			released_at,
+			settled_at
+		FROM distribution_commission_items
+		WHERE recharge_order_id = $1
+		LIMIT 1
+	`, strings.TrimSpace(rechargeOrderID))
+
+	item, err := scanDistributionCommissionItem(row.Scan)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return item, nil
+}
+
+func getDistributionCommissionItemByIDTx(ctx context.Context, tx pgx.Tx, commissionItemID string) (*distributionCommissionItemRecord, error) {
+	row := tx.QueryRow(ctx, `
+		SELECT
+			id,
+			referral_id,
+			rule_id,
+			promoter_user_id,
+			invitee_user_id,
+			recharge_order_id,
+			status,
+			commission_rate_basis_points,
+			settlement_threshold_cents,
+			commission_base_amount_cents,
+			amount_cents,
+			total_granted_credits,
+			consumed_credits,
+			released_amount_cents,
+			settled_amount_cents,
+			released_at,
+			settled_at
+		FROM distribution_commission_items
+		WHERE id = $1
+		FOR UPDATE
+	`, strings.TrimSpace(commissionItemID))
+
+	item, err := scanDistributionCommissionItem(row.Scan)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return item, nil
+}
+
+func buildDistributionSourceSnapshotTx(ctx context.Context, tx pgx.Tx, sourceType string, sourceID string) ([]byte, error) {
+	trimmedType := strings.TrimSpace(sourceType)
+	trimmedID := strings.TrimSpace(sourceID)
+	if trimmedType == "" {
+		return nil, nil
+	}
+
+	switch trimmedType {
+	case "ai_job":
+		var jobType string
+		var modelName string
+		var status string
+		var source string
+		var localTaskID *string
+		var localPublishTaskID *string
+		var createdAt time.Time
+		err := tx.QueryRow(ctx, `
+			SELECT job_type, model_name, status, source, local_task_id, local_publish_task_id, created_at
+			FROM ai_jobs
+			WHERE id = $1
+		`, trimmedID).Scan(&jobType, &modelName, &status, &source, &localTaskID, &localPublishTaskID, &createdAt)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				break
+			}
+			return nil, err
+		}
+
+		snapshot := map[string]any{
+			"type":      "ai_job",
+			"id":        trimmedID,
+			"title":     fmt.Sprintf("AI %s 任务", strings.ToUpper(strings.TrimSpace(jobType))),
+			"jobType":   jobType,
+			"modelName": modelName,
+			"status":    status,
+			"source":    source,
+			"createdAt": createdAt.Format(time.RFC3339),
+		}
+		if localTaskID != nil {
+			snapshot["localTaskId"] = strings.TrimSpace(*localTaskID)
+		}
+		if localPublishTaskID != nil {
+			snapshot["publishTaskId"] = strings.TrimSpace(*localPublishTaskID)
+			var title *string
+			var platform string
+			var accountName string
+			var taskStatus string
+			var runAt *time.Time
+			var taskCreatedAt time.Time
+			if err := tx.QueryRow(ctx, `
+				SELECT title, platform, account_name, status, run_at, created_at
+				FROM publish_tasks
+				WHERE id = $1
+			`, strings.TrimSpace(*localPublishTaskID)).Scan(&title, &platform, &accountName, &taskStatus, &runAt, &taskCreatedAt); err == nil {
+				snapshot["publishTask"] = map[string]any{
+					"id":          strings.TrimSpace(*localPublishTaskID),
+					"title":       valueOrEmpty(title),
+					"platform":    platform,
+					"accountName": accountName,
+					"status":      taskStatus,
+					"runAt":       timePtrValue(runAt),
+					"createdAt":   taskCreatedAt.Format(time.RFC3339),
+				}
+			}
+		}
+		return mustJSONBytes(snapshot), nil
+	case "publish_task":
+		var title *string
+		var platform string
+		var accountName string
+		var status string
+		var runAt *time.Time
+		var createdAt time.Time
+		err := tx.QueryRow(ctx, `
+			SELECT title, platform, account_name, status, run_at, created_at
+			FROM publish_tasks
+			WHERE id = $1
+		`, trimmedID).Scan(&title, &platform, &accountName, &status, &runAt, &createdAt)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				break
+			}
+			return nil, err
+		}
+		return mustJSONBytes(map[string]any{
+			"type":        "publish_task",
+			"id":          trimmedID,
+			"title":       valueOrEmpty(title),
+			"platform":    platform,
+			"accountName": accountName,
+			"status":      status,
+			"runAt":       timePtrValue(runAt),
+			"createdAt":   createdAt.Format(time.RFC3339),
+		}), nil
+	}
+
+	return mustJSONBytes(map[string]any{
+		"type": trimmedType,
+		"id":   trimmedID,
+	}), nil
+}
+
+func timePtrValue(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.UTC().Format(time.RFC3339)
+}
+
+func (s *Store) applyDistributionCommissionReleaseTx(ctx context.Context, tx pgx.Tx, input distributionCommissionReleaseInput) error {
+	if strings.TrimSpace(input.CommissionItemID) == "" || input.ConsumedCreditsDelta <= 0 {
+		return nil
+	}
+
+	item, err := getDistributionCommissionItemByIDTx(ctx, tx, input.CommissionItemID)
+	if err != nil {
+		return err
+	}
+	if item == nil {
+		return nil
+	}
+
+	now := time.Now().UTC()
+	state := commissionReleaseState{
+		TotalGrantedCredits: item.TotalGrantedCredits,
+		ConsumedCredits:     item.ConsumedCredits,
+		AmountCents:         item.AmountCents,
+		ReleasedAmountCents: item.ReleasedAmountCents,
+		SettledAmountCents:  item.SettledAmountCents,
+		Status:              item.Status,
+		ReleasedAt:          item.ReleasedAt,
+	}
+	nextState, consumedCredits := advanceCommissionReleaseState(state, input.ConsumedCreditsDelta, now)
+	if consumedCredits <= 0 {
+		return nil
+	}
+
+	releasedDelta := nextState.ReleasedAmountCents - state.ReleasedAmountCents
+	if _, err := tx.Exec(ctx, `
+		UPDATE distribution_commission_items
+		SET status = $2,
+		    consumed_credits = $3,
+		    released_amount_cents = $4,
+		    released_at = $5,
+		    last_release_source_type = $6,
+		    last_release_source_id = $7,
+		    updated_at = NOW()
+		WHERE id = $1
+	`, item.ID, nextState.Status, nextState.ConsumedCredits, nextState.ReleasedAmountCents, nextState.ReleasedAt, strings.TrimSpace(input.SourceType), strings.TrimSpace(input.SourceID)); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO distribution_commission_release_events (
+			id, commission_item_id, promoter_user_id, invitee_user_id, recharge_order_id,
+			source_type, source_id, source_snapshot, wallet_lot_id, quota_account_id,
+			wallet_ledger_id, quota_ledger_id, consumed_credits_delta, released_amount_delta_cents,
+			commission_item_consumed_credits, commission_item_released_amount_cents, metadata
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+	`, uuid.NewString(), item.ID, item.PromoterUserID, item.InviteeUserID, item.RechargeOrderID, strings.TrimSpace(input.SourceType),
+		nullableString(strings.TrimSpace(input.SourceID)), bytesOrNil(input.SourceSnapshot), input.WalletLotID, input.QuotaAccountID,
+		input.WalletLedgerID, input.QuotaLedgerID, consumedCredits, releasedDelta, nextState.ConsumedCredits, nextState.ReleasedAmountCents, bytesOrNil(input.Metadata)); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *Store) backfillDistributionGrantTrackingTx(ctx context.Context, tx pgx.Tx, inviteeUserID string) error {
+	if strings.TrimSpace(inviteeUserID) == "" {
+		return nil
+	}
+
+	rows, err := tx.Query(ctx, `
+		SELECT
+			id,
+			recharge_order_id,
+			consumed_credits,
+			total_granted_credits
+		FROM distribution_commission_items
+		WHERE invitee_user_id = $1
+		  AND status IN ('pending_consume', 'pending_settlement')
+		ORDER BY created_at ASC
+	`, strings.TrimSpace(inviteeUserID))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type candidate struct {
+		ID                  string
+		RechargeOrderID     string
+		ConsumedCredits     int64
+		TotalGrantedCredits int64
+	}
+
+	candidates := make([]candidate, 0)
+	for rows.Next() {
+		var item candidate
+		if scanErr := rows.Scan(&item.ID, &item.RechargeOrderID, &item.ConsumedCredits, &item.TotalGrantedCredits); scanErr != nil {
+			return scanErr
+		}
+		candidates = append(candidates, item)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, candidate := range candidates {
+		order, err := s.getRechargeOrderByIDAnyUserTx(ctx, tx, candidate.RechargeOrderID)
+		if err != nil || order == nil {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+
+		snapshot, err := s.distributionGrantSnapshotForRechargeOrderTx(ctx, tx, order)
+		if err != nil {
+			return err
+		}
+
+		quotaRows, err := tx.Query(ctx, `
+			SELECT id, meter_code, used_total, distribution_commission_item_id, release_unit_credits
+			FROM billing_quota_accounts
+			WHERE user_id = $1
+			  AND COALESCE(recharge_order_id, source_id, '') = $2
+			  AND (source_type = 'support_recharge' OR recharge_order_id IS NOT NULL)
+			FOR UPDATE
+		`, inviteeUserID, candidate.RechargeOrderID)
+		if err != nil {
+			return err
+		}
+
+		var quotaConsumedCredits int64
+		for quotaRows.Next() {
+			var accountID string
+			var meterCode string
+			var usedTotal int64
+			var commissionItemID *string
+			var releaseUnitCredits int64
+			if scanErr := quotaRows.Scan(&accountID, &meterCode, &usedTotal, &commissionItemID, &releaseUnitCredits); scanErr != nil {
+				quotaRows.Close()
+				return scanErr
+			}
+
+			snapshotUnitCredits := snapshot.QuotaUnitCredits[strings.TrimSpace(meterCode)]
+			if snapshotUnitCredits < 0 {
+				snapshotUnitCredits = 0
+			}
+			if commissionItemID == nil || strings.TrimSpace(*commissionItemID) == "" || releaseUnitCredits <= 0 || strings.TrimSpace(candidate.RechargeOrderID) == "" {
+				if _, err := tx.Exec(ctx, `
+					UPDATE billing_quota_accounts
+					SET recharge_order_id = COALESCE(NULLIF(recharge_order_id, ''), $2),
+					    distribution_commission_item_id = COALESCE(NULLIF(distribution_commission_item_id, ''), $3),
+					    release_unit_credits = CASE
+					        WHEN release_unit_credits <= 0 THEN $4
+					        ELSE release_unit_credits
+					    END,
+					    updated_at = NOW()
+					WHERE id = $1
+				`, accountID, candidate.RechargeOrderID, candidate.ID, snapshotUnitCredits); err != nil {
+					quotaRows.Close()
+					return err
+				}
+				if releaseUnitCredits <= 0 {
+					releaseUnitCredits = snapshotUnitCredits
+				}
+			}
+			quotaConsumedCredits += usedTotal * maxInt64(releaseUnitCredits, 0)
+		}
+		quotaRows.Close()
+		if err := quotaRows.Err(); err != nil {
+			return err
+		}
+
+		var existingLotCount int64
+		if err := tx.QueryRow(ctx, `
+			SELECT COUNT(*)::BIGINT
+			FROM billing_wallet_lots
+			WHERE user_id = $1
+			  AND recharge_order_id = $2
+			  AND distribution_commission_item_id = $3
+		`, inviteeUserID, candidate.RechargeOrderID, candidate.ID).Scan(&existingLotCount); err != nil {
+			return err
+		}
+		if existingLotCount > 0 || snapshot.WalletGrantCredits <= 0 {
+			continue
+		}
+
+		walletConsumedCredits := candidate.ConsumedCredits - quotaConsumedCredits
+		walletConsumedCredits = minInt64(maxInt64(walletConsumedCredits, 0), snapshot.WalletGrantCredits)
+		remainingCredits := snapshot.WalletGrantCredits - walletConsumedCredits
+		status := "active"
+		if remainingCredits <= 0 {
+			status = "consumed"
+			remainingCredits = 0
+		}
+
+		metadata := mustJSONBytes(map[string]any{
+			"backfilled": true,
+			"orderId":    order.ID,
+			"orderNo":    order.OrderNo,
+		})
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO billing_wallet_lots (
+				id, user_id, recharge_order_id, distribution_commission_item_id, source_type, source_id,
+				granted_credits, consumed_credits, remaining_credits, release_unit_credits, status, metadata
+			)
+			VALUES ($1, $2, $3, $4, 'support_recharge', $3, $5, $6, $7, 1, $8, $9)
+		`, uuid.NewString(), inviteeUserID, candidate.RechargeOrderID, candidate.ID, snapshot.WalletGrantCredits, walletConsumedCredits, remainingCredits, status, metadata); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func findApplicableDistributionRuleTx(ctx context.Context, tx pgx.Tx, promoterUserID string) (*distributionRuleRecord, error) {
 	row := tx.QueryRow(ctx, `
 		SELECT
@@ -686,69 +1156,79 @@ func findApplicableDistributionRuleTx(ctx context.Context, tx pgx.Tx, promoterUs
 	return &item, nil
 }
 
-func (s *Store) ensureDistributionCommissionForRechargeOrderTx(ctx context.Context, tx pgx.Tx, order *domain.RechargeOrder) error {
+func (s *Store) ensureDistributionCommissionForRechargeOrderTx(ctx context.Context, tx pgx.Tx, order *domain.RechargeOrder) (*distributionCommissionItemRecord, distributionGrantSnapshot, error) {
+	snapshot := distributionGrantSnapshot{QuotaUnitCredits: make(map[string]int64)}
 	if order == nil || strings.TrimSpace(order.UserID) == "" || strings.TrimSpace(order.ID) == "" {
-		return nil
+		return nil, snapshot, nil
 	}
 
-	var existingCount int
-	if err := tx.QueryRow(ctx, `
-		SELECT COUNT(*)::INT
-		FROM distribution_commission_items
-		WHERE recharge_order_id = $1
-	`, order.ID).Scan(&existingCount); err != nil {
-		return err
+	snapshotValue, err := s.distributionGrantSnapshotForRechargeOrderTx(ctx, tx, order)
+	if err != nil {
+		return nil, snapshot, err
 	}
-	if existingCount > 0 {
-		return nil
+	snapshot = snapshotValue
+
+	existing, err := getDistributionCommissionItemByRechargeOrderTx(ctx, tx, order.ID)
+	if err != nil {
+		return nil, snapshot, err
+	}
+	if existing != nil {
+		return existing, snapshot, nil
 	}
 
 	referral, err := getDistributionReferralByInviteeUserIDTx(ctx, tx, order.UserID)
 	if err != nil {
-		return err
+		return nil, snapshot, err
 	}
 	if referral == nil || referral.Status != "active" {
-		return nil
+		return nil, snapshot, nil
 	}
 
 	rule, err := findApplicableDistributionRuleTx(ctx, tx, referral.PromoterUserID)
 	if err != nil {
-		return err
+		return nil, snapshot, err
 	}
 	if rule == nil {
-		return nil
+		return nil, snapshot, nil
 	}
 
-	totalGrantedCredits, err := s.distributionGrantCreditsForRechargeOrderTx(ctx, tx, order)
-	if err != nil {
-		return err
-	}
+	totalGrantedCredits := snapshot.TotalGrantedCredits
 	if totalGrantedCredits <= 0 {
-		return nil
+		return nil, snapshot, nil
 	}
 	commissionAmount := calculateCommissionAmountCents(order.AmountCents, rule.CommissionRateBasisPoint)
 	if commissionAmount <= 0 {
-		return nil
+		return nil, snapshot, nil
 	}
 
 	metadata, _ := json.Marshal(map[string]any{
-		"orderId":           order.ID,
-		"orderNo":           order.OrderNo,
-		"channel":           order.Channel,
-		"amountCents":       order.AmountCents,
-		"creditAmount":      order.CreditAmount,
-		"bonusCreditAmount": order.ManualBonusCreditAmount,
-		"grantCredits":      totalGrantedCredits,
+		"orderId":            order.ID,
+		"orderNo":            order.OrderNo,
+		"channel":            order.Channel,
+		"amountCents":        order.AmountCents,
+		"creditAmount":       order.CreditAmount,
+		"bonusCreditAmount":  order.ManualBonusCreditAmount,
+		"grantCredits":       totalGrantedCredits,
+		"walletGrantCredits": snapshot.WalletGrantCredits,
+		"quotaUnitCredits":   snapshot.QuotaUnitCredits,
 	})
-	_, err = tx.Exec(ctx, `
+	itemID := uuid.NewString()
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO distribution_commission_items (
 			id, referral_id, rule_id, promoter_user_id, invitee_user_id, recharge_order_id, status,
 			commission_rate_basis_points, settlement_threshold_cents, commission_base_amount_cents,
 			amount_cents, total_granted_credits, metadata
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, 'pending_consume', $7, $8, $9, $10, $11, $12)
-	`, uuid.NewString(), referral.ID, rule.ID, referral.PromoterUserID, referral.InviteeUserID, order.ID, rule.CommissionRateBasisPoint, rule.SettlementThresholdCents, order.AmountCents, commissionAmount, totalGrantedCredits, metadata)
-	return err
+	`, itemID, referral.ID, rule.ID, referral.PromoterUserID, referral.InviteeUserID, order.ID, rule.CommissionRateBasisPoint, rule.SettlementThresholdCents, order.AmountCents, commissionAmount, totalGrantedCredits, metadata); err != nil {
+		return nil, snapshot, err
+	}
+
+	item, err := getDistributionCommissionItemByIDTx(ctx, tx, itemID)
+	if err != nil {
+		return nil, snapshot, err
+	}
+	return item, snapshot, nil
 }
 
 func (s *Store) releaseDistributionCommissionForUsageTx(ctx context.Context, tx pgx.Tx, inviteeUserID string, sourceType string, sourceID string, debitedCredits int64) error {
@@ -887,6 +1367,13 @@ func (s *Store) ListAdminCommissions(ctx context.Context, filter AdminCommission
 			c.commission_rate_basis_points,
 			c.commission_base_amount_cents,
 			c.amount_cents,
+			c.total_granted_credits,
+			c.consumed_credits,
+			c.released_amount_cents,
+			c.settled_amount_cents,
+			COALESCE(rel.release_event_count, 0)::BIGINT,
+			c.recharge_order_id,
+			ro.order_no,
 			c.created_at,
 			c.released_at,
 			c.settled_at
@@ -894,6 +1381,11 @@ func (s *Store) ListAdminCommissions(ctx context.Context, filter AdminCommission
 		INNER JOIN users pu ON pu.id = c.promoter_user_id
 		INNER JOIN users iu ON iu.id = c.invitee_user_id
 		LEFT JOIN recharge_orders ro ON ro.id = c.recharge_order_id
+		LEFT JOIN LATERAL (
+			SELECT COUNT(*)::BIGINT AS release_event_count
+			FROM distribution_commission_release_events e
+			WHERE e.commission_item_id = c.id
+		) rel ON TRUE
 		%s
 		ORDER BY c.created_at DESC
 		LIMIT $%d OFFSET $%d
@@ -919,6 +1411,13 @@ func (s *Store) ListAdminCommissions(ctx context.Context, filter AdminCommission
 			&basisPoints,
 			&item.CommissionBaseAmountCents,
 			&item.AmountCents,
+			&item.TotalGrantedCredits,
+			&item.ConsumedCredits,
+			&item.ReleasedAmountCents,
+			&item.SettledAmountCents,
+			&item.ReleaseEventCount,
+			&item.RechargeOrderID,
+			&item.RechargeOrderNo,
 			&item.CreatedAt,
 			&item.ReleasedAt,
 			&item.SettledAt,
@@ -929,6 +1428,70 @@ func (s *Store) ListAdminCommissions(ctx context.Context, filter AdminCommission
 		items = append(items, item)
 	}
 	return items, total, summary, rows.Err()
+}
+
+func (s *Store) ListAdminCommissionReleaseEvents(ctx context.Context, commissionItemID string, limit int) ([]domain.CommissionReleaseEvent, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT
+			e.id,
+			e.commission_item_id,
+			e.recharge_order_id,
+			ro.order_no,
+			e.source_type,
+			e.source_id,
+			e.source_snapshot,
+			e.wallet_lot_id,
+			e.quota_account_id,
+			e.wallet_ledger_id,
+			e.quota_ledger_id,
+			e.consumed_credits_delta,
+			e.released_amount_delta_cents,
+			e.commission_item_consumed_credits,
+			e.commission_item_released_amount_cents,
+			e.metadata,
+			e.created_at
+		FROM distribution_commission_release_events e
+		LEFT JOIN recharge_orders ro ON ro.id = e.recharge_order_id
+		WHERE e.commission_item_id = $1
+		ORDER BY e.created_at DESC
+		LIMIT $2
+	`, strings.TrimSpace(commissionItemID), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.CommissionReleaseEvent, 0, limit)
+	for rows.Next() {
+		var item domain.CommissionReleaseEvent
+		if scanErr := rows.Scan(
+			&item.ID,
+			&item.CommissionItemID,
+			&item.RechargeOrderID,
+			&item.RechargeOrderNo,
+			&item.SourceType,
+			&item.SourceID,
+			&item.SourceSnapshot,
+			&item.WalletLotID,
+			&item.QuotaAccountID,
+			&item.WalletLedgerID,
+			&item.QuotaLedgerID,
+			&item.ConsumedCreditsDelta,
+			&item.ReleasedAmountDeltaCents,
+			&item.CommissionItemConsumedCredits,
+			&item.CommissionItemReleasedAmountCents,
+			&item.Metadata,
+			&item.CreatedAt,
+		); scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func formatDistributionSettlementBatchNo(now time.Time) string {

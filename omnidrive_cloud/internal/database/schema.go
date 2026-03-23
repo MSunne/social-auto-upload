@@ -604,6 +604,23 @@ CREATE TABLE IF NOT EXISTS billing_wallets (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS billing_wallet_lots (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    recharge_order_id TEXT,
+    distribution_commission_item_id TEXT,
+    source_type TEXT,
+    source_id TEXT,
+    granted_credits BIGINT NOT NULL DEFAULT 0,
+    consumed_credits BIGINT NOT NULL DEFAULT 0,
+    remaining_credits BIGINT NOT NULL DEFAULT 0,
+    release_unit_credits BIGINT NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'active',
+    metadata JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS wallet_ledgers (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -678,6 +695,19 @@ CREATE TABLE IF NOT EXISTS payment_transactions (
 ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS recharge_order_id TEXT REFERENCES recharge_orders(id) ON DELETE SET NULL;
 ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS payment_transaction_id TEXT REFERENCES payment_transactions(id) ON DELETE SET NULL;
 
+CREATE TABLE IF NOT EXISTS billing_wallet_lot_consumptions (
+    id TEXT PRIMARY KEY,
+    wallet_lot_id TEXT REFERENCES billing_wallet_lots(id) ON DELETE SET NULL,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source_type TEXT NOT NULL,
+    source_id TEXT,
+    meter_code TEXT,
+    debited_credits BIGINT NOT NULL DEFAULT 0,
+    wallet_ledger_id TEXT REFERENCES wallet_ledgers(id) ON DELETE SET NULL,
+    metadata JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS wallet_adjustment_requests (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -721,10 +751,17 @@ CREATE TABLE IF NOT EXISTS billing_quota_accounts (
     expires_at TIMESTAMPTZ,
     source_type TEXT,
     source_id TEXT,
+    recharge_order_id TEXT,
+    distribution_commission_item_id TEXT,
+    release_unit_credits BIGINT NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'active',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE billing_quota_accounts ADD COLUMN IF NOT EXISTS recharge_order_id TEXT;
+ALTER TABLE billing_quota_accounts ADD COLUMN IF NOT EXISTS distribution_commission_item_id TEXT;
+ALTER TABLE billing_quota_accounts ADD COLUMN IF NOT EXISTS release_unit_credits BIGINT NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS billing_quota_ledgers (
     id TEXT PRIMARY KEY,
@@ -857,6 +894,27 @@ CREATE TABLE IF NOT EXISTS distribution_settlement_items (
     commission_item_id TEXT NOT NULL UNIQUE REFERENCES distribution_commission_items(id) ON DELETE CASCADE,
     promoter_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     amount_cents BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS distribution_commission_release_events (
+    id TEXT PRIMARY KEY,
+    commission_item_id TEXT NOT NULL REFERENCES distribution_commission_items(id) ON DELETE CASCADE,
+    promoter_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    invitee_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    recharge_order_id TEXT REFERENCES recharge_orders(id) ON DELETE SET NULL,
+    source_type TEXT NOT NULL,
+    source_id TEXT,
+    source_snapshot JSONB,
+    wallet_lot_id TEXT REFERENCES billing_wallet_lots(id) ON DELETE SET NULL,
+    quota_account_id TEXT REFERENCES billing_quota_accounts(id) ON DELETE SET NULL,
+    wallet_ledger_id TEXT REFERENCES wallet_ledgers(id) ON DELETE SET NULL,
+    quota_ledger_id TEXT REFERENCES billing_quota_ledgers(id) ON DELETE SET NULL,
+    consumed_credits_delta BIGINT NOT NULL DEFAULT 0,
+    released_amount_delta_cents BIGINT NOT NULL DEFAULT 0,
+    commission_item_consumed_credits BIGINT NOT NULL DEFAULT 0,
+    commission_item_released_amount_cents BIGINT NOT NULL DEFAULT 0,
+    metadata JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -1013,7 +1071,13 @@ CREATE INDEX IF NOT EXISTS idx_billing_package_entitlements_package_id ON billin
 CREATE INDEX IF NOT EXISTS idx_billing_pricing_rules_meter_code ON billing_pricing_rules(meter_code);
 CREATE INDEX IF NOT EXISTS idx_billing_pricing_rules_model_name ON billing_pricing_rules(model_name);
 CREATE INDEX IF NOT EXISTS idx_billing_wallets_user_id ON billing_wallets(user_id);
+CREATE INDEX IF NOT EXISTS idx_billing_wallet_lots_user_id ON billing_wallet_lots(user_id);
+CREATE INDEX IF NOT EXISTS idx_billing_wallet_lots_recharge_order_id ON billing_wallet_lots(recharge_order_id);
+CREATE INDEX IF NOT EXISTS idx_billing_wallet_lots_commission_item_id ON billing_wallet_lots(distribution_commission_item_id);
+CREATE INDEX IF NOT EXISTS idx_billing_wallet_lots_status_created_at ON billing_wallet_lots(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_wallet_ledgers_user_id ON wallet_ledgers(user_id);
+CREATE INDEX IF NOT EXISTS idx_billing_wallet_lot_consumptions_wallet_lot_id ON billing_wallet_lot_consumptions(wallet_lot_id);
+CREATE INDEX IF NOT EXISTS idx_billing_wallet_lot_consumptions_source ON billing_wallet_lot_consumptions(source_type, source_id);
 CREATE INDEX IF NOT EXISTS idx_recharge_orders_user_id ON recharge_orders(user_id);
 CREATE INDEX IF NOT EXISTS idx_recharge_orders_status ON recharge_orders(status);
 CREATE INDEX IF NOT EXISTS idx_payment_transactions_recharge_order_id ON payment_transactions(recharge_order_id);
@@ -1025,6 +1089,8 @@ CREATE INDEX IF NOT EXISTS idx_recharge_order_events_order_id ON recharge_order_
 CREATE INDEX IF NOT EXISTS idx_billing_quota_accounts_user_id ON billing_quota_accounts(user_id);
 CREATE INDEX IF NOT EXISTS idx_billing_quota_accounts_meter_code ON billing_quota_accounts(meter_code);
 CREATE INDEX IF NOT EXISTS idx_billing_quota_accounts_status_expires_at ON billing_quota_accounts(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_billing_quota_accounts_recharge_order_id ON billing_quota_accounts(recharge_order_id);
+CREATE INDEX IF NOT EXISTS idx_billing_quota_accounts_commission_item_id ON billing_quota_accounts(distribution_commission_item_id);
 CREATE INDEX IF NOT EXISTS idx_billing_quota_ledgers_user_id ON billing_quota_ledgers(user_id);
 CREATE INDEX IF NOT EXISTS idx_billing_usage_events_user_id ON billing_usage_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_billing_usage_events_source ON billing_usage_events(source_type, source_id);
@@ -1038,6 +1104,9 @@ CREATE INDEX IF NOT EXISTS idx_distribution_commission_items_promoter_user_id ON
 CREATE INDEX IF NOT EXISTS idx_distribution_commission_items_invitee_user_id ON distribution_commission_items(invitee_user_id);
 CREATE INDEX IF NOT EXISTS idx_distribution_commission_items_status ON distribution_commission_items(status);
 CREATE INDEX IF NOT EXISTS idx_distribution_commission_items_settlement_batch_id ON distribution_commission_items(settlement_batch_id);
+CREATE INDEX IF NOT EXISTS idx_distribution_commission_release_events_commission_item_id ON distribution_commission_release_events(commission_item_id);
+CREATE INDEX IF NOT EXISTS idx_distribution_commission_release_events_promoter_user_id ON distribution_commission_release_events(promoter_user_id);
+CREATE INDEX IF NOT EXISTS idx_distribution_commission_release_events_source ON distribution_commission_release_events(source_type, source_id);
 CREATE INDEX IF NOT EXISTS idx_distribution_settlement_batches_status ON distribution_settlement_batches(status);
 CREATE INDEX IF NOT EXISTS idx_distribution_settlement_items_batch_id ON distribution_settlement_items(batch_id);
 CREATE INDEX IF NOT EXISTS idx_distribution_settlement_items_promoter_user_id ON distribution_settlement_items(promoter_user_id);

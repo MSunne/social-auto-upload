@@ -1,158 +1,368 @@
 "use client";
 
 import { useState } from "react";
-import { useWalletLedgers } from "@/lib/hooks/useFinance";
+import { Loader2, RefreshCw, Search } from "lucide-react";
+import { useBillingActivities } from "@/lib/hooks/useFinance";
 import { PageHeader } from "@/components/ui/common";
-import { Search, Loader2, ArrowUpRight, ArrowDownLeft, RefreshCw } from "lucide-react";
+import type { BillingActivity } from "@/lib/types";
 
-const ENTRY_TYPES = [
-  { value: "", label: "全部类型" },
-  { value: "recharge", label: "充值入账", color: "text-green-400" },
-  { value: "consume", label: "消耗抵扣", color: "text-orange-400" },
-  { value: "refund", label: "售后退款", color: "text-blue-400" },
-  { value: "admin_adjustment", label: "人工调账", color: "text-purple-400" },
-  { value: "system_adjustment", label: "系统调账", color: "text-[var(--color-text-secondary)]" },
+const KIND_OPTIONS = [
+  { value: "", label: "全部记录" },
+  { value: "usage_event", label: "AI 计费" },
+  { value: "wallet_ledger", label: "钱包账变" },
+  { value: "recharge_order", label: "充值订单" },
 ];
+
+const JOB_TYPE_OPTIONS = [
+  { value: "", label: "全部 AI 类型" },
+  { value: "chat", label: "聊天" },
+  { value: "image", label: "作图" },
+  { value: "video", label: "视频" },
+];
+
+const STATUS_OPTIONS = [
+  { value: "", label: "全部状态" },
+  { value: "billed", label: "已计费" },
+  { value: "failed", label: "计费失败" },
+  { value: "paid", label: "已支付" },
+  { value: "pending_payment", label: "待支付" },
+  { value: "processing", label: "处理中" },
+  { value: "awaiting_manual_review", label: "待人工审核" },
+];
+
+const ENTRY_TYPE_LABELS: Record<string, string> = {
+  recharge: "充值入账",
+  consume: "消耗抵扣",
+  refund: "售后退款",
+  grant: "赠送积分",
+  manual_compensation: "人工补偿",
+  manual_deduction: "人工扣减",
+  admin_adjustment: "人工调账",
+  system_adjustment: "系统调账",
+};
+
+const CHANNEL_LABELS: Record<string, string> = {
+  manual_cs: "客服充值",
+  alipay: "支付宝",
+  wechatpay: "微信支付",
+};
+
+const JOB_TYPE_LABELS: Record<string, string> = {
+  chat: "聊天",
+  image: "作图",
+  video: "视频",
+};
+
+function formatCurrency(cents: number) {
+  return `¥ ${(cents / 100).toFixed(2)}`;
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) {
+    return "—";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "—";
+  }
+  return parsed.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function getActivityTypeLabel(item: BillingActivity) {
+  if (item.kind === "recharge_order") {
+    return "充值订单";
+  }
+  if (item.kind === "wallet_ledger") {
+    return (item.creditDelta ?? 0) > 0 ? "钱包入账" : "钱包扣减";
+  }
+  return "AI 计费";
+}
+
+function getBusinessLabel(item: BillingActivity) {
+  if (item.kind === "recharge_order") {
+    return CHANNEL_LABELS[item.channel ?? ""] || item.channel || "充值";
+  }
+  if (item.kind === "wallet_ledger") {
+    return ENTRY_TYPE_LABELS[item.entryType ?? ""] || item.entryType || "钱包账变";
+  }
+  if (item.jobType) {
+    return JOB_TYPE_LABELS[item.jobType] || item.jobType;
+  }
+  return item.sourceType || item.meterName || item.meterCode || "AI 用量";
+}
+
+function getActivityAmount(item: BillingActivity) {
+  if (item.kind === "recharge_order" && typeof item.amountCents === "number") {
+    const credits = (item.creditAmount ?? 0) + (item.bonusCreditAmount ?? 0);
+    return {
+      text: formatCurrency(item.amountCents),
+      meta: credits > 0 ? `到账 ${credits.toLocaleString("zh-CN")} 积分` : "",
+      tone: "text-green-400",
+    };
+  }
+  if (item.kind === "wallet_ledger" && typeof item.creditDelta === "number") {
+    const isIncome = item.creditDelta > 0;
+    return {
+      text: `${isIncome ? "+" : ""}${item.creditDelta.toLocaleString("zh-CN")} 积分`,
+      meta: "",
+      tone: isIncome ? "text-green-400" : "text-orange-400",
+    };
+  }
+  if (typeof item.debitedCredits === "number") {
+    return {
+      text: `-${item.debitedCredits.toLocaleString("zh-CN")} 积分`,
+      meta: typeof item.usageQuantity === "number" ? `${item.usageQuantity.toLocaleString("zh-CN")} ${item.meterName || item.meterCode || "单位"}` : "",
+      tone: "text-orange-400",
+    };
+  }
+  return {
+    text: typeof item.usageQuantity === "number" ? `${item.usageQuantity.toLocaleString("zh-CN")} ${item.meterName || item.meterCode || "单位"}` : "—",
+    meta: item.status === "failed" ? "本次未成功扣费" : "",
+    tone: item.status === "failed" ? "text-red-400" : "text-[var(--color-text-secondary)]",
+  };
+}
+
+function renderStatus(status?: string | null) {
+  if (!status) {
+    return <span className="text-xs text-[var(--color-text-secondary)]">已记账</span>;
+  }
+  if (status === "billed") {
+    return <span className="inline-flex rounded-full border border-green-500/20 bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-400">已计费</span>;
+  }
+  if (status === "failed") {
+    return <span className="inline-flex rounded-full border border-red-500/20 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-400">计费失败</span>;
+  }
+  return <span className="text-xs text-[var(--color-text-secondary)]">{status}</span>;
+}
 
 export function WalletLedgersView() {
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState("");
   const [searchInput, setSearchInput] = useState("");
-  const [entryType, setEntryType] = useState("");
+  const [kind, setKind] = useState("");
+  const [jobType, setJobType] = useState("");
+  const [status, setStatus] = useState("");
 
-  const { data, isLoading, error, refetch } = useWalletLedgers({ page, pageSize: 30, query: query || undefined, entryType: entryType || undefined });
-
-  const handleSearch = (e: React.FormEvent) => { e.preventDefault(); setQuery(searchInput); setPage(1); };
-
-  const getEntryBadge = (type: string) => {
-    const config = ENTRY_TYPES.find(t => t.value === type) || { label: type, color: "text-[var(--color-text-secondary)]" };
-    const isIncome = ["recharge", "refund", "admin_adjustment"].includes(type) || type.includes("income");
-    const bg = isIncome ? "bg-green-500/10 border-green-500/20" : "bg-orange-500/10 border-orange-500/20";
-    return (
-      <span className={`px-2 py-0.5 text-xs rounded border font-medium flex items-center gap-1 w-fit ${bg} ${config.color}`}>
-        {isIncome ? <ArrowDownLeft className="h-3 w-3" /> : <ArrowUpRight className="h-3 w-3" />}
-        {config.label}
-      </span>
-    );
-  };
+  const { data, isLoading, error, refetch } = useBillingActivities({
+    page,
+    pageSize: 30,
+    query: query || undefined,
+    kind: kind || undefined,
+    jobType: jobType || undefined,
+    status: status || undefined,
+  });
 
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between">
-        <PageHeader title="钱包账单流水" subtitle="全局追踪每一次积分的变动、充值与消费行为明细。" />
-        <button onClick={() => refetch()} className="flex items-center gap-2 px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm hover:bg-[var(--color-bg-secondary)] transition-colors">
-          <RefreshCw className="h-4 w-4" /> 刷新
+        <PageHeader title="财务流水" subtitle="统一查看充值订单、钱包账变和 OmniDrive 全部 AI 计费记录，并按来源或状态筛选。" />
+        <button
+          onClick={() => refetch()}
+          className="flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm transition-colors hover:bg-[var(--color-bg-secondary)]"
+        >
+          <RefreshCw className="h-4 w-4" />
+          刷新
         </button>
       </div>
 
-      {/* Summary Cards */}
-      {data && data.summary && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)]">
-            <p className="text-xs text-[var(--color-text-secondary)] mb-1">总流水笔数</p>
-            <p className="text-xl font-medium">{data.summary.totalEntryCount}</p>
+      {data?.summary ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-4">
+            <p className="mb-1 text-xs text-[var(--color-text-secondary)]">总流水笔数</p>
+            <p className="text-xl font-medium">{data.summary.totalActivityCount.toLocaleString()}</p>
           </div>
-          <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)]">
-            <p className="text-xs text-[var(--color-text-secondary)] mb-1">累计入账积分</p>
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-4">
+            <p className="mb-1 text-xs text-[var(--color-text-secondary)]">充值总额</p>
+            <p className="text-xl font-medium text-green-400">{formatCurrency(data.summary.totalRechargeAmountCents)}</p>
+          </div>
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-4">
+            <p className="mb-1 text-xs text-[var(--color-text-secondary)]">累计入账积分</p>
             <p className="text-xl font-medium text-green-400">+{data.summary.totalCreditIn.toLocaleString()}</p>
           </div>
-          <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)]">
-            <p className="text-xs text-[var(--color-text-secondary)] mb-1">累计消耗积分</p>
-            <p className="text-xl font-medium text-orange-400">-{data.summary.totalCreditOut.toLocaleString()}</p>
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-4">
+            <p className="mb-1 text-xs text-[var(--color-text-secondary)]">AI 已计费积分</p>
+            <p className="text-xl font-medium text-orange-400">-{data.summary.totalDebitedCredits.toLocaleString()}</p>
           </div>
         </div>
-      )}
+      ) : null}
 
-      {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center bg-[var(--color-bg-secondary)] p-4 rounded-xl border border-[var(--color-border)]">
-        <form onSubmit={handleSearch} className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-text-secondary)]" />
-          <input type="text" placeholder="搜索账单号 / 用户关联..." value={searchInput} onChange={e => setSearchInput(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-sm focus:outline-none focus:border-[var(--color-primary)]" />
+      <div className="space-y-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            setQuery(searchInput.trim());
+            setPage(1);
+          }}
+          className="relative max-w-md"
+        >
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-secondary)]" />
+          <input
+            type="text"
+            placeholder="搜索用户、模型、订单号或引用 ID"
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+            className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] py-2 pl-9 pr-4 text-sm focus:border-[var(--color-primary)] focus:outline-none"
+          />
         </form>
-        <div className="flex gap-1 flex-wrap">
-          {ENTRY_TYPES.map(rt => (
-            <button key={rt.value} onClick={() => { setEntryType(rt.value); setPage(1); }}
-              className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${entryType === rt.value ? "bg-[var(--color-primary)]/10 border-[var(--color-primary)]/50 text-[var(--color-primary)]" : "border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]"}`}>
-              {rt.label}
-            </button>
-          ))}
+
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap gap-2">
+            {KIND_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                onClick={() => {
+                  setKind(option.value);
+                  setPage(1);
+                }}
+                className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                  kind === option.value
+                    ? "border-[var(--color-primary)]/50 bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
+                    : "border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <select
+              value={jobType}
+              onChange={(event) => {
+                setJobType(event.target.value);
+                setPage(1);
+              }}
+              className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-2 text-sm focus:border-[var(--color-primary)] focus:outline-none"
+            >
+              {JOB_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <select
+              value={status}
+              onChange={(event) => {
+                setStatus(event.target.value);
+                setPage(1);
+              }}
+              className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-2 text-sm focus:border-[var(--color-primary)] focus:outline-none"
+            >
+              {STATUS_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
-      {/* Table */}
-      <div className="rounded-xl border border-[var(--color-border)] overflow-hidden bg-[var(--color-bg-primary)]">
+      <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)]">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left">
-            <thead className="text-xs text-[var(--color-text-secondary)] uppercase bg-[var(--color-bg-secondary)] border-b border-[var(--color-border)]">
+          <table className="w-full text-left text-sm">
+            <thead className="border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-xs uppercase text-[var(--color-text-secondary)]">
               <tr>
-                <th className="px-5 py-3.5 font-medium">交易时间</th>
-                <th className="px-5 py-3.5 font-medium">流水单号 / 摘要</th>
-                <th className="px-5 py-3.5 font-medium">归属用户</th>
-                <th className="px-5 py-3.5 font-medium">业务分类</th>
-                <th className="px-5 py-3.5 font-medium text-right">账变前</th>
-                <th className="px-5 py-3.5 font-medium text-right">变动额</th>
-                <th className="px-5 py-3.5 font-medium text-right">结余</th>
+                <th className="px-5 py-3.5 font-medium">时间</th>
+                <th className="px-5 py-3.5 font-medium">用户 / 邮箱</th>
+                <th className="px-5 py-3.5 font-medium">记录类型</th>
+                <th className="px-5 py-3.5 font-medium">业务</th>
+                <th className="px-5 py-3.5 font-medium">细节</th>
+                <th className="px-5 py-3.5 font-medium">状态</th>
+                <th className="px-5 py-3.5 font-medium text-right">费用 / 用量</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
-              {isLoading && (
-                <tr><td colSpan={7} className="px-6 py-12 text-center">
-                  <Loader2 className="h-6 w-6 animate-spin mx-auto text-[var(--color-text-secondary)]" />
-                  <p className="mt-2 text-sm text-[var(--color-text-secondary)]">加载流水数据中...</p>
-                </td></tr>
-              )}
-              {error && <tr><td colSpan={7} className="px-6 py-10 text-center text-red-500 text-sm">加载失败，请重试</td></tr>}
-              {data && data.items.length === 0 && <tr><td colSpan={7} className="px-6 py-12 text-center text-[var(--color-text-secondary)] text-sm">暂无符合条件的账单流水</td></tr>}
-              {data && data.items.map(row => {
-                const isIncome = row.ledger.amountDelta > 0;
-                return (
-                  <tr key={row.ledger.id} className="hover:bg-[var(--color-bg-secondary)]/50 transition-colors">
-                    <td className="px-5 py-3.5 text-xs text-[var(--color-text-secondary)] whitespace-nowrap">
-                      <div>{new Date(row.ledger.createdAt).toLocaleDateString("zh-CN")}</div>
-                      <div className="mt-0.5 font-mono">{new Date(row.ledger.createdAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</div>
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <div className="font-mono text-xs text-[var(--color-text-secondary)] mb-1">{row.ledger.id}</div>
-                      <div className="font-medium max-w-[240px] truncate" title={row.ledger.description || ""}>
-                        {row.ledger.description || "无摘要"}
-                      </div>
-                      {row.ledger.referenceType && (
-                        <div className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                          业务单据: <span className="font-mono">{row.ledger.referenceType} ({row.ledger.referenceId?.slice(-8)})</span>
+              {isLoading ? (
+                <tr>
+                  <td colSpan={7} className="px-6 py-12 text-center">
+                    <Loader2 className="mx-auto h-6 w-6 animate-spin text-[var(--color-text-secondary)]" />
+                    <p className="mt-2 text-sm text-[var(--color-text-secondary)]">加载财务流水中...</p>
+                  </td>
+                </tr>
+              ) : error ? (
+                <tr>
+                  <td colSpan={7} className="px-6 py-10 text-center text-sm text-red-500">
+                    加载失败，请重试
+                  </td>
+                </tr>
+              ) : !data || data.items.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-6 py-12 text-center text-sm text-[var(--color-text-secondary)]">
+                    暂无符合条件的财务流水
+                  </td>
+                </tr>
+              ) : (
+                data.items.map((row) => {
+                  const amount = getActivityAmount(row.activity);
+                  const meta = [row.activity.modelName, row.activity.meterName || row.activity.meterCode, row.activity.reference].filter(Boolean).join(" · ");
+                  return (
+                    <tr key={`${row.activity.kind}-${row.activity.id}`} className="transition-colors hover:bg-[var(--color-bg-secondary)]/50">
+                      <td className="whitespace-nowrap px-5 py-3.5 text-xs text-[var(--color-text-secondary)]">
+                        {formatDateTime(row.activity.occurredAt)}
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <div className="max-w-[180px] truncate text-sm" title={row.user.name}>
+                          {row.user.name}
                         </div>
-                      )}
-                    </td>
-                    <td className="px-5 py-3.5">
-                      {row.user ? (
-                        <><div className="text-sm">{row.user.name}</div><div className="text-xs text-[var(--color-text-secondary)]">{row.user.email}</div></>
-                      ) : <span className="text-xs text-[var(--color-text-secondary)]">—</span>}
-                    </td>
-                    <td className="px-5 py-3.5">{getEntryBadge(row.ledger.entryType)}</td>
-                    <td className="px-5 py-3.5 text-right font-mono text-[var(--color-text-secondary)]">{row.ledger.balanceBefore}</td>
-                    <td className={`px-5 py-3.5 text-right font-mono font-medium ${isIncome ? "text-green-400" : "text-orange-400"}`}>
-                      {isIncome ? "+" : ""}{row.ledger.amountDelta}
-                    </td>
-                    <td className="px-5 py-3.5 text-right font-mono text-blue-400 font-medium">
-                      {row.ledger.balanceAfter}
-                    </td>
-                  </tr>
-                );
-              })}
+                        <div className="max-w-[220px] truncate text-xs text-[var(--color-text-secondary)]" title={row.user.email}>
+                          {row.user.email}
+                        </div>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <div className="font-medium">{getActivityTypeLabel(row.activity)}</div>
+                        <div className="mt-0.5 text-xs text-[var(--color-text-secondary)]">{row.activity.kind}</div>
+                      </td>
+                      <td className="px-5 py-3.5">{getBusinessLabel(row.activity)}</td>
+                      <td className="px-5 py-3.5">
+                        <div className="max-w-[260px] truncate" title={row.activity.detail || row.activity.title}>
+                          {row.activity.detail || row.activity.title}
+                        </div>
+                        {meta ? <div className="mt-0.5 text-xs text-[var(--color-text-secondary)]">{meta}</div> : null}
+                      </td>
+                      <td className="px-5 py-3.5">{renderStatus(row.activity.status)}</td>
+                      <td className={`px-5 py-3.5 text-right font-mono font-medium ${amount.tone}`}>
+                        <div>{amount.text}</div>
+                        {amount.meta ? <div className="mt-0.5 text-xs text-[var(--color-text-secondary)]">{amount.meta}</div> : null}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {data && data.pagination && data.pagination.totalPages > 1 && (
+      {data?.pagination && data.pagination.totalPages > 1 ? (
         <div className="flex items-center justify-between px-1">
-          <p className="text-sm text-[var(--color-text-secondary)]">共 <span className="font-medium">{data.pagination.total}</span> 条流水</p>
+          <p className="text-sm text-[var(--color-text-secondary)]">
+            共 <span className="font-medium">{data.pagination.total}</span> 条流水
+          </p>
           <div className="flex gap-2">
-            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="px-3 py-1.5 text-sm border border-[var(--color-border)] rounded-lg disabled:opacity-50 hover:bg-[var(--color-bg-secondary)] transition-colors">上一页</button>
-            <button onClick={() => setPage(p => Math.min(data.pagination.totalPages, p + 1))} disabled={page >= data.pagination.totalPages} className="px-3 py-1.5 text-sm border border-[var(--color-border)] rounded-lg disabled:opacity-50 hover:bg-[var(--color-bg-secondary)] transition-colors">下一页</button>
+            <button
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              disabled={page === 1}
+              className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm transition-colors hover:bg-[var(--color-bg-secondary)] disabled:opacity-50"
+            >
+              上一页
+            </button>
+            <button
+              onClick={() => setPage((current) => Math.min(data.pagination.totalPages, current + 1))}
+              disabled={page >= data.pagination.totalPages}
+              className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm transition-colors hover:bg-[var(--color-bg-secondary)] disabled:opacity-50"
+            >
+              下一页
+            </button>
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

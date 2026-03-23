@@ -162,8 +162,11 @@ func (s *Store) ListCommissionItemsByPromoter(ctx context.Context, promoterUserI
 			c.commission_rate_basis_points,
 			c.commission_base_amount_cents,
 			c.amount_cents,
+			c.total_granted_credits,
+			c.consumed_credits,
 			c.released_amount_cents,
 			c.settled_amount_cents,
+			COALESCE(rel.release_event_count, 0)::BIGINT,
 			c.recharge_order_id,
 			ro.order_no,
 			c.created_at,
@@ -172,6 +175,11 @@ func (s *Store) ListCommissionItemsByPromoter(ctx context.Context, promoterUserI
 		FROM distribution_commission_items c
 		INNER JOIN users iu ON iu.id = c.invitee_user_id
 		LEFT JOIN recharge_orders ro ON ro.id = c.recharge_order_id
+		LEFT JOIN LATERAL (
+			SELECT COUNT(*)::BIGINT AS release_event_count
+			FROM distribution_commission_release_events e
+			WHERE e.commission_item_id = c.id
+		) rel ON TRUE
 		WHERE `+strings.Join(whereParts, " AND ")+`
 		ORDER BY c.created_at DESC
 		LIMIT $`+strconv.Itoa(argIndex), args...)
@@ -193,8 +201,11 @@ func (s *Store) ListCommissionItemsByPromoter(ctx context.Context, promoterUserI
 			&basisPoints,
 			&item.CommissionBaseAmountCents,
 			&item.AmountCents,
+			&item.TotalGrantedCredits,
+			&item.ConsumedCredits,
 			&item.ReleasedAmountCents,
 			&item.SettledAmountCents,
+			&item.ReleaseEventCount,
 			&item.RechargeOrderID,
 			&item.RechargeOrderNo,
 			&item.CreatedAt,
@@ -204,6 +215,72 @@ func (s *Store) ListCommissionItemsByPromoter(ctx context.Context, promoterUserI
 			return nil, scanErr
 		}
 		item.CommissionRate = basisPointsToRate(basisPoints)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) ListCommissionReleaseEventsByPromoter(ctx context.Context, promoterUserID string, commissionItemID string, limit int) ([]domain.CommissionReleaseEvent, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT
+			e.id,
+			e.commission_item_id,
+			e.recharge_order_id,
+			ro.order_no,
+			e.source_type,
+			e.source_id,
+			e.source_snapshot,
+			e.wallet_lot_id,
+			e.quota_account_id,
+			e.wallet_ledger_id,
+			e.quota_ledger_id,
+			e.consumed_credits_delta,
+			e.released_amount_delta_cents,
+			e.commission_item_consumed_credits,
+			e.commission_item_released_amount_cents,
+			e.metadata,
+			e.created_at
+		FROM distribution_commission_release_events e
+		INNER JOIN distribution_commission_items c ON c.id = e.commission_item_id
+		LEFT JOIN recharge_orders ro ON ro.id = e.recharge_order_id
+		WHERE e.commission_item_id = $1
+		  AND c.promoter_user_id = $2
+		ORDER BY e.created_at DESC
+		LIMIT $3
+	`, strings.TrimSpace(commissionItemID), strings.TrimSpace(promoterUserID), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.CommissionReleaseEvent, 0, limit)
+	for rows.Next() {
+		var item domain.CommissionReleaseEvent
+		if scanErr := rows.Scan(
+			&item.ID,
+			&item.CommissionItemID,
+			&item.RechargeOrderID,
+			&item.RechargeOrderNo,
+			&item.SourceType,
+			&item.SourceID,
+			&item.SourceSnapshot,
+			&item.WalletLotID,
+			&item.QuotaAccountID,
+			&item.WalletLedgerID,
+			&item.QuotaLedgerID,
+			&item.ConsumedCreditsDelta,
+			&item.ReleasedAmountDeltaCents,
+			&item.CommissionItemConsumedCredits,
+			&item.CommissionItemReleasedAmountCents,
+			&item.Metadata,
+			&item.CreatedAt,
+		); scanErr != nil {
+			return nil, scanErr
+		}
 		items = append(items, item)
 	}
 	return items, rows.Err()

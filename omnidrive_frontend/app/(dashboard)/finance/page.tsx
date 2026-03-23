@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -10,11 +10,37 @@ import {
   CreditCard,
   Loader2,
   ReceiptText,
+  Search,
+  Sparkles,
   Wallet,
 } from "lucide-react";
 import { EmptyState, PageHeader, StatCard, StatusBadge } from "@/components/ui/common";
-import { getBillingSummary, listRechargeOrders, listWalletLedger } from "@/lib/services";
-import type { BillingSummary, RechargeOrder, WalletLedger } from "@/lib/types";
+import { getBillingSummary, listBillingActivities } from "@/lib/services";
+import type { BillingActivity, BillingActivityListResponse, BillingSummary } from "@/lib/types";
+
+const KIND_OPTIONS = [
+  { value: "", label: "全部记录" },
+  { value: "usage_event", label: "AI 计费" },
+  { value: "wallet_ledger", label: "钱包账变" },
+  { value: "recharge_order", label: "充值订单" },
+];
+
+const JOB_TYPE_OPTIONS = [
+  { value: "", label: "全部 AI 类型" },
+  { value: "chat", label: "聊天" },
+  { value: "image", label: "作图" },
+  { value: "video", label: "视频" },
+];
+
+const STATUS_OPTIONS = [
+  { value: "", label: "全部状态" },
+  { value: "billed", label: "已计费" },
+  { value: "failed", label: "计费失败" },
+  { value: "paid", label: "已支付" },
+  { value: "pending_payment", label: "待支付" },
+  { value: "processing", label: "处理中" },
+  { value: "awaiting_manual_review", label: "待人工审核" },
+];
 
 const ENTRY_TYPE_LABELS: Record<string, string> = {
   recharge: "充值入账",
@@ -33,17 +59,10 @@ const CHANNEL_LABELS: Record<string, string> = {
   wechatpay: "微信支付",
 };
 
-type FinanceActivityItem = {
-  id: string;
-  occurredAt: string;
-  kind: "order" | "ledger";
-  eventLabel: string;
-  businessLabel: string;
-  detail: string;
-  reference: string;
-  status?: string;
-  amountText: string;
-  amountTone: string;
+const JOB_TYPE_LABELS: Record<string, string> = {
+  chat: "聊天",
+  image: "作图",
+  video: "视频",
 };
 
 function formatDateTime(value?: string | null) {
@@ -67,68 +86,118 @@ function formatCurrency(cents: number) {
   return `¥ ${(cents / 100).toFixed(2)}`;
 }
 
-function formatLedgerType(type: string) {
-  return ENTRY_TYPE_LABELS[type] || type;
+function renderActivityStatus(status?: string | null) {
+  if (!status) {
+    return <span className="text-xs text-text-muted">已记账</span>;
+  }
+  if (status === "billed") {
+    return <span className="inline-flex rounded-full bg-success/10 px-2.5 py-1 text-xs font-medium text-success">已计费</span>;
+  }
+  return <StatusBadge status={status} />;
 }
 
-function buildFinanceActivities(orders: RechargeOrder[], ledger: WalletLedger[]) {
-  const orderItems: FinanceActivityItem[] = orders.map((order) => ({
-    id: `order-${order.id}`,
-    occurredAt: order.createdAt,
-    kind: "order",
-    eventLabel: "新建订单",
-    businessLabel: CHANNEL_LABELS[order.channel] || order.channel,
-    detail: order.subject,
-    reference: order.orderNo,
-    status: order.status,
-    amountText: formatCurrency(order.amountCents),
-    amountTone: "text-info",
-  }));
+function getActivityTypeLabel(item: BillingActivity) {
+  if (item.kind === "recharge_order") {
+    return "充值订单";
+  }
+  if (item.kind === "wallet_ledger") {
+    if ((item.creditDelta ?? 0) > 0) {
+      return "钱包入账";
+    }
+    return "钱包扣减";
+  }
+  return "AI 计费";
+}
 
-  const ledgerItems: FinanceActivityItem[] = ledger.map((item) => {
-    const isIncome = item.amountDelta > 0;
+function getActivityBusinessLabel(item: BillingActivity) {
+  if (item.kind === "recharge_order") {
+    return CHANNEL_LABELS[item.channel ?? ""] || item.channel || "充值";
+  }
+  if (item.kind === "wallet_ledger") {
+    return ENTRY_TYPE_LABELS[item.entryType ?? ""] || item.entryType || "钱包账变";
+  }
+  if (item.jobType) {
+    return JOB_TYPE_LABELS[item.jobType] || item.jobType;
+  }
+  if (item.sourceType) {
+    return item.sourceType;
+  }
+  return item.meterName || item.meterCode || "AI 用量";
+}
+
+function getActivityAmount(item: BillingActivity) {
+  if (item.kind === "recharge_order" && typeof item.amountCents === "number") {
+    const credits = (item.creditAmount ?? 0) + (item.bonusCreditAmount ?? 0);
     return {
-      id: `ledger-${item.id}`,
-      occurredAt: item.createdAt,
-      kind: "ledger",
-      eventLabel: item.entryType === "consume" ? "消费" : isIncome ? "入账" : "账变",
-      businessLabel: formatLedgerType(item.entryType),
-      detail: item.description || item.referenceType || "钱包变更",
-      reference: item.referenceId || item.id,
-      amountText: `${isIncome ? "+" : ""}${item.amountDelta.toLocaleString("zh-CN")} 积分`,
-      amountTone: isIncome ? "text-success" : "text-warning",
+      text: formatCurrency(item.amountCents),
+      meta: credits > 0 ? `到账 ${credits.toLocaleString("zh-CN")} 积分` : "",
+      tone: "text-info",
     };
-  });
+  }
+  if (item.kind === "wallet_ledger" && typeof item.creditDelta === "number") {
+    const isIncome = item.creditDelta > 0;
+    return {
+      text: `${isIncome ? "+" : ""}${item.creditDelta.toLocaleString("zh-CN")} 积分`,
+      meta: "",
+      tone: isIncome ? "text-success" : "text-warning",
+    };
+  }
+  if (typeof item.debitedCredits === "number") {
+    return {
+      text: `-${item.debitedCredits.toLocaleString("zh-CN")} 积分`,
+      meta: typeof item.usageQuantity === "number" ? `${item.usageQuantity.toLocaleString("zh-CN")} ${item.meterName || item.meterCode || "单位"}` : "",
+      tone: "text-warning",
+    };
+  }
+  return {
+    text: typeof item.usageQuantity === "number" ? `${item.usageQuantity.toLocaleString("zh-CN")} ${item.meterName || item.meterCode || "单位"}` : "—",
+    meta: item.status === "failed" ? "本次未成功扣费" : "",
+    tone: item.status === "failed" ? "text-danger" : "text-text-secondary",
+  };
+}
 
-  return [...orderItems, ...ledgerItems].sort((left, right) => {
-    return new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime();
-  });
+function buildActivityMeta(item: BillingActivity) {
+  const parts = [item.modelName, item.meterName || item.meterCode, item.reference];
+  return parts.filter(Boolean).join(" · ");
 }
 
 export default function FinancePage() {
+  const [page, setPage] = useState(1);
+  const [query, setQuery] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [kind, setKind] = useState("");
+  const [jobType, setJobType] = useState("");
+  const [status, setStatus] = useState("");
+
   const { data: summary, isLoading: summaryLoading } = useQuery<BillingSummary>({
     queryKey: ["billingSummary"],
     queryFn: getBillingSummary,
   });
 
-  const { data: ledger = [], isLoading: ledgerLoading } = useQuery<WalletLedger[]>({
-    queryKey: ["walletLedger", { limit: 40 }],
-    queryFn: () => listWalletLedger({ limit: 40 }),
+  const {
+    data: activitiesData,
+    isLoading: activitiesLoading,
+    error,
+  } = useQuery<BillingActivityListResponse>({
+    queryKey: ["billingActivities", { page, query, kind, jobType, status }],
+    queryFn: () =>
+      listBillingActivities({
+        page,
+        pageSize: 20,
+        query: query || undefined,
+        kind: kind || undefined,
+        jobType: jobType || undefined,
+        status: status || undefined,
+      }),
   });
 
-  const { data: orders = [], isLoading: ordersLoading } = useQuery<RechargeOrder[]>({
-    queryKey: ["rechargeOrders", { limit: 20 }],
-    queryFn: () => listRechargeOrders({ limit: 20 }),
-  });
-
-  const activities = useMemo(() => buildFinanceActivities(orders, ledger), [orders, ledger]);
   const activeQuotaCount = summary?.quotaBalances.filter((item) => item.remainingTotal > 0).length ?? 0;
 
   return (
     <>
       <PageHeader
         title="财务管理"
-        subtitle="直接看财务流水明细，订单创建、消费、入账、订单类型和状态都汇总在一张表里。"
+        subtitle="统一查看 OmniDrive 里的聊天、作图、做视频、充值和钱包账变记录。"
         actions={
           <Link
             href="/top-up"
@@ -163,11 +232,11 @@ export default function FinancePage() {
           icon={<CreditCard className="h-5 w-5" />}
         />
         <StatCard
-          label="生效套餐"
-          value={summaryLoading ? "..." : activeQuotaCount}
-          change="到账后的套餐次数会显示在这里"
+          label="AI 已计费"
+          value={activitiesLoading ? "..." : (activitiesData?.summary.totalDebitedCredits ?? 0).toLocaleString("zh-CN")}
+          change="聊天、作图、做视频的累计扣减积分"
           changeType="positive"
-          icon={<ReceiptText className="h-5 w-5" />}
+          icon={<Sparkles className="h-5 w-5" />}
         />
       </div>
 
@@ -198,75 +267,208 @@ export default function FinancePage() {
         </div>
       ) : null}
 
+      <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-border bg-surface/70 p-4">
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            setQuery(searchInput.trim());
+            setPage(1);
+          }}
+          className="relative"
+        >
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+          <input
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+            placeholder="搜索模型、业务、订单号或引用 ID"
+            className="w-full rounded-xl border border-border bg-background pl-9 pr-4 py-2.5 text-sm text-text-primary outline-none transition-colors focus:border-accent"
+          />
+        </form>
+
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-wrap gap-2">
+            {KIND_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => {
+                  setKind(option.value);
+                  setPage(1);
+                }}
+                className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                  kind === option.value
+                    ? "border-accent bg-accent/10 text-accent"
+                    : "border-border text-text-secondary hover:bg-surface-hover/60"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <select
+              value={jobType}
+              onChange={(event) => {
+                setJobType(event.target.value);
+                setPage(1);
+              }}
+              className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none transition-colors focus:border-accent"
+            >
+              {JOB_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <select
+              value={status}
+              onChange={(event) => {
+                setStatus(event.target.value);
+                setPage(1);
+              }}
+              className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none transition-colors focus:border-accent"
+            >
+              {STATUS_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
       <div className="glass-card overflow-hidden">
         <div className="flex items-center justify-between border-b border-border px-6 py-5">
           <div>
             <h2 className="text-base font-semibold text-text-primary">财务明细列表</h2>
-            <p className="mt-1 text-sm text-text-secondary">统一展示新建订单、消费、入账、订单类型和业务细节。</p>
+            <p className="mt-1 text-sm text-text-secondary">统一展示聊天、作图、视频、充值和钱包变动。</p>
           </div>
-          <div className="text-xs text-text-muted">共 {activities.length} 条</div>
+          <div className="text-xs text-text-muted">共 {activitiesData?.pagination.total ?? 0} 条</div>
         </div>
 
-        {ledgerLoading || ordersLoading ? (
+        {activitiesLoading ? (
           <div className="flex min-h-72 items-center justify-center text-text-secondary">
             <Loader2 className="mr-3 h-5 w-5 animate-spin" />
             正在读取财务明细...
           </div>
-        ) : activities.length === 0 ? (
+        ) : error ? (
+          <div className="p-6 text-sm text-danger">加载财务明细失败，请刷新页面重试。</div>
+        ) : !activitiesData || activitiesData.items.length === 0 ? (
           <div className="p-6">
             <EmptyState
               icon={<Wallet className="h-6 w-6" />}
               title="还没有财务记录"
-              description="创建第一笔订单或产生第一次消费后，这里会自动展示完整明细。"
+              description="创建第一笔订单或产生第一次 AI 消费后，这里会自动展示完整明细。"
             />
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="border-b border-border bg-surface-hover/40 text-xs uppercase tracking-wider text-text-muted">
-                <tr>
-                  <th className="px-6 py-4">时间</th>
-                  <th className="px-6 py-4">事件</th>
-                  <th className="px-6 py-4">订单类型 / 业务</th>
-                  <th className="px-6 py-4">细节</th>
-                  <th className="px-6 py-4">状态</th>
-                  <th className="px-6 py-4 text-right">金额 / 积分</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {activities.map((item) => (
-                  <tr key={item.id} className="transition-colors hover:bg-surface-hover/20">
-                    <td className="px-6 py-4 text-xs text-text-secondary">
-                      {formatDateTime(item.occurredAt)}
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="font-medium text-text-primary">{item.eventLabel}</div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="font-medium text-text-primary">{item.businessLabel}</div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="max-w-sm truncate text-text-primary" title={item.detail}>
-                        {item.detail}
-                      </div>
-                      <div className="mt-1 font-mono text-xs text-text-muted">{item.reference}</div>
-                    </td>
-                    <td className="px-6 py-4">
-                      {item.kind === "order" && item.status ? (
-                        <StatusBadge status={item.status} />
-                      ) : (
-                        <span className="text-xs text-text-muted">已记账</span>
-                      )}
-                    </td>
-                    <td className={`px-6 py-4 text-right font-mono font-semibold ${item.amountTone}`}>
-                      {item.amountText}
-                    </td>
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-border bg-surface-hover/40 text-xs uppercase tracking-wider text-text-muted">
+                  <tr>
+                    <th className="px-6 py-4">时间</th>
+                    <th className="px-6 py-4">记录类型</th>
+                    <th className="px-6 py-4">业务</th>
+                    <th className="px-6 py-4">细节</th>
+                    <th className="px-6 py-4">状态</th>
+                    <th className="px-6 py-4 text-right">费用 / 用量</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {activitiesData.items.map((item) => {
+                    const amount = getActivityAmount(item);
+                    const meta = buildActivityMeta(item);
+                    return (
+                      <tr key={`${item.kind}-${item.id}`} className="transition-colors hover:bg-surface-hover/20">
+                        <td className="px-6 py-4 text-xs text-text-secondary">{formatDateTime(item.occurredAt)}</td>
+                        <td className="px-6 py-4">
+                          <div className="font-medium text-text-primary">{getActivityTypeLabel(item)}</div>
+                          <div className="mt-1 text-xs text-text-muted">{item.kind}</div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="font-medium text-text-primary">{getActivityBusinessLabel(item)}</div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="max-w-sm truncate text-text-primary" title={item.detail || item.title}>
+                            {item.detail || item.title}
+                          </div>
+                          {meta ? (
+                            <div className="mt-1 text-xs text-text-muted">{meta}</div>
+                          ) : null}
+                        </td>
+                        <td className="px-6 py-4">{renderActivityStatus(item.status)}</td>
+                        <td className={`px-6 py-4 text-right font-mono font-semibold ${amount.tone}`}>
+                          <div>{amount.text}</div>
+                          {amount.meta ? <div className="mt-1 text-xs text-text-muted">{amount.meta}</div> : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {activitiesData.pagination.totalPages > 1 ? (
+              <div className="flex items-center justify-between border-t border-border px-6 py-4">
+                <div className="text-sm text-text-secondary">
+                  共 {activitiesData.pagination.total} 条，当前第 {activitiesData.pagination.page} / {activitiesData.pagination.totalPages} 页
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPage((current) => Math.max(1, current - 1))}
+                    disabled={page === 1}
+                    className="rounded-lg border border-border px-3 py-1.5 text-sm text-text-primary transition-colors hover:bg-surface-hover/60 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    上一页
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPage((current) => Math.min(activitiesData.pagination.totalPages, current + 1))}
+                    disabled={page >= activitiesData.pagination.totalPages}
+                    className="rounded-lg border border-border px-3 py-1.5 text-sm text-text-primary transition-colors hover:bg-surface-hover/60 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    下一页
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </>
         )}
+      </div>
+
+      <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
+        <StatCard
+          label="总记录数"
+          value={(activitiesData?.summary.totalActivityCount ?? 0).toLocaleString("zh-CN")}
+          change="订单、钱包账变和 AI 计费统一统计"
+          changeType="neutral"
+          icon={<ReceiptText className="h-5 w-5" />}
+        />
+        <StatCard
+          label="充值总额"
+          value={formatCurrency(activitiesData?.summary.totalRechargeAmountCents ?? 0)}
+          change="当前筛选条件下的充值订单金额"
+          changeType="positive"
+          icon={<CreditCard className="h-5 w-5" />}
+        />
+        <StatCard
+          label="入账积分"
+          value={`+${(activitiesData?.summary.totalCreditIn ?? 0).toLocaleString("zh-CN")}`}
+          change="钱包账变中的所有入账积分"
+          changeType="positive"
+          icon={<Coins className="h-5 w-5" />}
+        />
+        <StatCard
+          label="可用配额"
+          value={activeQuotaCount.toLocaleString("zh-CN")}
+          change="仍有剩余次数或配额的套餐数量"
+          changeType="neutral"
+          icon={<Wallet className="h-5 w-5" />}
+        />
       </div>
     </>
   );

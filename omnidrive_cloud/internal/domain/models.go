@@ -742,6 +742,54 @@ type BillingSummary struct {
 	QuotaBalances        []BillingQuotaBalance `json:"quotaBalances"`
 }
 
+type Pagination struct {
+	Page       int   `json:"page"`
+	PageSize   int   `json:"pageSize"`
+	Total      int64 `json:"total"`
+	TotalPages int   `json:"totalPages"`
+}
+
+type BillingActivity struct {
+	ID                string          `json:"id"`
+	Kind              string          `json:"kind"`
+	UserID            string          `json:"userId"`
+	OccurredAt        time.Time       `json:"occurredAt"`
+	ResultAt          *time.Time      `json:"resultAt,omitempty"`
+	Title             string          `json:"title"`
+	Detail            *string         `json:"detail,omitempty"`
+	Status            *string         `json:"status,omitempty"`
+	EntryType         *string         `json:"entryType,omitempty"`
+	Channel           *string         `json:"channel,omitempty"`
+	SourceType        *string         `json:"sourceType,omitempty"`
+	MeterCode         *string         `json:"meterCode,omitempty"`
+	MeterName         *string         `json:"meterName,omitempty"`
+	ModelName         *string         `json:"modelName,omitempty"`
+	JobType           *string         `json:"jobType,omitempty"`
+	Reference         *string         `json:"reference,omitempty"`
+	ReferenceType     *string         `json:"referenceType,omitempty"`
+	ReferenceID       *string         `json:"referenceId,omitempty"`
+	SourceID          *string         `json:"sourceId,omitempty"`
+	AmountCents       *int64          `json:"amountCents,omitempty"`
+	CreditDelta       *int64          `json:"creditDelta,omitempty"`
+	UsageQuantity     *int64          `json:"usageQuantity,omitempty"`
+	DebitedCredits    *int64          `json:"debitedCredits,omitempty"`
+	CreditAmount      *int64          `json:"creditAmount,omitempty"`
+	BonusCreditAmount *int64          `json:"bonusCreditAmount,omitempty"`
+	BillMessage       *string         `json:"billMessage,omitempty"`
+	Payload           json.RawMessage `json:"payload,omitempty"`
+}
+
+type BillingActivityListSummary struct {
+	TotalActivityCount       int64 `json:"totalActivityCount"`
+	OrderCount               int64 `json:"orderCount"`
+	WalletLedgerCount        int64 `json:"walletLedgerCount"`
+	UsageEventCount          int64 `json:"usageEventCount"`
+	TotalRechargeAmountCents int64 `json:"totalRechargeAmountCents"`
+	TotalCreditIn            int64 `json:"totalCreditIn"`
+	TotalCreditOut           int64 `json:"totalCreditOut"`
+	TotalDebitedCredits      int64 `json:"totalDebitedCredits"`
+}
+
 type PartnerProfile struct {
 	UserID        string    `json:"userId"`
 	PartnerCode   string    `json:"partnerCode"`
@@ -784,13 +832,36 @@ type CommissionItem struct {
 	CommissionRate            float64    `json:"commissionRate"`
 	CommissionBaseAmountCents int64      `json:"commissionBaseAmountCents"`
 	AmountCents               int64      `json:"amountCents"`
+	TotalGrantedCredits       int64      `json:"totalGrantedCredits"`
+	ConsumedCredits           int64      `json:"consumedCredits"`
 	ReleasedAmountCents       int64      `json:"releasedAmountCents"`
 	SettledAmountCents        int64      `json:"settledAmountCents"`
+	ReleaseEventCount         int64      `json:"releaseEventCount"`
 	RechargeOrderID           string     `json:"rechargeOrderId"`
 	RechargeOrderNo           *string    `json:"rechargeOrderNo,omitempty"`
 	CreatedAt                 time.Time  `json:"createdAt"`
 	ReleasedAt                *time.Time `json:"releasedAt,omitempty"`
 	SettledAt                 *time.Time `json:"settledAt,omitempty"`
+}
+
+type CommissionReleaseEvent struct {
+	ID                                string          `json:"id"`
+	CommissionItemID                  string          `json:"commissionItemId"`
+	RechargeOrderID                   string          `json:"rechargeOrderId"`
+	RechargeOrderNo                   *string         `json:"rechargeOrderNo,omitempty"`
+	SourceType                        string          `json:"sourceType"`
+	SourceID                          *string         `json:"sourceId,omitempty"`
+	SourceSnapshot                    json.RawMessage `json:"sourceSnapshot,omitempty"`
+	WalletLotID                       *string         `json:"walletLotId,omitempty"`
+	QuotaAccountID                    *string         `json:"quotaAccountId,omitempty"`
+	WalletLedgerID                    *string         `json:"walletLedgerId,omitempty"`
+	QuotaLedgerID                     *string         `json:"quotaLedgerId,omitempty"`
+	ConsumedCreditsDelta              int64           `json:"consumedCreditsDelta"`
+	ReleasedAmountDeltaCents          int64           `json:"releasedAmountDeltaCents"`
+	CommissionItemConsumedCredits     int64           `json:"commissionItemConsumedCredits"`
+	CommissionItemReleasedAmountCents int64           `json:"commissionItemReleasedAmountCents"`
+	Metadata                          json.RawMessage `json:"metadata,omitempty"`
+	CreatedAt                         time.Time       `json:"createdAt"`
 }
 
 type WithdrawalRequest struct {

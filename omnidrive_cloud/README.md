@@ -33,6 +33,7 @@ This is the production-oriented cloud backend for `OmniDrive`.
 
 ```bash
 cd /Volumes/mud/project/github/social-auto-upload/omnidrive_cloud
+export OMNIDRIVE_LOG_LEVEL=info
 OMNIDRIVE_DATABASE_DSN='postgres://postgres:YOUR_PASSWORD@127.0.0.1:5432/omnidrive?sslmode=disable' go run ./cmd/omnidrive-bootstrap-db
 go run ./cmd/omnidrive-api
 ```

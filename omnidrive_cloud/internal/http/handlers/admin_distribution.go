@@ -1,9 +1,13 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
+
+	"github.com/go-chi/chi/v5"
 
 	appstate "omnidrive_cloud/internal/app"
 	httpcontext "omnidrive_cloud/internal/http/context"
@@ -16,13 +20,19 @@ type AdminDistributionHandler struct {
 }
 
 type createDistributionRelationRequest struct {
-	PromoterUserID string  `json:"promoterUserId"`
-	InviteeUserID  string  `json:"inviteeUserId"`
-	Notes          *string `json:"notes"`
+	PromoterUserID     string  `json:"promoterUserId"`
+	InviteeUserID      string  `json:"inviteeUserId"`
+	PromoterEmail      string  `json:"promoterEmail"`
+	InviteeEmail       string  `json:"inviteeEmail"`
+	PromoterIdentifier string  `json:"promoterIdentifier"`
+	InviteeIdentifier  string  `json:"inviteeIdentifier"`
+	Notes              *string `json:"notes"`
 }
 
 type openPartnerProfileRequest struct {
-	UserID string `json:"userId"`
+	UserID         string `json:"userId"`
+	Email          string `json:"email"`
+	UserIdentifier string `json:"userIdentifier"`
 }
 
 type createDistributionRuleRequest struct {
@@ -72,7 +82,11 @@ func (h *AdminDistributionHandler) OpenPartner(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	userID := strings.TrimSpace(payload.UserID)
+	userID, err := h.resolveDistributionUserID(r.Context(), payload.UserID, payload.UserIdentifier, payload.Email)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to resolve partner user")
+		return
+	}
 	if userID == "" {
 		render.Error(w, http.StatusBadRequest, "userId is required")
 		return
@@ -140,10 +154,21 @@ func (h *AdminDistributionHandler) CreateRelation(w http.ResponseWriter, r *http
 		return
 	}
 
+	promoterUserID, err := h.resolveDistributionUserID(r.Context(), payload.PromoterUserID, payload.PromoterIdentifier, payload.PromoterEmail)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to resolve promoter user")
+		return
+	}
+	inviteeUserID, err := h.resolveDistributionUserID(r.Context(), payload.InviteeUserID, payload.InviteeIdentifier, payload.InviteeEmail)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to resolve invitee user")
+		return
+	}
+
 	admin := httpcontext.CurrentAdmin(r.Context())
 	record, err := h.app.Store.CreateDistributionRelation(r.Context(), store.CreateDistributionRelationInput{
-		PromoterUserID:   strings.TrimSpace(payload.PromoterUserID),
-		InviteeUserID:    strings.TrimSpace(payload.InviteeUserID),
+		PromoterUserID:   promoterUserID,
+		InviteeUserID:    inviteeUserID,
 		Notes:            trimmedStringPtr(valueOrEmpty(payload.Notes)),
 		CreatedByAdminID: stringPtr(admin.ID),
 	})
@@ -276,6 +301,28 @@ func (h *AdminDistributionHandler) ListCommissions(w http.ResponseWriter, r *htt
 	})
 }
 
+func (h *AdminDistributionHandler) ListCommissionReleases(w http.ResponseWriter, r *http.Request) {
+	commissionID := strings.TrimSpace(chi.URLParam(r, "commissionId"))
+	if commissionID == "" {
+		render.Error(w, http.StatusBadRequest, "commissionId is required")
+		return
+	}
+
+	limit := 100
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			limit = parsed
+		}
+	}
+
+	items, err := h.app.Store.ListAdminCommissionReleaseEvents(r.Context(), commissionID, limit)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load commission release events")
+		return
+	}
+	render.JSON(w, http.StatusOK, items)
+}
+
 func (h *AdminDistributionHandler) ListSettlements(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, summary, err := h.app.Store.ListAdminSettlements(r.Context(), store.AdminSettlementListFilter{
@@ -346,4 +393,35 @@ func (h *AdminDistributionHandler) CreateSettlement(w http.ResponseWriter, r *ht
 	})
 
 	render.JSON(w, http.StatusCreated, record)
+}
+
+func (h *AdminDistributionHandler) resolveDistributionUserID(ctx context.Context, candidates ...string) (string, error) {
+	for _, candidate := range candidates {
+		trimmed := strings.TrimSpace(candidate)
+		if trimmed == "" {
+			continue
+		}
+		user, err := h.app.Store.GetUserByID(ctx, trimmed)
+		if err != nil {
+			return "", err
+		}
+		if user != nil {
+			return user.ID, nil
+		}
+		byEmail, err := h.app.Store.GetUserByEmail(ctx, trimmed)
+		if err != nil {
+			return "", err
+		}
+		if byEmail != nil {
+			return byEmail.User.ID, nil
+		}
+		byPhone, err := h.app.Store.GetUserByPhone(ctx, trimmed)
+		if err != nil {
+			return "", err
+		}
+		if byPhone != nil {
+			return byPhone.User.ID, nil
+		}
+	}
+	return "", nil
 }

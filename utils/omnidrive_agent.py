@@ -1811,11 +1811,21 @@ class OmniDriveBridge:
                 if not local_task:
                     continue
 
-            self.ai_task_manager.update_cloud_binding(
+            payload = job.get("inputPayload") or {}
+            if not isinstance(payload, dict):
+                payload = {}
+
+            local_task = self.ai_task_manager.update_cloud_binding(
                 local_task_id,
                 cloud_job_id,
                 cloud_status or local_task.get("cloudStatus") or "queued",
                 job.get("message"),
+                source=str(job.get("source") or "omnidrive_cloud").strip() or "omnidrive_cloud",
+                job_type=str(job.get("jobType") or "").strip(),
+                model_name=str(job.get("modelName") or "").strip(),
+                skill_id=str(job.get("skillId") or "").strip() or None,
+                prompt=str(job.get("prompt") or "").strip(),
+                payload=payload,
             )
 
             if cloud_status in {"queued", "running"}:
@@ -1828,7 +1838,26 @@ class OmniDriveBridge:
             if cloud_status not in {"success", "completed"}:
                 continue
 
-            if local_task.get("linkedPublishTaskUuid"):
+            linked_publish_task_uuid = str(local_task.get("linkedPublishTaskUuid") or "").strip()
+            if linked_publish_task_uuid:
+                publish_payload = payload.get("publishPayload") or {}
+                intended_run_at = (
+                    publish_payload.get("runAt")
+                    or publish_payload.get("requestedRun")
+                    or payload.get("publishAt")
+                    or payload.get("runAt")
+                )
+                intended_publish_at = (
+                    publish_payload.get("publishDate")
+                    or publish_payload.get("requestedRun")
+                    or payload.get("publishAt")
+                    or intended_run_at
+                )
+                self.publish_task_manager.realign_omnidrive_ai_task(
+                    linked_publish_task_uuid,
+                    intended_run_at,
+                    intended_publish_at,
+                )
                 continue
 
             artifact_refs = self._download_ai_artifacts(local_task, artifacts)

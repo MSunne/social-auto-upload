@@ -47,8 +47,59 @@ type createWithdrawalRequest struct {
 	ProofURLs      []string        `json:"proofUrls"`
 }
 
+type billingPageQuery struct {
+	Page     int
+	PageSize int
+}
+
+type billingActivityListResponse struct {
+	Items      []domain.BillingActivity          `json:"items"`
+	Pagination domain.Pagination                 `json:"pagination"`
+	Summary    domain.BillingActivityListSummary `json:"summary"`
+	Filters    map[string]any                    `json:"filters,omitempty"`
+}
+
 func NewBillingHandler(app *appstate.App) *BillingHandler {
 	return &BillingHandler{app: app}
+}
+
+func parseBillingPageQuery(r *http.Request) billingPageQuery {
+	page := 1
+	pageSize := 40
+
+	if raw := strings.TrimSpace(r.URL.Query().Get("page")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			page = parsed
+		}
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("pageSize")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			pageSize = parsed
+		}
+	}
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 40
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	return billingPageQuery{Page: page, PageSize: pageSize}
+}
+
+func buildBillingPagination(page int, pageSize int, total int64) domain.Pagination {
+	totalPages := 0
+	if total > 0 {
+		totalPages = int((total + int64(pageSize) - 1) / int64(pageSize))
+	}
+	return domain.Pagination{
+		Page:       page,
+		PageSize:   pageSize,
+		Total:      total,
+		TotalPages: totalPages,
+	}
 }
 
 func normalizeBillingChannel(value string) string {
@@ -244,6 +295,44 @@ func (h *BillingHandler) Ledger(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, items)
 }
 
+func (h *BillingHandler) ListActivities(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	page := parseBillingPageQuery(r)
+
+	items, total, summary, err := h.app.Store.ListBillingActivitiesByUser(r.Context(), user.ID, store.BillingActivityListFilter{
+		Query:      strings.TrimSpace(r.URL.Query().Get("query")),
+		Kind:       strings.TrimSpace(r.URL.Query().Get("kind")),
+		Status:     strings.TrimSpace(r.URL.Query().Get("status")),
+		EntryType:  strings.TrimSpace(r.URL.Query().Get("entryType")),
+		SourceType: strings.TrimSpace(r.URL.Query().Get("sourceType")),
+		JobType:    strings.TrimSpace(r.URL.Query().Get("jobType")),
+		Channel:    strings.TrimSpace(r.URL.Query().Get("channel")),
+		ModelName:  strings.TrimSpace(r.URL.Query().Get("modelName")),
+		Page:       page.Page,
+		PageSize:   page.PageSize,
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load billing activities")
+		return
+	}
+
+	render.JSON(w, http.StatusOK, billingActivityListResponse{
+		Items:      items,
+		Pagination: buildBillingPagination(page.Page, page.PageSize, total),
+		Summary:    summary,
+		Filters: map[string]any{
+			"query":      strings.TrimSpace(r.URL.Query().Get("query")),
+			"kind":       strings.TrimSpace(r.URL.Query().Get("kind")),
+			"status":     strings.TrimSpace(r.URL.Query().Get("status")),
+			"entryType":  strings.TrimSpace(r.URL.Query().Get("entryType")),
+			"sourceType": strings.TrimSpace(r.URL.Query().Get("sourceType")),
+			"jobType":    strings.TrimSpace(r.URL.Query().Get("jobType")),
+			"channel":    strings.TrimSpace(r.URL.Query().Get("channel")),
+			"modelName":  strings.TrimSpace(r.URL.Query().Get("modelName")),
+		},
+	})
+}
+
 func (h *BillingHandler) ListUsageEvents(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	limit := 50
@@ -284,6 +373,29 @@ func (h *BillingHandler) ListCommissions(w http.ResponseWriter, r *http.Request)
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load commission items")
+		return
+	}
+	render.JSON(w, http.StatusOK, items)
+}
+
+func (h *BillingHandler) ListCommissionReleases(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	commissionID := strings.TrimSpace(chi.URLParam(r, "commissionId"))
+	if commissionID == "" {
+		render.Error(w, http.StatusBadRequest, "commissionId is required")
+		return
+	}
+
+	limit := 100
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			limit = parsed
+		}
+	}
+
+	items, err := h.app.Store.ListCommissionReleaseEventsByPromoter(r.Context(), user.ID, commissionID, limit)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load commission release events")
 		return
 	}
 	render.JSON(w, http.StatusOK, items)

@@ -265,6 +265,11 @@ type AdminBillingUsageEventRow struct {
 	User  AdminUserSummary  `json:"user"`
 }
 
+type AdminBillingActivityRow struct {
+	Activity BillingActivity  `json:"activity"`
+	User     AdminUserSummary `json:"user"`
+}
+
 type AdminOrderDetail struct {
 	Record              AdminOrderRow        `json:"record"`
 	Events              []RechargeOrderEvent `json:"events"`
@@ -422,6 +427,17 @@ type AdminBillingUsageEventListSummary struct {
 	BilledCount         int64 `json:"billedCount"`
 	FailedCount         int64 `json:"failedCount"`
 	TotalDebitedCredits int64 `json:"totalDebitedCredits"`
+}
+
+type AdminBillingActivityListSummary struct {
+	TotalActivityCount       int64 `json:"totalActivityCount"`
+	OrderCount               int64 `json:"orderCount"`
+	WalletLedgerCount        int64 `json:"walletLedgerCount"`
+	UsageEventCount          int64 `json:"usageEventCount"`
+	TotalRechargeAmountCents int64 `json:"totalRechargeAmountCents"`
+	TotalCreditIn            int64 `json:"totalCreditIn"`
+	TotalCreditOut           int64 `json:"totalCreditOut"`
+	TotalDebitedCredits      int64 `json:"totalDebitedCredits"`
 }
 
 type AdminSupportRechargeSummary struct {
@@ -659,6 +675,13 @@ type AdminCommissionRow struct {
 	CommissionRate            float64          `json:"commissionRate"`
 	CommissionBaseAmountCents int64            `json:"commissionBaseAmountCents"`
 	AmountCents               int64            `json:"amountCents"`
+	TotalGrantedCredits       int64            `json:"totalGrantedCredits"`
+	ConsumedCredits           int64            `json:"consumedCredits"`
+	ReleasedAmountCents       int64            `json:"releasedAmountCents"`
+	SettledAmountCents        int64            `json:"settledAmountCents"`
+	ReleaseEventCount         int64            `json:"releaseEventCount"`
+	RechargeOrderID           string           `json:"rechargeOrderId"`
+	RechargeOrderNo           *string          `json:"rechargeOrderNo,omitempty"`
 	CreatedAt                 time.Time        `json:"createdAt"`
 	ReleasedAt                *time.Time       `json:"releasedAt,omitempty"`
 	SettledAt                 *time.Time       `json:"settledAt,omitempty"`

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { Fragment, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -8,6 +8,8 @@ import {
   ArrowUpRight,
   BadgePercent,
   Building2,
+  ChevronDown,
+  ChevronUp,
   Copy,
   Loader2,
   ReceiptText,
@@ -20,10 +22,11 @@ import {
   createWithdrawalRequest,
   getPartnerOverview,
   listCommissionItems,
+  listCommissionReleaseEvents,
   listWithdrawalRequests,
   openPartnerProfile,
 } from "@/lib/services";
-import type { CommissionItem, PartnerOverview, WithdrawalRequest } from "@/lib/types";
+import type { CommissionItem, CommissionReleaseEvent, PartnerOverview, WithdrawalRequest } from "@/lib/types";
 import { EmptyState, PageHeader, StatCard, StatusBadge } from "@/components/ui/common";
 
 type WithdrawalFormState = {
@@ -68,6 +71,45 @@ function formatDateTime(value?: string | null) {
 
 function formatPercent(value: number) {
   return `${(value * 100).toFixed(value * 100 >= 10 ? 1 : 2)}%`;
+}
+
+function getReleaseSourceTitle(item: CommissionReleaseEvent) {
+  const snapshot = item.sourceSnapshot;
+  if (snapshot && typeof snapshot === "object") {
+    const title = snapshot.title;
+    if (typeof title === "string" && title.trim()) {
+      return title.trim();
+    }
+    const publishTask = snapshot.publishTask;
+    if (publishTask && typeof publishTask === "object") {
+      const publishTitle = (publishTask as Record<string, unknown>).title;
+      if (typeof publishTitle === "string" && publishTitle.trim()) {
+        return publishTitle.trim();
+      }
+    }
+  }
+  return item.sourceType === "ai_job" ? "AI 任务" : item.sourceType;
+}
+
+function getReleaseEventTags(item: CommissionReleaseEvent) {
+  const metadata = item.metadata;
+  if (!metadata || typeof metadata !== "object") {
+    return [];
+  }
+  const tags: string[] = [];
+  const meterCode = metadata.meterCode;
+  if (typeof meterCode === "string" && meterCode.trim()) {
+    tags.push(meterCode.trim());
+  }
+  const debitedCredits = metadata.debitedCredits;
+  if (typeof debitedCredits === "number" && debitedCredits > 0) {
+    tags.push(`扣减 ${debitedCredits} 积分`);
+  }
+  const quotaUsed = metadata.quotaUsed;
+  if (typeof quotaUsed === "number" && quotaUsed > 0) {
+    tags.push(`套餐抵扣 ${quotaUsed}`);
+  }
+  return tags;
 }
 
 async function copyText(value: string) {
@@ -118,9 +160,77 @@ function parseAmountToCents(value: string) {
   return Math.round(parsed * 100);
 }
 
+function CommissionTracePanel({ commissionId }: { commissionId: string }) {
+  const { data, isLoading, error } = useQuery<CommissionReleaseEvent[]>({
+    queryKey: ["commissionReleaseEvents", commissionId],
+    queryFn: () => listCommissionReleaseEvents(commissionId, { limit: 100 }),
+    staleTime: 30 * 1000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 py-5 text-sm text-text-secondary">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        正在读取精确追溯...
+      </div>
+    );
+  }
+
+  if (error) {
+    return <div className="py-4 text-sm text-red-500">追溯数据读取失败，请稍后重试。</div>;
+  }
+
+  if (!data || data.length === 0) {
+    return <div className="py-4 text-sm text-text-secondary">当前佣金还没有释放记录。</div>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {data.map((item) => (
+        <div key={item.id} className="rounded-2xl border border-border bg-surface/65 p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div className="text-sm font-medium text-text-primary">{getReleaseSourceTitle(item)}</div>
+              <div className="mt-1 text-xs text-text-secondary">
+                {item.rechargeOrderNo || item.rechargeOrderId} · {formatDateTime(item.createdAt)}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {getReleaseEventTags(item).map((tag) => (
+                  <span key={tag} className="rounded-full border border-border px-2 py-1 text-[11px] text-text-secondary">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="grid min-w-[220px] grid-cols-2 gap-2 text-right text-xs">
+              <div className="rounded-2xl border border-border bg-background/60 px-3 py-2">
+                <div className="text-text-muted">本次释放积分</div>
+                <div className="mt-1 font-semibold text-text-primary">{item.consumedCreditsDelta}</div>
+              </div>
+              <div className="rounded-2xl border border-border bg-background/60 px-3 py-2">
+                <div className="text-text-muted">新增佣金</div>
+                <div className="mt-1 font-semibold text-accent">{formatCurrency(item.releasedAmountDeltaCents)}</div>
+              </div>
+              <div className="rounded-2xl border border-border bg-background/60 px-3 py-2">
+                <div className="text-text-muted">累计已消耗</div>
+                <div className="mt-1 font-semibold text-text-primary">{item.commissionItemConsumedCredits}</div>
+              </div>
+              <div className="rounded-2xl border border-border bg-background/60 px-3 py-2">
+                <div className="text-text-muted">累计已释放</div>
+                <div className="mt-1 font-semibold text-sky-400">{formatCurrency(item.commissionItemReleasedAmountCents)}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function EnterpriseCooperationPage() {
   const queryClient = useQueryClient();
   const [copyState, setCopyState] = useState<"idle" | "success" | "error">("idle");
+  const [expandedCommissionId, setExpandedCommissionId] = useState<string | null>(null);
   const [withdrawalForm, setWithdrawalForm] = useState<WithdrawalFormState>(EMPTY_WITHDRAWAL_FORM);
   const [withdrawalError, setWithdrawalError] = useState("");
 
@@ -437,41 +547,70 @@ export default function EnterpriseCooperationPage() {
                         <th className="px-6 py-4">客户</th>
                         <th className="px-6 py-4">状态</th>
                         <th className="px-6 py-4 text-right">合作金额</th>
-                        <th className="px-6 py-4 text-right">佣金</th>
-                        <th className="px-6 py-4 text-right">已释放</th>
+                        <th className="px-6 py-4 text-right">佣金 / 已释放</th>
+                        <th className="px-6 py-4 text-right">积分释放进度</th>
                         <th className="px-6 py-4">时间</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
-                      {commissions.map((item) => (
-                        <tr key={item.id} className="transition-colors hover:bg-surface-hover/20">
-                          <td className="px-6 py-4">
-                            <div className="font-medium text-text-primary">{item.inviteeName || "未命名客户"}</div>
-                            <div className="mt-1 text-xs text-text-muted">{item.inviteeEmail}</div>
-                          </td>
-                          <td className="px-6 py-4">
-                            <StatusBadge status={item.status} />
-                            <div className="mt-1 text-xs text-text-muted">
-                              佣金比例 {formatPercent(item.commissionRate)}
-                            </div>
-                          </td>
-                          <td className="px-6 py-4 text-right font-mono text-text-primary">
-                            {formatCurrency(item.commissionBaseAmountCents)}
-                          </td>
-                          <td className="px-6 py-4 text-right font-mono text-text-primary">
-                            {formatCurrency(item.amountCents)}
-                          </td>
-                          <td className="px-6 py-4 text-right font-mono text-text-primary">
-                            {formatCurrency(item.releasedAmountCents)}
-                          </td>
-                          <td className="px-6 py-4 text-xs text-text-secondary">
-                            <div>{formatDateTime(item.createdAt)}</div>
-                            <div className="mt-1 font-mono text-[11px] text-text-muted">
-                              {item.rechargeOrderNo || item.rechargeOrderId}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                      {commissions.map((item) => {
+                        const isExpanded = expandedCommissionId === item.id;
+                        const releasePercent = item.totalGrantedCredits > 0
+                          ? Math.min(100, (item.consumedCredits / item.totalGrantedCredits) * 100)
+                          : 0;
+
+                        return (
+                          <Fragment key={item.id}>
+                            <tr className="transition-colors hover:bg-surface-hover/20">
+                              <td className="px-6 py-4">
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedCommissionId((current) => current === item.id ? null : item.id)}
+                                  className="mb-2 inline-flex items-center gap-1 rounded-full border border-border px-2 py-1 text-[11px] text-text-secondary transition-colors hover:bg-surface-hover/40"
+                                >
+                                  {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                                  精确追溯
+                                </button>
+                                <div className="font-medium text-text-primary">{item.inviteeName || "未命名客户"}</div>
+                                <div className="mt-1 text-xs text-text-muted">{item.inviteeEmail}</div>
+                              </td>
+                              <td className="px-6 py-4">
+                                <StatusBadge status={item.status} />
+                                <div className="mt-1 text-xs text-text-muted">
+                                  佣金比例 {formatPercent(item.commissionRate)}
+                                </div>
+                              </td>
+                              <td className="px-6 py-4 text-right font-mono text-text-primary">
+                                {formatCurrency(item.commissionBaseAmountCents)}
+                              </td>
+                              <td className="px-6 py-4 text-right font-mono">
+                                <div className="text-text-primary">{formatCurrency(item.amountCents)}</div>
+                                <div className="mt-1 text-xs text-sky-400">已释放 {formatCurrency(item.releasedAmountCents)}</div>
+                              </td>
+                              <td className="px-6 py-4 text-right">
+                                <div className="font-mono text-text-primary">{item.consumedCredits} / {item.totalGrantedCredits}</div>
+                                <div className="mt-2 h-2 overflow-hidden rounded-full bg-border/70">
+                                  <div className="h-full rounded-full bg-accent" style={{ width: `${releasePercent}%` }} />
+                                </div>
+                                <div className="mt-1 text-[11px] text-text-muted">{releasePercent.toFixed(1)}% · {item.releaseEventCount} 条释放记录</div>
+                              </td>
+                              <td className="px-6 py-4 text-xs text-text-secondary">
+                                <div>{formatDateTime(item.createdAt)}</div>
+                                <div className="mt-1 font-mono text-[11px] text-text-muted">
+                                  {item.rechargeOrderNo || item.rechargeOrderId}
+                                </div>
+                              </td>
+                            </tr>
+                            {isExpanded && (
+                              <tr>
+                                <td colSpan={6} className="bg-surface-hover/20 px-6 py-5">
+                                  <CommissionTracePanel commissionId={item.id} />
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

@@ -138,6 +138,202 @@ func sanitizeAIModelForPublic(model *domain.AIModel) *domain.AIModel {
 	return &sanitized
 }
 
+func usageInt64FromValues(values ...any) int64 {
+	for _, value := range values {
+		switch typed := value.(type) {
+		case int64:
+			if typed > 0 {
+				return typed
+			}
+		case int:
+			if typed > 0 {
+				return int64(typed)
+			}
+		case float64:
+			if typed > 0 {
+				return int64(typed)
+			}
+		case json.Number:
+			if parsed, err := typed.Int64(); err == nil && parsed > 0 {
+				return parsed
+			}
+		case string:
+			if parsed, err := json.Number(strings.TrimSpace(typed)).Int64(); err == nil && parsed > 0 {
+				return parsed
+			}
+		}
+	}
+	return 0
+}
+
+func buildStreamChatBillingInput(job *domain.AIJob, result *aiclient.ChatResult) store.ApplyUsageBillingInput {
+	metrics := make([]store.ApplyUsageMetricInput, 0, 2)
+	usage := map[string]any{}
+	if result != nil && result.Usage != nil {
+		usage = result.Usage
+	}
+
+	if promptTokens := usageInt64FromValues(usage["prompt_tokens"], usage["input_tokens"]); promptTokens > 0 {
+		metrics = append(metrics, store.ApplyUsageMetricInput{
+			MeterCode: "chat_input_tokens",
+			Quantity:  promptTokens,
+			Metadata: mustJSONBytes(map[string]any{
+				"promptTokens": promptTokens,
+			}),
+		})
+	}
+	if completionTokens := usageInt64FromValues(usage["completion_tokens"], usage["output_tokens"], usage["candidates_token_count"]); completionTokens > 0 {
+		metrics = append(metrics, store.ApplyUsageMetricInput{
+			MeterCode: "chat_output_tokens",
+			Quantity:  completionTokens,
+			Metadata: mustJSONBytes(map[string]any{
+				"completionTokens": completionTokens,
+			}),
+		})
+	}
+
+	return store.ApplyUsageBillingInput{
+		UserID:     strings.TrimSpace(job.OwnerUserID),
+		SourceType: "ai_job",
+		SourceID:   strings.TrimSpace(job.ID),
+		ModelName:  strings.TrimSpace(job.ModelName),
+		JobType:    strings.TrimSpace(job.JobType),
+		Metrics:    metrics,
+	}
+}
+
+func applyStreamChatBilling(app *appstate.App, ctx context.Context, job *domain.AIJob, result *aiclient.ChatResult) *store.ApplyUsageBillingResult {
+	if app == nil || app.Store == nil || job == nil {
+		return &store.ApplyUsageBillingResult{
+			BillStatus:  "skipped",
+			BillMessage: "billing input incomplete",
+			Details:     []store.UsageBillingDetail{},
+		}
+	}
+
+	input := buildStreamChatBillingInput(job, result)
+	if strings.TrimSpace(input.UserID) == "" || strings.TrimSpace(input.SourceID) == "" {
+		return &store.ApplyUsageBillingResult{
+			BillStatus:  "skipped",
+			BillMessage: "billing input incomplete",
+			Details:     []store.UsageBillingDetail{},
+		}
+	}
+
+	billingResult, err := app.Store.ApplyUsageBilling(ctx, input)
+	if err != nil {
+		message := fmt.Sprintf("AI 计费失败: %v", err)
+		recordAuditEvent(app, ctx, store.CreateAuditEventInput{
+			OwnerUserID:  job.OwnerUserID,
+			ResourceType: "ai_job",
+			ResourceID:   &job.ID,
+			Action:       "ai_billing_failed",
+			Title:        "AI 计费失败",
+			Source:       job.ModelName,
+			Status:       "failed",
+			Message:      stringPtr(message),
+			Payload: mustJSONBytes(map[string]any{
+				"jobType":   job.JobType,
+				"modelName": job.ModelName,
+				"source":    job.Source,
+			}),
+		})
+		return &store.ApplyUsageBillingResult{
+			BillStatus:  "failed",
+			BillMessage: message,
+			Details:     []store.UsageBillingDetail{},
+		}
+	}
+
+	switch billingResult.BillStatus {
+	case "billed":
+		message := fmt.Sprintf("AI 计费完成，扣减 %d 积分", billingResult.TotalCredits)
+		recordAuditEvent(app, ctx, store.CreateAuditEventInput{
+			OwnerUserID:  job.OwnerUserID,
+			ResourceType: "ai_job",
+			ResourceID:   &job.ID,
+			Action:       "ai_billing_billed",
+			Title:        "AI 计费完成",
+			Source:       job.ModelName,
+			Status:       "success",
+			Message:      stringPtr(message),
+			Payload: mustJSONBytes(map[string]any{
+				"jobType":      job.JobType,
+				"modelName":    job.ModelName,
+				"source":       job.Source,
+				"totalCredits": billingResult.TotalCredits,
+				"details":      billingResult.Details,
+			}),
+		})
+	case "failed":
+		message := strings.TrimSpace(billingResult.BillMessage)
+		if message == "" {
+			message = "AI 计费失败"
+		}
+		recordAuditEvent(app, ctx, store.CreateAuditEventInput{
+			OwnerUserID:  job.OwnerUserID,
+			ResourceType: "ai_job",
+			ResourceID:   &job.ID,
+			Action:       "ai_billing_failed",
+			Title:        "AI 计费失败",
+			Source:       job.ModelName,
+			Status:       "failed",
+			Message:      stringPtr(message),
+			Payload: mustJSONBytes(map[string]any{
+				"jobType":   job.JobType,
+				"modelName": job.ModelName,
+				"source":    job.Source,
+				"details":   billingResult.Details,
+			}),
+		})
+	}
+
+	return billingResult
+}
+
+func billingResultToPayload(result *store.ApplyUsageBillingResult) map[string]any {
+	if result == nil {
+		return map[string]any{
+			"billStatus": "skipped",
+		}
+	}
+	return map[string]any{
+		"billStatus":    result.BillStatus,
+		"billMessage":   result.BillMessage,
+		"totalCredits":  result.TotalCredits,
+		"alreadyBilled": result.AlreadyBilled,
+		"details":       result.Details,
+	}
+}
+
+func buildStreamChatCompletionMessage(base string, billing *store.ApplyUsageBillingResult) string {
+	if billing == nil {
+		return base
+	}
+	switch billing.BillStatus {
+	case "billed":
+		if billing.TotalCredits > 0 {
+			return fmt.Sprintf("%s，已扣减 %d 积分", base, billing.TotalCredits)
+		}
+		return base
+	case "failed":
+		if strings.TrimSpace(billing.BillMessage) != "" {
+			return fmt.Sprintf("%s，计费待处理: %s", base, strings.TrimSpace(billing.BillMessage))
+		}
+		return base + "，计费待处理"
+	default:
+		return base
+	}
+}
+
+func billingResultCreditsPtr(result *store.ApplyUsageBillingResult) *int64 {
+	if result == nil || result.BillStatus != "billed" {
+		return nil
+	}
+	credits := result.TotalCredits
+	return &credits
+}
+
 func sanitizeAIModelListForPublic(items []domain.AIModel) []domain.AIModel {
 	if len(items) == 0 {
 		return items
@@ -476,21 +672,26 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 		result = &aiclient.ChatResult{}
 	}
 
+	billing := applyStreamChatBilling(h.app, r.Context(), updatedJob, result)
+	finishedAt := time.Now().UTC()
+
 	responsePayload := mustJSONBytes(map[string]any{
 		"text":         result.Text,
 		"role":         result.Role,
 		"usage":        result.Usage,
 		"finishReason": result.FinishReason,
 		"attachments":  attachmentRefs,
+		"billing":      billingResultToPayload(billing),
+		"completedAt":  finishedAt.Format(time.RFC3339),
 	})
 	successStatus := "success"
-	successMessage := "聊天已完成"
-	finishedAt := time.Now().UTC()
+	successMessage := buildStreamChatCompletionMessage("聊天已完成", billing)
 	_, _ = h.app.Store.UpdateAIJob(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
 		Status:          &successStatus,
 		OutputPayload:   responsePayload,
 		OutputTouched:   true,
 		Message:         &successMessage,
+		CostCredits:     billingResultCreditsPtr(billing),
 		FinishedAt:      &finishedAt,
 		FinishedTouched: true,
 	})
@@ -2022,7 +2223,7 @@ func isAllowedAIJobTransition(current string, next string) bool {
 	case "queued":
 		return next == "scheduled" || next == "running" || next == "cancelled" || next == "failed"
 	case "running":
-		return next == "success" || next == "completed" || next == "failed" || next == "cancelled"
+		return next == "queued" || next == "success" || next == "completed" || next == "failed" || next == "cancelled"
 	case "failed", "cancelled", "success", "completed":
 		return false
 	default:

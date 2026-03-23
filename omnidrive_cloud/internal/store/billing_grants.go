@@ -98,6 +98,22 @@ func (s *Store) grantWalletCreditsTx(ctx context.Context, tx pgx.Tx, input Grant
 		return err
 	}
 
+	if commissionItemID := trimOptionalString(input.DistributionCommissionItemID); commissionItemID != nil {
+		releaseUnitCredits := input.ReleaseUnitCredits
+		if releaseUnitCredits <= 0 {
+			releaseUnitCredits = 1
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO billing_wallet_lots (
+				id, user_id, recharge_order_id, distribution_commission_item_id, source_type, source_id,
+				granted_credits, consumed_credits, remaining_credits, release_unit_credits, status, metadata
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $7, $8, 'active', $9)
+		`, uuid.NewString(), input.UserID, input.RechargeOrderID, commissionItemID, input.ReferenceType, input.ReferenceID, input.Amount, releaseUnitCredits, input.Metadata); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -116,10 +132,10 @@ func (s *Store) grantQuotaTx(ctx context.Context, tx pgx.Tx, input GrantQuotaInp
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO billing_quota_accounts (
 			id, user_id, meter_code, granted_total, used_total, reserved_total, remaining_total,
-			expires_at, source_type, source_id, status
+			expires_at, source_type, source_id, recharge_order_id, distribution_commission_item_id, release_unit_credits, status
 		)
-		VALUES ($1, $2, $3, $4, 0, 0, $4, $5, $6, $7, 'active')
-	`, accountID, input.UserID, strings.TrimSpace(input.MeterCode), input.Amount, input.ExpiresAt, input.SourceType, input.SourceID); err != nil {
+		VALUES ($1, $2, $3, $4, 0, 0, $4, $5, $6, $7, $8, $9, $10, 'active')
+	`, accountID, input.UserID, strings.TrimSpace(input.MeterCode), input.Amount, input.ExpiresAt, input.SourceType, input.SourceID, input.RechargeOrderID, trimOptionalString(input.DistributionCommissionItemID), maxInt64(input.ReleaseUnitCredits, 0)); err != nil {
 		return err
 	}
 

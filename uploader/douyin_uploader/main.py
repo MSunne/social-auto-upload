@@ -244,7 +244,21 @@ class DouYinVideo(object):
             [
                 page.locator('[class^="recommendCover-"]'),
                 page.locator('[class*="recommendCover"]'),
+                page.locator('[class*="coverItem"]'),
+                page.locator('[class*="cover-item"]'),
+                page.locator('[class*="cover"] [role="radio"]'),
+                page.locator('[class*="cover"] [role="option"]'),
                 page.locator('[class*="cover"] img'),
+            ]
+        )
+
+    async def _find_cover_modal(self, page):
+        return await self._find_first_visible_locator(
+            [
+                page.locator("div.dy-creator-content-modal"),
+                page.locator('div[role="dialog"]'),
+                page.locator('div#tooltip-container [class*="modal"]'),
+                page.locator('div#tooltip-container [class*="dialog"]'),
             ]
         )
 
@@ -264,9 +278,71 @@ class DouYinVideo(object):
                 page.get_by_role("button", name="确定"),
                 page.get_by_role("button", name="完成"),
                 page.locator('div#tooltip-container button:visible:has-text("完成")'),
+                page.locator('div.dy-creator-content-modal button:has-text("完成")'),
+                page.locator('div[role="dialog"] button:has-text("完成")'),
                 page.locator('button:has-text("应用")'),
             ]
         )
+
+    async def _find_vertical_cover_prompt(self, page):
+        return await self._find_first_visible_locator(
+            [
+                page.locator('div[role="dialog"]:has-text("设置竖封面获取更多流量")'),
+                page.locator('div.dy-creator-content-modal:has-text("设置竖封面获取更多流量")'),
+                page.locator('div#tooltip-container [class*="modal"]:has-text("设置竖封面获取更多流量")'),
+                page.locator('div#tooltip-container [class*="dialog"]:has-text("设置竖封面获取更多流量")'),
+                page.locator('div:has-text("设置竖封面获取更多流量"):has-text("暂不设置")'),
+            ]
+        )
+
+    async def _dismiss_vertical_cover_prompt(self, page):
+        try:
+            prompt = await self._find_vertical_cover_prompt(page)
+        except Exception:
+            return False
+        if prompt is None:
+            return False
+
+        dismiss_button = await self._find_first_visible_locator(
+            [
+                prompt.get_by_role("button", name="暂不设置"),
+                prompt.locator('button:has-text("暂不设置")'),
+                prompt.locator('[role="button"]:has-text("暂不设置")'),
+                page.get_by_role("button", name="暂不设置"),
+                page.get_by_text("暂不设置", exact=True),
+            ]
+        )
+        close_button = None
+        if dismiss_button is None:
+            close_button = await self._find_first_visible_locator(
+                [
+                    prompt.locator('button[aria-label="关闭"]'),
+                    prompt.locator('button[aria-label="close"]'),
+                    prompt.locator('[aria-label="关闭"]'),
+                    prompt.locator('[aria-label="close"]'),
+                    prompt.locator('svg[style*="cursor: pointer"]'),
+                ]
+            )
+
+        try:
+            if dismiss_button is not None:
+                await dismiss_button.click(force=True)
+                douyin_logger.info("  [-] 检测到“设置竖封面获取更多流量”弹窗，已选择暂不设置")
+            elif close_button is not None:
+                await close_button.click(force=True)
+                douyin_logger.info("  [-] 检测到“设置竖封面获取更多流量”弹窗，已自动关闭")
+            else:
+                douyin_logger.warning("  [-] 检测到“设置竖封面获取更多流量”弹窗，但未找到可点击的关闭入口")
+                return False
+        except Exception as exc:
+            douyin_logger.warning("  [-] 关闭“设置竖封面获取更多流量”弹窗失败: {}", exc)
+            return False
+
+        await page.wait_for_timeout(500)
+        try:
+            return await self._find_vertical_cover_prompt(page) is None
+        except Exception:
+            return True
 
     async def _cover_warning_visible(self, page):
         for text in ["请设置封面后再发布", "请先设置封面", "请选择封面后再发布", "请选择封面"]:
@@ -277,41 +353,93 @@ class DouYinVideo(object):
                 continue
         return False
 
-    async def handle_auto_video_cover(self, page):
+    async def _cover_requirement_satisfied(self, page):
+        if await self._cover_warning_visible(page):
+            return False
+        cover_modal = await self._find_cover_modal(page)
+        return cover_modal is None
+
+    async def _open_cover_picker(self, page):
+        cover_entry = await self._find_cover_entry(page)
+        if cover_entry is None:
+            return False
+        await cover_entry.click(force=True)
+        await page.wait_for_timeout(600)
+        return True
+
+    async def _select_recommend_cover(self, page):
+        search_roots = []
+        cover_modal = await self._find_cover_modal(page)
+        if cover_modal is not None:
+            search_roots.append(cover_modal)
+        search_roots.append(page)
+
+        for root in search_roots:
+            recommend_cover = await self._find_recommend_cover(root)
+            if recommend_cover is None:
+                continue
+            try:
+                await recommend_cover.click(force=True)
+                await page.wait_for_timeout(500)
+                return True
+            except Exception:
+                continue
+        return False
+
+    async def _confirm_cover_selection(self, page):
+        confirm_button = await self._find_cover_confirm_button(page)
+        if confirm_button is None:
+            return False
+        await confirm_button.click(force=True)
+        await page.wait_for_timeout(800)
+        return True
+
+    async def handle_auto_video_cover(self, page, max_attempts=4):
         """
         处理必须设置封面的情况，自动选择一个可用封面
         """
         try:
-            warning_visible = await self._cover_warning_visible(page)
-            recommend_cover = await self._find_recommend_cover(page)
-            if recommend_cover is None and not warning_visible:
-                return False
+            for attempt in range(1, max(1, int(max_attempts)) + 1):
+                if await self._cover_requirement_satisfied(page):
+                    return True
 
-            if recommend_cover is None:
-                cover_entry = await self._find_cover_entry(page)
-                if cover_entry is None:
-                    douyin_logger.warning("  [-] 检测到封面缺失，但未找到“选择封面”入口")
-                    return False
-                douyin_logger.info("  [-] 检测到需要设置封面，正在打开封面选择器...")
-                await cover_entry.click(force=True)
-                await page.wait_for_timeout(800)
-                recommend_cover = await self._find_recommend_cover(page)
+                prompt_dismissed = await self._dismiss_vertical_cover_prompt(page)
+                if prompt_dismissed:
+                    await page.wait_for_timeout(400)
+                    if await self._cover_requirement_satisfied(page):
+                        douyin_logger.info("  [-] 已处理竖封面提示弹窗，沿用当前封面继续发布 attempt={}", attempt)
+                        return True
 
-            if recommend_cover is None:
-                douyin_logger.warning("  [-] 已打开封面选择器，但未找到可点击的推荐封面")
-                return False
+                warning_visible = await self._cover_warning_visible(page)
+                cover_modal = await self._find_cover_modal(page)
+                if cover_modal is None:
+                    if not warning_visible and attempt == 1:
+                        return False
+                    opened = await self._open_cover_picker(page)
+                    if not opened:
+                        douyin_logger.warning("  [-] 检测到封面缺失，但未找到“选择封面”入口")
+                        await page.wait_for_timeout(400)
+                        continue
+                    douyin_logger.info("  [-] 检测到需要设置封面，正在打开封面选择器... attempt={}", attempt)
 
-            douyin_logger.info("  [-] 正在自动选择推荐封面...")
-            await recommend_cover.click(force=True)
-            await page.wait_for_timeout(800)
+                douyin_logger.info("  [-] 正在自动选择推荐封面... attempt={}", attempt)
+                selected = await self._select_recommend_cover(page)
+                if not selected:
+                    douyin_logger.warning("  [-] 已打开封面选择器，但未找到可点击的推荐封面 attempt={}", attempt)
+                    await page.wait_for_timeout(500)
+                    continue
 
-            confirm_button = await self._find_cover_confirm_button(page)
-            if confirm_button is not None:
-                await confirm_button.click(force=True)
-                await page.wait_for_timeout(800)
+                await self._confirm_cover_selection(page)
+                await self._dismiss_vertical_cover_prompt(page)
+                await page.wait_for_timeout(600)
 
-            douyin_logger.info("  [-] 已完成封面自动选择")
-            return True
+                if await self._cover_requirement_satisfied(page):
+                    douyin_logger.info("  [-] 已完成封面自动选择 attempt={}", attempt)
+                    return True
+
+                douyin_logger.warning("  [-] 封面选择后平台仍未确认，准备重试 attempt={}", attempt)
+
+            douyin_logger.warning("  [-] 自动选择封面未通过平台校验，达到最大重试次数")
         except Exception as exc:
             douyin_logger.warning("  [-] 自动选择封面失败: {}", exc)
         return False
