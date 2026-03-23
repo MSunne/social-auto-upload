@@ -6,7 +6,7 @@ from queue import Empty
 
 from playwright.async_api import async_playwright
 
-from myUtils.auth import check_cookie_detail, validate_active_page_detail
+from myUtils.auth import check_cookie_detail, validate_active_page_detail, validate_login_completion_detail
 from utils.account_storage import upsert_login_account
 from utils.base_social_media import set_init_script
 from utils.browser_hook import get_browser_options
@@ -417,6 +417,19 @@ async def click_visible_option(page, text):
     return False
 
 
+async def get_verification_targets(page):
+    _, _, anchor_locator = await get_verification_anchor(page)
+    container = await get_verification_container(page, anchor_locator)
+    targets = []
+    for target in (container, page):
+        if target is None:
+            continue
+        if any(target is existing for existing in targets):
+            continue
+        targets.append(target)
+    return targets
+
+
 async def click_visible_partial_option(target, texts):
     _, candidate = await find_first_visible_containing_text(target, texts)
     if candidate is None:
@@ -448,8 +461,20 @@ async def find_first_editable_input(page):
 
 
 async def click_submit_action(page):
-    for text in VERIFICATION_SUBMIT_TEXTS:
-        if await click_visible_option(page, text):
+    for target in await get_verification_targets(page):
+        for text in VERIFICATION_SUBMIT_TEXTS:
+            if await click_visible_option(target, text):
+                return True
+            if await click_visible_partial_option(target, [text]):
+                return True
+    return False
+
+
+async def click_verification_option(page, text):
+    for target in await get_verification_targets(page):
+        if await click_visible_option(target, text):
+            return True
+        if await click_visible_partial_option(target, [text]):
             return True
     return False
 
@@ -596,7 +621,7 @@ async def apply_remote_action(page, action, status_queue=None, command_queue=Non
         target_text = str(payload.get("text") or payload.get("optionText") or "").strip()
         if not target_text:
             return False
-        result = await click_visible_option(page, target_text)
+        result = await click_verification_option(page, target_text)
         if result:
             push_structured_status(
                 status_queue,
@@ -637,7 +662,8 @@ async def apply_remote_action(page, action, status_queue=None, command_queue=Non
             await page.keyboard.press(key)
         if key.lower() == "enter":
             await asyncio.sleep(0.2)
-            await click_submit_action(page)
+            if await detect_verification_challenge(page):
+                await click_submit_action(page)
         push_structured_status(
             status_queue,
             command_queue,
@@ -657,19 +683,27 @@ async def apply_remote_action(page, action, status_queue=None, command_queue=Non
         if not filled:
             return False
         await asyncio.sleep(0.2)
-        try:
-            await input_locator.press("Enter")
-        except Exception:
-            await page.keyboard.press("Enter")
-        await asyncio.sleep(0.2)
-        await click_submit_action(page)
-        push_structured_status(
-            status_queue,
-            command_queue,
-            "log",
-            {"message": "远端已发送验证码并尝试提交验证"},
-        )
-        return True
+        submitted = await click_submit_action(page)
+        if not submitted:
+            try:
+                await input_locator.press("Enter")
+                submitted = True
+            except Exception:
+                try:
+                    await page.keyboard.press("Enter")
+                    submitted = True
+                except Exception:
+                    submitted = False
+        if submitted:
+            await asyncio.sleep(0.3)
+            push_structured_status(
+                status_queue,
+                command_queue,
+                "log",
+                {"message": "远端已发送验证码并尝试提交验证"},
+            )
+            return True
+        return False
 
     if action_type == "refresh_qr":
         targets = [target for target in (qr_action_root, page) if target is not None]
@@ -706,12 +740,26 @@ async def drain_remote_actions(page, command_queue, status_queue=None, qr_action
         return False
 
     handled = False
+    deferred_actions = []
     while True:
         try:
             action = command_queue.get_nowait()
         except Empty:
             break
-        handled = await apply_remote_action(page, action, status_queue, command_queue, qr_action_root=qr_action_root) or handled
+
+        applied = await apply_remote_action(page, action, status_queue, command_queue, qr_action_root=qr_action_root)
+        if applied:
+            handled = True
+            continue
+
+        retry_count = int(action.get("_retryCount") or 0)
+        if retry_count < 8 and str(action.get("actionType") or "").strip() not in {"cancel_session", "cancel_login"}:
+            deferred_action = dict(action)
+            deferred_action["_retryCount"] = retry_count + 1
+            deferred_actions.append(deferred_action)
+
+    for action in deferred_actions:
+        command_queue.put(action)
 
     return handled
 
@@ -728,6 +776,8 @@ async def wait_for_login_result(
     initial_qr_data=None,
     verification_timeout=900,
     verification_settle_seconds=2.0,
+    success_validator=None,
+    success_check_interval=2.5,
 ):
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
@@ -736,6 +786,8 @@ async def wait_for_login_result(
     qr_hidden_since = None
     verification_started_at = None
     verification_cleared_since = None
+    verification_observed = False
+    last_success_check_at = 0.0
 
     while loop.time() < deadline:
         now = loop.time()
@@ -758,6 +810,7 @@ async def wait_for_login_result(
 
         challenge = None if qr_phase_waiting_scan else await detect_verification_challenge(page)
         if challenge:
+            verification_observed = True
             if verification_started_at is None:
                 verification_started_at = now
                 deadline = max(deadline, now + max(verification_timeout, timeout))
@@ -796,8 +849,45 @@ async def wait_for_login_result(
             verification_cleared_since is not None and now - verification_cleared_since >= verification_settle_seconds
         )
 
+        if (
+            success_validator is not None
+            and verification_observed
+            and verification_settled
+            and now - last_success_check_at >= max(success_check_interval, 0.5)
+        ):
+            last_success_check_at = now
+            try:
+                if await success_validator(page):
+                    login_logger.info(
+                        "login success validator passed original_url={} current_url={}",
+                        original_url,
+                        page.url,
+                    )
+                    return True
+            except Exception:
+                pass
+
         if url_changed_event.is_set() or page.url != original_url:
             if not verification_settled:
+                await asyncio.sleep(0.5)
+                continue
+            if success_validator is not None and verification_observed:
+                try:
+                    if await success_validator(page):
+                        login_logger.info(
+                            "login success validator passed after navigation original_url={} current_url={}",
+                            original_url,
+                            page.url,
+                        )
+                        return True
+                except Exception:
+                    pass
+                deadline = max(deadline, loop.time() + max(success_check_interval * 4, 30))
+                login_logger.info(
+                    "login navigation observed before login completion original_url={} current_url={} waiting_for_success_validator=true",
+                    original_url,
+                    page.url,
+                )
                 await asyncio.sleep(0.5)
                 continue
             login_logger.info("login navigation detected original_url={} current_url={}", original_url, page.url)
@@ -806,6 +896,9 @@ async def wait_for_login_result(
         if qr_locator is not None and not qr_visible and not qr_state.get("isExpired"):
             if qr_state.get("isScanned"):
                 deadline = max(deadline, loop.time() + 180)
+                qr_hidden_since = None
+            elif verification_observed:
+                deadline = max(deadline, loop.time() + 30)
                 qr_hidden_since = None
             elif not verification_settled:
                 qr_hidden_since = None
@@ -869,6 +962,7 @@ async def persist_login_state_with_retry(
         if page is not None and not page.is_closed():
             challenge = await detect_verification_challenge(page)
             if challenge:
+                deadline = max(deadline, asyncio.get_running_loop().time() + 120)
                 if challenge["signature"] != last_verification_signature:
                     push_structured_status(status_queue, command_queue, "verification_required", challenge["payload"])
                     last_verification_signature = challenge["signature"]
@@ -942,6 +1036,20 @@ async def persist_login_state_with_retry(
         f"{platform_label} 登录后未能确认本地登录态已生效: {str(last_error or '等待超时').strip()}"
     )
 
+
+def build_login_success_validator(account_type):
+    async def validator(page):
+        result = await validate_login_completion_detail(
+            account_type,
+            page,
+            settle_seconds=0.4,
+            retries=2,
+            retry_delay_seconds=0.4,
+        )
+        return bool(result.get("ok"))
+
+    return validator
+
 # 抖音登录
 async def douyin_cookie_gen(id,status_queue, command_queue=None):
     url_changed_event = asyncio.Event()
@@ -978,6 +1086,7 @@ async def douyin_cookie_gen(id,status_queue, command_queue=None):
                 qr_locator=img_locator,
                 qr_action_root=page,
                 initial_qr_data=qr_data,
+                success_validator=build_login_success_validator(3),
             )
             if login_result == "cancelled":
                 login_logger.info("douyin login cancelled account_name={}", id)
@@ -1070,6 +1179,7 @@ async def get_tencent_cookie(id,status_queue, command_queue=None):
                 qr_locator=img_locator,
                 qr_action_root=iframe_locator,
                 initial_qr_data=qr_data,
+                success_validator=build_login_success_validator(2),
             )
             if login_result == "cancelled":
                 login_logger.info("tencent login cancelled account_name={}", id)
@@ -1158,6 +1268,7 @@ async def get_ks_cookie(id,status_queue, command_queue=None):
                 qr_locator=img_locator,
                 qr_action_root=page,
                 initial_qr_data=qr_data,
+                success_validator=build_login_success_validator(4),
             )
             if login_result == "cancelled":
                 login_logger.info("kuaishou login cancelled account_name={}", id)
@@ -1245,6 +1356,7 @@ async def xiaohongshu_cookie_gen(id,status_queue, command_queue=None):
                 qr_locator=img_locator,
                 qr_action_root=page,
                 initial_qr_data=qr_data,
+                success_validator=build_login_success_validator(1),
             )
             if login_result == "cancelled":
                 login_logger.info("xiaohongshu login cancelled account_name={}", id)

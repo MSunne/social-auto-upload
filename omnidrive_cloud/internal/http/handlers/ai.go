@@ -110,6 +110,21 @@ type persistedChatAttachment struct {
 	MessageIndex int     `json:"messageIndex"`
 }
 
+var defaultChatSupportedFileTypes = []string{
+	"image/*",
+	".txt",
+	".md",
+	".markdown",
+	".json",
+	".csv",
+	".tsv",
+	".yaml",
+	".yml",
+	".xml",
+	".html",
+	".htm",
+}
+
 func NewAIHandler(app *appstate.App) *AIHandler {
 	return &AIHandler{app: app}
 }
@@ -225,6 +240,10 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if err := validateChatInputPayloadFiles(model, inputPayload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		render.Error(w, http.StatusInternalServerError, "Streaming is not supported by this server")
@@ -281,7 +300,7 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sanitizedInputPayload, artifactInputs, attachmentRefs, err := h.prepareStreamChatPayload(r.Context(), user.ID, jobID, payload.Prompt, inputPayload)
+	sanitizedInputPayload, artifactInputs, attachmentRefs, err := h.prepareStreamChatPayload(r.Context(), user.ID, jobID, model, payload.Prompt, inputPayload)
 	if err != nil {
 		failedStatus := "failed"
 		failedAt := time.Now().UTC()
@@ -382,8 +401,10 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sawDoneEvent := false
 	result, err := provider.GenerateChatStream(r.Context(), req, func(chunk aiclient.ChatStreamChunk) error {
 		if chunk.Done {
+			sawDoneEvent = true
 			return writeSSEEvent(w, flusher, "done", chatStreamResponse{
 				JobID:        jobID,
 				ModelName:    payload.ModelName,
@@ -398,6 +419,7 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 			return writeSSEEvent(w, flusher, "progress", chatStreamResponse{
 				JobID:      jobID,
 				ModelName:  payload.ModelName,
+				Text:       chunk.Text,
 				Role:       chunk.Role,
 				Progressed: true,
 			})
@@ -435,6 +457,19 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 			Error:     err.Error(),
 		})
 		return
+	}
+	if result != nil && !sawDoneEvent {
+		if err := writeSSEEvent(w, flusher, "done", chatStreamResponse{
+			JobID:        jobID,
+			ModelName:    payload.ModelName,
+			Text:         result.Text,
+			Role:         result.Role,
+			Usage:        result.Usage,
+			FinishReason: result.FinishReason,
+			Done:         true,
+		}); err != nil {
+			return
+		}
 	}
 
 	if result == nil {
@@ -642,7 +677,7 @@ func stripChatAttachmentDrafts(raw []byte) []byte {
 	return sanitized
 }
 
-func (h *AIHandler) prepareStreamChatPayload(ctx context.Context, ownerUserID string, jobID string, prompt *string, rawPayload []byte) ([]byte, []store.UpsertAIJobArtifactInput, []persistedChatAttachment, error) {
+func (h *AIHandler) prepareStreamChatPayload(ctx context.Context, ownerUserID string, jobID string, model *domain.AIModel, prompt *string, rawPayload []byte) ([]byte, []store.UpsertAIJobArtifactInput, []persistedChatAttachment, error) {
 	payload := map[string]any{}
 	if len(rawPayload) > 0 {
 		if err := json.Unmarshal(rawPayload, &payload); err != nil {
@@ -668,7 +703,7 @@ func (h *AIHandler) prepareStreamChatPayload(ctx context.Context, ownerUserID st
 		return nil, nil, nil, err
 	}
 	for index, draft := range drafts {
-		prepared, err := h.persistChatAttachment(ctx, ownerUserID, jobID, messageIndex, index, draft)
+		prepared, err := h.persistChatAttachment(ctx, ownerUserID, jobID, model, messageIndex, index, draft)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -703,7 +738,7 @@ type preparedChatAttachment struct {
 	PromptParts   []map[string]any
 }
 
-func (h *AIHandler) persistChatAttachment(ctx context.Context, ownerUserID string, jobID string, messageIndex int, order int, draft chatAttachmentDraft) (*preparedChatAttachment, error) {
+func (h *AIHandler) persistChatAttachment(ctx context.Context, ownerUserID string, jobID string, model *domain.AIModel, messageIndex int, order int, draft chatAttachmentDraft) (*preparedChatAttachment, error) {
 	fileName := sanitizeUploadFilename(draft.FileName)
 	if fileName == "" {
 		fileName = fmt.Sprintf("attachment-%d.bin", order+1)
@@ -721,6 +756,9 @@ func (h *AIHandler) persistChatAttachment(ctx context.Context, ownerUserID strin
 	}
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
+	}
+	if err := validateChatAttachmentFileType(model, fileName, mimeType); err != nil {
+		return nil, err
 	}
 
 	object, err := h.app.Storage.SaveBytes(
@@ -840,6 +878,115 @@ func decodeChatAttachmentBytes(draft chatAttachmentDraft) ([]byte, string, error
 		return decodeBase64Payload(strings.TrimSpace(draft.Base64Data))
 	}
 	return nil, "", fmt.Errorf("attachment %q is missing file data", strings.TrimSpace(draft.FileName))
+}
+
+func normalizeSupportedFileTypes(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	items := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.ToLower(strings.TrimSpace(value))
+		if trimmed == "" {
+			continue
+		}
+		if !strings.Contains(trimmed, "/") && !strings.HasPrefix(trimmed, ".") {
+			trimmed = "." + strings.TrimPrefix(trimmed, ".")
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		items = append(items, trimmed)
+	}
+	return items
+}
+
+func resolveModelSupportedFileTypes(model *domain.AIModel) []string {
+	if model == nil {
+		return nil
+	}
+	values := normalizeSupportedFileTypes(model.SupportedFileTypes)
+	if len(values) > 0 {
+		return values
+	}
+	if strings.TrimSpace(model.Category) == "chat" {
+		return append([]string{}, defaultChatSupportedFileTypes...)
+	}
+	return nil
+}
+
+func matchesSupportedFileType(fileName string, mimeType string, spec string) bool {
+	spec = strings.ToLower(strings.TrimSpace(spec))
+	if spec == "" {
+		return false
+	}
+	normalizedMime := strings.ToLower(strings.TrimSpace(mimeType))
+	if semicolonIndex := strings.Index(normalizedMime, ";"); semicolonIndex >= 0 {
+		normalizedMime = strings.TrimSpace(normalizedMime[:semicolonIndex])
+	}
+	lowerName := strings.ToLower(strings.TrimSpace(fileName))
+	switch {
+	case strings.HasPrefix(spec, "."):
+		return strings.EqualFold(filepath.Ext(lowerName), spec)
+	case strings.HasSuffix(spec, "/*"):
+		return strings.HasPrefix(normalizedMime, strings.TrimSuffix(spec, "*"))
+	case strings.Contains(spec, "/"):
+		return normalizedMime == spec
+	default:
+		return strings.EqualFold(filepath.Ext(lowerName), "."+strings.TrimPrefix(spec, "."))
+	}
+}
+
+func validateChatAttachmentFileType(model *domain.AIModel, fileName string, mimeType string) error {
+	supported := resolveModelSupportedFileTypes(model)
+	if len(supported) == 0 {
+		return nil
+	}
+	for _, item := range supported {
+		if matchesSupportedFileType(fileName, mimeType, item) {
+			return nil
+		}
+	}
+	return fmt.Errorf("当前模型不支持文件 %s，允许类型：%s", fileName, strings.Join(supported, ", "))
+}
+
+func validateChatInputPayloadFiles(model *domain.AIModel, rawPayload []byte) error {
+	if len(rawPayload) == 0 {
+		return nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rawPayload, &payload); err != nil {
+		return fmt.Errorf("inputPayload must be valid json")
+	}
+	drafts, err := decodeChatAttachmentDrafts(payload["attachments"])
+	if err != nil {
+		return err
+	}
+	for index, draft := range drafts {
+		fileName := sanitizeUploadFilename(draft.FileName)
+		if fileName == "" {
+			fileName = fmt.Sprintf("attachment-%d.bin", index+1)
+		}
+		_, mimeType, decodeErr := decodeChatAttachmentBytes(draft)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		if strings.TrimSpace(mimeType) == "" {
+			mimeType = strings.TrimSpace(draft.MimeType)
+		}
+		if strings.TrimSpace(mimeType) == "" {
+			mimeType = mime.TypeByExtension(filepath.Ext(fileName))
+		}
+		if strings.TrimSpace(mimeType) == "" {
+			mimeType = "application/octet-stream"
+		}
+		if err := validateChatAttachmentFileType(model, fileName, mimeType); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func detectChatAttachmentKind(mimeType string, fileName string) string {

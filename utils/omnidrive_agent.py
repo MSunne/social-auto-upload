@@ -13,6 +13,7 @@ from pathlib import Path
 from queue import Empty, Queue
 
 import requests
+import conf as app_conf
 
 from conf import BASE_DIR
 from utils.device_meta import get_local_ip
@@ -76,7 +77,10 @@ FINAL_LOGIN_STATUSES = {"success", "failed", "cancelled"}
 LOGIN_PENDING_STALE_SECONDS = 90
 LOGIN_RUNNING_STALE_SECONDS = 60
 LOGIN_VERIFICATION_STALE_SECONDS = 180
-ACCOUNT_VALIDATION_INTERVAL_SECONDS = 300
+ACCOUNT_VALIDATION_INTERVAL_SECONDS = max(
+    600,
+    int(getattr(app_conf, "OMNIDRIVE_ACCOUNT_VALIDATION_INTERVAL", 21600)),
+)
 ACCOUNT_VALIDATION_BATCH_SIZE = 2
 
 
@@ -351,6 +355,7 @@ class OmniDriveBridge:
         return data
 
     def _sync_accounts(self):
+        retired_deleted = self._sync_retired_accounts()
         rows = self._refresh_local_account_health(self._load_local_accounts())
         mirrored = 0
         for row in rows:
@@ -361,8 +366,13 @@ class OmniDriveBridge:
             mirroredAccounts=mirrored,
             lastAccountSyncAt=self._now_string(),
         )
-        if mirrored:
-            agent_logger.debug("omnidrive bridge synced accounts count={} device_code={}", mirrored, self.device_code)
+        if mirrored or retired_deleted:
+            agent_logger.debug(
+                "omnidrive bridge synced accounts count={} retired_deleted={} device_code={}",
+                mirrored,
+                retired_deleted,
+                self.device_code,
+            )
         else:
             log_throttled(
                 agent_logger,
@@ -372,6 +382,57 @@ class OmniDriveBridge:
                 "omnidrive bridge account sync idle device_code={}",
                 self.device_code,
             )
+
+    def _sync_retired_accounts(self):
+        try:
+            payload = self._request("GET", f"/api/v1/agent/accounts/{self.device_code}") or {}
+        except requests.HTTPError as exc:
+            response = getattr(exc, "response", None)
+            if response is not None and response.status_code == 404:
+                log_throttled(
+                    agent_logger,
+                    "DEBUG",
+                    f"omnidrive_agent.retired_accounts_unsupported:{self.device_code}",
+                    max(self.account_sync_interval * 4, 120),
+                    "omnidrive bridge retired account sync unsupported device_code={}",
+                    self.device_code,
+                )
+                return 0
+            raise
+
+        retired_items = payload.get("retiredItems") or []
+        if not retired_items:
+            return 0
+
+        ack_items = []
+        deleted_count = 0
+        for item in retired_items:
+            platform = str(item.get("platform") or "").strip()
+            account_name = str(item.get("accountName") or "").strip()
+            if not platform or not account_name:
+                continue
+            deleted, ackable = self._delete_local_account_by_target(platform, account_name)
+            if deleted:
+                deleted_count += 1
+            if ackable:
+                ack_items.append(
+                    {
+                        "platform": platform,
+                        "accountName": account_name,
+                        "acknowledgedAt": self._iso_now(),
+                    }
+                )
+
+        if ack_items:
+            self._request(
+                "POST",
+                "/api/v1/agent/accounts/retired-ack",
+                payload={
+                    "deviceCode": self.device_code,
+                    "items": ack_items,
+                },
+            )
+        return deleted_count
 
     def _sync_account_row(self, row):
         platform_name = PLATFORM_NAME_BY_TYPE.get(int(row["type"]))
@@ -398,6 +459,49 @@ class OmniDriveBridge:
         except Exception:
             return False
         return self._sync_account_row(row)
+
+    def _delete_local_account_by_target(self, platform_name, account_name):
+        platform_type = PLATFORM_TYPE_BY_NAME.get(str(platform_name or "").strip())
+        normalized_name = str(account_name or "").strip()
+        if not platform_type or not normalized_name:
+            return False, False
+
+        rows = self._query_local_accounts(
+            """
+                WHERE type = ? AND userName = ?
+                ORDER BY id DESC
+                """,
+            (platform_type, normalized_name),
+            fetchall=True,
+        )
+        if not rows:
+            return False, True
+
+        from utils.account_storage import clear_account_storage_state
+
+        deleted = False
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            for raw_row in rows:
+                row = dict(raw_row)
+                clear_account_storage_state(
+                    row,
+                    db_path=self.db_path,
+                    base_dir=self._workspace_dir.parent,
+                )
+                cursor.execute("DELETE FROM user_info WHERE id = ?", (int(row["id"]),))
+                if cursor.rowcount:
+                    deleted = True
+            conn.commit()
+
+        if deleted:
+            agent_logger.info(
+                "omnidrive bridge deleted local account from retired sync platform={} account_name={} device_code={}",
+                platform_name,
+                normalized_name,
+                self.device_code,
+            )
+        return deleted, True
 
     def _refresh_local_account_health(self, rows):
         normalized_rows = [dict(row) for row in rows]

@@ -18,6 +18,7 @@ func scanSkill(row pgx.Row) (*domain.ProductSkill, error) {
 	var skill domain.ProductSkill
 	var deviceID *string
 	var promptTemplate *string
+	var topicsPayload []byte
 	var referencePayload []byte
 	var executionTime *time.Time
 	var nextRunAt *time.Time
@@ -32,6 +33,7 @@ func scanSkill(row pgx.Row) (*domain.ProductSkill, error) {
 		&skill.OutputType,
 		&skill.ModelName,
 		&promptTemplate,
+		&topicsPayload,
 		&referencePayload,
 		&executionTime,
 		&skill.RepeatDaily,
@@ -47,6 +49,7 @@ func scanSkill(row pgx.Row) (*domain.ProductSkill, error) {
 
 	skill.DeviceID = normalizeOptionalString(deviceID)
 	skill.PromptTemplate = promptTemplate
+	skill.Topics = normalizeSkillTopicsFromJSON(topicsPayload)
 	skill.ReferencePayload = bytesOrNil(referencePayload)
 	skill.ExecutionTime = executionTime
 	skill.NextRunAt = nextRunAt
@@ -58,6 +61,7 @@ func scanSkillWithLoad(row pgx.Row) (*domain.ProductSkill, error) {
 	var skill domain.ProductSkill
 	var deviceID *string
 	var promptTemplate *string
+	var topicsPayload []byte
 	var referencePayload []byte
 	var executionTime *time.Time
 	var nextRunAt *time.Time
@@ -72,6 +76,7 @@ func scanSkillWithLoad(row pgx.Row) (*domain.ProductSkill, error) {
 		&skill.OutputType,
 		&skill.ModelName,
 		&promptTemplate,
+		&topicsPayload,
 		&referencePayload,
 		&executionTime,
 		&skill.RepeatDaily,
@@ -95,6 +100,7 @@ func scanSkillWithLoad(row pgx.Row) (*domain.ProductSkill, error) {
 
 	skill.DeviceID = normalizeOptionalString(deviceID)
 	skill.PromptTemplate = promptTemplate
+	skill.Topics = normalizeSkillTopicsFromJSON(topicsPayload)
 	skill.ReferencePayload = bytesOrNil(referencePayload)
 	skill.ExecutionTime = executionTime
 	skill.NextRunAt = nextRunAt
@@ -104,7 +110,7 @@ func scanSkillWithLoad(row pgx.Row) (*domain.ProductSkill, error) {
 
 const skillSelectColumns = `
 	id, owner_user_id, device_id, name, description, output_type, model_name,
-	prompt_template, reference_payload, execution_time, repeat_daily, storyboard_enabled, next_run_at, last_run_at,
+	prompt_template, topics, reference_payload, execution_time, repeat_daily, storyboard_enabled, next_run_at, last_run_at,
 	is_enabled, created_at, updated_at
 `
 
@@ -149,6 +155,50 @@ func trimmedStringPointer(value *string) *string {
 		return nil
 	}
 	return &trimmed
+}
+
+func normalizeSkillTopics(topics []string) []string {
+	if len(topics) == 0 {
+		return []string{}
+	}
+	normalized := make([]string, 0, len(topics))
+	seen := make(map[string]struct{}, len(topics))
+	for _, item := range topics {
+		topic := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(item), "#"))
+		if topic == "" {
+			continue
+		}
+		key := strings.ToLower(topic)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, topic)
+	}
+	return normalized
+}
+
+func normalizeSkillTopicsFromJSON(raw []byte) []string {
+	if len(raw) == 0 {
+		return []string{}
+	}
+	var topics []string
+	if err := json.Unmarshal(raw, &topics); err != nil {
+		return []string{}
+	}
+	return normalizeSkillTopics(topics)
+}
+
+func marshalSkillTopics(topics []string) []byte {
+	normalized := normalizeSkillTopics(topics)
+	if len(normalized) == 0 {
+		return []byte("[]")
+	}
+	payload, err := json.Marshal(normalized)
+	if err != nil {
+		return []byte("[]")
+	}
+	return payload
 }
 
 func (s *Store) ListSkillsByOwner(ctx context.Context, ownerUserID string) ([]domain.ProductSkill, error) {
@@ -380,22 +430,27 @@ func (s *Store) ListDeletedSkillEventsByOwner(ctx context.Context, ownerUserID s
 }
 
 func (s *Store) CreateSkill(ctx context.Context, input CreateSkillInput) (*domain.ProductSkill, error) {
+	topicsPayload := marshalSkillTopics(input.Topics)
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO product_skills (
 			id, owner_user_id, device_id, name, description, output_type, model_name,
-			prompt_template, reference_payload, execution_time, repeat_daily, storyboard_enabled, next_run_at, is_enabled
+			prompt_template, topics, reference_payload, execution_time, repeat_daily, storyboard_enabled, next_run_at, is_enabled
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING id, owner_user_id, device_id, name, description, output_type, model_name,
-		          prompt_template, reference_payload, execution_time, repeat_daily, storyboard_enabled, next_run_at, last_run_at,
+		          prompt_template, topics, reference_payload, execution_time, repeat_daily, storyboard_enabled, next_run_at, last_run_at,
 		          is_enabled, created_at, updated_at
 	`, input.ID, input.OwnerUserID, input.DeviceID, input.Name, input.Description, input.OutputType, input.ModelName,
-		input.PromptTemplate, input.ReferencePayload, input.ExecutionTime, input.RepeatDaily, input.StoryboardEnabled, input.NextRunAt, input.IsEnabled)
+		input.PromptTemplate, topicsPayload, input.ReferencePayload, input.ExecutionTime, input.RepeatDaily, input.StoryboardEnabled, input.NextRunAt, input.IsEnabled)
 
 	return scanSkill(row)
 }
 
 func (s *Store) UpdateSkill(ctx context.Context, skillID string, ownerUserID string, input UpdateSkillInput) (*domain.ProductSkill, error) {
+	topicsPayload := any(nil)
+	if input.TopicsTouched {
+		topicsPayload = marshalSkillTopics(input.Topics)
+	}
 	referencePayload := any(nil)
 	if input.ReferenceTouched {
 		referencePayload = input.ReferencePayload
@@ -418,40 +473,44 @@ func (s *Store) UpdateSkill(ctx context.Context, skillID string, ownerUserID str
 	}
 
 	row := s.pool.QueryRow(ctx, `
-		UPDATE product_skills
-		SET device_id = CASE
-		        WHEN $3 = TRUE THEN $4
-		        ELSE device_id
-		    END,
-		    name = COALESCE($5, name),
-		    description = COALESCE($6, description),
-		    output_type = COALESCE($7, output_type),
-		    model_name = COALESCE($8, model_name),
-		    prompt_template = COALESCE($9, prompt_template),
-		    reference_payload = COALESCE($10, reference_payload),
-		    execution_time = CASE
-		        WHEN $11 = TRUE THEN $12
-		        ELSE execution_time
-		    END,
-		    repeat_daily = COALESCE($13, repeat_daily),
-		    storyboard_enabled = COALESCE($14, storyboard_enabled),
-		    next_run_at = CASE
-		        WHEN $15 = TRUE THEN $16
-		        ELSE next_run_at
-		    END,
-		    last_run_at = CASE
-		        WHEN $17 = TRUE THEN $18
-		        ELSE last_run_at
-		    END,
-		    is_enabled = COALESCE($19, is_enabled),
-		    updated_at = NOW()
-		WHERE id = $1 AND owner_user_id = $2
-		RETURNING id, owner_user_id, device_id, name, description, output_type, model_name,
-		          prompt_template, reference_payload, execution_time, repeat_daily, storyboard_enabled, next_run_at, last_run_at,
-		          is_enabled, created_at, updated_at
-	`, skillID, ownerUserID, input.DeviceTouched, deviceID, input.Name, input.Description, input.OutputType, input.ModelName,
-		input.PromptTemplate, referencePayload, input.ExecutionTouched, executionTime, input.RepeatDaily, input.StoryboardEnabled,
-		input.NextRunTouched, nextRunAt, input.LastRunTouched, lastRunAt, input.IsEnabled)
+			UPDATE product_skills
+			SET device_id = CASE
+			        WHEN $3 = TRUE THEN $4
+			        ELSE device_id
+			    END,
+			    name = COALESCE($5, name),
+			    description = COALESCE($6, description),
+			    output_type = COALESCE($7, output_type),
+			    model_name = COALESCE($8, model_name),
+			    prompt_template = COALESCE($9, prompt_template),
+			    topics = CASE
+			        WHEN $10 = TRUE THEN $11
+			        ELSE topics
+			    END,
+			    reference_payload = COALESCE($12, reference_payload),
+			    execution_time = CASE
+			        WHEN $13 = TRUE THEN $14
+			        ELSE execution_time
+			    END,
+			    repeat_daily = COALESCE($15, repeat_daily),
+			    storyboard_enabled = COALESCE($16, storyboard_enabled),
+			    next_run_at = CASE
+			        WHEN $17 = TRUE THEN $18
+			        ELSE next_run_at
+			    END,
+			    last_run_at = CASE
+			        WHEN $19 = TRUE THEN $20
+			        ELSE last_run_at
+			    END,
+			    is_enabled = COALESCE($21, is_enabled),
+			    updated_at = NOW()
+			WHERE id = $1 AND owner_user_id = $2
+			RETURNING id, owner_user_id, device_id, name, description, output_type, model_name,
+			          prompt_template, topics, reference_payload, execution_time, repeat_daily, storyboard_enabled, next_run_at, last_run_at,
+			          is_enabled, created_at, updated_at
+		`, skillID, ownerUserID, input.DeviceTouched, deviceID, input.Name, input.Description, input.OutputType, input.ModelName,
+		input.PromptTemplate, input.TopicsTouched, topicsPayload, referencePayload, input.ExecutionTouched, executionTime,
+		input.RepeatDaily, input.StoryboardEnabled, input.NextRunTouched, nextRunAt, input.LastRunTouched, lastRunAt, input.IsEnabled)
 
 	skill, err := scanSkill(row)
 	if err != nil {

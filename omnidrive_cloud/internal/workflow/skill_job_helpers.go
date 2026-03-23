@@ -116,6 +116,7 @@ func BuildSkillAIJobPayload(
 	}
 
 	prompt := BuildSkillJobPrompt(skill)
+	topics := normalizeSkillTopics(skill.Topics)
 	payload := map[string]any{
 		"prompt":           prompt,
 		"skillName":        skill.Name,
@@ -169,6 +170,7 @@ func BuildSkillAIJobPayload(
 		payload["publishPayload"] = map[string]any{
 			"title":        skill.Name,
 			"contentText":  skill.Description,
+			"tags":         topics,
 			"targets":      publishTargets,
 			"runAt":        publishAt.UTC().Format(time.RFC3339),
 			"requestedRun": publishAt.UTC().Format(time.RFC3339),
@@ -181,6 +183,27 @@ func BuildSkillAIJobPayload(
 	}
 
 	return json.Marshal(payload)
+}
+
+func normalizeSkillTopics(topics []string) []string {
+	if len(topics) == 0 {
+		return []string{}
+	}
+	normalized := make([]string, 0, len(topics))
+	seen := make(map[string]struct{}, len(topics))
+	for _, item := range topics {
+		topic := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(item), "#"))
+		if topic == "" {
+			continue
+		}
+		key := strings.ToLower(topic)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, topic)
+	}
+	return normalized
 }
 
 func loadSkillStoryboardConfig(ctx context.Context, app *appstate.App, jobType string) (string, string, []map[string]any, error) {

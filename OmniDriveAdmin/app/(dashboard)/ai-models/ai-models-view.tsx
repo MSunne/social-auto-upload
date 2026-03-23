@@ -52,6 +52,13 @@ function renderPricingSummary(model: AIModel) {
   );
 }
 
+function renderSupportedFileTypes(model: AIModel) {
+  if (!model.supportedFileTypes || model.supportedFileTypes.length === 0) {
+    return "未配置";
+  }
+  return model.supportedFileTypes.join(", ");
+}
+
 export function AIModelsView() {
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState("");
@@ -258,6 +265,12 @@ export function AIModelsView() {
                             model.billingMode}
                         </div>
                         {renderPricingSummary(model)}
+                        <div
+                          className="text-xs text-[var(--color-text-secondary)] max-w-[320px] truncate"
+                          title={renderSupportedFileTypes(model)}
+                        >
+                          支持文件：{renderSupportedFileTypes(model)}
+                        </div>
                       </div>
                     </td>
                     <td className="px-6 py-4">

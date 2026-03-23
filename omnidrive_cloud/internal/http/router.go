@@ -168,7 +168,9 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 		api.Route("/agent", func(agent chi.Router) {
 			agent.Post("/heartbeat", agentHandler.Heartbeat)
 			agent.Get("/device-session/{deviceCode}", agentHandler.IssueDeviceSession)
+			agent.Get("/accounts/{deviceCode}", agentHandler.ListAccounts)
 			agent.Post("/accounts/sync", agentHandler.SyncAccount)
+			agent.Post("/accounts/retired-ack", agentHandler.AckRetiredAccounts)
 			agent.Get("/ai-jobs/{deviceCode}", agentHandler.ListAIJobs)
 			agent.Post("/ai-jobs/sync", agentHandler.SyncAIJob)
 			agent.Post("/ai-jobs/{jobId}/delivery", agentHandler.UpdateAIJobDelivery)

@@ -84,6 +84,7 @@ type PlatformAccountLoad struct {
 	PendingTaskCount              int64 `json:"pendingTaskCount"`
 	RunningTaskCount              int64 `json:"runningTaskCount"`
 	NeedsVerifyTaskCount          int64 `json:"needsVerifyTaskCount"`
+	CancelRequestedTaskCount      int64 `json:"cancelRequestedTaskCount"`
 	FailedTaskCount               int64 `json:"failedTaskCount"`
 	ActiveLoginSessionCount       int64 `json:"activeLoginSessionCount"`
 	VerificationLoginSessionCount int64 `json:"verificationLoginSessionCount"`
@@ -128,6 +129,7 @@ type ProductSkill struct {
 	OutputType        string           `json:"outputType"`
 	ModelName         string           `json:"modelName"`
 	PromptTemplate    *string          `json:"promptTemplate"`
+	Topics            []string         `json:"topics"`
 	ReferencePayload  json.RawMessage  `json:"referencePayload,omitempty"`
 	ExecutionTime     *time.Time       `json:"executionTime,omitempty"`
 	RepeatDaily       bool             `json:"repeatDaily"`
@@ -379,6 +381,14 @@ type AgentRetiredSkillItem struct {
 	LastChangedAt  time.Time  `json:"lastChangedAt"`
 }
 
+type AgentRetiredAccountItem struct {
+	Platform      string    `json:"platform"`
+	AccountName   string    `json:"accountName"`
+	Reason        string    `json:"reason"`
+	Message       *string   `json:"message,omitempty"`
+	LastChangedAt time.Time `json:"lastChangedAt"`
+}
+
 type AgentSkillManifestSummary struct {
 	ActiveCount   int64 `json:"activeCount"`
 	RetiredCount  int64 `json:"retiredCount"`
@@ -561,6 +571,7 @@ type AIModel struct {
 	VideoReferenceLimit       *int            `json:"videoReferenceLimit,omitempty"`
 	VideoSupportedResolutions []string        `json:"videoSupportedResolutions,omitempty"`
 	VideoSupportedDurations   []string        `json:"videoSupportedDurations,omitempty"`
+	SupportedFileTypes        []string        `json:"supportedFileTypes,omitempty"`
 	IsEnabled                 bool            `json:"isEnabled"`
 	CreatedAt                 time.Time       `json:"createdAt"`
 	UpdatedAt                 time.Time       `json:"updatedAt"`

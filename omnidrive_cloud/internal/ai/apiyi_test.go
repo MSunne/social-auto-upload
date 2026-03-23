@@ -290,6 +290,48 @@ func TestSubmitVideoUsesVeoJSONWithoutReferences(t *testing.T) {
 	}
 }
 
+func TestSubmitVideoRetriesLMRootPromptRewriteFailures(t *testing.T) {
+	attempts := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.Header().Set("Content-Type", "application/json")
+		if attempts < 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{
+				"error": {
+					"code": "13",
+					"message": "Error forwarded from LMRoot. Failed to get combined chunks. attempt failed with error: Invalid response from Gemini model. Failed to parse JSON. prompt_rewriter lmroot_generate veo3_prompt_rewriter_utils.cc"
+				}
+			}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"video_retry_ok","model":"veo-3.1-fast","status":"queued","created":1762181811}`))
+	}))
+	defer server.Close()
+
+	provider, err := NewAPIYIProvider(config.Config{
+		APIYIBaseURL: server.URL,
+		APIYIApiKey:  "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewAPIYIProvider returned error: %v", err)
+	}
+
+	_, err = provider.SubmitVideo(context.Background(), VideoRequest{
+		Model:   "veo-3.1-fast",
+		BaseURL: server.URL,
+		APIKey:  "sk-veo",
+		Prompt:  "生成一条镜头缓慢推进的产品视频",
+	})
+	if err != nil {
+		t.Fatalf("SubmitVideo returned error after retries: %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("expected SubmitVideo to retry 3 attempts, got %d", attempts)
+	}
+}
+
 func TestGenerateImageUsesGeminiImageConfigAndInlineData(t *testing.T) {
 	var capturedPath string
 	var capturedAuth string

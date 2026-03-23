@@ -155,7 +155,7 @@ const platformTagType = (p) => ({ '抖音': 'danger', '快手': 'success', '视�
 const fetchAccounts = async () => {
   loading.value = true
   try {
-    const res = await accountApi.getValidAccounts()
+    const res = await accountApi.getAccounts()
     if (res?.data) accountStore.setAccounts(res.data)
   } catch { ElMessage.error('获取账号失败') }
   loading.value = false

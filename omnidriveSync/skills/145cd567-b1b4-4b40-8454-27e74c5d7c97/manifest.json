@@ -9,6 +9,7 @@
     "outputType": "视文模式",
     "modelName": "veo-3.1-fast-fl",
     "promptTemplate": "做一个抖音风格的视频、介绍这个镜子的测试皮肤效果。",
+    "topics": [],
     "repeatDaily": false,
     "storyboardEnabled": true,
     "isEnabled": true,
@@ -21,7 +22,7 @@
       "runningTaskCount": 0,
       "needsVerifyTaskCount": 0,
       "failedTaskCount": 0,
-      "aiJobCount": 6,
+      "aiJobCount": 9,
       "activeAiJobCount": 0
     }
   },
@@ -55,13 +56,13 @@
     "needsSync": false,
     "assetCount": 1,
     "message": null,
-    "lastSyncedAt": "2026-03-22T13:37:12.900782+08:00",
+    "lastSyncedAt": "2026-03-23T16:22:58.554671+08:00",
     "createdAt": "2026-03-22T10:18:15.072097+08:00",
-    "updatedAt": "2026-03-22T13:37:13.645836+08:00"
+    "updatedAt": "2026-03-23T16:22:58.587509+08:00"
   },
   "cache": {
     "manifestPath": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/145cd567-b1b4-4b40-8454-27e74c5d7c97/manifest.json",
     "assetsDir": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/145cd567-b1b4-4b40-8454-27e74c5d7c97/assets",
-    "syncedAt": "2026-03-22T05:39:13.260117Z"
+    "syncedAt": "2026-03-23T08:24:58.716336Z"
   }
 }

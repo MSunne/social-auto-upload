@@ -120,6 +120,15 @@ type retiredSkillAckRequest struct {
 	} `json:"items"`
 }
 
+type retiredAccountAckRequest struct {
+	DeviceCode string `json:"deviceCode"`
+	Items      []struct {
+		Platform       string  `json:"platform"`
+		AccountName    string  `json:"accountName"`
+		AcknowledgedAt *string `json:"acknowledgedAt"`
+	} `json:"items"`
+}
+
 type syncAIJobRequest struct {
 	ID             string      `json:"id"`
 	DeviceCode     string      `json:"deviceCode"`
@@ -324,8 +333,52 @@ func (h *AgentHandler) SyncAccount(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to sync account")
 		return
 	}
+	if account == nil {
+		render.JSON(w, http.StatusOK, map[string]any{
+			"ignored": true,
+			"reason":  "account_unbound",
+		})
+		return
+	}
 
 	render.JSON(w, http.StatusOK, account)
+}
+
+func (h *AgentHandler) ListAccounts(w http.ResponseWriter, r *http.Request) {
+	deviceCode := strings.TrimSpace(chi.URLParam(r, "deviceCode"))
+	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
+	if deviceCode == "" || agentKey == "" {
+		render.Error(w, http.StatusBadRequest, "deviceCode and X-Agent-Key are required")
+		return
+	}
+
+	device, err := h.app.Store.GetDeviceByCode(r.Context(), deviceCode)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device")
+		return
+	}
+	if device == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+	if !agentKeyMatches(device, agentKey) {
+		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+		return
+	}
+	if !device.IsEnabled {
+		render.Error(w, http.StatusConflict, "Device is disabled")
+		return
+	}
+
+	retiredItems, err := h.app.Store.ListRetiredPlatformAccountsByDevice(r.Context(), device.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load retired accounts")
+		return
+	}
+
+	render.JSON(w, http.StatusOK, map[string]any{
+		"retiredItems": retiredItems,
+	})
 }
 
 func (h *AgentHandler) ListLoginTasks(w http.ResponseWriter, r *http.Request) {
@@ -763,6 +816,70 @@ func (h *AgentHandler) AckRetiredSkills(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		acked++
+	}
+
+	render.JSON(w, http.StatusOK, map[string]any{
+		"acked":      acked,
+		"deviceCode": payload.DeviceCode,
+	})
+}
+
+func (h *AgentHandler) AckRetiredAccounts(w http.ResponseWriter, r *http.Request) {
+	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
+	if agentKey == "" {
+		render.Error(w, http.StatusBadRequest, "X-Agent-Key is required")
+		return
+	}
+
+	var payload retiredAccountAckRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	payload.DeviceCode = strings.TrimSpace(payload.DeviceCode)
+	if payload.DeviceCode == "" {
+		render.Error(w, http.StatusBadRequest, "deviceCode is required")
+		return
+	}
+
+	device, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device")
+		return
+	}
+	if device == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+	if !agentKeyMatches(device, agentKey) {
+		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+		return
+	}
+
+	items := make([]domain.AgentRetiredAccountItem, 0, len(payload.Items))
+	for _, item := range payload.Items {
+		platform := strings.TrimSpace(item.Platform)
+		accountName := strings.TrimSpace(item.AccountName)
+		if platform == "" || accountName == "" {
+			continue
+		}
+		if item.AcknowledgedAt != nil && strings.TrimSpace(*item.AcknowledgedAt) != "" {
+			if _, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(*item.AcknowledgedAt)); parseErr != nil {
+				render.Error(w, http.StatusBadRequest, "acknowledgedAt must be RFC3339")
+				return
+			}
+		}
+		items = append(items, domain.AgentRetiredAccountItem{
+			Platform:    platform,
+			AccountName: accountName,
+			Reason:      "deleted",
+		})
+	}
+
+	acked, err := h.app.Store.AckRetiredPlatformAccountsByDevice(r.Context(), device.ID, items)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to acknowledge retired accounts")
+		return
 	}
 
 	render.JSON(w, http.StatusOK, map[string]any{

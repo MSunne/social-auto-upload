@@ -387,6 +387,75 @@ class OmniDriveBridgeTests(unittest.TestCase):
             },
         )
 
+    def test_sync_accounts_deletes_retired_cloud_accounts_locally(self):
+        bridge = self.make_bridge()
+        self.ensure_user_info_table(bridge.db_path)
+        cookie_dir = self.temp_dir / "cookiesFile"
+        cookie_dir.mkdir(parents=True, exist_ok=True)
+        cookie_file = cookie_dir / "ks-real.json"
+        cookie_file.write_text("{}", encoding="utf-8")
+
+        with sqlite3.connect(bridge.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO user_info (type, filePath, userName, status)
+                VALUES (?, ?, ?, ?)
+                """,
+                (4, "ks-real.json", "测试快手_乔总", 1),
+            )
+            conn.commit()
+
+        request_calls = []
+
+        def fake_request(method, path, *, params=None, payload=None):
+            request_calls.append((method, path, payload))
+            if method == "GET" and path == "/api/v1/agent/accounts/device-1":
+                return {
+                    "retiredItems": [
+                        {
+                            "platform": "快手",
+                            "accountName": "测试快手_乔总",
+                            "reason": "deleted",
+                            "lastChangedAt": "2026-03-23T10:00:00Z",
+                        }
+                    ]
+                }
+            if method == "POST" and path == "/api/v1/agent/accounts/retired-ack":
+                return {"acked": 1}
+            raise AssertionError(f"unexpected request {method} {path}")
+
+        with mock.patch.object(bridge, "_request", side_effect=fake_request):
+            bridge._sync_accounts()
+
+        with sqlite3.connect(bridge.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM user_info")
+            remaining = cursor.fetchone()[0]
+
+        self.assertEqual(remaining, 0)
+        self.assertFalse(cookie_file.exists())
+        self.assertEqual(
+            request_calls,
+            [
+                ("GET", "/api/v1/agent/accounts/device-1", None),
+                (
+                    "POST",
+                    "/api/v1/agent/accounts/retired-ack",
+                    {
+                        "deviceCode": "device-1",
+                        "items": [
+                            {
+                                "platform": "快手",
+                                "accountName": "测试快手_乔总",
+                                "acknowledgedAt": mock.ANY,
+                            }
+                        ],
+                    },
+                ),
+            ],
+        )
+
     def test_import_remote_account_skill_job_falls_back_to_cloud_job_id_and_creates_publish_tasks(self):
         publish_task_manager = DummyPublishTaskManager(worker_count=2)
         ai_task_manager = DummyAITaskManager()

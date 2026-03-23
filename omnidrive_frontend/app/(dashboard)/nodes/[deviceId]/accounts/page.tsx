@@ -1,10 +1,12 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import {
+  AlertTriangle,
   ArrowLeft,
+  Clock3,
   Users,
   Layout,
   ListChecks,
@@ -17,9 +19,17 @@ import {
   ExternalLink,
   Plus,
   Loader2,
+  X,
 } from "lucide-react";
 import Link from "next/link";
-import { getDevice, listAccounts, listSkills, listTasks, deleteAccount, validateAccount } from "@/lib/services";
+import {
+  getDevice,
+  listAccounts,
+  listSkills,
+  listTasks,
+  deleteAccount,
+  validateAccount,
+} from "@/lib/services";
 import type { Device, Account, Skill, Task, LoginSession } from "@/lib/types";
 import { StatusBadge } from "@/components/ui/common";
 import { AddAccountModal } from "@/components/ui/add-account-modal";
@@ -39,12 +49,34 @@ const PLATFORMS = [
 
 function getErrorMessage(error: unknown, fallback: string): string {
   if (typeof error === "object" && error !== null && "message" in error) {
-    const message = String((error as { message?: string }).message || "").trim();
+    const message = String(
+      (error as { message?: string }).message || "",
+    ).trim();
     if (message) {
       return message;
     }
   }
   return fallback;
+}
+
+function getAccountDeleteUsage(account: Account | null) {
+  const load = account?.load;
+  const activeTaskCount =
+    (load?.pendingTaskCount || 0) +
+    (load?.runningTaskCount || 0) +
+    (load?.needsVerifyTaskCount || 0) +
+    (load?.cancelRequestedTaskCount || 0);
+  const totalTaskCount = load?.taskCount || 0;
+  const historicalTaskCount = Math.max(totalTaskCount - activeTaskCount, 0);
+  const activeLoginSessionCount = load?.activeLoginSessionCount || 0;
+
+  return {
+    activeTaskCount,
+    totalTaskCount,
+    historicalTaskCount,
+    activeLoginSessionCount,
+    hasBlockingUsage: activeTaskCount > 0 || activeLoginSessionCount > 0,
+  };
 }
 
 export default function DeviceAccountsPage({
@@ -80,20 +112,58 @@ export default function DeviceAccountsPage({
 
   /* Modal state */
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
-  const [validationSession, setValidationSession] = useState<LoginSession | null>(null);
+  const [validationSession, setValidationSession] =
+    useState<LoginSession | null>(null);
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [deleteCountdown, setDeleteCountdown] = useState(5);
+  const [deleteDialogError, setDeleteDialogError] = useState<string | null>(
+    null,
+  );
 
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
   const [isValidating, setIsValidating] = useState<string | null>(null);
 
-  const handleDelete = async (accountId: string) => {
-    if (!confirm("确认解绑并删除此账号？此操作不可逆。")) return;
+  const deleteTarget = useMemo(
+    () => accounts.find((account) => account.id === deleteTargetId) || null,
+    [accounts, deleteTargetId],
+  );
+  const deleteUsage = getAccountDeleteUsage(deleteTarget);
+
+  useEffect(() => {
+    if (!deleteTargetId) {
+      setDeleteCountdown(5);
+      setDeleteDialogError(null);
+      return;
+    }
+    setDeleteCountdown(5);
+    setDeleteDialogError(null);
+  }, [deleteTargetId]);
+
+  useEffect(() => {
+    if (!deleteTarget || deleteUsage.hasBlockingUsage || deleteCountdown <= 0) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setDeleteCountdown((current) => Math.max(0, current - 1));
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [deleteCountdown, deleteTarget, deleteUsage.hasBlockingUsage]);
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
     try {
-      setIsDeleting(accountId);
-      await deleteAccount(accountId);
-      queryClient.invalidateQueries({ queryKey: ["accounts", deviceId] });
-      queryClient.invalidateQueries({ queryKey: ["device", deviceId] });
+      setDeleteDialogError(null);
+      setIsDeleting(deleteTarget.id);
+      await deleteAccount(deleteTarget.id);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["accounts", deviceId] }),
+        queryClient.invalidateQueries({ queryKey: ["device", deviceId] }),
+        queryClient.invalidateQueries({ queryKey: ["tasks"] }),
+      ]);
+      setDeleteTargetId(null);
     } catch (err: unknown) {
-      alert(getErrorMessage(err, "删除失败"));
+      setDeleteDialogError(getErrorMessage(err, "解绑失败，请稍后重试"));
+      await queryClient.invalidateQueries({ queryKey: ["accounts", deviceId] });
     } finally {
       setIsDeleting(null);
     }
@@ -230,7 +300,9 @@ export default function DeviceAccountsPage({
             return (
               <button
                 key={p.key}
-                onClick={() => count > 0 && setPlatformFilter(isActive ? null : p.key)}
+                onClick={() =>
+                  count > 0 && setPlatformFilter(isActive ? null : p.key)
+                }
                 className={`inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all ${
                   isActive
                     ? `${p.bg} ${p.color} border-current/40 shadow-[0_0_10px_rgba(255,255,255,0.06)] scale-105`
@@ -321,10 +393,12 @@ export default function DeviceAccountsPage({
               <tbody className="divide-y divide-border/30">
                 {filteredAccounts.map((acc, idx) => {
                   const platformCfg = PLATFORMS.find(
-                    (p) => p.key === acc.platform
+                    (p) => p.key === acc.platform,
                   );
-                  const hasActiveLoginSession = (acc.load?.activeLoginSessionCount || 0) > 0;
-                  const needsAttention = acc.status !== "active" || hasActiveLoginSession;
+                  const hasActiveLoginSession =
+                    (acc.load?.activeLoginSessionCount || 0) > 0;
+                  const needsAttention =
+                    acc.status !== "active" || hasActiveLoginSession;
                   return (
                     <motion.tr
                       key={acc.id}
@@ -370,7 +444,9 @@ export default function DeviceAccountsPage({
                           {acc.lastMessage && (
                             <div
                               className={`max-w-xs truncate text-xs ${
-                                needsAttention ? "text-amber-300" : "text-text-muted"
+                                needsAttention
+                                  ? "text-amber-300"
+                                  : "text-text-muted"
                               }`}
                               title={acc.lastMessage}
                             >
@@ -383,9 +459,7 @@ export default function DeviceAccountsPage({
                       {/* Heartbeat Time */}
                       <td className="px-6 py-4 font-mono text-xs text-text-muted">
                         {acc.updatedAt
-                          ? new Date(
-                              acc.updatedAt
-                            ).toLocaleString("zh-CN", {
+                          ? new Date(acc.updatedAt).toLocaleString("zh-CN", {
                               month: "2-digit",
                               day: "2-digit",
                               hour: "2-digit",
@@ -413,10 +487,20 @@ export default function DeviceAccountsPage({
                               onClick={() => handleValidate(acc.id)}
                               disabled={isValidating === acc.id}
                               className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-400 cursor-pointer transition-all hover:border-amber-400/60 hover:bg-amber-500/20 hover:shadow-[0_0_10px_rgba(245,158,11,0.25)] hover:-translate-y-px disabled:opacity-50"
-                              title={hasActiveLoginSession ? "重新打开认证流程" : "重新认证 (账号已失效或待确认)"}
+                              title={
+                                hasActiveLoginSession
+                                  ? "重新打开认证流程"
+                                  : "重新认证 (账号已失效或待确认)"
+                              }
                             >
-                              {isValidating === acc.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <KeyRound className="h-3 w-3" />}
-                              {hasActiveLoginSession ? "重新打开认证" : "重新认证"}
+                              {isValidating === acc.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <KeyRound className="h-3 w-3" />
+                              )}
+                              {hasActiveLoginSession
+                                ? "重新打开认证"
+                                : "重新认证"}
                             </button>
                           ) : (
                             <button
@@ -425,17 +509,25 @@ export default function DeviceAccountsPage({
                               className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-400 cursor-pointer transition-all hover:border-emerald-400/60 hover:bg-emerald-500/20 hover:shadow-[0_0_10px_rgba(16,185,129,0.25)] hover:-translate-y-px disabled:opacity-50"
                               title="登录状态有效"
                             >
-                              {isValidating === acc.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <BadgeCheck className="h-3 w-3" />}
+                              {isValidating === acc.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <BadgeCheck className="h-3 w-3" />
+                              )}
                               重新认证
                             </button>
                           )}
                           <button
-                            onClick={() => handleDelete(acc.id)}
+                            onClick={() => setDeleteTargetId(acc.id)}
                             disabled={isDeleting === acc.id}
                             className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-surface px-3 py-1.5 text-xs font-semibold text-text-muted cursor-pointer transition-all hover:border-danger/50 hover:text-danger hover:bg-danger/10 hover:shadow-[0_0_8px_rgba(239,68,68,0.15)] disabled:opacity-50"
                             title="删除账号关联"
                           >
-                            {isDeleting === acc.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                            {isDeleting === acc.id ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3 w-3" />
+                            )}
                             解绑删除
                           </button>
                         </div>
@@ -479,6 +571,153 @@ export default function DeviceAccountsPage({
           </div>
         )}
       </motion.div>
+
+      <AnimatePresence>
+        {deleteTarget && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center px-4 py-6">
+            <motion.button
+              type="button"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => !isDeleting && setDeleteTargetId(null)}
+              className="fixed inset-0 bg-black/70 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 14 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 14 }}
+              transition={{ duration: 0.18, ease: "easeOut" }}
+              className="relative z-10 w-full max-w-lg overflow-hidden rounded-3xl border border-white/10 bg-[#0A0A14]/95 shadow-[0_0_80px_rgba(239,68,68,0.18)] backdrop-blur-xl"
+            >
+              <div className="border-b border-white/5 bg-gradient-to-r from-red-500/12 via-amber-500/8 to-transparent px-6 py-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-red-500/15 text-red-300 shadow-[0_0_24px_rgba(239,68,68,0.18)]">
+                      <AlertTriangle className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-black tracking-wide text-white">
+                        解除 OmniBull 账号绑定
+                      </h3>
+                      <p className="mt-1 text-sm text-text-muted">
+                        {deleteTarget.platform} / {deleteTarget.accountName}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => !isDeleting && setDeleteTargetId(null)}
+                    className="rounded-full bg-white/5 p-2 text-text-muted transition-all hover:rotate-90 hover:bg-red-500/20 hover:text-red-300"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-4 px-6 py-6">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-2xl border border-white/8 bg-white/5 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-widest text-text-muted">
+                      计划中任务
+                    </p>
+                    <p className="mt-2 text-2xl font-black text-white">
+                      {deleteUsage.activeTaskCount}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-white/8 bg-white/5 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-widest text-text-muted">
+                      历史任务
+                    </p>
+                    <p className="mt-2 text-2xl font-black text-white">
+                      {deleteUsage.historicalTaskCount}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-white/8 bg-white/5 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-widest text-text-muted">
+                      活跃认证
+                    </p>
+                    <p className="mt-2 text-2xl font-black text-white">
+                      {deleteUsage.activeLoginSessionCount}
+                    </p>
+                  </div>
+                </div>
+
+                {deleteUsage.hasBlockingUsage ? (
+                  <div className="rounded-2xl border border-amber-500/30 bg-amber-500/12 px-4 py-4 text-sm leading-6 text-amber-100">
+                    当前账号还有计划中任务或正在进行的认证流程，暂时不能解绑。
+                    {deleteUsage.historicalTaskCount > 0
+                      ? ` 等这些阻塞项处理完后，再解绑时会一并清空 ${deleteUsage.historicalTaskCount} 条历史任务记录。`
+                      : ""}
+                  </div>
+                ) : (
+                  <>
+                    <div className="rounded-2xl border border-red-500/30 bg-red-500/12 px-4 py-4 text-sm leading-6 text-red-100">
+                      {deleteUsage.historicalTaskCount > 0
+                        ? `检测到账户下仍保留 ${deleteUsage.historicalTaskCount} 条历史任务记录。解除绑定后，这些任务记录和相关登录记录会一并清空，且不会再被 OmniBull 自动补回。`
+                        : "当前没有计划中任务，可以正常解绑。解除绑定后，会清空相关历史登录记录，并阻止 OmniBull 自动把这个账号重新同步回来。"}
+                    </div>
+                    <div className="flex items-center gap-3 rounded-2xl border border-cyan/25 bg-cyan/10 px-4 py-3 text-sm text-cyan-100">
+                      <Clock3 className="h-4 w-4 shrink-0" />
+                      {deleteCountdown > 0
+                        ? `请等待 ${deleteCountdown} 秒后再确认解绑。`
+                        : "倒计时结束，现在可以确认解绑。"}
+                    </div>
+                  </>
+                )}
+
+                {deleteDialogError ? (
+                  <div className="rounded-2xl border border-red-500/35 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+                    {deleteDialogError}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="flex flex-col gap-3 border-t border-white/5 bg-black/30 px-6 py-5 sm:flex-row sm:items-center sm:justify-end">
+                {deleteUsage.hasBlockingUsage ? (
+                  <Link
+                    href={`/nodes/${deviceId}/accounts/${deleteTarget.id}`}
+                    className="inline-flex items-center justify-center gap-2 rounded-full border border-amber-500/35 bg-amber-500/10 px-5 py-2.5 text-sm font-semibold text-amber-200 transition-all hover:border-amber-400/60 hover:bg-amber-500/20"
+                  >
+                    查看任务
+                  </Link>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setDeleteTargetId(null)}
+                  disabled={Boolean(isDeleting)}
+                  className="rounded-full px-5 py-2.5 text-sm font-bold text-text-muted transition-all hover:bg-white/8 hover:text-white disabled:opacity-50"
+                >
+                  取消
+                </button>
+                {!deleteUsage.hasBlockingUsage ? (
+                  <button
+                    type="button"
+                    onClick={handleDelete}
+                    disabled={
+                      deleteCountdown > 0 || isDeleting === deleteTarget.id
+                    }
+                    className={`inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm font-bold transition-all ${
+                      deleteCountdown > 0 || isDeleting === deleteTarget.id
+                        ? "cursor-not-allowed bg-white/10 text-white/35"
+                        : "bg-gradient-to-r from-red-500 to-orange-500 text-white shadow-[0_0_24px_rgba(239,68,68,0.28)] hover:scale-[1.02]"
+                    }`}
+                  >
+                    {isDeleting === deleteTarget.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-4 w-4" />
+                    )}
+                    {deleteCountdown > 0
+                      ? `解除绑定 (${deleteCountdown}s)`
+                      : "确认解除绑定"}
+                  </button>
+                ) : null}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Add Account Modal */}
       <AddAccountModal

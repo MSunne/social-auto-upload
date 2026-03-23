@@ -7,16 +7,24 @@ import {
   CalendarClock,
   Clock3,
   ListChecks,
+  Loader2,
   Pencil,
   Plus,
   Sparkles,
+  Trash2,
   UserRound,
 } from "lucide-react";
 import Link from "next/link";
 import { AccountSkillRunModal } from "@/components/ui/account-skill-run-modal";
-import { EmptyState, PageHeader, StatCard, StatusBadge } from "@/components/ui/common";
+import {
+  EmptyState,
+  PageHeader,
+  StatCard,
+  StatusBadge,
+} from "@/components/ui/common";
 import {
   createAccountSkillRun,
+  deleteTask,
   getAccountWorkspace,
   getDevice,
   listAIJobs,
@@ -24,8 +32,20 @@ import {
   listTasks,
   updateAIJob,
 } from "@/lib/services";
-import type { AIJob, AccountSkillScheduleSlot, Device, PlatformAccountWorkspace, Skill, Task } from "@/lib/types";
-import { buildAIJobTitle, formatDateTime, resolveAIJobStage, shouldShowAIJobInWorkflow } from "@/lib/workflow";
+import type {
+  AIJob,
+  AccountSkillScheduleSlot,
+  Device,
+  PlatformAccountWorkspace,
+  Skill,
+  Task,
+} from "@/lib/types";
+import {
+  buildAIJobTitle,
+  formatDateTime,
+  resolveAIJobStage,
+  shouldShowAIJobInWorkflow,
+} from "@/lib/workflow";
 
 type TimelineItem = {
   id: string;
@@ -67,7 +87,8 @@ function parseISOTime(value?: string | null) {
 
 function getAIJobPublishAt(job: AIJob) {
   const payload = (job.inputPayload || {}) as Record<string, unknown>;
-  const publishAt = typeof payload.publishAt === "string" ? payload.publishAt : null;
+  const publishAt =
+    typeof payload.publishAt === "string" ? payload.publishAt : null;
   return publishAt || job.runAt || null;
 }
 
@@ -80,7 +101,11 @@ function normalizeTimeOfDay(value?: string | null) {
 }
 
 function resolveScheduleTimezone(value?: string | null) {
-  return (value || Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai").trim();
+  return (
+    value ||
+    Intl.DateTimeFormat().resolvedOptions().timeZone ||
+    "Asia/Shanghai"
+  ).trim();
 }
 
 function normalizeGenerationLeadMinutes(value?: number | null) {
@@ -91,16 +116,24 @@ function normalizeGenerationLeadMinutes(value?: number | null) {
   return Math.min(24 * 60, Math.round(numeric));
 }
 
-function inferGenerationLeadMinutes(publishAt?: string | null, generateAt?: string | null) {
+function inferGenerationLeadMinutes(
+  publishAt?: string | null,
+  generateAt?: string | null,
+) {
   if (!publishAt || !generateAt) {
     return DEFAULT_GENERATION_LEAD_MINUTES;
   }
   const publishDate = new Date(publishAt);
   const generateDate = new Date(generateAt);
-  if (Number.isNaN(publishDate.getTime()) || Number.isNaN(generateDate.getTime())) {
+  if (
+    Number.isNaN(publishDate.getTime()) ||
+    Number.isNaN(generateDate.getTime())
+  ) {
     return DEFAULT_GENERATION_LEAD_MINUTES;
   }
-  return normalizeGenerationLeadMinutes((publishDate.getTime() - generateDate.getTime()) / 60000);
+  return normalizeGenerationLeadMinutes(
+    (publishDate.getTime() - generateDate.getTime()) / 60000,
+  );
 }
 
 function formatGenerationLeadMinutes(minutes: number) {
@@ -139,10 +172,17 @@ function getAIJobScheduleConfig(job: AIJob): AccountSkillScheduleSlot | null {
       : null;
   if (scheduleRaw) {
     return {
-      scheduleKey: typeof scheduleRaw.scheduleKey === "string" ? scheduleRaw.scheduleKey : undefined,
-      timeOfDay: normalizeTimeOfDay(typeof scheduleRaw.timeOfDay === "string" ? scheduleRaw.timeOfDay : ""),
+      scheduleKey:
+        typeof scheduleRaw.scheduleKey === "string"
+          ? scheduleRaw.scheduleKey
+          : undefined,
+      timeOfDay: normalizeTimeOfDay(
+        typeof scheduleRaw.timeOfDay === "string" ? scheduleRaw.timeOfDay : "",
+      ),
       repeatDaily: Boolean(scheduleRaw.repeatDaily),
-      timezone: resolveScheduleTimezone(typeof scheduleRaw.timezone === "string" ? scheduleRaw.timezone : null),
+      timezone: resolveScheduleTimezone(
+        typeof scheduleRaw.timezone === "string" ? scheduleRaw.timezone : null,
+      ),
       generationLeadMinutes:
         typeof scheduleRaw.generationLeadMinutes === "number"
           ? normalizeGenerationLeadMinutes(scheduleRaw.generationLeadMinutes)
@@ -162,7 +202,10 @@ function getAIJobScheduleConfig(job: AIJob): AccountSkillScheduleSlot | null {
         ),
         repeatDaily: false,
         timezone: resolveScheduleTimezone(null),
-        generationLeadMinutes: inferGenerationLeadMinutes(publishAt, generateAt),
+        generationLeadMinutes: inferGenerationLeadMinutes(
+          publishAt,
+          generateAt,
+        ),
       }
     : null;
 }
@@ -171,7 +214,9 @@ function formatScheduleRule(schedule: AccountSkillScheduleSlot | null) {
   if (!schedule || !schedule.timeOfDay) {
     return "未设置";
   }
-  return schedule.repeatDaily ? `每天 ${schedule.timeOfDay}` : `单次 ${schedule.timeOfDay}`;
+  return schedule.repeatDaily
+    ? `每天 ${schedule.timeOfDay}`
+    : `单次 ${schedule.timeOfDay}`;
 }
 
 function getAIJobGenerateAt(job: AIJob) {
@@ -179,21 +224,36 @@ function getAIJobGenerateAt(job: AIJob) {
 }
 
 function isEditableAccountSkillRun(job: AIJob) {
-  return job.source === "account_skill_binding" && (job.status === "scheduled" || job.status === "queued") && !job.localPublishTaskId;
+  return (
+    job.source === "account_skill_binding" &&
+    (job.status === "scheduled" || job.status === "queued") &&
+    !job.localPublishTaskId
+  );
 }
 
-function buildUpdatedAccountSkillRun(job: AIJob, schedule: AccountSkillScheduleSlot) {
+function buildUpdatedAccountSkillRun(
+  job: AIJob,
+  schedule: AccountSkillScheduleSlot,
+) {
   const publishAt = nextPublishAtFromTimeOfDay(schedule.timeOfDay);
   const publishDate = new Date(publishAt);
-  const generationLeadMinutes = normalizeGenerationLeadMinutes(schedule.generationLeadMinutes);
-  const generateAt = new Date(publishDate.getTime() - generationLeadMinutes * 60 * 1000).toISOString();
-  const inputPayload = JSON.parse(JSON.stringify(job.inputPayload || {})) as Record<string, unknown>;
+  const generationLeadMinutes = normalizeGenerationLeadMinutes(
+    schedule.generationLeadMinutes,
+  );
+  const generateAt = new Date(
+    publishDate.getTime() - generationLeadMinutes * 60 * 1000,
+  ).toISOString();
+  const inputPayload = JSON.parse(
+    JSON.stringify(job.inputPayload || {}),
+  ) as Record<string, unknown>;
   const currentPublishPayload =
-    inputPayload.publishPayload && typeof inputPayload.publishPayload === "object"
+    inputPayload.publishPayload &&
+    typeof inputPayload.publishPayload === "object"
       ? (inputPayload.publishPayload as Record<string, unknown>)
       : {};
   const currentSchedule =
-    inputPayload.scheduleConfig && typeof inputPayload.scheduleConfig === "object"
+    inputPayload.scheduleConfig &&
+    typeof inputPayload.scheduleConfig === "object"
       ? (inputPayload.scheduleConfig as Record<string, unknown>)
       : {};
 
@@ -213,8 +273,10 @@ function buildUpdatedAccountSkillRun(job: AIJob, schedule: AccountSkillScheduleS
     generationLeadMinutes,
   };
 
-  const nextStatus = new Date(generateAt).getTime() > Date.now() ? "scheduled" : "queued";
-  const nextMessage = nextStatus === "scheduled" ? "等待定时生成" : "等待云端生成";
+  const nextStatus =
+    new Date(generateAt).getTime() > Date.now() ? "scheduled" : "queued";
+  const nextMessage =
+    nextStatus === "scheduled" ? "等待定时生成" : "等待云端生成";
 
   return {
     inputPayload,
@@ -257,10 +319,11 @@ export default function AccountTaskPage({
     queryFn: () => getDevice(deviceId),
   });
 
-  const { data: workspace, isLoading: workspaceLoading } = useQuery<PlatformAccountWorkspace>({
-    queryKey: ["accountWorkspace", accountId],
-    queryFn: () => getAccountWorkspace(accountId),
-  });
+  const { data: workspace, isLoading: workspaceLoading } =
+    useQuery<PlatformAccountWorkspace>({
+      queryKey: ["accountWorkspace", accountId],
+      queryFn: () => getAccountWorkspace(accountId),
+    });
 
   const { data: tasks = [], isLoading: tasksLoading } = useQuery<Task[]>({
     queryKey: ["tasks", "account", accountId],
@@ -269,7 +332,13 @@ export default function AccountTaskPage({
 
   const { data: skillRuns = [], isLoading: aiLoading } = useQuery<AIJob[]>({
     queryKey: ["aiJobs", "account", accountId],
-    queryFn: () => listAIJobs({ deviceId, accountId, limit: 100, excludeSource: "omnidrive_chat" }),
+    queryFn: () =>
+      listAIJobs({
+        deviceId,
+        accountId,
+        limit: 100,
+        excludeSource: "omnidrive_chat",
+      }),
   });
 
   const { data: skills = [] } = useQuery<Skill[]>({
@@ -278,54 +347,107 @@ export default function AccountTaskPage({
   });
 
   const createMutation = useMutation({
-    mutationFn: async (payload: { skillId: string; scheduleSlots: AccountSkillScheduleSlot[] }) =>
-      createAccountSkillRun(accountId, payload),
+    mutationFn: async (payload: {
+      skillId: string;
+      scheduleSlots: AccountSkillScheduleSlot[];
+    }) => createAccountSkillRun(accountId, payload),
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["aiJobs", "account", accountId] }),
-        queryClient.invalidateQueries({ queryKey: ["tasks", "account", accountId] }),
-        queryClient.invalidateQueries({ queryKey: ["accountWorkspace", accountId] }),
+        queryClient.invalidateQueries({
+          queryKey: ["aiJobs", "account", accountId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["tasks", "account", accountId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["accountWorkspace", accountId],
+        }),
       ]);
       setIsCreateOpen(false);
     },
     onError: (error) => {
-      window.alert(error instanceof Error ? error.message : "创建账号任务失败，请稍后重试");
+      window.alert(
+        error instanceof Error ? error.message : "创建账号任务失败，请稍后重试",
+      );
     },
   });
 
   const updateMutation = useMutation({
-    mutationFn: async (payload: { job: AIJob; schedule: AccountSkillScheduleSlot }) => {
-      const nextPayload = buildUpdatedAccountSkillRun(payload.job, payload.schedule);
+    mutationFn: async (payload: {
+      job: AIJob;
+      schedule: AccountSkillScheduleSlot;
+    }) => {
+      const nextPayload = buildUpdatedAccountSkillRun(
+        payload.job,
+        payload.schedule,
+      );
       return updateAIJob(payload.job.id, nextPayload);
     },
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["aiJobs", "account", accountId] }),
-        queryClient.invalidateQueries({ queryKey: ["tasks", "account", accountId] }),
-        queryClient.invalidateQueries({ queryKey: ["accountWorkspace", accountId] }),
+        queryClient.invalidateQueries({
+          queryKey: ["aiJobs", "account", accountId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["tasks", "account", accountId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["accountWorkspace", accountId],
+        }),
       ]);
       setEditingJob(null);
       setIsCreateOpen(false);
     },
     onError: (error) => {
-      window.alert(error instanceof Error ? error.message : "修改发布时间失败，请稍后重试");
+      window.alert(
+        error instanceof Error ? error.message : "修改发布时间失败，请稍后重试",
+      );
     },
   });
 
-  const skillMap = useMemo(() => new Map(skills.map((item) => [item.id, item])), [skills]);
+  const deleteTaskMutation = useMutation({
+    mutationFn: async (taskId: string) => deleteTask(taskId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["tasks"] }),
+        queryClient.invalidateQueries({
+          queryKey: ["tasks", "account", accountId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["accountWorkspace", accountId],
+        }),
+        queryClient.invalidateQueries({ queryKey: ["accounts", deviceId] }),
+        queryClient.invalidateQueries({ queryKey: ["device", deviceId] }),
+      ]);
+    },
+    onError: (error) => {
+      window.alert(
+        error instanceof Error ? error.message : "删除任务失败，请稍后重试",
+      );
+    },
+  });
+
+  const skillMap = useMemo(
+    () => new Map(skills.map((item) => [item.id, item])),
+    [skills],
+  );
 
   const timelineItems = useMemo(() => {
-    const aiItems: TimelineItem[] = skillRuns.filter(shouldShowAIJobInWorkflow).map((job) => ({
-      id: job.id,
-      kind: "ai_job",
-      title: buildAIJobTitle(job),
-      subtitle: job.skillId ? `技能 ${skillMap.get(job.skillId)?.name || job.skillId}` : job.modelName,
-      status: toTimelineStatus(job, "ai_job"),
-      scheduledAt: getAIJobPublishAt(job),
-      updatedAt: job.updatedAt,
-      href: `/tasks/ai/${job.id}`,
-      label: "技能生成",
-    }));
+    const aiItems: TimelineItem[] = skillRuns
+      .filter(shouldShowAIJobInWorkflow)
+      .map((job) => ({
+        id: job.id,
+        kind: "ai_job",
+        title: buildAIJobTitle(job),
+        subtitle: job.skillId
+          ? `技能 ${skillMap.get(job.skillId)?.name || job.skillId}`
+          : job.modelName,
+        status: toTimelineStatus(job, "ai_job"),
+        scheduledAt: getAIJobPublishAt(job),
+        updatedAt: job.updatedAt,
+        href: `/tasks/ai/${job.id}`,
+        label: "技能生成",
+      }));
     const publishItems: TimelineItem[] = tasks.map((task) => ({
       id: task.id,
       kind: "publish_task",
@@ -339,15 +461,25 @@ export default function AccountTaskPage({
     }));
 
     return [...aiItems, ...publishItems].sort((left, right) => {
-      const leftDate = parseISOTime(left.scheduledAt) || parseISOTime(left.updatedAt) || new Date(0);
-      const rightDate = parseISOTime(right.scheduledAt) || parseISOTime(right.updatedAt) || new Date(0);
+      const leftDate =
+        parseISOTime(left.scheduledAt) ||
+        parseISOTime(left.updatedAt) ||
+        new Date(0);
+      const rightDate =
+        parseISOTime(right.scheduledAt) ||
+        parseISOTime(right.updatedAt) ||
+        new Date(0);
       return leftDate.getTime() - rightDate.getTime();
     });
   }, [skillMap, skillRuns, tasks]);
 
   const accountSkillPlans = useMemo<AccountSkillPlan[]>(() => {
     return skillRuns
-      .filter((job) => job.source === "account_skill_binding" && ["scheduled", "queued", "running"].includes(job.status))
+      .filter(
+        (job) =>
+          job.source === "account_skill_binding" &&
+          ["scheduled", "queued", "running"].includes(job.status),
+      )
       .map((job) => {
         const stage = resolveAIJobStage(job);
         return {
@@ -359,20 +491,43 @@ export default function AccountTaskPage({
           status: toTimelineStatus(job, "ai_job"),
           stageLabel: stage.label,
           stageDescription: stage.description,
-          generationLeadMinutes: normalizeGenerationLeadMinutes(getAIJobScheduleConfig(job)?.generationLeadMinutes),
+          generationLeadMinutes: normalizeGenerationLeadMinutes(
+            getAIJobScheduleConfig(job)?.generationLeadMinutes,
+          ),
           editable: isEditableAccountSkillRun(job),
         };
       })
       .sort((left, right) => {
-        const leftDate = parseISOTime(left.publishAt) || parseISOTime(left.generateAt) || parseISOTime(left.job.updatedAt) || new Date(0);
-        const rightDate = parseISOTime(right.publishAt) || parseISOTime(right.generateAt) || parseISOTime(right.job.updatedAt) || new Date(0);
+        const leftDate =
+          parseISOTime(left.publishAt) ||
+          parseISOTime(left.generateAt) ||
+          parseISOTime(left.job.updatedAt) ||
+          new Date(0);
+        const rightDate =
+          parseISOTime(right.publishAt) ||
+          parseISOTime(right.generateAt) ||
+          parseISOTime(right.job.updatedAt) ||
+          new Date(0);
         return leftDate.getTime() - rightDate.getTime();
       });
   }, [skillMap, skillRuns]);
 
   const account = workspace?.account;
-  const enabledSkills = useMemo(() => skills.filter((item) => item.isEnabled), [skills]);
+  const enabledSkills = useMemo(
+    () => skills.filter((item) => item.isEnabled),
+    [skills],
+  );
   const isSkillRunModalOpen = isCreateOpen || Boolean(editingJob);
+
+  const handleDeleteTask = async (taskId: string, title: string) => {
+    const confirmed = window.confirm(
+      `确认删除任务“${title}”吗？删除后无法恢复。`,
+    );
+    if (!confirmed) {
+      return;
+    }
+    await deleteTaskMutation.mutateAsync(taskId);
+  };
 
   if (workspaceLoading || tasksLoading || aiLoading) {
     return (
@@ -430,20 +585,38 @@ export default function AccountTaskPage({
         />
         <StatCard
           label="待生成技能任务"
-          value={skillRuns.filter((item) => item.status === "scheduled" || item.status === "queued" || item.status === "running").length}
+          value={
+            skillRuns.filter(
+              (item) =>
+                item.status === "scheduled" ||
+                item.status === "queued" ||
+                item.status === "running",
+            ).length
+          }
           icon={<Sparkles className="h-5 w-5" />}
         />
         <StatCard
           label="待发布任务"
-          value={tasks.filter((item) => item.status === "scheduled" || item.status === "pending" || item.status === "running").length}
+          value={
+            tasks.filter(
+              (item) =>
+                item.status === "scheduled" ||
+                item.status === "pending" ||
+                item.status === "running",
+            ).length
+          }
           icon={<CalendarClock className="h-5 w-5" />}
         />
       </div>
 
       <div className="mb-6 overflow-hidden rounded-3xl border border-border bg-surface">
         <div className="border-b border-border px-6 py-5">
-          <h2 className="text-lg font-semibold text-text-primary">账号技能计划</h2>
-          <p className="mt-1 text-sm text-text-secondary">同一条技能可以被多个账号复用，发布时间在这里为当前账号单独安排和修改。</p>
+          <h2 className="text-lg font-semibold text-text-primary">
+            账号技能计划
+          </h2>
+          <p className="mt-1 text-sm text-text-secondary">
+            同一条技能可以被多个账号复用，发布时间在这里为当前账号单独安排和修改。
+          </p>
         </div>
 
         {accountSkillPlans.length === 0 ? (
@@ -451,7 +624,11 @@ export default function AccountTaskPage({
             <EmptyState
               icon={<Sparkles className="h-6 w-6" />}
               title="还没有账号专属技能计划"
-              description={enabledSkills.length > 0 ? "先为当前账号创建一条技能任务，再按发布时间进入生成和发布链路。" : "当前没有可用技能，请先去技能中心创建并启用技能。"}
+              description={
+                enabledSkills.length > 0
+                  ? "先为当前账号创建一条技能任务，再按发布时间进入生成和发布链路。"
+                  : "当前没有可用技能，请先去技能中心创建并启用技能。"
+              }
               action={
                 enabledSkills.length > 0 ? (
                   <button
@@ -475,7 +652,10 @@ export default function AccountTaskPage({
         ) : (
           <div className="divide-y divide-border">
             {accountSkillPlans.map((plan) => (
-              <div key={plan.job.id} className="flex flex-col gap-4 px-6 py-5 xl:flex-row xl:items-center xl:justify-between">
+              <div
+                key={plan.job.id}
+                className="flex flex-col gap-4 px-6 py-5 xl:flex-row xl:items-center xl:justify-between"
+              >
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="rounded-full bg-white/6 px-2.5 py-1 text-xs font-medium text-text-secondary">
@@ -483,26 +663,50 @@ export default function AccountTaskPage({
                     </span>
                     <StatusBadge status={plan.status} />
                   </div>
-                  <p className="mt-3 text-base font-semibold text-text-primary">{plan.skill?.name || buildAIJobTitle(plan.job)}</p>
+                  <p className="mt-3 text-base font-semibold text-text-primary">
+                    {plan.skill?.name || buildAIJobTitle(plan.job)}
+                  </p>
                   <p className="mt-1 text-sm text-text-secondary">
-                    {plan.skill?.description ? `技能说明：${plan.skill.description}` : "这条计划会先生成内容，再进入该账号的发布链路。"}
+                    {plan.skill?.description
+                      ? `技能说明：${plan.skill.description}`
+                      : "这条计划会先生成内容，再进入该账号的发布链路。"}
                   </p>
                   <div className="mt-2 space-y-1 text-xs text-text-secondary">
                     <p>执行规则：{formatScheduleRule(plan.schedule)}</p>
-                    <p>生成提前量：{formatGenerationLeadMinutes(plan.generationLeadMinutes)}</p>
-                    <p>当前阶段：{plan.stageLabel}{plan.stageDescription ? ` · ${plan.stageDescription}` : ""}</p>
+                    <p>
+                      生成提前量：
+                      {formatGenerationLeadMinutes(plan.generationLeadMinutes)}
+                    </p>
+                    <p>
+                      当前阶段：{plan.stageLabel}
+                      {plan.stageDescription
+                        ? ` · ${plan.stageDescription}`
+                        : ""}
+                    </p>
                   </div>
                 </div>
 
                 <div className="flex flex-col items-start gap-3 xl:items-end">
                   <div className="text-sm text-text-secondary">
                     <p>
-                      计划发布时间：<span className="font-medium text-text-primary">{plan.publishAt ? formatDateTime(plan.publishAt) : "未设置"}</span>
+                      计划发布时间：
+                      <span className="font-medium text-text-primary">
+                        {plan.publishAt
+                          ? formatDateTime(plan.publishAt)
+                          : "未设置"}
+                      </span>
                     </p>
                     <p className="mt-1">
-                      计划生成时间：<span className="font-medium text-text-primary">{plan.generateAt ? formatDateTime(plan.generateAt) : "未设置"}</span>
+                      计划生成时间：
+                      <span className="font-medium text-text-primary">
+                        {plan.generateAt
+                          ? formatDateTime(plan.generateAt)
+                          : "未设置"}
+                      </span>
                     </p>
-                    <p className="mt-1">最近更新：{formatDateTime(plan.job.updatedAt)}</p>
+                    <p className="mt-1">
+                      最近更新：{formatDateTime(plan.job.updatedAt)}
+                    </p>
                   </div>
                   {plan.editable ? (
                     <button
@@ -514,7 +718,9 @@ export default function AccountTaskPage({
                       修改计划时间
                     </button>
                   ) : (
-                    <span className="text-xs text-text-secondary">当前阶段不可修改计划时间</span>
+                    <span className="text-xs text-text-secondary">
+                      当前阶段不可修改计划时间
+                    </span>
                   )}
                 </div>
               </div>
@@ -525,8 +731,12 @@ export default function AccountTaskPage({
 
       <div className="overflow-hidden rounded-3xl border border-border bg-surface">
         <div className="border-b border-border px-6 py-5">
-          <h2 className="text-lg font-semibold text-text-primary">账号任务时间线</h2>
-          <p className="mt-1 text-sm text-text-secondary">按执行或发布时间从近到远排序，先看计划，再看状态。</p>
+          <h2 className="text-lg font-semibold text-text-primary">
+            账号任务时间线
+          </h2>
+          <p className="mt-1 text-sm text-text-secondary">
+            按执行或发布时间从近到远排序，先看计划，再看状态。
+          </p>
         </div>
 
         {timelineItems.length === 0 ? (
@@ -534,7 +744,11 @@ export default function AccountTaskPage({
             <EmptyState
               icon={<Clock3 className="h-6 w-6" />}
               title="当前账号还没有任务"
-              description={enabledSkills.length > 0 ? "先从一个技能创建账号专属任务，它会先生成，再进入发布链路。" : "当前没有可用技能，请先去技能中心创建并启用技能。"}
+              description={
+                enabledSkills.length > 0
+                  ? "先从一个技能创建账号专属任务，它会先生成，再进入发布链路。"
+                  : "当前没有可用技能，请先去技能中心创建并启用技能。"
+              }
               action={
                 enabledSkills.length > 0 ? (
                   <button
@@ -558,7 +772,10 @@ export default function AccountTaskPage({
         ) : (
           <div className="divide-y divide-border">
             {timelineItems.map((item) => (
-              <div key={`${item.kind}-${item.id}`} className="flex flex-col gap-4 px-6 py-5 md:flex-row md:items-center md:justify-between">
+              <div
+                key={`${item.kind}-${item.id}`}
+                className="flex flex-col gap-4 px-6 py-5 md:flex-row md:items-center md:justify-between"
+              >
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="rounded-full bg-white/6 px-2.5 py-1 text-xs font-medium text-text-secondary">
@@ -566,22 +783,53 @@ export default function AccountTaskPage({
                     </span>
                     <StatusBadge status={item.status} />
                   </div>
-                  <p className="mt-3 text-base font-semibold text-text-primary">{item.title}</p>
-                  <p className="mt-1 text-sm text-text-secondary">{item.subtitle}</p>
+                  <p className="mt-3 text-base font-semibold text-text-primary">
+                    {item.title}
+                  </p>
+                  <p className="mt-1 text-sm text-text-secondary">
+                    {item.subtitle}
+                  </p>
                 </div>
 
                 <div className="flex flex-col items-start gap-3 md:items-end">
                   <div className="text-sm text-text-secondary">
-                    <p>计划时间：<span className="font-medium text-text-primary">{item.scheduledAt ? formatDateTime(item.scheduledAt) : "未设置"}</span></p>
-                    <p className="mt-1">最近更新：{formatDateTime(item.updatedAt)}</p>
+                    <p>
+                      计划时间：
+                      <span className="font-medium text-text-primary">
+                        {item.scheduledAt
+                          ? formatDateTime(item.scheduledAt)
+                          : "未设置"}
+                      </span>
+                    </p>
+                    <p className="mt-1">
+                      最近更新：{formatDateTime(item.updatedAt)}
+                    </p>
                   </div>
                   {item.href ? (
-                    <Link
-                      href={item.href}
-                      className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-hover px-3 py-1.5 text-xs font-medium text-text-primary transition-colors hover:border-accent hover:text-accent"
-                    >
-                      查看详情
-                    </Link>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link
+                        href={item.href}
+                        className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-hover px-3 py-1.5 text-xs font-medium text-text-primary transition-colors hover:border-accent hover:text-accent"
+                      >
+                        查看详情
+                      </Link>
+                      {item.kind === "publish_task" ? (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTask(item.id, item.title)}
+                          disabled={deleteTaskMutation.isPending}
+                          className="inline-flex items-center gap-2 rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-200 transition-colors hover:border-red-400/55 hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {deleteTaskMutation.isPending &&
+                          deleteTaskMutation.variables === item.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3.5 w-3.5" />
+                          )}
+                          删除任务
+                        </button>
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
               </div>
@@ -603,7 +851,10 @@ export default function AccountTaskPage({
         }}
         onSubmit={async (payload) => {
           if (editingJob) {
-            await updateMutation.mutateAsync({ job: editingJob, schedule: payload.scheduleSlots[0] });
+            await updateMutation.mutateAsync({
+              job: editingJob,
+              schedule: payload.scheduleSlots[0],
+            });
             return;
           }
           await createMutation.mutateAsync(payload);

@@ -29,6 +29,12 @@ import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { API_BASE_URL } from "@/lib/api";
+import {
+  buildFileAccept,
+  formatSupportedFileTypes,
+  isFileSupportedByTypes,
+  resolveSupportedFileTypes,
+} from "@/lib/ai-file-types";
 import { getAIJob, getAIJobArtifacts, listAIJobs, listAIModels } from "@/lib/services";
 import type { AIJob, AIJobArtifact, AIModel } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -92,9 +98,6 @@ const INITIAL_MESSAGES: ChatMessage[] = [
   },
 ];
 
-const ACCEPTED_FILE_TYPES =
-  "image/*,.txt,.md,.markdown,.json,.csv,.tsv,.yaml,.yml,.xml,.html,.htm";
-
 function buildConversationMessages(history: ChatMessage[], nextUserMessage: string) {
   const messages = history
     .filter((item) => !item.isSeed)
@@ -155,6 +158,13 @@ function formatModelPrice(model?: AIModel | null) {
     return "价格待配置";
   }
   return `参考价 ${amount.toFixed(2)}`;
+}
+
+function buildUnsupportedFilesMessage(fileNames: string[], supportedTypes: string[]) {
+  if (fileNames.length === 0) {
+    return "";
+  }
+  return `当前模型不支持这些文件：${fileNames.join("、")}。允许类型：${formatSupportedFileTypes(supportedTypes)}`;
 }
 
 function matchesModelQuery(model: AIModel, query: string) {
@@ -561,6 +571,16 @@ function appendStreamError(existingContent: string, nextError: string) {
   return `${normalizedContent}\n\n[流式连接已中断] ${normalizedError}`;
 }
 
+function getAssistantDisplayContent(message: ChatMessage) {
+  if (message.content.trim()) {
+    return message.content;
+  }
+  if (message.state === "streaming") {
+    return "模型正在思考中...";
+  }
+  return message.content;
+}
+
 function AttachmentList({
   attachments,
   onRemove,
@@ -651,7 +671,7 @@ function AttachmentThumbnail({ href, fileName }: { href: string; fileName: strin
     // eslint-disable-next-line @next/next/no-img-element
     <img
       src={href}
-      alt=""
+      alt={fileName}
       className="h-11 w-11 rounded-xl object-cover"
       onError={() => setFailed(true)}
     />
@@ -825,7 +845,6 @@ export default function ChatPage() {
   const {
     data: rawModels = [],
     isLoading: modelsLoading,
-    error: modelsError,
   } = useQuery<AIModel[], Error>({
     queryKey: ["aiModels", "chat"],
     queryFn: () => listAIModels({ category: "chat" }),
@@ -864,6 +883,12 @@ export default function ChatPage() {
   const activeModel = useMemo(() => {
     return chatModels.find((item) => item.modelName === selectedModelName) || chatModels[0] || null;
   }, [chatModels, selectedModelName]);
+  const activeSupportedFileTypes = useMemo(() => resolveSupportedFileTypes(activeModel), [activeModel]);
+  const activeSupportedFileTypesLabel = useMemo(
+    () => formatSupportedFileTypes(activeSupportedFileTypes),
+    [activeSupportedFileTypes],
+  );
+  const activeFileAccept = useMemo(() => buildFileAccept(activeSupportedFileTypes), [activeSupportedFileTypes]);
 
   useEffect(() => {
     if (!selectedModelName && chatModels.length > 0) {
@@ -939,8 +964,22 @@ export default function ChatPage() {
         return;
       }
 
+      const supportedFiles = files.filter((file) => isFileSupportedByTypes(file, activeSupportedFileTypes));
+      const unsupportedFiles = files.filter((file) => !isFileSupportedByTypes(file, activeSupportedFileTypes));
+      if (unsupportedFiles.length > 0) {
+        setSubmitError(
+          buildUnsupportedFilesMessage(
+            unsupportedFiles.map((item) => item.name),
+            activeSupportedFileTypes,
+          ),
+        );
+      }
+      if (supportedFiles.length === 0) {
+        return;
+      }
+
       try {
-        const nextAttachments = await Promise.all(files.map((file) => fileToAttachment(file)));
+        const nextAttachments = await Promise.all(supportedFiles.map((file) => fileToAttachment(file)));
         setDraftAttachments((previous) => {
           const seen = new Set(previous.map((item) => item.id));
           const merged = [...previous];
@@ -951,18 +990,32 @@ export default function ChatPage() {
           }
           return merged;
         });
-        setSubmitError("");
+        if (unsupportedFiles.length === 0) {
+          setSubmitError("");
+        }
       } catch (error) {
         setSubmitError(toErrorMessage(error, "附件读取失败，请重新选择文件"));
       }
     },
-    [],
+    [activeSupportedFileTypes],
   );
 
   async function handleSend() {
     const fallbackPrompt = "请先阅读我上传的附件，并根据这些内容给我回复。";
     const nextUserMessage = draft.trim() || (draftAttachments.length > 0 ? fallbackPrompt : "");
     if ((!nextUserMessage && draftAttachments.length === 0) || !activeModel || sending) {
+      return;
+    }
+    const unsupportedDrafts = draftAttachments.filter(
+      (item) => !isFileSupportedByTypes({ name: item.fileName, type: item.mimeType }, activeSupportedFileTypes),
+    );
+    if (unsupportedDrafts.length > 0) {
+      setSubmitError(
+        buildUnsupportedFilesMessage(
+          unsupportedDrafts.map((item) => item.fileName),
+          activeSupportedFileTypes,
+        ),
+      );
       return;
     }
 
@@ -1173,6 +1226,8 @@ export default function ChatPage() {
         streamAbortRef.current = null;
       }
       void queryClient.invalidateQueries({ queryKey: ["aiJobs", "chat", "history"] });
+      void queryClient.invalidateQueries({ queryKey: ["billingSummary"] });
+      void queryClient.invalidateQueries({ queryKey: ["walletLedger"] });
       const historyJobId = createdJobId || selectedJobId;
       if (historyJobId) {
         void queryClient.invalidateQueries({ queryKey: ["aiJob", historyJobId] });
@@ -1201,9 +1256,6 @@ export default function ChatPage() {
     setDraftAttachments([]);
     setSubmitError("");
   }
-
-  const modelsErrorMessage = modelsError ? toErrorMessage(modelsError, "聊天模型加载失败") : "";
-
   return (
     <div className="grid h-[calc(100vh-2rem)] grid-cols-1 gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
       {/* ── Sidebar: History-first ── */}
@@ -1300,6 +1352,15 @@ export default function ChatPage() {
                 <span className="truncate">{activeModel?.modelName || "未选择模型"}</span>
                 {activeModel && (<><span className="text-text-muted/30">·</span><span className="flex items-center gap-1"><Coins className="h-3 w-3" />{formatModelPrice(activeModel)}</span></>)}
               </div>
+              <div className="mt-1 space-y-1">
+                <p className="line-clamp-2 text-[11px] text-text-muted">
+                  {activeModel?.description || "模型说明将从后台配置实时读取。"}
+                </p>
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-text-muted">
+                  <Paperclip className="h-3 w-3" />
+                  <span>支持文件：{activeSupportedFileTypesLabel}</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1323,7 +1384,11 @@ export default function ChatPage() {
                       </div>
                     ) : (
                       <div className="text-sm leading-7">
-                        {message.role === "assistant" ? <ChatMarkdown content={message.content} /> : <span className="whitespace-pre-wrap">{message.content}</span>}
+                        {message.role === "assistant" ? (
+                          <ChatMarkdown content={getAssistantDisplayContent(message)} />
+                        ) : (
+                          <span className="whitespace-pre-wrap">{message.content}</span>
+                        )}
                         {message.state === "streaming" && <span className="ml-1 inline-block h-4 w-1.5 animate-pulse rounded-full bg-accent/80 align-middle" />}
                       </div>
                     )}
@@ -1350,10 +1415,22 @@ export default function ChatPage() {
 
         <div className="border-t border-border px-6 py-4">
           <div>
-            <input ref={fileInputRef} type="file" multiple accept={ACCEPTED_FILE_TYPES} className="hidden" onChange={handleFilesSelected} />
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept={activeFileAccept || undefined}
+              className="hidden"
+              onChange={handleFilesSelected}
+            />
             <AttachmentList attachments={draftAttachments} onRemove={removeDraftAttachment} />
             <div className="flex items-end gap-2 rounded-2xl border border-border bg-background/80 px-3 py-2.5 shadow-sm transition-colors focus-within:border-accent/40 focus-within:shadow-accent/10">
-              <button type="button" onClick={openFilePicker} disabled={!activeModel || sending} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-text-muted transition-colors hover:bg-surface-hover hover:text-text-primary disabled:opacity-40">
+              <button
+                type="button"
+                onClick={openFilePicker}
+                disabled={!activeModel || sending || activeSupportedFileTypes.length === 0}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-text-muted transition-colors hover:bg-surface-hover hover:text-text-primary disabled:opacity-40"
+              >
                 <Paperclip className="h-4 w-4" />
               </button>
               <textarea value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={handleKeyDown} placeholder={activeModel ? "输入消息..." : "请先选择模型"} disabled={!activeModel || sending} rows={1} className="max-h-32 min-h-[36px] flex-1 resize-none border-none bg-transparent py-1.5 text-sm leading-6 text-text-primary outline-none placeholder:text-text-muted/60 disabled:cursor-not-allowed disabled:opacity-50" style={{ height: "36px" }} onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = "36px"; t.style.height = Math.min(t.scrollHeight, 128) + "px"; }} />
@@ -1365,6 +1442,7 @@ export default function ChatPage() {
             </div>
             <div className="mt-2 flex items-center justify-between px-1 text-[11px] text-text-muted/60">
               <span>{sending ? "正在接收回复..." : "Enter 发送 · Shift+Enter 换行"}</span>
+              <span>{activeSupportedFileTypes.length > 0 ? `可上传：${activeSupportedFileTypesLabel}` : "当前模型未配置可上传文件"}</span>
             </div>
           </div>
         </div>

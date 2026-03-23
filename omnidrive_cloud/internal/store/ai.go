@@ -54,6 +54,7 @@ func scanAIModel(row pgx.Row) (*domain.AIModel, error) {
 	var videoReferenceLimit *int
 	var videoSupportedResolutions []byte
 	var videoSupportedDurations []byte
+	var supportedFileTypes []byte
 
 	if err := row.Scan(
 		&model.ID,
@@ -72,6 +73,7 @@ func scanAIModel(row pgx.Row) (*domain.AIModel, error) {
 		&videoReferenceLimit,
 		&videoSupportedResolutions,
 		&videoSupportedDurations,
+		&supportedFileTypes,
 		&model.IsEnabled,
 		&model.CreatedAt,
 		&model.UpdatedAt,
@@ -92,6 +94,7 @@ func scanAIModel(row pgx.Row) (*domain.AIModel, error) {
 	model.VideoReferenceLimit = videoReferenceLimit
 	model.VideoSupportedResolutions = decodeStringList(videoSupportedResolutions)
 	model.VideoSupportedDurations = decodeStringList(videoSupportedDurations)
+	model.SupportedFileTypes = decodeStringList(supportedFileTypes)
 	return &model, nil
 }
 
@@ -277,6 +280,7 @@ func (s *Store) ListAIModels(ctx context.Context, category string) ([]domain.AIM
 			description, pricing_payload,
 			image_reference_limit, image_supported_sizes,
 			video_reference_limit, video_supported_resolutions, video_supported_durations,
+			supported_file_types,
 			is_enabled, created_at, updated_at
 		FROM ai_models
 		WHERE is_enabled = TRUE
@@ -312,6 +316,7 @@ func (s *Store) GetAIModelByName(ctx context.Context, modelName string) (*domain
 			description, pricing_payload,
 			image_reference_limit, image_supported_sizes,
 			video_reference_limit, video_supported_resolutions, video_supported_durations,
+			supported_file_types,
 			is_enabled, created_at, updated_at
 		FROM ai_models
 		WHERE model_name = $1

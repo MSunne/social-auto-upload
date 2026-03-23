@@ -186,6 +186,8 @@ class DouYinVideo(object):
 
             await self.set_thumbnail(page, self.thumbnail_path)
             await self.set_location(page, "")
+            if not self.thumbnail_path:
+                await self.handle_auto_video_cover(page)
 
             third_part_element = '[class^="info"] > [class^="first-part"] div div.semi-switch'
             if await page.locator(third_part_element).count():
@@ -222,40 +224,96 @@ class DouYinVideo(object):
             await context.close()
             await browser.close()
 
+    async def _find_first_visible_locator(self, locators):
+        for locator in locators:
+            try:
+                count = await locator.count()
+            except Exception:
+                continue
+            for index in range(count):
+                candidate = locator.nth(index)
+                try:
+                    if await candidate.is_visible():
+                        return candidate
+                except Exception:
+                    continue
+        return None
+
+    async def _find_recommend_cover(self, page):
+        return await self._find_first_visible_locator(
+            [
+                page.locator('[class^="recommendCover-"]'),
+                page.locator('[class*="recommendCover"]'),
+                page.locator('[class*="cover"] img'),
+            ]
+        )
+
+    async def _find_cover_entry(self, page):
+        return await self._find_first_visible_locator(
+            [
+                page.get_by_text("选择封面", exact=True),
+                page.get_by_role("button", name="选择封面"),
+                page.locator('button:has-text("选择封面")'),
+                page.locator('div:has-text("选择封面")'),
+            ]
+        )
+
+    async def _find_cover_confirm_button(self, page):
+        return await self._find_first_visible_locator(
+            [
+                page.get_by_role("button", name="确定"),
+                page.get_by_role("button", name="完成"),
+                page.locator('div#tooltip-container button:visible:has-text("完成")'),
+                page.locator('button:has-text("应用")'),
+            ]
+        )
+
+    async def _cover_warning_visible(self, page):
+        for text in ["请设置封面后再发布", "请先设置封面", "请选择封面后再发布", "请选择封面"]:
+            try:
+                if await page.get_by_text(text).first.is_visible():
+                    return True
+            except Exception:
+                continue
+        return False
+
     async def handle_auto_video_cover(self, page):
         """
-        处理必须设置封面的情况，点击推荐封面的第一个
+        处理必须设置封面的情况，自动选择一个可用封面
         """
-        # 1. 判断是否出现 "请设置封面后再发布" 的提示
-        # 必须确保提示是可见的 (is_visible)，因为 DOM 中可能存在隐藏的历史提示
-        if await page.get_by_text("请设置封面后再发布").first.is_visible():
-            print("  [-] 检测到需要设置封面提示...")
+        try:
+            warning_visible = await self._cover_warning_visible(page)
+            recommend_cover = await self._find_recommend_cover(page)
+            if recommend_cover is None and not warning_visible:
+                return False
 
-            # 2. 定位“智能推荐封面”区域下的第一个封面
-            # 使用 class^= 前缀匹配，避免 hash 变化导致失效
-            recommend_cover = page.locator('[class^="recommendCover-"]').first
+            if recommend_cover is None:
+                cover_entry = await self._find_cover_entry(page)
+                if cover_entry is None:
+                    douyin_logger.warning("  [-] 检测到封面缺失，但未找到“选择封面”入口")
+                    return False
+                douyin_logger.info("  [-] 检测到需要设置封面，正在打开封面选择器...")
+                await cover_entry.click(force=True)
+                await page.wait_for_timeout(800)
+                recommend_cover = await self._find_recommend_cover(page)
 
-            if await recommend_cover.count():
-                print("  [-] 正在选择第一个推荐封面...")
-                try:
-                    await recommend_cover.click()
-                    await asyncio.sleep(1)  # 等待选中生效
+            if recommend_cover is None:
+                douyin_logger.warning("  [-] 已打开封面选择器，但未找到可点击的推荐封面")
+                return False
 
-                    # 3. 处理可能的确认弹窗 "是否确认应用此封面？"
-                    # 并不一定每次都会出现，健壮性判断：如果出现弹窗，则点击确定
-                    confirm_text = "是否确认应用此封面？"
-                    if await page.get_by_text(confirm_text).first.is_visible():
-                        print(f"  [-] 检测到确认弹窗: {confirm_text}")
-                        # 直接点击“确定”按钮，不依赖脆弱的 CSS 类名
-                        await page.get_by_role("button", name="确定").click()
-                        print("  [-] 已点击确认应用封面")
-                        await asyncio.sleep(1)
+            douyin_logger.info("  [-] 正在自动选择推荐封面...")
+            await recommend_cover.click(force=True)
+            await page.wait_for_timeout(800)
 
-                    print("  [-] 已完成封面选择流程")
-                    return True
-                except Exception as e:
-                    print(f"  [-] 选择封面失败: {e}")
+            confirm_button = await self._find_cover_confirm_button(page)
+            if confirm_button is not None:
+                await confirm_button.click(force=True)
+                await page.wait_for_timeout(800)
 
+            douyin_logger.info("  [-] 已完成封面自动选择")
+            return True
+        except Exception as exc:
+            douyin_logger.warning("  [-] 自动选择封面失败: {}", exc)
         return False
 
     async def set_thumbnail(self, page: Page, thumbnail_path: str):

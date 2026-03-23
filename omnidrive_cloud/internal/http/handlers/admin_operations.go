@@ -1827,6 +1827,11 @@ func (h *AdminConsoleHandler) CreateLoginSessionAction(w http.ResponseWriter, r 
 			render.Error(w, http.StatusInternalServerError, "Failed to cancel login session")
 			return
 		}
+	} else {
+		if _, err := h.app.Store.TouchLoginSession(r.Context(), session.ID); err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to refresh login session")
+			return
+		}
 	}
 
 	render.JSON(w, http.StatusCreated, action)

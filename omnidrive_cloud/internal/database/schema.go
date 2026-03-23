@@ -148,6 +148,16 @@ CREATE TABLE IF NOT EXISTS platform_accounts (
     UNIQUE(device_id, platform, account_name)
 );
 
+CREATE TABLE IF NOT EXISTS platform_account_tombstones (
+    id TEXT PRIMARY KEY,
+    device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    platform TEXT NOT NULL,
+    account_name TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(device_id, platform, account_name)
+);
+
 CREATE TABLE IF NOT EXISTS login_sessions (
     id TEXT PRIMARY KEY,
     device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
@@ -181,6 +191,7 @@ CREATE TABLE IF NOT EXISTS product_skills (
     output_type TEXT NOT NULL,
     model_name TEXT NOT NULL,
     prompt_template TEXT,
+    topics JSONB NOT NULL DEFAULT '[]'::jsonb,
     reference_payload JSONB,
     execution_time TIMESTAMPTZ,
     repeat_daily BOOLEAN NOT NULL DEFAULT FALSE,
@@ -386,6 +397,7 @@ ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS repeat_daily BOOLEAN NOT NUL
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS storyboard_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS next_run_at TIMESTAMPTZ;
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS last_run_at TIMESTAMPTZ;
+ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS topics JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE TABLE IF NOT EXISTS ai_models (
     id TEXT PRIMARY KEY,
@@ -404,6 +416,7 @@ CREATE TABLE IF NOT EXISTS ai_models (
     video_reference_limit INT,
     video_supported_resolutions JSONB NOT NULL DEFAULT '[]'::jsonb,
     video_supported_durations JSONB NOT NULL DEFAULT '[]'::jsonb,
+    supported_file_types JSONB NOT NULL DEFAULT '[]'::jsonb,
     is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -425,6 +438,16 @@ ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS image_supported_sizes JSONB NOT N
 ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS video_reference_limit INT;
 ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS video_supported_resolutions JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS video_supported_durations JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS supported_file_types JSONB NOT NULL DEFAULT '[]'::jsonb;
+UPDATE ai_models
+SET supported_file_types = CASE
+    WHEN category = 'chat' THEN '["image/*",".txt",".md",".markdown",".json",".csv",".tsv",".yaml",".yml",".xml",".html",".htm"]'::jsonb
+    WHEN category = 'image' THEN '["image/*"]'::jsonb
+    WHEN category = 'video' THEN '["image/*"]'::jsonb
+    WHEN category = 'music' THEN '["audio/*"]'::jsonb
+    ELSE supported_file_types
+END
+WHERE supported_file_types IS NULL OR supported_file_types = '[]'::jsonb;
 
 CREATE TABLE IF NOT EXISTS ai_jobs (
     id TEXT PRIMARY KEY,
@@ -958,6 +981,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires_at ON admin_sessions(expir
 CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_admin_user_id ON admin_audit_logs(admin_user_id);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_resource_type ON admin_audit_logs(resource_type);
 CREATE INDEX IF NOT EXISTS idx_platform_accounts_device_id ON platform_accounts(device_id);
+CREATE INDEX IF NOT EXISTS idx_platform_account_tombstones_device_id ON platform_account_tombstones(device_id);
 CREATE INDEX IF NOT EXISTS idx_login_sessions_device_id ON login_sessions(device_id);
 CREATE INDEX IF NOT EXISTS idx_login_sessions_user_id ON login_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_login_session_actions_session_id ON login_session_actions(session_id);

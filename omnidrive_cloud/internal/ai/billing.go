@@ -66,6 +66,13 @@ func buildImageBillingInput(job *domain.AIJob, imageCount int) store.ApplyUsageB
 }
 
 func buildVideoBillingInput(job *domain.AIJob) store.ApplyUsageBillingInput {
+	payload := decodePayloadMap(job.InputPayload)
+	metadata := map[string]any{
+		"jobId": job.ID,
+	}
+	if durationSeconds := intPtrFromMap(payload, "durationSeconds", "duration"); durationSeconds != nil && *durationSeconds > 0 {
+		metadata["durationSeconds"] = *durationSeconds
+	}
 	return store.ApplyUsageBillingInput{
 		UserID:     strings.TrimSpace(job.OwnerUserID),
 		SourceType: "ai_job",
@@ -76,9 +83,7 @@ func buildVideoBillingInput(job *domain.AIJob) store.ApplyUsageBillingInput {
 			{
 				MeterCode: "video_generations",
 				Quantity:  1,
-				Metadata: mustJSONBytes(map[string]any{
-					"jobId": job.ID,
-				}),
+				Metadata:  mustJSONBytes(metadata),
 			},
 		},
 	}
@@ -101,6 +106,10 @@ func usageInt64(values ...any) int64 {
 			}
 		case json.Number:
 			if parsed, err := typed.Int64(); err == nil && parsed > 0 {
+				return parsed
+			}
+		case string:
+			if parsed, err := json.Number(strings.TrimSpace(typed)).Int64(); err == nil && parsed > 0 {
 				return parsed
 			}
 		}

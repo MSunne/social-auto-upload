@@ -31,6 +31,7 @@ type createSkillRequest struct {
 	OutputType        string      `json:"outputType"`
 	ModelName         string      `json:"modelName"`
 	PromptTemplate    *string     `json:"promptTemplate"`
+	Topics            []string    `json:"topics"`
 	ReferencePayload  interface{} `json:"referencePayload"`
 	DeviceID          *string     `json:"deviceId"`
 	ExecutionTime     *string     `json:"executionTime"`
@@ -45,6 +46,7 @@ type updateSkillRequest struct {
 	OutputType        *string     `json:"outputType"`
 	ModelName         *string     `json:"modelName"`
 	PromptTemplate    *string     `json:"promptTemplate"`
+	Topics            []string    `json:"topics"`
 	ReferencePayload  interface{} `json:"referencePayload"`
 	DeviceID          *string     `json:"deviceId"`
 	ExecutionTime     *string     `json:"executionTime"`
@@ -108,6 +110,27 @@ func parseSkillExecutionTime(raw string, now time.Time) (*time.Time, error) {
 	}
 
 	return nil, fmt.Errorf("executionTime must be RFC3339 or HH:MM[:SS]")
+}
+
+func normalizeSkillTopics(topics []string) []string {
+	if len(topics) == 0 {
+		return []string{}
+	}
+	normalized := make([]string, 0, len(topics))
+	seen := make(map[string]struct{}, len(topics))
+	for _, item := range topics {
+		topic := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(item), "#"))
+		if topic == "" {
+			continue
+		}
+		key := strings.ToLower(topic)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, topic)
+	}
+	return normalized
 }
 
 func (h *SkillHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -313,6 +336,7 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 	payload.Description = strings.TrimSpace(payload.Description)
 	payload.OutputType = strings.TrimSpace(payload.OutputType)
 	payload.ModelName = strings.TrimSpace(payload.ModelName)
+	payload.Topics = normalizeSkillTopics(payload.Topics)
 	if payload.Name == "" || payload.Description == "" || payload.OutputType == "" || payload.ModelName == "" {
 		render.Error(w, http.StatusBadRequest, "name, description, outputType, and modelName are required")
 		return
@@ -360,6 +384,7 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 		OutputType:        payload.OutputType,
 		ModelName:         payload.ModelName,
 		PromptTemplate:    payload.PromptTemplate,
+		Topics:            payload.Topics,
 		ReferencePayload:  referenceBytes,
 		ExecutionTime:     nil,
 		RepeatDaily:       false,
@@ -389,6 +414,7 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 			"name":      skill.Name,
 			"modelName": skill.ModelName,
 			"deviceId":  skill.DeviceID,
+			"topics":    skill.Topics,
 		}),
 	})
 
@@ -411,6 +437,7 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	var referenceBytes []byte
 	var err error
+	payload.Topics = normalizeSkillTopics(payload.Topics)
 	referenceTouched := payload.ReferencePayload != nil
 	if referenceTouched {
 		referenceBytes, err = json.Marshal(payload.ReferencePayload)
@@ -444,6 +471,8 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 		OutputType:        payload.OutputType,
 		ModelName:         payload.ModelName,
 		PromptTemplate:    payload.PromptTemplate,
+		Topics:            payload.Topics,
+		TopicsTouched:     payload.Topics != nil,
 		ReferencePayload:  referenceBytes,
 		ReferenceTouched:  referenceTouched,
 		DeviceID:          deviceID,
@@ -481,6 +510,7 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Payload: mustJSONBytes(map[string]any{
 			"name":              payload.Name,
 			"modelName":         payload.ModelName,
+			"topics":            payload.Topics,
 			"storyboardEnabled": payload.StoryboardEnabled,
 			"isEnabled":         payload.IsEnabled,
 		}),

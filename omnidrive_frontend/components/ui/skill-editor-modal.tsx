@@ -44,6 +44,7 @@ type SkillFormState = {
   name: string;
   description: string;
   promptTemplate: string;
+  topicsText: string;
   outputType: string;
   modelName: string;
   storyboardEnabled: boolean;
@@ -94,6 +95,7 @@ const EMPTY_FORM: SkillFormState = {
   name: "",
   description: "",
   promptTemplate: "",
+  topicsText: "",
   outputType: "图文模式",
   modelName: "",
   storyboardEnabled: true,
@@ -108,6 +110,7 @@ function buildSkillFormState(skill?: Skill | null): SkillFormState {
     name: skill.name || "",
     description: skill.description || "",
     promptTemplate: skill.promptTemplate || "",
+    topicsText: (skill.topics || []).join("，"),
     outputType: normalizeSkillOutputLabel(skill.outputType),
     modelName: skill.modelName || "",
     storyboardEnabled: skill.storyboardEnabled !== false,
@@ -197,6 +200,10 @@ export function SkillEditorModal({
     modelName: form.modelName.trim(),
     deviceId,
     promptTemplate: form.promptTemplate.trim() || null,
+    topics: form.topicsText
+      .split(/[\n,，#\s]+/)
+      .map((item) => item.trim())
+      .filter(Boolean),
     storyboardEnabled: form.storyboardEnabled,
     isEnabled: form.isEnabled,
   });
@@ -474,9 +481,9 @@ export function SkillEditorModal({
                       </div>
                     </div>
 
-                    <div className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
-                      <label className="space-y-2.5">
-                        <span className="text-sm font-medium text-white">技能说明</span>
+	                    <div className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
+	                      <label className="space-y-2.5">
+	                        <span className="text-sm font-medium text-white">技能说明</span>
                         <textarea
                           value={form.description}
                           onChange={(event) =>
@@ -485,23 +492,41 @@ export function SkillEditorModal({
                           rows={5}
                           placeholder="描述内容目标、受众、语气、场景和限制。"
                           className="w-full rounded-[24px] border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
-                        />
-                      </label>
+	                        />
+	                      </label>
 
-                      <label className="space-y-2.5">
-                        <span className="text-sm font-medium text-white">任务提示词</span>
-                        <textarea
-                          value={form.promptTemplate}
-                          onChange={(event) =>
-                            setForm((current) => ({ ...current, promptTemplate: event.target.value }))
-                          }
-                          rows={5}
-                          placeholder="告诉系统重点表达什么，比如镜头感、文案节奏、品牌边界和禁用词。"
-                          className="w-full rounded-[24px] border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
-                        />
-                      </label>
-                    </div>
-                  </SectionCard>
+	                      <div className="space-y-4">
+	                        <label className="space-y-2.5">
+	                          <span className="text-sm font-medium text-white">任务提示词</span>
+	                          <textarea
+	                            value={form.promptTemplate}
+	                            onChange={(event) =>
+	                              setForm((current) => ({ ...current, promptTemplate: event.target.value }))
+	                            }
+	                            rows={5}
+	                            placeholder="告诉系统重点表达什么，比如镜头感、文案节奏、品牌边界和禁用词。"
+	                            className="w-full rounded-[24px] border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
+	                          />
+	                        </label>
+
+	                        <label className="space-y-2.5">
+	                          <span className="text-sm font-medium text-white">默认话题</span>
+	                          <textarea
+	                            value={form.topicsText}
+	                            onChange={(event) =>
+	                              setForm((current) => ({ ...current, topicsText: event.target.value }))
+	                            }
+	                            rows={3}
+	                            placeholder="例如：春季穿搭，新品开箱，玩具测评。多个话题可用空格、逗号或换行分隔。"
+	                            className="w-full rounded-[24px] border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
+	                          />
+	                          <p className="text-xs leading-5 text-text-secondary">
+	                            这些话题会跟随技能进入账号发布任务，并继续传给 SAU 上传器。
+	                          </p>
+	                        </label>
+	                      </div>
+	                    </div>
+	                  </SectionCard>
 
                   <SectionCard
                     title="执行方式"

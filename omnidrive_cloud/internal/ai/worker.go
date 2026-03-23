@@ -225,7 +225,7 @@ func (w *Worker) processJob(ctx context.Context, job domain.AIJob) {
 		return
 	}
 
-	message := fmt.Sprintf("AI 云端执行失败: %v", execErr)
+	message := buildAIExecutionFailureMessage(claimed.JobType, execErr)
 	if _, err := w.failJob(ctx, claimed.ID, leaseToken, message, nil); err != nil {
 		w.app.Logger.Error("ai worker failed to mark ai job as failed", "job_id", claimed.ID, "error", err)
 		return
@@ -422,6 +422,9 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 	if strings.TrimSpace(state.RemoteVideoID) == "" {
 		submission, err := w.provider.SubmitVideo(ctx, req)
 		if err != nil {
+			if shouldRequeueVideoSubmissionError(err) {
+				return buildTemporaryVideoRequeueError(job, state, err)
+			}
 			return err
 		}
 		if strings.TrimSpace(submission.ID) == "" {
@@ -453,6 +456,9 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 
 		status, err := w.provider.GetVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey)
 		if err != nil {
+			if isTransientVideoProviderExecutionError(err) {
+				return buildTemporaryVideoRequeueError(job, state, err)
+			}
 			return err
 		}
 		state.RemoteStatus = strings.TrimSpace(status.Status)
@@ -470,6 +476,9 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 		case "completed":
 			artifact, err := w.provider.DownloadVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey)
 			if err != nil {
+				if isTransientVideoProviderExecutionError(err) {
+					return buildTemporaryVideoRequeueError(job, state, err)
+				}
 				return err
 			}
 			if strings.TrimSpace(artifact.FileName) == "" {
@@ -660,6 +669,97 @@ func (w *Worker) requeueJob(ctx context.Context, jobID string, leaseToken string
 		OutputPayload: outputPayload,
 		OutputTouched: len(outputPayload) > 0,
 	})
+}
+
+func buildAIExecutionFailureMessage(jobType string, err error) string {
+	if err == nil {
+		return "AI 云端执行失败"
+	}
+	raw := strings.TrimSpace(err.Error())
+	if raw == "" {
+		return "AI 云端执行失败"
+	}
+
+	switch {
+	case strings.EqualFold(strings.TrimSpace(jobType), "video") && isLMRootGeminiPromptRewriteErrorMessage(raw):
+		return "AI 云端执行失败: 上游视频模型临时返回了异常结果，请稍后重试"
+	case strings.EqualFold(strings.TrimSpace(jobType), "video") && isTransientVideoProviderExecutionError(err):
+		return "AI 云端执行失败: 上游视频服务暂时不可用，请稍后重试"
+	default:
+		return "AI 云端执行失败: " + truncateFailureMessage(raw, 280)
+	}
+}
+
+func buildTemporaryVideoRequeueError(job *domain.AIJob, state videoExecutionState, err error) error {
+	message := "AI 视频服务暂时波动，任务已自动排队重试"
+	if isLMRootGeminiPromptRewriteErrorMessage(errorString(err)) {
+		message = "AI 视频服务临时返回了异常结果，任务已自动排队重试"
+	}
+	return &requeueExecutionError{
+		Message:       message,
+		OutputPayload: buildVideoOutputPayload(job, state, nil),
+	}
+}
+
+func shouldRequeueVideoSubmissionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := errorString(err)
+	if isLMRootGeminiPromptRewriteErrorMessage(message) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(message), "provider request failed with status 429")
+}
+
+func isTransientVideoProviderExecutionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isRetryableProviderError(err) {
+		return true
+	}
+	message := strings.ToLower(errorString(err))
+	if message == "" {
+		return false
+	}
+	if isLMRootGeminiPromptRewriteErrorMessage(message) {
+		return true
+	}
+	transientMarkers := []string{
+		"provider request failed with status 429",
+		"provider request failed with status 500",
+		"provider request failed with status 502",
+		"provider request failed with status 503",
+		"provider request failed with status 504",
+		"timeout",
+		"temporary",
+	}
+	for _, marker := range transientMarkers {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func truncateFailureMessage(message string, limit int) string {
+	message = strings.TrimSpace(message)
+	if limit <= 0 || len(message) == 0 {
+		return ""
+	}
+	runes := []rune(message)
+	if len(runes) <= limit {
+		return message
+	}
+	return strings.TrimSpace(string(runes[:limit])) + "..."
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return strings.TrimSpace(err.Error())
 }
 
 func (w *Worker) saveBinaryArtifact(ctx context.Context, job *domain.AIJob, artifactType string, artifactKey string, source string, artifact BinaryArtifact) (store.UpsertAIJobArtifactInput, error) {

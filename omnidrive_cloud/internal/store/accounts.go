@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -55,6 +56,7 @@ func scanPlatformAccountWithLoad(row pgx.Row) (*domain.PlatformAccount, error) {
 		&account.Load.PendingTaskCount,
 		&account.Load.RunningTaskCount,
 		&account.Load.NeedsVerifyTaskCount,
+		&account.Load.CancelRequestedTaskCount,
 		&account.Load.FailedTaskCount,
 		&account.Load.ActiveLoginSessionCount,
 		&account.Load.VerificationLoginSessionCount,
@@ -77,6 +79,7 @@ const platformAccountLoadColumns = `
 	COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.device_id = pa.device_id AND pt.platform = pa.platform AND pt.account_name = pa.account_name AND pt.status = 'pending'), 0)::BIGINT AS pending_task_count,
 	COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.device_id = pa.device_id AND pt.platform = pa.platform AND pt.account_name = pa.account_name AND pt.status = 'running'), 0)::BIGINT AS running_task_count,
 	COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.device_id = pa.device_id AND pt.platform = pa.platform AND pt.account_name = pa.account_name AND pt.status = 'needs_verify'), 0)::BIGINT AS needs_verify_task_count,
+	COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.device_id = pa.device_id AND pt.platform = pa.platform AND pt.account_name = pa.account_name AND pt.status = 'cancel_requested'), 0)::BIGINT AS cancel_requested_task_count,
 	COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.device_id = pa.device_id AND pt.platform = pa.platform AND pt.account_name = pa.account_name AND pt.status = 'failed'), 0)::BIGINT AS failed_task_count,
 	COALESCE((SELECT COUNT(*) FROM login_sessions ls WHERE ls.device_id = pa.device_id AND ls.platform = pa.platform AND ls.account_name = pa.account_name AND ls.status IN ('pending', 'running', 'verification_required')), 0)::BIGINT AS active_login_session_count,
 	COALESCE((SELECT COUNT(*) FROM login_sessions ls WHERE ls.device_id = pa.device_id AND ls.platform = pa.platform AND ls.account_name = pa.account_name AND ls.status = 'verification_required'), 0)::BIGINT AS verification_login_session_count
@@ -184,18 +187,167 @@ func (s *Store) ListPublishTasksByAccountTarget(ctx context.Context, ownerUserID
 	return items, rows.Err()
 }
 
+func (s *Store) isPlatformAccountSyncBlocked(ctx context.Context, deviceID string, platform string, accountName string) (bool, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM platform_account_tombstones
+			WHERE device_id = $1
+			  AND platform = $2
+			  AND account_name = $3
+		)
+	`, deviceID, platform, accountName)
+
+	var blocked bool
+	if err := row.Scan(&blocked); err != nil {
+		return false, err
+	}
+	return blocked, nil
+}
+
+func (s *Store) clearPlatformAccountSyncBlock(ctx context.Context, deviceID string, platform string, accountName string) error {
+	_, err := s.pool.Exec(ctx, `
+		DELETE FROM platform_account_tombstones
+		WHERE device_id = $1
+		  AND platform = $2
+		  AND account_name = $3
+	`, deviceID, platform, accountName)
+	return err
+}
+
 func (s *Store) DeleteOwnedAccount(ctx context.Context, accountID string, ownerUserID string) (bool, error) {
-	commandTag, err := s.pool.Exec(ctx, `
-		DELETE FROM platform_accounts pa
-		USING devices d
-		WHERE pa.device_id = d.id
-		  AND pa.id = $1
-		  AND d.owner_user_id = $2
-	`, accountID, ownerUserID)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return false, err
 	}
-	return commandTag.RowsAffected() > 0, nil
+	defer tx.Rollback(ctx)
+
+	var deviceID string
+	var platform string
+	var accountName string
+	if err := tx.QueryRow(ctx, `
+		SELECT pa.device_id, pa.platform, pa.account_name
+		FROM platform_accounts pa
+		INNER JOIN devices d ON d.id = pa.device_id
+		WHERE pa.id = $1
+		  AND d.owner_user_id = $2
+		FOR UPDATE
+	`, accountID, ownerUserID).Scan(&deviceID, &platform, &accountName); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO platform_account_tombstones (id, device_id, platform, account_name)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (device_id, platform, account_name) DO UPDATE
+		SET updated_at = NOW()
+	`, uuid.NewString(), deviceID, platform, accountName); err != nil {
+		return false, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM publish_tasks
+		WHERE device_id = $1
+		  AND platform = $2
+		  AND account_name = $3
+	`, deviceID, platform, accountName); err != nil {
+		return false, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM login_sessions
+		WHERE device_id = $1
+		  AND platform = $2
+		  AND account_name = $3
+	`, deviceID, platform, accountName); err != nil {
+		return false, err
+	}
+
+	commandTag, err := tx.Exec(ctx, `
+		DELETE FROM platform_accounts
+		WHERE id = $1
+	`, accountID)
+	if err != nil {
+		return false, err
+	}
+	if commandTag.RowsAffected() == 0 {
+		return false, nil
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Store) ListRetiredPlatformAccountsByDevice(ctx context.Context, deviceID string) ([]domain.AgentRetiredAccountItem, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT platform, account_name, updated_at
+		FROM platform_account_tombstones
+		WHERE device_id = $1
+		ORDER BY updated_at ASC, created_at ASC
+	`, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.AgentRetiredAccountItem, 0)
+	for rows.Next() {
+		var item domain.AgentRetiredAccountItem
+		if err := rows.Scan(&item.Platform, &item.AccountName, &item.LastChangedAt); err != nil {
+			return nil, err
+		}
+		item.Reason = "deleted"
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) AckRetiredPlatformAccountsByDevice(ctx context.Context, deviceID string, items []domain.AgentRetiredAccountItem) (int64, error) {
+	if strings.TrimSpace(deviceID) == "" || len(items) == 0 {
+		return 0, nil
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	var acked int64
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		platform := strings.TrimSpace(item.Platform)
+		accountName := strings.TrimSpace(item.AccountName)
+		if platform == "" || accountName == "" {
+			continue
+		}
+		key := platform + "::" + accountName
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+
+		commandTag, err := tx.Exec(ctx, `
+			DELETE FROM platform_account_tombstones
+			WHERE device_id = $1
+			  AND platform = $2
+			  AND account_name = $3
+		`, deviceID, platform, accountName)
+		if err != nil {
+			return 0, err
+		}
+		acked += commandTag.RowsAffected()
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return acked, nil
 }
 
 func (s *Store) GetAccountUsageSummary(ctx context.Context, accountID string, ownerUserID string) (int64, int64, error) {
@@ -211,6 +363,7 @@ func (s *Store) GetAccountUsageSummary(ctx context.Context, accountID string, ow
 				  AND pt.device_id = pa.device_id
 				  AND pt.platform = pa.platform
 				  AND pt.account_name = pa.account_name
+				  AND pt.status IN ('pending', 'running', 'needs_verify', 'cancel_requested')
 			), 0)::BIGINT,
 			COALESCE((
 				SELECT COUNT(*)
@@ -444,9 +597,32 @@ func (s *Store) UpdateLoginSessionEvent(ctx context.Context, sessionID string, i
 	return session, nil
 }
 
+func (s *Store) TouchLoginSession(ctx context.Context, sessionID string) (*domain.LoginSession, error) {
+	row := s.pool.QueryRow(ctx, `
+		UPDATE login_sessions
+		SET updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, device_id, user_id, platform, account_name, status, qr_data,
+		          verification_payload, message, created_at, updated_at
+	`, sessionID)
+
+	session, err := scanLoginSession(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return session, nil
+}
+
 func (s *Store) UpsertPlatformAccountFromLogin(ctx context.Context, session *domain.LoginSession) error {
 	if session.Status != "success" && session.Status != "active" {
 		return nil
+	}
+
+	if err := s.clearPlatformAccountSyncBlock(ctx, session.DeviceID, session.Platform, session.AccountName); err != nil {
+		return err
 	}
 
 	_, err := s.pool.Exec(ctx, `
@@ -464,6 +640,14 @@ func (s *Store) UpsertPlatformAccountFromLogin(ctx context.Context, session *dom
 }
 
 func (s *Store) UpsertPlatformAccount(ctx context.Context, deviceID string, platform string, accountName string, status string, lastMessage *string, lastAuthenticatedAt *time.Time) (*domain.PlatformAccount, error) {
+	blocked, err := s.isPlatformAccountSyncBlocked(ctx, deviceID, platform, accountName)
+	if err != nil {
+		return nil, err
+	}
+	if blocked {
+		return nil, nil
+	}
+
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO platform_accounts (
 			id, device_id, platform, account_name, status, last_message, last_authenticated_at
@@ -478,7 +662,14 @@ func (s *Store) UpsertPlatformAccount(ctx context.Context, deviceID string, plat
 		          last_authenticated_at, created_at, updated_at
 	`, uuid.NewString(), deviceID, platform, accountName, status, lastMessage, lastAuthenticatedAt)
 
-	return scanPlatformAccount(row)
+	account, err := scanPlatformAccount(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return account, nil
 }
 
 func scanLoginAction(row pgx.Row) (*domain.LoginSessionAction, error) {

@@ -371,7 +371,7 @@ func (h *AccountHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	if taskCount > 0 || activeLoginSessionCount > 0 {
 		render.JSON(w, http.StatusConflict, map[string]any{
-			"error": "Account is still referenced by tasks or active login sessions",
+			"error": "账号仍存在计划中任务或活跃登录流程，请先处理后再解绑",
 			"usage": map[string]any{
 				"publishTaskCount":        taskCount,
 				"activeLoginSessionCount": activeLoginSessionCount,
@@ -397,7 +397,7 @@ func (h *AccountHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		Title:        "删除平台账号镜像",
 		Source:       "accounts",
 		Status:       "success",
-		Message:      auditStringPtr("云端账号镜像已删除"),
+		Message:      auditStringPtr("云端账号镜像及历史记录已删除，并阻止设备自动补回"),
 	})
 	render.JSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
@@ -602,6 +602,11 @@ func (h *AccountHandler) CreateLoginAction(w http.ResponseWriter, r *http.Reques
 			Message: &cancelMessage,
 		}); err != nil {
 			render.Error(w, http.StatusInternalServerError, "Failed to cancel login session")
+			return
+		}
+	} else {
+		if _, err := h.app.Store.TouchLoginSession(r.Context(), sessionID); err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to refresh login session")
 			return
 		}
 	}

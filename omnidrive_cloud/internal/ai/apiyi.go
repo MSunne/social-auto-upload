@@ -513,30 +513,8 @@ func (p *APIYIProvider) SubmitVideo(ctx context.Context, req VideoRequest) (*Vid
 	if err != nil {
 		return nil, err
 	}
-
-	endpointURL := p.resolveEndpointURL(req.BaseURL, "/v1/videos")
-	authHeader := p.resolveVideoAuthorization(req.Model, req.APIKey)
-
-	httpReq, err := p.newRetryableRequest(ctx, http.MethodPost, endpointURL, requestBody, func(r *http.Request) {
-		r.Header.Set("Authorization", authHeader)
-		r.Header.Set("Content-Type", contentType)
-		r.Header.Set("Accept", "application/json")
-	})
+	responseBody, err := p.doVideoRequest(ctx, req.Model, req.BaseURL, req.APIKey, http.MethodPost, "/v1/videos", requestBody, contentType)
 	if err != nil {
-		return nil, err
-	}
-
-	resp, err := p.doRequest(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if err := ensureHTTPStatus(resp, responseBody); err != nil {
 		return nil, err
 	}
 
@@ -766,31 +744,56 @@ func (p *APIYIProvider) doJSON(ctx context.Context, baseURL string, apiKey strin
 }
 
 func (p *APIYIProvider) doVideoRequest(ctx context.Context, model string, baseURL string, apiKey string, method string, path string, body []byte, contentType string) ([]byte, error) {
-	req, err := p.newRetryableRequest(ctx, method, p.resolveEndpointURL(baseURL, path), body, func(r *http.Request) {
-		r.Header.Set("Authorization", p.resolveVideoAuthorization(model, apiKey))
-		if strings.TrimSpace(contentType) != "" {
-			r.Header.Set("Content-Type", contentType)
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
 		}
-		r.Header.Set("Accept", "application/json")
-	})
-	if err != nil {
-		return nil, err
+
+		req, err := p.newRetryableRequest(ctx, method, p.resolveEndpointURL(baseURL, path), body, func(r *http.Request) {
+			r.Header.Set("Authorization", p.resolveVideoAuthorization(model, apiKey))
+			if strings.TrimSpace(contentType) != "" {
+				r.Header.Set("Content-Type", contentType)
+			}
+			r.Header.Set("Accept", "application/json")
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		resp, err := p.doRequest(req)
+		if err != nil {
+			lastErr = err
+			if !isRetryableProviderError(err) {
+				return nil, err
+			}
+			continue
+		}
+
+		responseBody, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			lastErr = readErr
+			if !isRetryableProviderError(readErr) {
+				return nil, readErr
+			}
+			continue
+		}
+
+		if statusErr := ensureHTTPStatus(resp, responseBody); statusErr != nil {
+			lastErr = statusErr
+			if !isRetryableProviderStatusError(resp.StatusCode, responseBody) {
+				return nil, statusErr
+			}
+			continue
+		}
+		return responseBody, nil
 	}
 
-	resp, err := p.doRequest(req)
-	if err != nil {
-		return nil, err
+	if lastErr != nil {
+		return nil, lastErr
 	}
-	defer resp.Body.Close()
-
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if err := ensureHTTPStatus(resp, responseBody); err != nil {
-		return nil, err
-	}
-	return responseBody, nil
+	return nil, fmt.Errorf("provider video request failed")
 }
 
 func (p *APIYIProvider) resolveBaseURL(override string) string {
@@ -951,6 +954,27 @@ func ensureHTTPStatus(resp *http.Response, body []byte) error {
 		}
 	}
 	return fmt.Errorf("provider request failed with status %d", resp.StatusCode)
+}
+
+func isLMRootGeminiPromptRewriteErrorMessage(message string) bool {
+	lower := strings.ToLower(strings.TrimSpace(message))
+	if lower == "" {
+		return false
+	}
+	return (strings.Contains(lower, "failed to get combined chunks") &&
+		strings.Contains(lower, "invalid response from gemini model") &&
+		strings.Contains(lower, "failed to parse json")) ||
+		(strings.Contains(lower, "prompt_rewriter") &&
+			strings.Contains(lower, "lmroot_generate")) ||
+		(strings.Contains(lower, "veo3_prompt_rewriter_utils.cc") &&
+			strings.Contains(lower, "failed to parse json"))
+}
+
+func isRetryableProviderStatusError(statusCode int, body []byte) bool {
+	if statusCode == http.StatusTooManyRequests || statusCode >= http.StatusInternalServerError {
+		return true
+	}
+	return isLMRootGeminiPromptRewriteErrorMessage(string(body))
 }
 
 func newAPIYIHTTPClient() *http.Client {
@@ -1277,11 +1301,13 @@ func extractText(content any) string {
 	switch typed := content.(type) {
 	case string:
 		return strings.TrimSpace(typed)
+	case map[string]any:
+		return strings.TrimSpace(extractTextFromObject(typed))
 	case []any:
 		parts := make([]string, 0, len(typed))
 		for _, item := range typed {
 			if obj, ok := item.(map[string]any); ok {
-				if text := strings.TrimSpace(stringValue(obj["text"])); text != "" {
+				if text := strings.TrimSpace(extractTextFromObject(obj)); text != "" {
 					parts = append(parts, text)
 				}
 			}
@@ -1299,11 +1325,13 @@ func extractDeltaText(content any) string {
 	switch typed := content.(type) {
 	case string:
 		return typed
+	case map[string]any:
+		return extractDeltaTextFromObject(typed)
 	case []any:
 		parts := make([]string, 0, len(typed))
 		for _, item := range typed {
 			if obj, ok := item.(map[string]any); ok {
-				if text := stringValue(obj["text"]); text != "" {
+				if text := extractDeltaTextFromObject(obj); text != "" {
 					parts = append(parts, text)
 				}
 			}
@@ -1312,6 +1340,34 @@ func extractDeltaText(content any) string {
 	default:
 		return stringValue(content)
 	}
+}
+
+func extractTextFromObject(payload map[string]any) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	for _, key := range []string{"text", "content", "output_text", "value"} {
+		if value, ok := payload[key]; ok {
+			if text := strings.TrimSpace(extractText(value)); text != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func extractDeltaTextFromObject(payload map[string]any) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	for _, key := range []string{"text", "content", "output_text", "value"} {
+		if value, ok := payload[key]; ok {
+			if text := extractDeltaText(value); text != "" {
+				return text
+			}
+		}
+	}
+	return ""
 }
 
 func normalizeRemoteVideoStatus(value string) string {

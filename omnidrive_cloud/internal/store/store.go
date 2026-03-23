@@ -263,6 +263,7 @@ type CreateSkillInput struct {
 	OutputType        string
 	ModelName         string
 	PromptTemplate    *string
+	Topics            []string
 	ReferencePayload  []byte
 	ExecutionTime     *time.Time
 	RepeatDaily       bool
@@ -333,6 +334,8 @@ type UpdateSkillInput struct {
 	OutputType        *string
 	ModelName         *string
 	PromptTemplate    *string
+	Topics            []string
+	TopicsTouched     bool
 	ReferencePayload  []byte
 	ReferenceTouched  bool
 	DeviceID          *string

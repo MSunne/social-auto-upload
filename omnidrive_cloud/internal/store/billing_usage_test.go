@@ -90,3 +90,56 @@ func TestPlanUsageChargeFailsWhenWalletInsufficient(t *testing.T) {
 		t.Fatalf("expected failed bill status, got %#v", detail)
 	}
 }
+
+func TestPlanUsageChargeAllowsFallbackRuleWithoutPersistentID(t *testing.T) {
+	detail, walletPlan, _, ok := planUsageCharge(
+		ApplyUsageMetricInput{MeterCode: "chat_output_tokens", Quantity: 1500},
+		pricingRuleRecord{
+			MeterCode:         "chat_output_tokens",
+			ChargeMode:        "wallet_only",
+			UnitSize:          1000,
+			WalletDebitAmount: 2,
+		},
+		10,
+		map[string][]*quotaAccountRecord{},
+	)
+
+	if !ok {
+		t.Fatalf("expected synthesized pricing rule to succeed: %#v", detail)
+	}
+	if detail.PricingRuleID != "" {
+		t.Fatalf("expected synthesized pricing rule to keep empty pricing rule id, got %#v", detail)
+	}
+	if detail.DebitCredits != 4 || walletPlan.debitCredits != 4 {
+		t.Fatalf("unexpected synthesized rule billing detail: %#v %#v", detail, walletPlan)
+	}
+}
+
+func TestPlanUsageChargeSupportsDynamicQuantityFromMetricMetadata(t *testing.T) {
+	detail, walletPlan, _, ok := planUsageCharge(
+		ApplyUsageMetricInput{
+			MeterCode: "video_generations",
+			Quantity:  1,
+			Metadata:  mustJSONMap(map[string]any{"durationSeconds": 8}),
+		},
+		pricingRuleRecord{
+			MeterCode:         "video_generations",
+			ChargeMode:        "wallet_only",
+			UnitSize:          1,
+			WalletDebitAmount: 5,
+			QuantityMetaKey:   "durationSeconds",
+		},
+		100,
+		map[string][]*quotaAccountRecord{},
+	)
+
+	if !ok {
+		t.Fatalf("expected dynamic quantity pricing to succeed: %#v", detail)
+	}
+	if detail.Quantity != 8 || detail.DebitCredits != 40 {
+		t.Fatalf("unexpected dynamic quantity billing detail: %#v", detail)
+	}
+	if walletPlan.quantity != 8 || walletPlan.debitCredits != 40 {
+		t.Fatalf("unexpected dynamic quantity wallet plan: %#v", walletPlan)
+	}
+}

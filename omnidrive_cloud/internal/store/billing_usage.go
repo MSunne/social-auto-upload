@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"omnidrive_cloud/internal/domain"
 )
 
 type ApplyUsageMetricInput struct {
@@ -56,6 +59,7 @@ type pricingRuleRecord struct {
 	QuotaMeterCode    *string
 	UnitSize          int64
 	WalletDebitAmount int64
+	QuantityMetaKey   string
 }
 
 type quotaAccountRecord struct {
@@ -325,7 +329,131 @@ func loadPricingRulesForUsageTx(ctx context.Context, tx pgx.Tx, modelName string
 		}
 		result[item.MeterCode] = item
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	model, err := loadAIModelForUsageBillingTx(ctx, tx, modelName)
+	if err != nil {
+		return nil, err
+	}
+	for meterCode, fallbackRule := range buildFallbackPricingRulesForUsage(model, jobType) {
+		if _, exists := result[meterCode]; exists {
+			continue
+		}
+		result[meterCode] = fallbackRule
+	}
+	return result, nil
+}
+
+func loadAIModelForUsageBillingTx(ctx context.Context, tx pgx.Tx, modelName string) (*domain.AIModel, error) {
+	row := tx.QueryRow(ctx, `
+		SELECT
+			id, vendor, model_name, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
+			description, pricing_payload,
+			image_reference_limit, image_supported_sizes,
+			video_reference_limit, video_supported_resolutions, video_supported_durations,
+			is_enabled, created_at, updated_at
+		FROM ai_models
+		WHERE model_name = $1
+	`, strings.TrimSpace(modelName))
+
+	model, err := scanAIModel(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return model, nil
+}
+
+func buildFallbackPricingRulesForUsage(model *domain.AIModel, jobType string) map[string]pricingRuleRecord {
+	if model == nil {
+		return nil
+	}
+
+	jobType = strings.TrimSpace(strings.ToLower(jobType))
+	category := strings.TrimSpace(strings.ToLower(model.Category))
+	if jobType == "" {
+		jobType = category
+	}
+
+	switch jobType {
+	case "chat":
+		if category != "chat" {
+			return nil
+		}
+		result := make(map[string]pricingRuleRecord)
+		if amount := fallbackWalletDebitAmount(model.ChatInputBillingAmount, model.BillingAmount, model.ChatInputRawRate, model.RawRate); amount > 0 {
+			result["chat_input_tokens"] = pricingRuleRecord{
+				MeterCode:         "chat_input_tokens",
+				ChargeMode:        "wallet_only",
+				UnitSize:          1000,
+				WalletDebitAmount: amount,
+			}
+		}
+		if amount := fallbackWalletDebitAmount(model.ChatOutputBillingAmount, model.BillingAmount, model.ChatOutputRawRate, model.RawRate); amount > 0 {
+			result["chat_output_tokens"] = pricingRuleRecord{
+				MeterCode:         "chat_output_tokens",
+				ChargeMode:        "wallet_only",
+				UnitSize:          1000,
+				WalletDebitAmount: amount,
+			}
+		}
+		return result
+	case "image":
+		if category != "image" {
+			return nil
+		}
+		if amount := fallbackWalletDebitAmount(model.BillingAmount, model.RawRate); amount > 0 {
+			rule := pricingRuleRecord{
+				MeterCode:         "image_generations",
+				ChargeMode:        "quota_first_wallet_fallback",
+				UnitSize:          1,
+				WalletDebitAmount: amount,
+			}
+			quotaMeterCode := "image_generation_quota"
+			rule.QuotaMeterCode = &quotaMeterCode
+			return map[string]pricingRuleRecord{
+				"image_generations": rule,
+			}
+		}
+	case "video":
+		if category != "video" {
+			return nil
+		}
+		if amount := fallbackWalletDebitAmount(model.BillingAmount, model.RawRate); amount > 0 {
+			rule := pricingRuleRecord{
+				MeterCode:         "video_generations",
+				UnitSize:          1,
+				WalletDebitAmount: amount,
+			}
+			if strings.EqualFold(strings.TrimSpace(model.BillingMode), "per_second") {
+				rule.ChargeMode = "wallet_only"
+				rule.QuantityMetaKey = "durationSeconds"
+			} else {
+				rule.ChargeMode = "quota_first_wallet_fallback"
+				quotaMeterCode := "video_generation_quota"
+				rule.QuotaMeterCode = &quotaMeterCode
+			}
+			return map[string]pricingRuleRecord{
+				"video_generations": rule,
+			}
+		}
+	}
+
+	return nil
+}
+
+func fallbackWalletDebitAmount(candidates ...*float64) int64 {
+	for _, candidate := range candidates {
+		if candidate == nil || *candidate <= 0 {
+			continue
+		}
+		return int64(math.Ceil(*candidate))
+	}
+	return 0
 }
 
 func ensureWalletAndLockTx(ctx context.Context, tx pgx.Tx, userID string) (int64, error) {
@@ -387,15 +515,19 @@ func loadQuotaAccountsForUsageTx(ctx context.Context, tx pgx.Tx, userID string, 
 }
 
 func planUsageCharge(metric ApplyUsageMetricInput, rule pricingRuleRecord, walletBalance int64, quotaAccounts map[string][]*quotaAccountRecord) (UsageBillingDetail, walletLedgerPlan, []quotaLedgerPlan, bool) {
+	quantity := metric.Quantity
+	if override := metricQuantityFromMetadata(metric.Metadata, rule.QuantityMetaKey); override > 0 {
+		quantity = override
+	}
 	detail := UsageBillingDetail{
 		MeterCode:     strings.TrimSpace(metric.MeterCode),
-		Quantity:      metric.Quantity,
-		PricingRuleID: rule.ID,
-		ChargeMode:    rule.ChargeMode,
+		Quantity:      quantity,
+		PricingRuleID: strings.TrimSpace(rule.ID),
+		ChargeMode:    strings.TrimSpace(rule.ChargeMode),
 		BillStatus:    "billed",
 	}
 
-	if rule.ID == "" {
+	if detail.MeterCode == "" || detail.ChargeMode == "" {
 		detail.BillStatus = "failed"
 		detail.BillMessage = "pricing rule not found"
 		return detail, walletLedgerPlan{}, nil, false
@@ -405,11 +537,11 @@ func planUsageCharge(metric ApplyUsageMetricInput, rule pricingRuleRecord, walle
 	if unitSize <= 0 {
 		unitSize = 1
 	}
-	detail.Units = ceilDiv(metric.Quantity, unitSize)
+	detail.Units = ceilDiv(detail.Quantity, unitSize)
 
 	walletPlan := walletLedgerPlan{
 		meterCode:   detail.MeterCode,
-		quantity:    metric.Quantity,
+		quantity:    detail.Quantity,
 		unit:        "credit",
 		description: fmt.Sprintf("AI %s 计费", detail.MeterCode),
 	}
@@ -450,7 +582,7 @@ func planUsageCharge(metric ApplyUsageMetricInput, rule pricingRuleRecord, walle
 					description: fmt.Sprintf("AI %s 套餐抵扣", detail.MeterCode),
 					payload: mustJSONMap(map[string]any{
 						"meterCode": metric.MeterCode,
-						"quantity":  metric.Quantity,
+						"quantity":  detail.Quantity,
 						"units":     detail.Units,
 						"quotaUsed": used,
 					}),
@@ -684,4 +816,37 @@ func metricMetadataByMeter(metrics []ApplyUsageMetricInput, meterCode string) an
 		break
 	}
 	return nil
+}
+
+func metricQuantityFromMetadata(raw []byte, key string) int64 {
+	key = strings.TrimSpace(key)
+	if key == "" || len(raw) == 0 {
+		return 0
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return 0
+	}
+	return usageQuantityValue(payload[key])
+}
+
+func usageQuantityValue(value any) int64 {
+	switch typed := value.(type) {
+	case int64:
+		return maxInt64(typed, 0)
+	case int:
+		return maxInt64(int64(typed), 0)
+	case float64:
+		return maxInt64(int64(math.Round(typed)), 0)
+	case json.Number:
+		if parsed, err := typed.Int64(); err == nil {
+			return maxInt64(parsed, 0)
+		}
+	case string:
+		if parsed, err := json.Number(strings.TrimSpace(typed)).Int64(); err == nil {
+			return maxInt64(parsed, 0)
+		}
+	}
+	return 0
 }

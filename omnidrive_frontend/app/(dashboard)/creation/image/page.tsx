@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertTriangle,
@@ -324,6 +324,7 @@ function buildPromptOptimizationMessages(prompt: string, referenceImages: Refere
 }
 
 export default function ImageCreationPage() {
+  const queryClient = useQueryClient();
   const [prompt, setPrompt] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
   const [selectedSize, setSelectedSize] = useState("");
@@ -346,6 +347,7 @@ export default function ImageCreationPage() {
   const previewSectionRef = useRef<HTMLDivElement>(null);
   const autoPreviewedJobIdRef = useRef<string | null>(null);
   const resolvedOptimizeJobIdRef = useRef<string | null>(null);
+  const billedJobIdRef = useRef<string | null>(null);
   const latestRefImagesRef = useRef<ReferenceImage[]>([]);
 
   const { data: allModels = [], isLoading: modelsLoading } = useQuery<AIModel[]>({
@@ -516,6 +518,18 @@ export default function ImageCreationPage() {
     void refetchImageJobs();
     previewSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [currentJob, refetchImageJobs]);
+
+  useEffect(() => {
+    if (!currentJob || !isTerminalJob(currentJob)) {
+      return;
+    }
+    if (billedJobIdRef.current === currentJob.id) {
+      return;
+    }
+    billedJobIdRef.current = currentJob.id;
+    void queryClient.invalidateQueries({ queryKey: ["billingSummary"] });
+    void queryClient.invalidateQueries({ queryKey: ["walletLedger"] });
+  }, [currentJob, queryClient]);
 
   useEffect(() => {
     if (!copied) {

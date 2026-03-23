@@ -73,6 +73,7 @@ func (s *Store) ListAdminAIModels(ctx context.Context, filter AdminAIModelListFi
 			description, pricing_payload,
 			image_reference_limit, image_supported_sizes,
 			video_reference_limit, video_supported_resolutions, video_supported_durations,
+			supported_file_types,
 			is_enabled, created_at, updated_at
 		FROM ai_models
 		%s
@@ -103,6 +104,7 @@ func (s *Store) GetAIModelByID(ctx context.Context, id string) (*domain.AIModel,
 			description, pricing_payload,
 			image_reference_limit, image_supported_sizes,
 			video_reference_limit, video_supported_resolutions, video_supported_durations,
+			supported_file_types,
 			is_enabled, created_at, updated_at
 		FROM ai_models
 		WHERE id = $1
@@ -135,6 +137,7 @@ type CreateAIModelInput struct {
 	VideoReferenceLimit       *int
 	VideoSupportedResolutions []byte
 	VideoSupportedDurations   []byte
+	SupportedFileTypes        []byte
 	IsEnabled                 bool
 }
 
@@ -145,19 +148,22 @@ func (s *Store) CreateAIModel(ctx context.Context, input CreateAIModelInput) (*d
 			description, pricing_payload,
 			image_reference_limit, image_supported_sizes,
 			video_reference_limit, video_supported_resolutions, video_supported_durations,
+			supported_file_types,
 			is_enabled, created_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9,
 			$10, $11,
 			$12, $13,
 			$14, $15, $16,
-			$17, CLOCK_TIMESTAMP(), CLOCK_TIMESTAMP()
+			$17,
+			$18, CLOCK_TIMESTAMP(), CLOCK_TIMESTAMP()
 		)
 		RETURNING
 			id, vendor, model_name, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
 			description, pricing_payload,
 			image_reference_limit, image_supported_sizes,
 			video_reference_limit, video_supported_resolutions, video_supported_durations,
+			supported_file_types,
 			is_enabled, created_at, updated_at
 	`,
 		input.ID,
@@ -176,6 +182,7 @@ func (s *Store) CreateAIModel(ctx context.Context, input CreateAIModelInput) (*d
 		input.VideoReferenceLimit,
 		input.VideoSupportedResolutions,
 		input.VideoSupportedDurations,
+		input.SupportedFileTypes,
 		input.IsEnabled,
 	)
 
@@ -198,6 +205,7 @@ type UpdateAIModelInput struct {
 	VideoReferenceLimit       *int
 	VideoSupportedResolutions *[]string
 	VideoSupportedDurations   *[]string
+	SupportedFileTypes        *[]string
 	IsEnabled                 *bool
 }
 
@@ -286,6 +294,11 @@ func (s *Store) UpdateAIModel(ctx context.Context, id string, input UpdateAIMode
 		args = append(args, mustJSONBytes(*input.VideoSupportedDurations))
 		argIndex++
 	}
+	if input.SupportedFileTypes != nil {
+		setParts = append(setParts, fmt.Sprintf("supported_file_types = $%d", argIndex))
+		args = append(args, mustJSONBytes(*input.SupportedFileTypes))
+		argIndex++
+	}
 
 	if len(setParts) == 1 {
 		// Nothing to update, return the existing model
@@ -295,6 +308,7 @@ func (s *Store) UpdateAIModel(ctx context.Context, id string, input UpdateAIMode
 				description, pricing_payload,
 				image_reference_limit, image_supported_sizes,
 				video_reference_limit, video_supported_resolutions, video_supported_durations,
+				supported_file_types,
 				is_enabled, created_at, updated_at
 			FROM ai_models
 			WHERE id = $1
@@ -313,6 +327,7 @@ func (s *Store) UpdateAIModel(ctx context.Context, id string, input UpdateAIMode
 			description, pricing_payload,
 			image_reference_limit, image_supported_sizes,
 			video_reference_limit, video_supported_resolutions, video_supported_durations,
+			supported_file_types,
 			is_enabled, created_at, updated_at
 	`, setClause), args...)
 

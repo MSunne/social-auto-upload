@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useCreateAIModel, useUpdateAIModel } from "@/lib/hooks/useAIModels";
 import { AIModel } from "@/lib/types";
 import { X } from "lucide-react";
@@ -33,6 +33,7 @@ const DEFAULT_FORM = {
   videoReferenceLimit: "",
   videoSupportedResolutions: "",
   videoSupportedDurations: "",
+  supportedFileTypes: "",
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -105,6 +106,7 @@ function toFormState(model: AIModel | null) {
       model.videoSupportedResolutions,
     ),
     videoSupportedDurations: toCommaSeparated(model.videoSupportedDurations),
+    supportedFileTypes: toCommaSeparated(model.supportedFileTypes),
   };
 }
 
@@ -123,16 +125,27 @@ export function AIModelDrawer({
   onClose,
   isCreate,
 }: AIModelDrawerProps) {
+  if (!isOpen) return null;
+
+  return (
+    <AIModelDrawerContent
+      key={`${isCreate ? "create" : "edit"}-${model?.id || "new"}`}
+      model={model}
+      onClose={onClose}
+      isCreate={isCreate}
+    />
+  );
+}
+
+function AIModelDrawerContent({
+  model,
+  onClose,
+  isCreate,
+}: Omit<AIModelDrawerProps, "isOpen">) {
   const createModel = useCreateAIModel();
   const updateModel = useUpdateAIModel();
 
   const [form, setForm] = useState(() => toFormState(model));
-
-  useEffect(() => {
-    if (isOpen) {
-      setForm(toFormState(model));
-    }
-  }, [isOpen, model]);
 
   const chatInputRawRate = parseOptionalNumber(form.chatInputRawRate);
   const chatOutputRawRate = parseOptionalNumber(form.chatOutputRawRate);
@@ -200,6 +213,7 @@ export function AIModelDrawer({
         form.category === "video"
           ? parseCommaSeparated(form.videoSupportedDurations)
           : [],
+      supportedFileTypes: parseCommaSeparated(form.supportedFileTypes),
       isEnabled: form.isEnabled,
     };
 
@@ -220,8 +234,6 @@ export function AIModelDrawer({
       alert(error instanceof Error ? error.message : "操作失败，请重试");
     }
   };
-
-  if (!isOpen) return null;
 
   const isPending = createModel.isPending || updateModel.isPending;
 
@@ -543,6 +555,23 @@ export function AIModelDrawer({
               placeholder="模型用途说明、限制事项等..."
               className="w-full px-3 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm focus:outline-none focus:border-[var(--color-accent)] resize-none h-20"
             />
+          </div>
+
+          <div>
+            <label className="block text-sm text-[var(--color-text-secondary)] mb-1.5">
+              支持文件类型
+            </label>
+            <textarea
+              value={form.supportedFileTypes}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, supportedFileTypes: e.target.value }))
+              }
+              placeholder="例如：image/*, .pdf, .docx, .txt"
+              className="w-full px-3 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm focus:outline-none focus:border-[var(--color-accent)] resize-none h-20"
+            />
+            <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+              用英文逗号分隔，可填写扩展名或 MIME 类型，例如 <code>.pdf</code>、<code>.docx</code>、<code>image/*</code>。
+            </p>
           </div>
 
           {form.category === "image" && (

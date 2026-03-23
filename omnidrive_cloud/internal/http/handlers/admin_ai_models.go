@@ -47,6 +47,7 @@ type adminCreateAIModelRequest struct {
 	VideoReferenceLimit       *int            `json:"videoReferenceLimit"`
 	VideoSupportedResolutions []string        `json:"videoSupportedResolutions"`
 	VideoSupportedDurations   []string        `json:"videoSupportedDurations"`
+	SupportedFileTypes        []string        `json:"supportedFileTypes"`
 	IsEnabled                 bool            `json:"isEnabled"`
 }
 
@@ -71,6 +72,7 @@ type adminUpdateAIModelRequest struct {
 	VideoReferenceLimit       *int             `json:"videoReferenceLimit"`
 	VideoSupportedResolutions *[]string        `json:"videoSupportedResolutions"`
 	VideoSupportedDurations   *[]string        `json:"videoSupportedDurations"`
+	SupportedFileTypes        *[]string        `json:"supportedFileTypes"`
 	IsEnabled                 *bool            `json:"isEnabled"`
 }
 
@@ -146,6 +148,29 @@ func normalizeAdminStringList(values []string) []string {
 	return items
 }
 
+func normalizeAdminSupportedFileTypes(values []string) []string {
+	if len(values) == 0 {
+		return []string{}
+	}
+	seen := make(map[string]struct{}, len(values))
+	items := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.ToLower(strings.TrimSpace(value))
+		if trimmed == "" {
+			continue
+		}
+		if !strings.Contains(trimmed, "/") && !strings.HasPrefix(trimmed, ".") {
+			trimmed = "." + strings.TrimPrefix(trimmed, ".")
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		items = append(items, trimmed)
+	}
+	return items
+}
+
 func normalizeAdminUpdateOptionalText(value *string) *string {
 	if value == nil {
 		return nil
@@ -173,18 +198,19 @@ func normalizeCreateAIModelPayload(payload adminCreateAIModelRequest) (store.Cre
 	}
 
 	input := store.CreateAIModelInput{
-		ID:             strings.TrimSpace(payload.ID),
-		Vendor:         vendor,
-		ModelName:      modelName,
-		Category:       category,
-		BillingMode:    billingMode,
-		BaseURL:        baseURL,
-		APIKey:         normalizeOptionalAdminText(payload.APIKey),
-		RawRate:        payload.RawRate,
-		BillingAmount:  payload.BillingAmount,
-		Description:    normalizeOptionalAdminText(payload.Description),
-		IsEnabled:      payload.IsEnabled,
-		PricingPayload: nil,
+		ID:                 strings.TrimSpace(payload.ID),
+		Vendor:             vendor,
+		ModelName:          modelName,
+		Category:           category,
+		BillingMode:        billingMode,
+		BaseURL:            baseURL,
+		APIKey:             normalizeOptionalAdminText(payload.APIKey),
+		RawRate:            payload.RawRate,
+		BillingAmount:      payload.BillingAmount,
+		Description:        normalizeOptionalAdminText(payload.Description),
+		IsEnabled:          payload.IsEnabled,
+		PricingPayload:     nil,
+		SupportedFileTypes: mustJSONBytes(normalizeAdminSupportedFileTypes(payload.SupportedFileTypes)),
 	}
 	if payload.PricingPayload != nil {
 		input.PricingPayload = []byte(payload.PricingPayload)
@@ -264,6 +290,10 @@ func normalizeUpdateAIModelPayload(payload adminUpdateAIModelRequest) (store.Upd
 	if payload.VideoSupportedDurations != nil {
 		values := normalizeAdminStringList(*payload.VideoSupportedDurations)
 		input.VideoSupportedDurations = &values
+	}
+	if payload.SupportedFileTypes != nil {
+		values := normalizeAdminSupportedFileTypes(*payload.SupportedFileTypes)
+		input.SupportedFileTypes = &values
 	}
 
 	switch resolvedCategory {

@@ -218,6 +218,7 @@ func scanAdminMediaAccountRow(scan scanFn) (*domain.AdminMediaAccountRow, error)
 		&item.Account.Load.PendingTaskCount,
 		&item.Account.Load.RunningTaskCount,
 		&item.Account.Load.NeedsVerifyTaskCount,
+		&item.Account.Load.CancelRequestedTaskCount,
 		&item.Account.Load.FailedTaskCount,
 		&item.Account.Load.ActiveLoginSessionCount,
 		&item.Account.Load.VerificationLoginSessionCount,

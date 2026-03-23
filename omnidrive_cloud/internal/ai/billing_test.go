@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"encoding/json"
 	"testing"
 
 	"omnidrive_cloud/internal/domain"
@@ -61,6 +62,31 @@ func TestBuildImageAndVideoBillingInputs(t *testing.T) {
 	}
 	if videoInput.Metrics[0].MeterCode != "video_generations" || videoInput.Metrics[0].Quantity != 1 {
 		t.Fatalf("unexpected video billing metric: %#v", videoInput.Metrics[0])
+	}
+}
+
+func TestBuildVideoBillingInputCarriesDurationMetadata(t *testing.T) {
+	job := &domain.AIJob{
+		ID:          "job-video-2",
+		OwnerUserID: "user-3",
+		ModelName:   "veo-3.1-fast-fl",
+		JobType:     "video",
+		InputPayload: mustJSONBytes(map[string]any{
+			"durationSeconds": 12,
+		}),
+	}
+
+	videoInput := buildVideoBillingInput(job)
+	if len(videoInput.Metrics) != 1 {
+		t.Fatalf("expected one video billing metric, got %d", len(videoInput.Metrics))
+	}
+
+	var metadata map[string]any
+	if err := json.Unmarshal(videoInput.Metrics[0].Metadata, &metadata); err != nil {
+		t.Fatalf("expected video billing metadata to be json: %v", err)
+	}
+	if metadata["durationSeconds"] != float64(12) {
+		t.Fatalf("expected duration metadata 12, got %#v", metadata)
 	}
 }
 

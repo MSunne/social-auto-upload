@@ -84,7 +84,7 @@ def _cookie_check_result(ok, state, message, *, current_url=None):
     }
 
 
-async def validate_cookie_page(page, platform_type, *, settle_seconds=0.5):
+async def validate_cookie_page(page, platform_type, *, settle_seconds=0.5, require_success_path=True):
     platform_label, platform_logger = VALIDATION_LABELS.get(platform_type, ("account", douyin_logger))
     if settle_seconds > 0:
         await asyncio.sleep(settle_seconds)
@@ -117,7 +117,12 @@ async def validate_cookie_page(page, platform_type, *, settle_seconds=0.5):
     expected_paths = tuple(str(item or "").strip().lower() for item in (url_hints.get("paths") or ()))
     host_matches = not expected_hosts or any(host_hint in current_host for host_hint in expected_hosts)
     path_matches = not expected_paths or any(path_hint in current_path for path_hint in expected_paths)
-    if (expected_hosts or expected_paths) and not (host_matches and path_matches):
+    if expected_hosts and not host_matches:
+        message = f"本地 cookie 已失效，未进入预期站点: {current_url}"
+        platform_logger.error("[+] {}", message)
+        return _cookie_check_result(False, "unexpected_page", message, current_url=current_url)
+
+    if require_success_path and expected_paths and not path_matches:
         message = f"本地 cookie 已失效，未进入预期页面: {current_url}"
         platform_logger.error("[+] {}", message)
         return _cookie_check_result(False, "unexpected_page", message, current_url=current_url)
@@ -128,6 +133,15 @@ async def validate_cookie_page(page, platform_type, *, settle_seconds=0.5):
 
 async def validate_active_cookie_page(page, platform_type, *, settle_seconds=0.5):
     return await validate_cookie_page(page, platform_type, settle_seconds=settle_seconds)
+
+
+async def validate_login_completion_page(page, platform_type, *, settle_seconds=0.5):
+    return await validate_cookie_page(
+        page,
+        platform_type,
+        settle_seconds=settle_seconds,
+        require_success_path=False,
+    )
 
 
 async def validate_active_tencent_page(page, *, settle_seconds=0.5):
@@ -150,6 +164,28 @@ async def validate_active_tencent_page(page, *, settle_seconds=0.5):
             current_url=page.url,
         )
     return await validate_cookie_page(page, 2, settle_seconds=0)
+
+
+async def validate_login_completion_tencent_page(page, *, settle_seconds=0.5):
+    if settle_seconds > 0:
+        await asyncio.sleep(settle_seconds)
+
+    iframe = page.frame_locator("iframe").first
+    if await has_visible_text(iframe, VERIFICATION_PAGE_HINTS):
+        return _cookie_check_result(
+            False,
+            "verification_required",
+            "本地 cookie 尚未完成验证，视频号当前仍停留在二次验证页面",
+            current_url=page.url,
+        )
+    if await has_visible_text(iframe, LOGIN_PAGE_HINTS.get(2, [])):
+        return _cookie_check_result(
+            False,
+            "login_required",
+            "本地 cookie 尚未完成登录，视频号当前仍停留在登录页",
+            current_url=page.url,
+        )
+    return await validate_login_completion_page(page, 2, settle_seconds=0)
 
 
 async def validate_active_page_detail(platform_type, page, *, settle_seconds=0.5, retries=3, retry_delay_seconds=1.0):
@@ -178,6 +214,34 @@ async def validate_active_page_detail(platform_type, page, *, settle_seconds=0.5
             return result
 
     return last_result or _cookie_check_result(False, "error", "页面登录态校验失败", current_url=page.url)
+
+
+async def validate_login_completion_detail(platform_type, page, *, settle_seconds=0.5, retries=3, retry_delay_seconds=1.0):
+    attempts = max(int(retries), 1)
+    last_result = None
+
+    for attempt in range(attempts):
+        if platform_type == 2:
+            result = await validate_login_completion_tencent_page(
+                page,
+                settle_seconds=settle_seconds if attempt == 0 else retry_delay_seconds,
+            )
+        else:
+            result = await validate_login_completion_page(
+                page,
+                platform_type,
+                settle_seconds=settle_seconds if attempt == 0 else retry_delay_seconds,
+            )
+
+        last_result = result
+        if result.get("ok"):
+            return result
+
+        state = str(result.get("state") or "").strip()
+        if state in {"login_required", "verification_required", "missing_storage", "unsupported_platform"}:
+            return result
+
+    return last_result or _cookie_check_result(False, "error", "页面登录完成校验失败", current_url=page.url)
 
 
 def _load_storage_state(account_ref):

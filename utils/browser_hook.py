@@ -14,7 +14,12 @@ COMMON_BROWSER_PATHS = [
 ]
 
 
-def resolve_browser_executable_path():
+def resolve_browser_executable_path(*, headless=False):
+    if headless:
+        # Headless validation works better with Playwright's bundled Chromium.
+        # Avoid forcing the local Chrome app so macOS does not briefly bounce the
+        # dock icon for background cookie checks.
+        return None
     for candidate in COMMON_BROWSER_PATHS:
         if not candidate:
             continue
@@ -51,7 +56,7 @@ def get_browser_options(headless=None, extra_args=None):
         "args": deduped_args,
     }
 
-    executable_path = resolve_browser_executable_path()
+    executable_path = resolve_browser_executable_path(headless=actual_headless)
     if executable_path:
         options["executable_path"] = executable_path
 
