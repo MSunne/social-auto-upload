@@ -130,7 +130,9 @@ export function PartnersView() {
               {error && (
                 <tr>
                   <td colSpan={6} className="px-6 py-10 text-center text-sm text-red-500">
-                    加载失败，请稍后重试
+                    {error instanceof Error && error.message.trim()
+                      ? `加载失败：${error.message.trim()}`
+                      : "加载失败，请稍后重试"}
                   </td>
                 </tr>
               )}

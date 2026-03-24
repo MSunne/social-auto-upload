@@ -290,7 +290,11 @@ class PublishTaskManager:
         ):
             return False
 
-        if str(task.get("status") or "").strip() not in {"pending", "scheduled", "failed"}:
+        current_status = str(task.get("status") or "").strip()
+        current_message = str(task.get("message") or "").strip()
+        if current_status not in {"pending", "scheduled", "failed"}:
+            return False
+        if current_status == "failed" and current_message != RESTART_INTERRUPTED_MESSAGE:
             return False
 
         with self._connect() as conn:
@@ -308,7 +312,10 @@ class PublishTaskManager:
                     updated_at = CURRENT_TIMESTAMP
                 WHERE task_uuid = ?
                   AND source = 'omnidrive_ai'
-                  AND status IN ('pending', 'scheduled', 'failed')
+                  AND (
+                      status IN ('pending', 'scheduled')
+                      OR (status = 'failed' AND message = ?)
+                  )
                 ''',
                 (
                     intended_run_at,
@@ -316,6 +323,7 @@ class PublishTaskManager:
                     next_status,
                     next_message,
                     task_uuid,
+                    RESTART_INTERRUPTED_MESSAGE,
                 ),
             )
             changed = cursor.rowcount == 1

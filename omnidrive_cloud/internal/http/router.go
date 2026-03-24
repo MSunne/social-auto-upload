@@ -48,7 +48,10 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Route("/auth", func(auth chi.Router) {
 			auth.Post("/register", authHandler.Register)
+			auth.Post("/register/sms-code", authHandler.SendRegisterSMSCode)
 			auth.Post("/login", authHandler.Login)
+			auth.Post("/login/phone", authHandler.LoginWithPhone)
+			auth.Post("/login/password", authHandler.LoginWithPassword)
 			auth.With(authmiddleware.RequireUser(app)).Get("/me", authHandler.Me)
 		})
 

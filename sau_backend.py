@@ -3082,7 +3082,6 @@ def run_async_function(type,id,status_queue,command_queue=None):
                         1 if is_valid else 0,
                         None if is_valid else failure_message,
                     )
-
                     if is_valid:
                         print(f"✅ {id} 本地 Cookie 验证成功！直接进入等效登录完成状态。")
                         if status_queue is not None:

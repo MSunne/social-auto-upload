@@ -328,8 +328,60 @@ func compactJSONPayloadFromBytes(raw []byte) json.RawMessage {
 	return payload
 }
 
+type adminAIJobScheduleMeta struct {
+	GenerateAt  *time.Time
+	PublishAt   *time.Time
+	RepeatDaily bool
+	TimeOfDay   string
+	ScheduleKey string
+}
+
+func extractAdminAIJobScheduleMeta(job domain.AIJob) adminAIJobScheduleMeta {
+	meta := adminAIJobScheduleMeta{GenerateAt: job.RunAt}
+	if len(job.InputPayload) == 0 {
+		return meta
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(job.InputPayload, &payload); err != nil {
+		return meta
+	}
+	if meta.GenerateAt == nil {
+		if runAtRaw, _ := payload["runAt"].(string); strings.TrimSpace(runAtRaw) != "" {
+			if parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(runAtRaw)); err == nil {
+				meta.GenerateAt = &parsed
+			}
+		}
+	}
+	if publishAtRaw, _ := payload["publishAt"].(string); strings.TrimSpace(publishAtRaw) != "" {
+		if parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(publishAtRaw)); err == nil {
+			meta.PublishAt = &parsed
+		}
+	}
+	scheduleRaw, _ := payload["scheduleConfig"].(map[string]any)
+	if scheduleRaw == nil {
+		return meta
+	}
+	meta.RepeatDaily, _ = scheduleRaw["repeatDaily"].(bool)
+	meta.TimeOfDay, _ = scheduleRaw["timeOfDay"].(string)
+	meta.ScheduleKey, _ = scheduleRaw["scheduleKey"].(string)
+	return meta
+}
+
+func formatAdminAIJobScheduleSummary(meta adminAIJobScheduleMeta) string {
+	if !meta.RepeatDaily {
+		return ""
+	}
+	if strings.TrimSpace(meta.TimeOfDay) != "" {
+		return fmt.Sprintf("同一循环任务，每天 %s 发布", strings.TrimSpace(meta.TimeOfDay))
+	}
+	return "同一循环任务，每天按时发布"
+}
+
 func pickJobLifecycleTitle(status string) string {
 	switch strings.TrimSpace(status) {
+	case "scheduled":
+		return "已安排下一次执行"
 	case "queued":
 		return "作业进入队列"
 	case "running":
@@ -362,10 +414,17 @@ func buildAIJobExecutionLogs(workspace *domain.AdminAIJobWorkspace) []domain.Adm
 
 	job := workspace.Record.Job
 	entries := make([]domain.AdminExecutionLog, 0, len(workspace.RecentAudits)+len(workspace.Artifacts)+len(workspace.PublishTasks)+len(workspace.BillingUsageEvents)+4)
+	scheduleMeta := extractAdminAIJobScheduleMeta(job)
 
 	createdMessage := fmt.Sprintf("来源：%s", strings.TrimSpace(job.Source))
-	if job.RunAt != nil {
-		createdMessage += fmt.Sprintf(" · 计划执行：%s", job.RunAt.Format(time.RFC3339))
+	if scheduleMeta.GenerateAt != nil {
+		createdMessage += fmt.Sprintf(" · 计划生成：%s", scheduleMeta.GenerateAt.Format(time.RFC3339))
+	}
+	if scheduleMeta.PublishAt != nil {
+		createdMessage += fmt.Sprintf(" · 计划发布：%s", scheduleMeta.PublishAt.Format(time.RFC3339))
+	}
+	if summary := formatAdminAIJobScheduleSummary(scheduleMeta); summary != "" {
+		createdMessage += " · " + summary
 	}
 	entries = append(entries, domain.AdminExecutionLog{
 		ID:        "job-created",
@@ -378,7 +437,7 @@ func buildAIJobExecutionLogs(workspace *domain.AdminAIJobWorkspace) []domain.Adm
 		Payload:   compactJSONPayload(job.InputPayload),
 	})
 
-	if job.RunAt != nil {
+	if scheduleMeta.GenerateAt != nil {
 		runMessage := "到达计划执行时间，准备进入模型调用。"
 		entries = append(entries, domain.AdminExecutionLog{
 			ID:        "job-scheduled",
@@ -387,7 +446,7 @@ func buildAIJobExecutionLogs(workspace *domain.AdminAIJobWorkspace) []domain.Adm
 			Title:     "进入调度窗口",
 			Message:   &runMessage,
 			Source:    "scheduler",
-			Timestamp: *job.RunAt,
+			Timestamp: *scheduleMeta.GenerateAt,
 		})
 	}
 

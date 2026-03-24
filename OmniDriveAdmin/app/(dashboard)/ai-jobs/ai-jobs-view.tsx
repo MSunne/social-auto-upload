@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/ui/common";
 import { useAdminAIJobs, useBulkActionAIJobs } from "@/lib/hooks/useAdminAIJobs";
 import type { AdminAIJobRow } from "@/lib/types";
 import { AIJobDetailDrawer } from "./ai-job-detail-drawer";
+import { describeJobSchedule, extractJobScheduleMeta } from "./schedule-meta";
 
 const STATUS_OPTIONS = [
   { value: "", label: "全部" },
@@ -65,6 +66,22 @@ function getCategoryColor(category?: string) {
   }
 }
 
+function getJobMessageTone(status: string, message?: string | null) {
+  if (!message) {
+    return "text-[var(--color-text-secondary)]";
+  }
+  if (status === "failed" || status === "cancelled") {
+    return "text-red-600";
+  }
+  if (status === "scheduled") {
+    return "text-cyan-700";
+  }
+  if (status === "success" || status === "completed") {
+    return message.includes("计费待处理") ? "text-amber-700" : "text-emerald-700";
+  }
+  return "text-[var(--color-text-secondary)]";
+}
+
 function StatusPill({ status }: { status: string }) {
   const tone = STATUS_CLASS[status] || "border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]";
   return (
@@ -85,6 +102,10 @@ function JobRow({
   onToggleSelect: () => void;
   onOpenDetail: () => void;
 }) {
+  const scheduleMeta = extractJobScheduleMeta(row.job);
+  const scheduleDescription = describeJobSchedule(scheduleMeta);
+  const messageTone = getJobMessageTone(row.job.status, row.job.message);
+
   return (
     <tr className={selected ? "bg-[var(--color-primary)]/5" : "hover:bg-[var(--color-bg-secondary)]/35"}>
       <td className="px-3 py-3 align-top">
@@ -120,15 +141,29 @@ function JobRow({
           <p className="text-xs text-[var(--color-text-secondary)]">
             积分 {row.job.costCredits.toLocaleString()} · 产物 {row.artifactCount} · 关联发布任务 {row.publishTaskCount}
           </p>
+          {scheduleDescription ? (
+            <p className="text-xs text-cyan-700">{scheduleDescription}</p>
+          ) : null}
           <p className="text-xs text-[var(--color-text-secondary)]">投递 {row.job.deliveryStatus || "—"}</p>
         </div>
       </td>
       <td className="px-3 py-3 align-top">
         <div className="space-y-1">
           <p className="text-sm text-[var(--color-text-primary)]">{formatCompactTime(row.job.createdAt)}</p>
-          <p className="text-xs text-[var(--color-text-secondary)]">更新 {formatCompactTime(row.job.updatedAt)}</p>
+          {scheduleMeta.generateAt ? (
+            <p className="text-xs text-[var(--color-text-secondary)]">
+              计划生成 {formatCompactTime(scheduleMeta.generateAt)}
+            </p>
+          ) : (
+            <p className="text-xs text-[var(--color-text-secondary)]">更新 {formatCompactTime(row.job.updatedAt)}</p>
+          )}
+          {scheduleMeta.publishAt ? (
+            <p className="text-xs text-[var(--color-text-secondary)]">
+              计划发布 {formatCompactTime(scheduleMeta.publishAt)}
+            </p>
+          ) : null}
           {row.job.message ? (
-            <p className="line-clamp-2 max-w-[240px] text-xs leading-5 text-red-600" title={row.job.message}>
+            <p className={`line-clamp-2 max-w-[240px] text-xs leading-5 ${messageTone}`} title={row.job.message}>
               {row.job.message}
             </p>
           ) : null}

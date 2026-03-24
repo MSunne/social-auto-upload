@@ -126,6 +126,5 @@ class AccountStorageTestCase(unittest.TestCase):
         self.assertIsNotNone(migrated_row["storageStateJson"])
         self.assertEqual(json.loads(migrated_row["storageStateJson"]), SAMPLE_STORAGE_STATE)
 
-
 if __name__ == "__main__":
     unittest.main()

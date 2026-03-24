@@ -35,6 +35,7 @@ const JOB_TYPE_OPTIONS = [
 const STATUS_OPTIONS = [
   { value: "", label: "全部状态" },
   { value: "billed", label: "已计费" },
+  { value: "returned", label: "已返还" },
   { value: "failed", label: "计费失败" },
   { value: "paid", label: "已支付" },
   { value: "pending_payment", label: "待支付" },
@@ -46,6 +47,8 @@ const ENTRY_TYPE_LABELS: Record<string, string> = {
   recharge: "充值入账",
   consume: "算力消耗",
   refund: "退款返还",
+  usage_refund: "任务失败返还积分",
+  usage_return: "任务失败返还积分",
   grant: "赠送积分",
   manual_compensation: "人工补偿",
   manual_deduction: "人工扣减",
@@ -93,7 +96,23 @@ function renderActivityStatus(status?: string | null) {
   if (status === "billed") {
     return <span className="inline-flex rounded-full bg-success/10 px-2.5 py-1 text-xs font-medium text-success">已计费</span>;
   }
+  if (status === "returned" || status === "refunded") {
+    return <span className="inline-flex rounded-full bg-info/10 px-2.5 py-1 text-xs font-medium text-info">已返还</span>;
+  }
   return <StatusBadge status={status} />;
+}
+
+function getPayloadRecord(item: BillingActivity): Record<string, unknown> | null {
+  if (!item.payload || typeof item.payload !== "object") {
+    return null;
+  }
+  return item.payload as Record<string, unknown>;
+}
+
+function getPayloadNumber(item: BillingActivity, key: string) {
+  const payload = getPayloadRecord(item);
+  const value = payload?.[key];
+  return typeof value === "number" ? value : 0;
 }
 
 function getActivityTypeLabel(item: BillingActivity) {
@@ -141,6 +160,16 @@ function getActivityAmount(item: BillingActivity) {
       meta: "",
       tone: isIncome ? "text-success" : "text-warning",
     };
+  }
+  if (item.status === "returned" || item.status === "refunded") {
+    const returnedCredits = getPayloadNumber(item, "returnedCredits") || getPayloadNumber(item, "refundedCredits");
+    if (returnedCredits > 0) {
+      return {
+        text: `+${returnedCredits.toLocaleString("zh-CN")} 积分`,
+        meta: "任务失败已自动返还积分",
+        tone: "text-success",
+      };
+    }
   }
   if (typeof item.debitedCredits === "number") {
     return {

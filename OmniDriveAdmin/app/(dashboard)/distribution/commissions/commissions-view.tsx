@@ -57,7 +57,15 @@ function extractReleaseMeta(item: AdminCommissionReleaseEvent) {
   if (typeof quotaUsed === "number" && quotaUsed > 0) {
     values.push(`套餐抵扣 ${quotaUsed}`);
   }
+  const returnReason = metadata.returnReason ?? metadata.refundReason;
+  if (typeof returnReason === "string" && returnReason.trim()) {
+    values.push("失败返还");
+  }
   return values;
+}
+
+function isReversalRelease(item: AdminCommissionReleaseEvent) {
+  return item.consumedCreditsDelta < 0 || item.releasedAmountDeltaCents < 0;
 }
 
 function CommissionTracePanel({ commissionId }: { commissionId: string }) {
@@ -82,7 +90,12 @@ function CommissionTracePanel({ commissionId }: { commissionId: string }) {
 
   return (
     <div className="space-y-3">
-      {data.map((item) => (
+      {data.map((item) => {
+        const isReversal = isReversalRelease(item);
+        const amountTone = isReversal ? "text-red-400" : "text-[var(--color-primary)]";
+        const creditsTone = isReversal ? "text-red-400" : "text-[var(--color-text-primary)]";
+
+        return (
         <div key={item.id} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
@@ -100,12 +113,12 @@ function CommissionTracePanel({ commissionId }: { commissionId: string }) {
             </div>
             <div className="grid min-w-[180px] grid-cols-2 gap-2 text-right text-xs">
               <div className="rounded-lg bg-[var(--color-bg-secondary)] px-3 py-2">
-                <div className="text-[var(--color-text-secondary)]">释放积分</div>
-                <div className="mt-1 font-semibold text-[var(--color-text-primary)]">{item.consumedCreditsDelta}</div>
+                <div className="text-[var(--color-text-secondary)]">{isReversal ? "回退积分" : "释放积分"}</div>
+                <div className={`mt-1 font-semibold ${creditsTone}`}>{item.consumedCreditsDelta}</div>
               </div>
               <div className="rounded-lg bg-[var(--color-bg-secondary)] px-3 py-2">
-                <div className="text-[var(--color-text-secondary)]">新增佣金</div>
-                <div className="mt-1 font-semibold text-[var(--color-primary)]">{formatCurrency(item.releasedAmountDeltaCents)}</div>
+                <div className="text-[var(--color-text-secondary)]">{isReversal ? "回退佣金" : "新增佣金"}</div>
+                <div className={`mt-1 font-semibold ${amountTone}`}>{formatCurrency(item.releasedAmountDeltaCents)}</div>
               </div>
               <div className="rounded-lg bg-[var(--color-bg-secondary)] px-3 py-2">
                 <div className="text-[var(--color-text-secondary)]">累计消耗</div>
@@ -118,7 +131,8 @@ function CommissionTracePanel({ commissionId }: { commissionId: string }) {
             </div>
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

@@ -382,13 +382,13 @@ export function SkillEditorModal({
       ];
 
   return (
-    <div className="fixed inset-0 z-[90] overflow-y-auto bg-[#050814]/85 px-4 py-4 backdrop-blur-xl sm:px-6 sm:py-6">
+    <div className="fixed inset-0 z-[90] bg-[#050814]/85 px-4 py-4 backdrop-blur-xl sm:px-6 sm:py-6">
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute left-[-10%] top-[-8%] h-64 w-64 rounded-full bg-accent/14 blur-3xl" />
         <div className="absolute bottom-[-8%] right-[-5%] h-64 w-64 rounded-full bg-cyan/12 blur-3xl" />
       </div>
 
-      <div className="relative mx-auto flex h-[calc(100vh-2rem)] max-w-[1260px]">
+      <div className="relative mx-auto flex h-[calc(100vh-2rem)] max-w-[1260px] items-stretch sm:h-[calc(100vh-3rem)]">
         <div className="flex w-full flex-col overflow-hidden rounded-[30px] border border-white/10 bg-[#08111f]/96 shadow-[0_28px_100px_rgba(0,0,0,0.52)]">
           <div className="border-b border-white/10 bg-[linear-gradient(135deg,rgba(177,73,255,0.14),rgba(0,245,212,0.05)_40%,rgba(8,17,31,0)_72%)] px-6 py-6 sm:px-8">
             <div className="flex items-start justify-between gap-4">
@@ -402,10 +402,10 @@ export function SkillEditorModal({
                     {skill ? "编辑技能" : "新增技能"}
                   </h3>
                   <p className="mt-2 max-w-3xl text-sm leading-6 text-text-secondary">
-                    先选产出和模型，再决定是否开启分镜，发布时间改到账号任务页单独安排。
+                    先选产出和模型，再决定是否开启分镜，然后上传参考素材。
                   </p>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="mt-1 flex flex-wrap gap-2">
                   <BadgeChip label={`节点 ${deviceId.slice(0, 8)}`} />
                   <BadgeChip label={form.storyboardEnabled ? "分镜优化开启" : "分镜优化关闭"} active={form.storyboardEnabled} />
                   <BadgeChip label={form.isEnabled ? "技能启用中" : "技能已暂停"} active={form.isEnabled} tone="emerald" />
@@ -427,8 +427,8 @@ export function SkillEditorModal({
 
           <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_292px]">
-              <div className="px-6 py-6 sm:px-8">
-                <div className="space-y-6">
+              <div className="px-6 py-8 sm:px-8">
+                <div className="space-y-8">
                   <SectionCard
                     title="基础设定"
                     description="先把这条技能的目标和最终产出说清楚。"
@@ -554,15 +554,15 @@ export function SkillEditorModal({
                       />
                     </div>
 
-                      <div className="rounded-[24px] border border-white/10 bg-[#0d1729] p-4">
-                        <div className="flex items-center gap-2 text-sm font-medium text-white">
-                          <Cpu className="h-4 w-4 text-cyan" />
-                          最终执行模型
-                        </div>
-                        <p className="mt-2 text-sm leading-6 text-text-secondary">
-                          这里只选一个最终模型，方便按质量、速度和成本做取舍。分镜模型在系统侧单独配置。
-                        </p>
+                    <div className="rounded-[24px] border border-white/10 bg-[#0d1729] p-4">
+                      <div className="flex items-center gap-2 text-sm font-medium text-white">
+                        <Cpu className="h-4 w-4 text-cyan" />
+                        最终执行模型
                       </div>
+                      <p className="mt-2 text-sm leading-6 text-text-secondary">
+                        这里只选一个最终模型，方便按质量、速度和成本做取舍。分镜模型在系统侧单独配置。
+                      </p>
+                    </div>
 
                     {modelsLoading ? (
                       <InlineLoading label="正在读取可用模型..." />
@@ -741,7 +741,7 @@ export function SkillEditorModal({
                 </div>
               </div>
 
-              <aside className="border-t border-white/10 bg-white/[0.03] px-6 py-6 xl:border-l xl:border-t-0 xl:px-5">
+              <aside className="border-t border-white/10 bg-white/[0.03] px-6 py-8 xl:border-l xl:border-t-0 xl:px-5">
                 <div className="space-y-4">
                   <SidebarCard title="执行概览" icon={<Sparkles className="h-4 w-4 text-accent" />}>
                     <div className="grid gap-3">
@@ -765,7 +765,7 @@ export function SkillEditorModal({
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center justify-end gap-3 border-t border-white/10 bg-[#091221]/92 px-6 py-4 sm:px-8">
+          <div className="flex shrink-0 items-center justify-end gap-3 border-t border-white/10 bg-[linear-gradient(to_right,#091221,#0b1628)] px-6 py-5 shadow-[0_-12px_40px_rgba(0,0,0,0.4)] sm:px-8">
             <button
               type="button"
               onClick={() => {
@@ -803,11 +803,11 @@ function SectionCard({
 }) {
   return (
     <section className="overflow-hidden rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.03))]">
-      <div className="border-b border-white/10 bg-white/[0.03] px-5 py-5 sm:px-6">
+      <div className="border-b border-white/10 bg-white/[0.03] px-5 py-4 sm:px-6">
         <h4 className="text-lg font-semibold text-white">{title}</h4>
-        <p className="mt-2 text-sm leading-6 text-text-secondary">{description}</p>
+        <p className="mt-1.5 text-sm leading-6 text-text-secondary">{description}</p>
       </div>
-      <div className="px-5 py-5 sm:px-6">{children}</div>
+      <div className="space-y-5 px-5 py-5 sm:px-6">{children}</div>
     </section>
   );
 }

@@ -17,7 +17,7 @@ func (s *Store) GrantWalletCredits(ctx context.Context, input GrantWalletCredits
 	}
 	defer tx.Rollback(ctx)
 
-	if err := s.grantWalletCreditsTx(ctx, tx, input); err != nil {
+	if _, err := s.grantWalletCreditsTx(ctx, tx, input); err != nil {
 		return err
 	}
 
@@ -38,12 +38,12 @@ func (s *Store) GrantQuota(ctx context.Context, input GrantQuotaInput) error {
 	return tx.Commit(ctx)
 }
 
-func (s *Store) grantWalletCreditsTx(ctx context.Context, tx pgx.Tx, input GrantWalletCreditsInput) error {
+func (s *Store) grantWalletCreditsTx(ctx context.Context, tx pgx.Tx, input GrantWalletCreditsInput) (string, error) {
 	if strings.TrimSpace(input.UserID) == "" {
-		return fmt.Errorf("user id is required")
+		return "", fmt.Errorf("user id is required")
 	}
 	if input.Amount <= 0 {
-		return fmt.Errorf("wallet grant amount must be positive")
+		return "", fmt.Errorf("wallet grant amount must be positive")
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -51,7 +51,7 @@ func (s *Store) grantWalletCreditsTx(ctx context.Context, tx pgx.Tx, input Grant
 		VALUES ($1, 0, 0)
 		ON CONFLICT (user_id) DO NOTHING
 	`, input.UserID); err != nil {
-		return err
+		return "", err
 	}
 
 	var before int64
@@ -61,7 +61,7 @@ func (s *Store) grantWalletCreditsTx(ctx context.Context, tx pgx.Tx, input Grant
 		WHERE user_id = $1
 		FOR UPDATE
 	`, input.UserID).Scan(&before); err != nil {
-		return err
+		return "", err
 	}
 
 	after := before + input.Amount
@@ -71,7 +71,7 @@ func (s *Store) grantWalletCreditsTx(ctx context.Context, tx pgx.Tx, input Grant
 		    updated_at = NOW()
 		WHERE user_id = $1
 	`, input.UserID, after); err != nil {
-		return err
+		return "", err
 	}
 
 	description := input.Description
@@ -87,15 +87,16 @@ func (s *Store) grantWalletCreditsTx(ctx context.Context, tx pgx.Tx, input Grant
 	quantity := input.Amount
 	unit := "credit"
 
+	ledgerID := uuid.NewString()
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO wallet_ledgers (
 			id, user_id, entry_type, amount_delta, balance_before, balance_after, meter_code, quantity,
 			unit, description, reference_type, reference_id, recharge_order_id, payment_transaction_id, metadata
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-	`, uuid.NewString(), input.UserID, entryType, input.Amount, before, after, meterCode, quantity, unit,
+	`, ledgerID, input.UserID, entryType, input.Amount, before, after, meterCode, quantity, unit,
 		description, input.ReferenceType, input.ReferenceID, input.RechargeOrderID, input.PaymentTransactionID, input.Metadata); err != nil {
-		return err
+		return "", err
 	}
 
 	if commissionItemID := trimOptionalString(input.DistributionCommissionItemID); commissionItemID != nil {
@@ -110,11 +111,11 @@ func (s *Store) grantWalletCreditsTx(ctx context.Context, tx pgx.Tx, input Grant
 			)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $7, $8, 'active', $9)
 		`, uuid.NewString(), input.UserID, input.RechargeOrderID, commissionItemID, input.ReferenceType, input.ReferenceID, input.Amount, releaseUnitCredits, input.Metadata); err != nil {
-			return err
+			return "", err
 		}
 	}
 
-	return nil
+	return ledgerID, nil
 }
 
 func (s *Store) grantQuotaTx(ctx context.Context, tx pgx.Tx, input GrantQuotaInput) error {

@@ -110,9 +110,46 @@ CREATE TABLE IF NOT EXISTS admin_system_configs (
     image_storyboard_prompt_template TEXT NOT NULL DEFAULT '',
     image_storyboard_model TEXT NOT NULL DEFAULT '',
     image_storyboard_reference_payload JSONB NOT NULL DEFAULT '[]'::jsonb,
+    sms_registration_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    sms_registration_provider TEXT NOT NULL DEFAULT 'aliyun_dypnsapi',
+    sms_registration_endpoint TEXT NOT NULL DEFAULT 'dypnsapi.aliyuncs.com',
+    sms_registration_access_key_id TEXT NOT NULL DEFAULT '',
+    sms_registration_access_key_secret TEXT NOT NULL DEFAULT '',
+    sms_registration_sign_name TEXT NOT NULL DEFAULT '',
+    sms_registration_template_code TEXT NOT NULL DEFAULT '',
+    sms_registration_template_param TEXT NOT NULL DEFAULT '{"code":"##code##"}',
+    sms_registration_scheme_name TEXT NOT NULL DEFAULT '',
+    sms_registration_default_country_code TEXT NOT NULL DEFAULT '86',
+    sms_registration_valid_minutes INT NOT NULL DEFAULT 10,
+    sms_registration_cooldown_seconds INT NOT NULL DEFAULT 60,
+    sms_registration_daily_limit INT NOT NULL DEFAULT 10,
+    sms_registration_code_length INT NOT NULL DEFAULT 6,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS phone_verification_codes (
+    id TEXT PRIMARY KEY,
+    scene TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    country_code TEXT NOT NULL DEFAULT '86',
+    status TEXT NOT NULL DEFAULT 'pending',
+    provider TEXT NOT NULL,
+    provider_request_id TEXT,
+    provider_biz_id TEXT,
+    provider_code TEXT,
+    provider_message TEXT,
+    template_code TEXT,
+    expires_at TIMESTAMPTZ NOT NULL,
+    verified_at TIMESTAMPTZ,
+    consumed_at TIMESTAMPTZ,
+    attempt_count INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_phone_verification_codes_lookup
+    ON phone_verification_codes (phone, country_code, scene, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS devices (
     id TEXT PRIMARY KEY,
@@ -388,6 +425,20 @@ ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS storyboard_reference_p
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS image_storyboard_prompt_template TEXT NOT NULL DEFAULT '';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS image_storyboard_model TEXT NOT NULL DEFAULT '';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS image_storyboard_reference_payload JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_provider TEXT NOT NULL DEFAULT 'aliyun_dypnsapi';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_endpoint TEXT NOT NULL DEFAULT 'dypnsapi.aliyuncs.com';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_access_key_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_access_key_secret TEXT NOT NULL DEFAULT '';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_sign_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_template_code TEXT NOT NULL DEFAULT '';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_template_param TEXT NOT NULL DEFAULT '{"code":"##code##"}';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_scheme_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_default_country_code TEXT NOT NULL DEFAULT '86';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_valid_minutes INT NOT NULL DEFAULT 10;
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_cooldown_seconds INT NOT NULL DEFAULT 60;
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_daily_limit INT NOT NULL DEFAULT 10;
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_code_length INT NOT NULL DEFAULT 6;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_chat_model TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_image_model TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_video_model TEXT;

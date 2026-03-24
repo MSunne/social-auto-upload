@@ -331,7 +331,7 @@ func (s *Store) CreditSupportRecharge(ctx context.Context, orderID string, input
 		}
 
 		if entitlement.MeterCode == "wallet_credit" {
-			if err := s.grantWalletCreditsTx(ctx, tx, GrantWalletCreditsInput{
+			if _, err := s.grantWalletCreditsTx(ctx, tx, GrantWalletCreditsInput{
 				UserID:                       order.UserID,
 				Amount:                       entitlement.GrantAmount,
 				EntryType:                    &entryType,

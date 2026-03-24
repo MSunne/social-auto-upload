@@ -1,6 +1,9 @@
 package store
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestPlanUsageChargeWalletOnly(t *testing.T) {
 	detail, walletPlan, quotaPlans, ok := planUsageCharge(
@@ -141,5 +144,45 @@ func TestPlanUsageChargeSupportsDynamicQuantityFromMetricMetadata(t *testing.T) 
 	}
 	if walletPlan.quantity != 8 || walletPlan.debitCredits != 40 {
 		t.Fatalf("unexpected dynamic quantity wallet plan: %#v", walletPlan)
+	}
+}
+
+func TestSupportsFailureRefundForUsage(t *testing.T) {
+	if supportsFailureRefundForUsage(pricingRuleRecord{QuantityMetaKey: "durationSeconds"}, "video_generations") {
+		t.Fatalf("expected per-second video billing to skip failure refund")
+	}
+	if supportsFailureRefundForUsage(pricingRuleRecord{}, "chat_output_tokens") {
+		t.Fatalf("expected chat token billing to skip failure refund")
+	}
+	if !supportsFailureRefundForUsage(pricingRuleRecord{}, "image_generations") {
+		t.Fatalf("expected per-count image billing to support failure refund")
+	}
+}
+
+func TestQuotaUsageReturnCredits(t *testing.T) {
+	if got := quotaUsageReturnCredits(6, nil, 3); got != 18 {
+		t.Fatalf("expected quota return credits from stored snapshot, got %d", got)
+	}
+
+	payload := decodeUsageEventPayload(mustJSONMap(map[string]any{"creditValue": 15}))
+	if got := quotaUsageReturnCredits(0, payload, 2); got != 15 {
+		t.Fatalf("expected quota return credits from payload credit value, got %d", got)
+	}
+
+	payload = decodeUsageEventPayload(mustJSONMap(map[string]any{"releaseUnitCredits": 4}))
+	if got := quotaUsageReturnCredits(0, payload, 2); got != 8 {
+		t.Fatalf("expected quota return credits from payload release unit credits, got %d", got)
+	}
+}
+
+func TestAIModelSelectColumnsIncludeSupportedFileTypes(t *testing.T) {
+	if !strings.Contains(aiModelSelectColumns, "supported_file_types") {
+		t.Fatalf("aiModelSelectColumns must include supported_file_types for scanAIModel")
+	}
+}
+
+func TestAdminAIJobSelectColumnsIncludeRunAt(t *testing.T) {
+	if !strings.Contains(adminAIJobSelectColumns, "aj.run_at") {
+		t.Fatalf("adminAIJobSelectColumns must include aj.run_at so scheduled jobs render correctly")
 	}
 }

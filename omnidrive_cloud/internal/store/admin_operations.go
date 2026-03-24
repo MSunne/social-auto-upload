@@ -82,7 +82,7 @@ const adminAIJobSelectColumns = `
 	aj.job_type, aj.model_name, aj.prompt, aj.status, aj.input_payload, aj.output_payload,
 	aj.message, aj.notes, aj.exception_reason, aj.risk_tags, aj.cost_credits, aj.lease_owner_device_id, aj.lease_token,
 	aj.lease_expires_at, aj.delivery_status, aj.delivery_message, aj.local_publish_task_id,
-	aj.created_at, aj.updated_at, aj.delivered_at, aj.finished_at
+	aj.run_at, aj.created_at, aj.updated_at, aj.delivered_at, aj.finished_at
 `
 
 func scanAdminUserRow(scan scanFn) (*domain.AdminUserRow, error) {
@@ -413,6 +413,7 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 	var leaseExpiresAt *time.Time
 	var deliveryMessage *string
 	var localPublishTaskID *string
+	var runAt *time.Time
 	var deliveredAt *time.Time
 	var finishedAt *time.Time
 	var ownerID *string
@@ -457,6 +458,7 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 		&item.Job.DeliveryStatus,
 		&deliveryMessage,
 		&localPublishTaskID,
+		&runAt,
 		&item.Job.CreatedAt,
 		&item.Job.UpdatedAt,
 		&deliveredAt,
@@ -500,6 +502,7 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 	item.Job.LeaseExpiresAt = leaseExpiresAt
 	item.Job.DeliveryMessage = deliveryMessage
 	item.Job.LocalPublishTaskID = localPublishTaskID
+	item.Job.RunAt = runAt
 	item.Job.DeliveredAt = deliveredAt
 	item.Job.FinishedAt = finishedAt
 

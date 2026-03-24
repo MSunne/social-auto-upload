@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CalendarClock, Check, Loader2, Plus, Repeat, Sparkles, Trash2, X } from "lucide-react";
+import { CalendarClock, Check, ChevronRight, Loader2, Plus, Repeat, Search, Sparkles, Trash2, X } from "lucide-react";
 import type { AIJob, AccountSkillScheduleSlot, Skill } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { normalizeSkillOutputLabel } from "@/lib/workflow";
@@ -108,6 +108,64 @@ function resolveJobScheduleSlot(job?: AIJob | null): AccountSkillScheduleSlot {
   };
 }
 
+function TimeInput({ value, onChange }: { value: string; onChange: (val: string) => void }) {
+  const parts = value.split(":");
+  const h = parts[0] || "00";
+  const m = parts[1] || "00";
+  const s = parts[2] || "00";
+
+  const updatePart = (index: number, v: string) => {
+    const newParts = [...parts];
+    newParts[index] = v.padStart(2, "0");
+    onChange(newParts.slice(0, 3).join(":"));
+  };
+
+  const handleBlur = (index: number, max: number, e: React.FocusEvent<HTMLInputElement>) => {
+    let num = parseInt(e.target.value || "0", 10);
+    if (isNaN(num)) num = 0;
+    if (num > max) num = max;
+    updatePart(index, num.toString());
+  };
+
+  const handleChange = (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value.replace(/\D/g, "").slice(0, 2);
+    const newParts = [...parts];
+    newParts[index] = val; // Store temporarily as typed
+    onChange(newParts.slice(0, 3).join(":"));
+  };
+
+  return (
+    <div className="flex h-11 items-center justify-center gap-1 rounded-2xl border border-white/10 bg-white/6 px-4 text-base font-semibold tracking-widest text-white transition-all focus-within:border-accent/40 focus-within:bg-white/8 focus-within:ring-4 focus-within:ring-accent/10">
+      <input
+        type="text"
+        className="w-7 bg-transparent text-center outline-none selection:bg-accent/40"
+        value={h}
+        onChange={(e) => handleChange(0, e)}
+        onBlur={(e) => handleBlur(0, 23, e)}
+        placeholder="HH"
+      />
+      <span className="text-white/30">:</span>
+      <input
+        type="text"
+        className="w-7 bg-transparent text-center outline-none selection:bg-accent/40"
+        value={m}
+        onChange={(e) => handleChange(1, e)}
+        onBlur={(e) => handleBlur(1, 59, e)}
+        placeholder="MM"
+      />
+      <span className="text-white/30">:</span>
+      <input
+        type="text"
+        className="w-7 bg-transparent text-center outline-none selection:bg-accent/40"
+        value={s}
+        onChange={(e) => handleChange(2, e)}
+        onBlur={(e) => handleBlur(2, 59, e)}
+        placeholder="SS"
+      />
+    </div>
+  );
+}
+
 export function AccountSkillRunModal({
   isOpen,
   accountName,
@@ -132,17 +190,25 @@ export function AccountSkillRunModal({
     isEditing ? [resolveJobScheduleSlot(job)] : [buildDefaultScheduleSlot()],
   );
 
+  const [skillSearch, setSkillSearch] = useState("");
   const selectedSkill = modalSkills.find((item) => item.id === selectedSkillId) || null;
   const repeatCount = scheduleSlots.filter((item) => item.repeatDaily).length;
+  const filteredSkills = useMemo(() => {
+    const q = skillSearch.trim().toLowerCase();
+    if (!q) return modalSkills;
+    return modalSkills.filter(
+      (s) => s.name.toLowerCase().includes(q) || (s.description || "").toLowerCase().includes(q),
+    );
+  }, [modalSkills, skillSearch]);
 
   if (!isOpen) {
     return null;
   }
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 px-4 py-6 backdrop-blur-md">
-      <div className="w-full max-w-3xl overflow-hidden rounded-[28px] border border-white/10 bg-[#09111f] shadow-[0_30px_90px_rgba(0,0,0,0.45)]">
-        <div className="flex items-start justify-between border-b border-white/10 px-6 py-5">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 px-4 py-8 backdrop-blur-md">
+      <div className="flex w-full max-w-3xl flex-col overflow-hidden rounded-[28px] border border-white/10 bg-[#09111f] shadow-[0_30px_90px_rgba(0,0,0,0.45)] sm:max-h-[calc(100vh-4rem)]">
+        <div className="flex shrink-0 items-start justify-between border-b border-white/10 px-6 py-5">
           <div>
             <p className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/6 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-text-muted">
               <Sparkles className="h-3.5 w-3.5 text-accent" />
@@ -159,65 +225,105 @@ export function AccountSkillRunModal({
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-text-muted transition-all hover:border-white/20 hover:bg-white/10 hover:text-white"
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-text-muted transition-all hover:border-white/20 hover:bg-white/10 hover:text-white"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="space-y-6 px-6 py-6">
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 text-sm font-medium text-white">
-              <Check className="h-4 w-4 text-cyan" />
-              {isEditing ? "当前技能" : "选择技能"}
-            </div>
-            <div className="grid gap-3 md:grid-cols-2">
-              {modalSkills.map((skill) => {
-                const selected = skill.id === selectedSkillId;
-                return (
-                  <button
-                    key={skill.id}
-                    type="button"
-                    onClick={() => {
-                      if (isEditing) {
-                        return;
-                      }
-                      setSelectedSkillId(skill.id);
-                      setScheduleSlots([buildDefaultScheduleSlot()]);
-                    }}
-                    className={cn(
-                      "rounded-[24px] border px-4 py-4 text-left transition-all",
-                      selected
-                        ? "border-accent/45 bg-accent/12 shadow-[0_12px_35px_rgba(177,73,255,0.14)]"
-                        : "border-white/10 bg-white/[0.04] hover:border-white/20 hover:bg-white/[0.06]",
-                      isEditing ? "cursor-default" : "",
-                    )}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-white">{skill.name}</p>
-                        <p className="mt-1 text-xs text-text-secondary">{normalizeSkillOutputLabel(skill.outputType)}</p>
-                      </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-6">
+          <div className="space-y-6">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-sm font-medium text-white">
+                  <Check className="h-4 w-4 text-cyan" />
+                  {isEditing ? "当前技能" : "选择技能"}
+                </div>
+                {!isEditing && modalSkills.length > 4 ? (
+                  <span className="text-xs text-text-muted">{filteredSkills.length}/{modalSkills.length} 条技能</span>
+                ) : null}
+              </div>
+
+              {!isEditing && modalSkills.length > 4 ? (
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+                  <input
+                    type="text"
+                    value={skillSearch}
+                    onChange={(e) => setSkillSearch(e.target.value)}
+                    placeholder="搜索技能名称或描述..."
+                    className="w-full rounded-2xl border border-white/10 bg-white/6 py-2.5 pl-10 pr-4 text-sm text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
+                  />
+                </div>
+              ) : null}
+
+              <div className={cn("space-y-1.5 overflow-y-auto rounded-[20px] border border-white/10 bg-[#0d1729] p-2", !isEditing && modalSkills.length > 4 ? "max-h-[200px]" : "")}>
+                {filteredSkills.map((skill) => {
+                  const selected = skill.id === selectedSkillId;
+                  return (
+                    <button
+                      key={skill.id}
+                      type="button"
+                      onClick={() => {
+                        if (isEditing) return;
+                        setSelectedSkillId(skill.id);
+                        setScheduleSlots([buildDefaultScheduleSlot()]);
+                      }}
+                      className={cn(
+                        "flex w-full items-center gap-3 rounded-2xl border px-3.5 py-3 text-left transition-all",
+                        selected
+                          ? "border-accent/45 bg-accent/12"
+                          : "border-transparent hover:border-white/10 hover:bg-white/[0.04]",
+                        isEditing ? "cursor-default" : "",
+                      )}
+                    >
                       <span
                         className={cn(
-                          "inline-flex h-7 w-7 items-center justify-center rounded-full border transition-all",
-                          selected ? "border-white/20 bg-white text-[#09111f]" : "border-white/10 bg-white/5 text-transparent",
+                          "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-all",
+                          selected ? "border-accent bg-accent text-white" : "border-white/20 bg-white/5 text-transparent",
                         )}
                       >
-                        <Check className="h-3.5 w-3.5" />
+                        <Check className="h-3 w-3" />
                       </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-white">{skill.name}</p>
+                        <p className="mt-0.5 truncate text-xs text-text-secondary">{normalizeSkillOutputLabel(skill.outputType)}{skill.description ? ` · ${skill.description}` : ""}</p>
+                      </div>
+                      <ChevronRight className={cn("h-4 w-4 shrink-0 text-white/20 transition-colors", selected && "text-accent/60")} />
+                    </button>
+                  );
+                })}
+                {filteredSkills.length === 0 ? (
+                  <p className="px-4 py-6 text-center text-sm text-text-secondary">
+                    {skillSearch ? "没有匹配的技能" : "当前没有可用技能，请先返回技能中心启用或创建技能。"}
+                  </p>
+                ) : null}
+              </div>
+              {selectedSkill ? (
+                <div className="animate-in fade-in slide-in-from-top-2 rounded-[20px] border border-accent/20 bg-accent/[0.06] p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-accent/15 text-accent">
+                      <Sparkles className="h-4 w-4" />
                     </div>
-                    <p className="mt-3 line-clamp-2 text-sm leading-6 text-text-secondary">{skill.description}</p>
-                  </button>
-                );
-              })}
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <p className="text-sm font-semibold text-white">{selectedSkill.name}</p>
+                      <p className="text-sm leading-6 text-text-secondary">{selectedSkill.description || "暂无技能说明。"}</p>
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <span className="inline-flex items-center gap-1 rounded-lg bg-white/8 px-2 py-1 text-[11px] font-medium text-text-secondary">
+                          输出 <span className="text-white">{normalizeSkillOutputLabel(selectedSkill.outputType)}</span>
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded-lg bg-white/8 px-2 py-1 text-[11px] font-medium text-text-secondary">
+                          模型 <span className="text-white">{selectedSkill.modelName || "未配置"}</span>
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded-lg bg-white/8 px-2 py-1 text-[11px] font-medium text-text-secondary">
+                          分镜 <span className="text-white">{selectedSkill.storyboardEnabled === false ? "关闭" : "启用"}</span>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </div>
-            {!modalSkills.length ? (
-              <p className="rounded-[20px] border border-dashed border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-text-secondary">
-                当前没有可用技能，请先返回技能中心启用或创建技能。
-              </p>
-            ) : null}
-          </div>
 
           <div className="grid gap-4 rounded-[24px] border border-white/10 bg-white/[0.04] p-5 md:grid-cols-[1.1fr_0.9fr]">
             <div className="space-y-2">
@@ -247,20 +353,16 @@ export function AccountSkillRunModal({
                         </button>
                       ) : null}
                     </div>
-                    <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-center">
-                      <input
-                        type="time"
-                        step={1}
+                    <div className="mt-5 flex flex-wrap items-center gap-3">
+                      <TimeInput
                         value={slot.timeOfDay}
-                        onChange={(event) => {
-                          const nextValue = normalizeTimeOfDay(event.target.value);
+                        onChange={(nextValue) => {
                           setScheduleSlots((current) =>
                             current.map((item, itemIndex) =>
                               itemIndex === index ? { ...item, timeOfDay: nextValue } : item,
                             ),
                           );
                         }}
-                        className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white outline-none transition-all focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10 md:max-w-[220px]"
                       />
                       <button
                         type="button"
@@ -272,7 +374,7 @@ export function AccountSkillRunModal({
                           )
                         }
                         className={cn(
-                          "inline-flex items-center gap-2 rounded-2xl border px-4 py-3 text-sm font-medium transition-all",
+                          "inline-flex h-11 items-center gap-2 rounded-2xl border px-4 text-sm font-medium transition-all",
                           slot.repeatDaily
                             ? "border-cyan/35 bg-cyan/12 text-white"
                             : "border-white/10 bg-white/5 text-text-secondary hover:border-white/20 hover:text-white",
@@ -281,8 +383,8 @@ export function AccountSkillRunModal({
                         <Repeat className="h-4 w-4" />
                         {slot.repeatDaily ? "每天重复" : "只执行一次"}
                       </button>
-                      <label className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-text-secondary">
-                        <span>生成提前</span>
+                      <label className="flex h-11 items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 text-sm text-text-secondary transition-all focus-within:border-accent/40 focus-within:bg-white/8 focus-within:ring-4 focus-within:ring-accent/10">
+                        <span className="font-medium">生成提前</span>
                         <input
                           type="number"
                           min={0}
@@ -297,9 +399,9 @@ export function AccountSkillRunModal({
                               ),
                             );
                           }}
-                          className="w-20 rounded-xl border border-white/10 bg-white/6 px-3 py-2 text-sm text-white outline-none transition-all focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
+                          className="w-12 bg-transparent p-0 text-center font-semibold text-white outline-none"
                         />
-                        <span>分钟</span>
+                        <span className="font-medium">分钟</span>
                       </label>
                     </div>
                   </div>
@@ -345,8 +447,9 @@ export function AccountSkillRunModal({
             </div>
           </div>
         </div>
+      </div>
 
-        <div className="flex items-center justify-end gap-3 border-t border-white/10 px-6 py-4">
+      <div className="flex shrink-0 items-center justify-end gap-3 border-t border-white/10 bg-[#09111f] px-6 py-4">
           <button
             type="button"
             onClick={onClose}

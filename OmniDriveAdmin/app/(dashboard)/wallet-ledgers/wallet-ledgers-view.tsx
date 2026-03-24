@@ -23,6 +23,7 @@ const JOB_TYPE_OPTIONS = [
 const STATUS_OPTIONS = [
   { value: "", label: "全部状态" },
   { value: "billed", label: "已计费" },
+  { value: "returned", label: "已返还" },
   { value: "failed", label: "计费失败" },
   { value: "paid", label: "已支付" },
   { value: "pending_payment", label: "待支付" },
@@ -34,6 +35,8 @@ const ENTRY_TYPE_LABELS: Record<string, string> = {
   recharge: "充值入账",
   consume: "消耗抵扣",
   refund: "售后退款",
+  usage_refund: "任务失败返还积分",
+  usage_return: "任务失败返还积分",
   grant: "赠送积分",
   manual_compensation: "人工补偿",
   manual_deduction: "人工扣减",
@@ -84,6 +87,19 @@ function getActivityTypeLabel(item: BillingActivity) {
   return "AI 计费";
 }
 
+function getPayloadRecord(item: BillingActivity): Record<string, unknown> | null {
+  if (!item.payload || typeof item.payload !== "object") {
+    return null;
+  }
+  return item.payload as Record<string, unknown>;
+}
+
+function getPayloadNumber(item: BillingActivity, key: string) {
+  const payload = getPayloadRecord(item);
+  const value = payload?.[key];
+  return typeof value === "number" ? value : 0;
+}
+
 function getBusinessLabel(item: BillingActivity) {
   if (item.kind === "recharge_order") {
     return CHANNEL_LABELS[item.channel ?? ""] || item.channel || "充值";
@@ -114,7 +130,17 @@ function getActivityAmount(item: BillingActivity) {
       tone: isIncome ? "text-green-400" : "text-orange-400",
     };
   }
-  if (typeof item.debitedCredits === "number") {
+  if (item.status === "returned" || item.status === "refunded") {
+    const returnedCredits = getPayloadNumber(item, "returnedCredits") || getPayloadNumber(item, "refundedCredits");
+    if (returnedCredits > 0) {
+      return {
+        text: `+${returnedCredits.toLocaleString("zh-CN")} 积分`,
+        meta: "任务失败已自动返还积分",
+        tone: "text-green-400",
+      };
+    }
+  }
+  if (typeof item.debitedCredits === "number" && item.debitedCredits > 0) {
     return {
       text: `-${item.debitedCredits.toLocaleString("zh-CN")} 积分`,
       meta: typeof item.usageQuantity === "number" ? `${item.usageQuantity.toLocaleString("zh-CN")} ${item.meterName || item.meterCode || "单位"}` : "",
@@ -134,6 +160,9 @@ function renderStatus(status?: string | null) {
   }
   if (status === "billed") {
     return <span className="inline-flex rounded-full border border-green-500/20 bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-400">已计费</span>;
+  }
+  if (status === "returned" || status === "refunded") {
+    return <span className="inline-flex rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-xs font-medium text-sky-400">已返还</span>;
   }
   if (status === "failed") {
     return <span className="inline-flex rounded-full border border-red-500/20 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-400">计费失败</span>;

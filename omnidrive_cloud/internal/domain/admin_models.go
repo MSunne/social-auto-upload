@@ -743,42 +743,61 @@ type AdminManualSupportConfig struct {
 	Note      string `json:"note"`
 }
 
+type AdminSMSRegistrationConfig struct {
+	Enabled            bool   `json:"enabled"`
+	Provider           string `json:"provider"`
+	Endpoint           string `json:"endpoint"`
+	AccessKeyID        string `json:"accessKeyId"`
+	AccessKeySecret    string `json:"accessKeySecret"`
+	SignName           string `json:"signName"`
+	TemplateCode       string `json:"templateCode"`
+	TemplateParam      string `json:"templateParam"`
+	SchemeName         string `json:"schemeName"`
+	DefaultCountryCode string `json:"defaultCountryCode"`
+	ValidMinutes       int    `json:"validMinutes"`
+	CooldownSeconds    int    `json:"cooldownSeconds"`
+	DailyLimit         int    `json:"dailyLimit"`
+	CodeLength         int    `json:"codeLength"`
+}
+
 type AdminSystemSettingsRecord struct {
-	ID                        string                   `json:"id"`
-	AIWorkerEnabled           bool                     `json:"aiWorkerEnabled"`
-	PaymentChannels           []string                 `json:"paymentChannels"`
-	BillingManualSupport      AdminManualSupportConfig `json:"billingManualSupport"`
-	DefaultChatModel          string                   `json:"defaultChatModel"`
-	DefaultImageModel         string                   `json:"defaultImageModel"`
-	DefaultVideoModel         string                   `json:"defaultVideoModel"`
-	StoryboardPrompt          string                   `json:"storyboardPrompt"`
-	StoryboardModel           string                   `json:"storyboardModel"`
-	StoryboardReferences      json.RawMessage          `json:"storyboardReferences,omitempty"`
-	ImageStoryboardPrompt     string                   `json:"imageStoryboardPrompt"`
-	ImageStoryboardModel      string                   `json:"imageStoryboardModel"`
-	ImageStoryboardReferences json.RawMessage          `json:"imageStoryboardReferences,omitempty"`
-	CreatedAt                 time.Time                `json:"createdAt"`
-	UpdatedAt                 time.Time                `json:"updatedAt"`
+	ID                        string                     `json:"id"`
+	AIWorkerEnabled           bool                       `json:"aiWorkerEnabled"`
+	PaymentChannels           []string                   `json:"paymentChannels"`
+	BillingManualSupport      AdminManualSupportConfig   `json:"billingManualSupport"`
+	SMSRegistration           AdminSMSRegistrationConfig `json:"smsRegistration"`
+	DefaultChatModel          string                     `json:"defaultChatModel"`
+	DefaultImageModel         string                     `json:"defaultImageModel"`
+	DefaultVideoModel         string                     `json:"defaultVideoModel"`
+	StoryboardPrompt          string                     `json:"storyboardPrompt"`
+	StoryboardModel           string                     `json:"storyboardModel"`
+	StoryboardReferences      json.RawMessage            `json:"storyboardReferences,omitempty"`
+	ImageStoryboardPrompt     string                     `json:"imageStoryboardPrompt"`
+	ImageStoryboardModel      string                     `json:"imageStoryboardModel"`
+	ImageStoryboardReferences json.RawMessage            `json:"imageStoryboardReferences,omitempty"`
+	CreatedAt                 time.Time                  `json:"createdAt"`
+	UpdatedAt                 time.Time                  `json:"updatedAt"`
 }
 
 type AdminSystemConfig struct {
-	AuthMode                  string                   `json:"authMode"`
-	AdminEmail                string                   `json:"adminEmail"`
-	S3Configured              bool                     `json:"s3Configured"`
-	S3Endpoint                string                   `json:"s3Endpoint"`
-	S3Bucket                  string                   `json:"s3Bucket"`
-	AIWorkerEnabled           bool                     `json:"aiWorkerEnabled"`
-	PaymentChannels           []string                 `json:"paymentChannels"`
-	BillingManualSupport      AdminManualSupportConfig `json:"billingManualSupport"`
-	DefaultChatModel          string                   `json:"defaultChatModel"`
-	DefaultImageModel         string                   `json:"defaultImageModel"`
-	DefaultVideoModel         string                   `json:"defaultVideoModel"`
-	StoryboardPrompt          string                   `json:"storyboardPrompt"`
-	StoryboardModel           string                   `json:"storyboardModel"`
-	StoryboardReferences      json.RawMessage          `json:"storyboardReferences,omitempty"`
-	ImageStoryboardPrompt     string                   `json:"imageStoryboardPrompt"`
-	ImageStoryboardModel      string                   `json:"imageStoryboardModel"`
-	ImageStoryboardReferences json.RawMessage          `json:"imageStoryboardReferences,omitempty"`
-	Notes                     []string                 `json:"notes"`
-	UpdatedAt                 *time.Time               `json:"updatedAt,omitempty"`
+	AuthMode                  string                     `json:"authMode"`
+	AdminEmail                string                     `json:"adminEmail"`
+	S3Configured              bool                       `json:"s3Configured"`
+	S3Endpoint                string                     `json:"s3Endpoint"`
+	S3Bucket                  string                     `json:"s3Bucket"`
+	AIWorkerEnabled           bool                       `json:"aiWorkerEnabled"`
+	PaymentChannels           []string                   `json:"paymentChannels"`
+	BillingManualSupport      AdminManualSupportConfig   `json:"billingManualSupport"`
+	SMSRegistration           AdminSMSRegistrationConfig `json:"smsRegistration"`
+	DefaultChatModel          string                     `json:"defaultChatModel"`
+	DefaultImageModel         string                     `json:"defaultImageModel"`
+	DefaultVideoModel         string                     `json:"defaultVideoModel"`
+	StoryboardPrompt          string                     `json:"storyboardPrompt"`
+	StoryboardModel           string                     `json:"storyboardModel"`
+	StoryboardReferences      json.RawMessage            `json:"storyboardReferences,omitempty"`
+	ImageStoryboardPrompt     string                     `json:"imageStoryboardPrompt"`
+	ImageStoryboardModel      string                     `json:"imageStoryboardModel"`
+	ImageStoryboardReferences json.RawMessage            `json:"imageStoryboardReferences,omitempty"`
+	Notes                     []string                   `json:"notes"`
+	UpdatedAt                 *time.Time                 `json:"updatedAt,omitempty"`
 }

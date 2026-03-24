@@ -650,78 +650,65 @@ export default function AccountTaskPage({
             />
           </div>
         ) : (
-          <div className="divide-y divide-border">
+          <div className="grid gap-4 p-5">
             {accountSkillPlans.map((plan) => (
               <div
                 key={plan.job.id}
-                className="flex flex-col gap-4 px-6 py-5 xl:flex-row xl:items-center xl:justify-between"
+                className="group overflow-hidden rounded-2xl border border-border bg-surface transition-all hover:border-accent/30 hover:shadow-lg hover:shadow-accent/5"
               >
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-full bg-white/6 px-2.5 py-1 text-xs font-medium text-text-secondary">
-                      账号计划
-                    </span>
-                    <StatusBadge status={plan.status} />
-                  </div>
-                  <p className="mt-3 text-base font-semibold text-text-primary">
-                    {plan.skill?.name || buildAIJobTitle(plan.job)}
-                  </p>
-                  <p className="mt-1 text-sm text-text-secondary">
-                    {plan.skill?.description
-                      ? `技能说明：${plan.skill.description}`
-                      : "这条计划会先生成内容，再进入该账号的发布链路。"}
-                  </p>
-                  <div className="mt-2 space-y-1 text-xs text-text-secondary">
-                    <p>执行规则：{formatScheduleRule(plan.schedule)}</p>
-                    <p>
-                      生成提前量：
-                      {formatGenerationLeadMinutes(plan.generationLeadMinutes)}
-                    </p>
-                    <p>
-                      当前阶段：{plan.stageLabel}
-                      {plan.stageDescription
-                        ? ` · ${plan.stageDescription}`
-                        : ""}
-                    </p>
-                  </div>
-                </div>
+                <div className="flex">
+                  <div className="w-1 shrink-0 bg-gradient-to-b from-accent via-pink to-cyan" />
+                  <div className="flex flex-1 flex-col gap-4 p-5 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <StatusBadge status={plan.status} />
+                        <span className="rounded-lg bg-white/6 px-2 py-0.5 text-[11px] font-medium text-text-muted">
+                          {formatScheduleRule(plan.schedule)}
+                        </span>
+                      </div>
+                      <p className="mt-2.5 text-base font-semibold text-text-primary">
+                        {plan.skill?.name || buildAIJobTitle(plan.job)}
+                      </p>
+                      <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-text-secondary">
+                        {plan.skill?.description || "这条计划先生成内容，再进入发布链路。"}
+                      </p>
 
-                <div className="flex flex-col items-start gap-3 xl:items-end">
-                  <div className="text-sm text-text-secondary">
-                    <p>
-                      计划发布时间：
-                      <span className="font-medium text-text-primary">
-                        {plan.publishAt
-                          ? formatDateTime(plan.publishAt)
-                          : "未设置"}
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <span className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-surface-hover/50 px-2.5 py-1 text-xs text-text-secondary">
+                          <CalendarClock className="h-3 w-3 text-cyan" />
+                          发布 <span className="font-medium text-text-primary">{plan.publishAt ? formatDateTime(plan.publishAt) : "未设置"}</span>
+                        </span>
+                        <span className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-surface-hover/50 px-2.5 py-1 text-xs text-text-secondary">
+                          <Sparkles className="h-3 w-3 text-accent" />
+                          生成 <span className="font-medium text-text-primary">{plan.generateAt ? formatDateTime(plan.generateAt) : "未设置"}</span>
+                        </span>
+                        <span className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-surface-hover/50 px-2.5 py-1 text-xs text-text-secondary">
+                          提前 <span className="font-medium text-text-primary">{formatGenerationLeadMinutes(plan.generationLeadMinutes)}</span>
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex shrink-0 flex-col items-start gap-2 xl:items-end">
+                      <span className="rounded-lg bg-white/6 px-2 py-1 text-[11px] text-text-muted">
+                        {plan.stageLabel}{plan.stageDescription ? ` · ${plan.stageDescription}` : ""}
                       </span>
-                    </p>
-                    <p className="mt-1">
-                      计划生成时间：
-                      <span className="font-medium text-text-primary">
-                        {plan.generateAt
-                          ? formatDateTime(plan.generateAt)
-                          : "未设置"}
+                      <span className="text-[11px] text-text-muted">
+                        更新 {formatDateTime(plan.job.updatedAt)}
                       </span>
-                    </p>
-                    <p className="mt-1">
-                      最近更新：{formatDateTime(plan.job.updatedAt)}
-                    </p>
+                      {plan.editable ? (
+                        <button
+                          type="button"
+                          onClick={() => setEditingJob(plan.job)}
+                          className="mt-1 inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-accent/15 to-cyan/10 border border-accent/25 px-3.5 py-1.5 text-xs font-semibold text-accent transition-all hover:from-accent/25 hover:to-cyan/15 hover:shadow-md hover:shadow-accent/10"
+                        >
+                          <Pencil className="h-3 w-3" />
+                          修改时间
+                        </button>
+                      ) : (
+                        <span className="mt-1 text-[11px] text-text-muted italic">不可修改</span>
+                      )}
+                    </div>
                   </div>
-                  {plan.editable ? (
-                    <button
-                      type="button"
-                      onClick={() => setEditingJob(plan.job)}
-                      className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-hover px-3 py-1.5 text-xs font-medium text-text-primary transition-colors hover:border-accent hover:text-accent"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                      修改计划时间
-                    </button>
-                  ) : (
-                    <span className="text-xs text-text-secondary">
-                      当前阶段不可修改计划时间
-                    </span>
-                  )}
                 </div>
               </div>
             ))}
@@ -770,67 +757,66 @@ export default function AccountTaskPage({
             />
           </div>
         ) : (
-          <div className="divide-y divide-border">
+          <div className="grid gap-4 p-5">
             {timelineItems.map((item) => (
               <div
                 key={`${item.kind}-${item.id}`}
-                className="flex flex-col gap-4 px-6 py-5 md:flex-row md:items-center md:justify-between"
+                className="group overflow-hidden rounded-2xl border border-border bg-surface transition-all hover:border-accent/30 hover:shadow-lg hover:shadow-accent/5"
               >
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-full bg-white/6 px-2.5 py-1 text-xs font-medium text-text-secondary">
-                      {item.label}
-                    </span>
-                    <StatusBadge status={item.status} />
-                  </div>
-                  <p className="mt-3 text-base font-semibold text-text-primary">
-                    {item.title}
-                  </p>
-                  <p className="mt-1 text-sm text-text-secondary">
-                    {item.subtitle}
-                  </p>
-                </div>
-
-                <div className="flex flex-col items-start gap-3 md:items-end">
-                  <div className="text-sm text-text-secondary">
-                    <p>
-                      计划时间：
-                      <span className="font-medium text-text-primary">
-                        {item.scheduledAt
-                          ? formatDateTime(item.scheduledAt)
-                          : "未设置"}
-                      </span>
-                    </p>
-                    <p className="mt-1">
-                      最近更新：{formatDateTime(item.updatedAt)}
-                    </p>
-                  </div>
-                  {item.href ? (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Link
-                        href={item.href}
-                        className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-hover px-3 py-1.5 text-xs font-medium text-text-primary transition-colors hover:border-accent hover:text-accent"
-                      >
-                        查看详情
-                      </Link>
-                      {item.kind === "publish_task" ? (
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteTask(item.id, item.title)}
-                          disabled={deleteTaskMutation.isPending}
-                          className="inline-flex items-center gap-2 rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-200 transition-colors hover:border-red-400/55 hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {deleteTaskMutation.isPending &&
-                          deleteTaskMutation.variables === item.id ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-3.5 w-3.5" />
-                          )}
-                          删除任务
-                        </button>
-                      ) : null}
+                <div className="flex">
+                  <div className={`w-1 shrink-0 ${item.kind === "ai_job" ? "bg-gradient-to-b from-accent to-pink" : "bg-gradient-to-b from-cyan to-emerald-400"}`} />
+                  <div className="flex flex-1 flex-col gap-4 p-5 md:flex-row md:items-start md:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`rounded-lg px-2 py-0.5 text-[11px] font-semibold ${item.kind === "ai_job" ? "bg-accent/12 text-accent" : "bg-cyan/12 text-cyan"}`}>
+                          {item.label}
+                        </span>
+                        <StatusBadge status={item.status} />
+                      </div>
+                      <p className="mt-2 text-sm font-semibold text-text-primary">
+                        {item.title}
+                      </p>
+                      <p className="mt-0.5 text-xs text-text-secondary">
+                        {item.subtitle}
+                      </p>
+                      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                        <span className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-surface-hover/50 px-2.5 py-1 text-[11px] text-text-secondary">
+                          <CalendarClock className="h-3 w-3 text-cyan" />
+                          {item.scheduledAt ? formatDateTime(item.scheduledAt) : "未设置"}
+                        </span>
+                        <span className="text-[11px] text-text-muted">
+                          更新 {formatDateTime(item.updatedAt)}
+                        </span>
+                      </div>
                     </div>
-                  ) : null}
+
+                    {item.href ? (
+                      <div className="flex shrink-0 flex-wrap items-center gap-2">
+                        <Link
+                          href={item.href}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-surface-hover px-3 py-1.5 text-xs font-medium text-text-primary transition-all hover:border-accent hover:text-accent hover:shadow-sm"
+                        >
+                          查看详情
+                        </Link>
+                        {item.kind === "publish_task" ? (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteTask(item.id, item.title)}
+                            disabled={deleteTaskMutation.isPending}
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-red-500/25 bg-red-500/8 px-3 py-1.5 text-xs font-medium text-red-300 transition-all hover:border-red-400/50 hover:bg-red-500/14 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {deleteTaskMutation.isPending &&
+                            deleteTaskMutation.variables === item.id ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3 w-3" />
+                            )}
+                            删除
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             ))}

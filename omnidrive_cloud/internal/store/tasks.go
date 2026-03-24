@@ -224,7 +224,13 @@ func (s *Store) ListPendingPublishTasksByDevice(ctx context.Context, deviceID st
 }
 
 func (s *Store) SyncPublishTask(ctx context.Context, input SyncPublishTaskInput) (*domain.PublishTask, error) {
-	row := s.pool.QueryRow(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
 		INSERT INTO publish_tasks (
 			id, device_id, account_id, skill_id, skill_revision, platform, account_name, title,
 			content_text, media_payload, status, message, verification_payload,
@@ -271,7 +277,19 @@ func (s *Store) SyncPublishTask(ctx context.Context, input SyncPublishTaskInput)
 		input.Title, input.ContentText, input.MediaPayload, input.Status, input.Message,
 		input.VerificationPayload, input.RunAt, input.FinishedAt)
 
-	return scanPublishTask(row)
+	task, err := scanPublishTask(row)
+	if err != nil {
+		return nil, err
+	}
+	if task != nil && strings.EqualFold(strings.TrimSpace(task.Status), "failed") {
+		if err := s.returnUsageCreditsForFailedSourceTx(ctx, tx, "publish_task", task.ID, valueOrEmpty(task.Message)); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return task, nil
 }
 
 func (s *Store) UpdatePublishTask(ctx context.Context, taskID string, ownerUserID string, input UpdatePublishTaskInput) (*domain.PublishTask, error) {
@@ -280,7 +298,13 @@ func (s *Store) UpdatePublishTask(ctx context.Context, taskID string, ownerUserI
 		mediaPayload = input.MediaPayload
 	}
 
-	row := s.pool.QueryRow(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
 		UPDATE publish_tasks pt
 		SET title = COALESCE($3, pt.title),
 		    content_text = COALESCE($4, pt.content_text),
@@ -304,6 +328,14 @@ func (s *Store) UpdatePublishTask(ctx context.Context, taskID string, ownerUserI
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
+		return nil, err
+	}
+	if task != nil && strings.EqualFold(strings.TrimSpace(task.Status), "failed") {
+		if err := s.returnUsageCreditsForFailedSourceTx(ctx, tx, "publish_task", task.ID, valueOrEmpty(task.Message)); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return task, nil

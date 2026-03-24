@@ -21,6 +21,7 @@ import type {
   BillingUsageEvent,
   PublishTask,
 } from "@/lib/types";
+import { describeJobSchedule, extractJobScheduleMeta } from "./schedule-meta";
 
 interface AIJobDetailDrawerProps {
   jobId: string | null;
@@ -33,6 +34,8 @@ const STATUS_CLASS: Record<string, string> = {
   completed: "border-emerald-600/25 bg-emerald-500/10 text-emerald-700",
   success: "border-emerald-600/25 bg-emerald-500/10 text-emerald-700",
   failed: "border-red-600/25 bg-red-500/10 text-red-700",
+  returned: "border-sky-600/25 bg-sky-500/10 text-sky-700",
+  refunded: "border-sky-600/25 bg-sky-500/10 text-sky-700",
   cancelled: "border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]",
   scheduled: "border-cyan-600/25 bg-cyan-500/10 text-cyan-700",
   created: "border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)]",
@@ -45,6 +48,8 @@ const STATUS_LABEL: Record<string, string> = {
   completed: "已完成",
   success: "已完成",
   failed: "失败",
+  returned: "已返还",
+  refunded: "已返还",
   cancelled: "已取消",
   scheduled: "已计划",
   created: "已创建",
@@ -186,13 +191,19 @@ function pickLogIcon(stage: string) {
 function buildFallbackExecutionLogs(data: AdminAIJobWorkspace): AdminExecutionLog[] {
   const entries: AdminExecutionLog[] = [];
   const job = data.record.job;
+  const scheduleMeta = extractJobScheduleMeta(job);
+  const scheduleSummary = describeJobSchedule(scheduleMeta);
 
   entries.push({
     id: "fallback-created",
     stage: "job",
     status: "created",
     title: "AI 作业已创建",
-    message: `来源 ${job.source || "system"}${job.runAt ? ` · 计划执行 ${formatFullDateTime(job.runAt)}` : ""}`,
+    message:
+      `来源 ${job.source || "system"}`
+      + `${scheduleMeta.generateAt ? ` · 计划生成 ${formatFullDateTime(scheduleMeta.generateAt)}` : ""}`
+      + `${scheduleMeta.publishAt ? ` · 计划发布 ${formatFullDateTime(scheduleMeta.publishAt)}` : ""}`
+      + `${scheduleSummary ? ` · ${scheduleSummary}` : ""}`,
     source: "system",
     timestamp: job.createdAt,
     payload: job.inputPayload,
@@ -359,6 +370,8 @@ function DrawerBody({
   const billingUsageEvents = data.billingUsageEvents ?? [];
   const publishOutcome = summarizePublishTaskOutcome(publishTasks);
   const publishTargetSummary = formatPublishTargetSummary(job.inputPayload);
+  const scheduleMeta = extractJobScheduleMeta(job);
+  const scheduleSummary = describeJobSchedule(scheduleMeta);
 
   return (
     <div className="space-y-5">
@@ -439,6 +452,9 @@ function DrawerBody({
               <InfoRow label="执行设备" value={data.record.device?.name || "云端"} />
               <InfoRow label="关联技能" value={data.record.skill?.name || "—"} />
               <InfoRow label="目标账号" value={publishTargetSummary} />
+              <InfoRow label="计划生成" value={formatFullDateTime(scheduleMeta.generateAt)} />
+              <InfoRow label="计划发布" value={formatFullDateTime(scheduleMeta.publishAt)} />
+              <InfoRow label="循环策略" value={scheduleSummary || "单次执行"} />
               <InfoRow label="关联发布任务" value={`${publishTasks.length} 条`} />
               <InfoRow label="发布成功" value={`${publishOutcome.successCount} 条`} />
               <InfoRow label="发布失败" value={`${publishOutcome.failedCount} 条`} />

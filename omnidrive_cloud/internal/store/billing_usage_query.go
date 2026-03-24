@@ -75,6 +75,9 @@ func scanBillingUsageEvent(scan scanFn) (*domain.BillingUsageEvent, error) {
 	item.QuotaAccountID = quotaAccountID
 	item.WalletLedgerID = walletLedgerID
 	item.QuotaLedgerID = quotaLedgerID
+	if strings.TrimSpace(item.BillStatus) == "refunded" {
+		item.BillStatus = "returned"
+	}
 	item.BillMessage = billMessage
 	item.Payload = bytesOrNil(payload)
 	return &item, nil
@@ -101,9 +104,7 @@ func (s *Store) ListBillingUsageEventsByUser(ctx context.Context, userID string,
 		argIndex++
 	}
 	if billStatus := strings.TrimSpace(filter.BillStatus); billStatus != "" {
-		whereParts = append(whereParts, fmt.Sprintf("e.bill_status = $%d", argIndex))
-		args = append(args, billStatus)
-		argIndex++
+		whereParts, args, argIndex = appendEquivalentStatusFilter(whereParts, args, argIndex, "e.bill_status", billStatus)
 	}
 	if jobType := strings.TrimSpace(filter.JobType); jobType != "" {
 		whereParts = append(whereParts, fmt.Sprintf("e.job_type = $%d", argIndex))
@@ -184,9 +185,7 @@ func (s *Store) ListAdminBillingUsageEvents(ctx context.Context, filter AdminBil
 		argIndex++
 	}
 	if billStatus := strings.TrimSpace(filter.BillStatus); billStatus != "" {
-		whereParts = append(whereParts, fmt.Sprintf("e.bill_status = $%d", argIndex))
-		args = append(args, billStatus)
-		argIndex++
+		whereParts, args, argIndex = appendEquivalentStatusFilter(whereParts, args, argIndex, "e.bill_status", billStatus)
 	}
 	if jobType := strings.TrimSpace(filter.JobType); jobType != "" {
 		whereParts = append(whereParts, fmt.Sprintf("e.job_type = $%d", argIndex))

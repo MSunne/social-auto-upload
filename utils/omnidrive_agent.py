@@ -1860,6 +1860,10 @@ class OmniDriveBridge:
                 )
                 continue
 
+            existing_artifact_refs = local_task.get("artifactRefs") or []
+            if existing_artifact_refs and str(local_task.get("status") or "").strip() == "output_ready":
+                continue
+
             artifact_refs = self._download_ai_artifacts(local_task, artifacts)
             if not artifact_refs:
                 self.ai_task_manager.mark_cloud_state(local_task_id, "failed", "云端 AI 任务没有可导入的有效产物")

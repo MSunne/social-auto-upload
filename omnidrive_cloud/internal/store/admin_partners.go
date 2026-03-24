@@ -25,11 +25,12 @@ func (s *Store) ListAdminPartnerProfiles(ctx context.Context, filter AdminPartne
 	if query := strings.TrimSpace(filter.Query); query != "" {
 		whereParts = append(whereParts, fmt.Sprintf(`(
 			u.id ILIKE $%d OR
-			u.email ILIKE $%d OR
-			u.name ILIKE $%d OR
+			COALESCE(u.email, '') ILIKE $%d OR
+			COALESCE(u.phone, '') ILIKE $%d OR
+			COALESCE(u.name, '') ILIKE $%d OR
 			p.partner_code ILIKE $%d OR
 			p.partner_name ILIKE $%d
-		)`, argIndex, argIndex, argIndex, argIndex, argIndex))
+		)`, argIndex, argIndex, argIndex, argIndex, argIndex, argIndex))
 		args = append(args, ilikePattern(query))
 		argIndex++
 	}
@@ -115,7 +116,7 @@ func (s *Store) ListAdminPartnerProfiles(ctx context.Context, filter AdminPartne
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT
 			u.id,
-			u.email,
+			COALESCE(u.email, u.phone, ''),
 			u.name,
 			p.partner_code,
 			p.partner_name,

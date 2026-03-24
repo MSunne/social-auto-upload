@@ -20,6 +20,15 @@ const aiJobSelectColumns = `
 	delivery_status, delivery_message, local_publish_task_id, run_at, created_at, updated_at, delivered_at, finished_at
 `
 
+const aiModelSelectColumns = `
+	id, vendor, model_name, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
+	description, pricing_payload,
+	image_reference_limit, image_supported_sizes,
+	video_reference_limit, video_supported_resolutions, video_supported_durations,
+	supported_file_types,
+	is_enabled, created_at, updated_at
+`
+
 const executableAIJobSourcesSQL = "'omnidrive_cloud', 'omnibull_local', 'account_skill_binding', 'openclaw_skill', 'openclaw_main_chat'"
 
 type aiModelPricingPayload struct {
@@ -275,13 +284,7 @@ func scanAIJobArtifact(row pgx.Row) (*domain.AIJobArtifact, error) {
 
 func (s *Store) ListAIModels(ctx context.Context, category string) ([]domain.AIModel, error) {
 	query := `
-		SELECT
-			id, vendor, model_name, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
-			description, pricing_payload,
-			image_reference_limit, image_supported_sizes,
-			video_reference_limit, video_supported_resolutions, video_supported_durations,
-			supported_file_types,
-			is_enabled, created_at, updated_at
+		SELECT ` + aiModelSelectColumns + `
 		FROM ai_models
 		WHERE is_enabled = TRUE
 	`
@@ -311,13 +314,7 @@ func (s *Store) ListAIModels(ctx context.Context, category string) ([]domain.AIM
 
 func (s *Store) GetAIModelByName(ctx context.Context, modelName string) (*domain.AIModel, error) {
 	row := s.pool.QueryRow(ctx, `
-		SELECT
-			id, vendor, model_name, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
-			description, pricing_payload,
-			image_reference_limit, image_supported_sizes,
-			video_reference_limit, video_supported_resolutions, video_supported_durations,
-			supported_file_types,
-			is_enabled, created_at, updated_at
+		SELECT `+aiModelSelectColumns+`
 		FROM ai_models
 		WHERE model_name = $1
 	`, modelName)
@@ -503,7 +500,13 @@ func (s *Store) UpdateAIJob(ctx context.Context, jobID string, ownerUserID strin
 		deliveredAt = input.DeliveredAt
 	}
 
-	row := s.pool.QueryRow(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
 		UPDATE ai_jobs
 		SET device_id = CASE
 		        WHEN $3 = TRUE THEN $4
@@ -557,6 +560,14 @@ func (s *Store) UpdateAIJob(ctx context.Context, jobID string, ownerUserID strin
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
+		return nil, err
+	}
+	if job != nil && strings.EqualFold(strings.TrimSpace(job.Status), "failed") {
+		if err := s.returnUsageCreditsForFailedSourceTx(ctx, tx, "ai_job", job.ID, valueOrEmpty(job.Message)); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return job, nil
@@ -1165,7 +1176,13 @@ func (s *Store) SyncCloudAIJobExecution(ctx context.Context, jobID string, lease
 		finishedAt = input.FinishedAt
 	}
 
-	row := s.pool.QueryRow(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
 		UPDATE ai_jobs
 		SET status = COALESCE($3::text, status),
 		    output_payload = CASE
@@ -1207,6 +1224,14 @@ func (s *Store) SyncCloudAIJobExecution(ctx context.Context, jobID string, lease
 		}
 		return nil, err
 	}
+	if job != nil && strings.EqualFold(strings.TrimSpace(job.Status), "failed") {
+		if err := s.returnUsageCreditsForFailedSourceTx(ctx, tx, "ai_job", job.ID, valueOrEmpty(job.Message)); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	return job, nil
 }
 
@@ -1220,7 +1245,13 @@ func (s *Store) SyncAIJobExecution(ctx context.Context, jobID string, deviceID s
 		finishedAt = input.FinishedAt
 	}
 
-	row := s.pool.QueryRow(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
 		UPDATE ai_jobs
 		SET status = COALESCE($4::text, status),
 		    output_payload = CASE
@@ -1260,6 +1291,14 @@ func (s *Store) SyncAIJobExecution(ctx context.Context, jobID string, deviceID s
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
+		return nil, err
+	}
+	if job != nil && strings.EqualFold(strings.TrimSpace(job.Status), "failed") {
+		if err := s.returnUsageCreditsForFailedSourceTx(ctx, tx, "ai_job", job.ID, valueOrEmpty(job.Message)); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return job, nil

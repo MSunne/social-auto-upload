@@ -161,9 +161,7 @@ func appendBillingActivityFilters(
 		argIndex++
 	}
 	if trimmed := strings.TrimSpace(status); trimmed != "" {
-		whereParts = append(whereParts, fmt.Sprintf("status = $%d", argIndex))
-		args = append(args, trimmed)
-		argIndex++
+		whereParts, args, argIndex = appendEquivalentStatusFilter(whereParts, args, argIndex, "status", trimmed)
 	}
 	if trimmed := strings.TrimSpace(entryType); trimmed != "" {
 		whereParts = append(whereParts, fmt.Sprintf("entry_type = $%d", argIndex))
@@ -191,6 +189,21 @@ func appendBillingActivityFilters(
 		argIndex++
 	}
 	return whereParts, args, argIndex
+}
+
+func appendEquivalentStatusFilter(whereParts []string, args []any, argIndex int, column string, status string) ([]string, []any, int) {
+	trimmed := strings.TrimSpace(status)
+	if trimmed == "" {
+		return whereParts, args, argIndex
+	}
+	if trimmed == "returned" || trimmed == "refunded" {
+		whereParts = append(whereParts, fmt.Sprintf("(%s = $%d OR %s = $%d)", column, argIndex, column, argIndex+1))
+		args = append(args, "returned", "refunded")
+		return whereParts, args, argIndex + 2
+	}
+	whereParts = append(whereParts, fmt.Sprintf("%s = $%d", column, argIndex))
+	args = append(args, trimmed)
+	return whereParts, args, argIndex + 1
 }
 
 const billingActivitiesUserBaseQuery = `
@@ -269,7 +282,7 @@ const billingActivitiesUserBaseQuery = `
 			e.updated_at AS result_at,
 			COALESCE(e.job_type, e.source_type, e.meter_code) AS title,
 			COALESCE(e.bill_message, m.name, e.meter_code) AS detail,
-			e.bill_status AS status,
+				CASE WHEN e.bill_status = 'refunded' THEN 'returned' ELSE e.bill_status END AS status,
 			NULL::TEXT AS entry_type,
 			NULL::TEXT AS channel,
 			e.source_type,
@@ -381,7 +394,7 @@ const billingActivitiesAdminBaseQuery = `
 			e.updated_at AS result_at,
 			COALESCE(e.job_type, e.source_type, e.meter_code) AS title,
 			COALESCE(e.bill_message, m.name, e.meter_code) AS detail,
-			e.bill_status AS status,
+				CASE WHEN e.bill_status = 'refunded' THEN 'returned' ELSE e.bill_status END AS status,
 			NULL::TEXT AS entry_type,
 			NULL::TEXT AS channel,
 			e.source_type,

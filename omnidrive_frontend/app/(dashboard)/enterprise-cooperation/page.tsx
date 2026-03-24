@@ -109,7 +109,15 @@ function getReleaseEventTags(item: CommissionReleaseEvent) {
   if (typeof quotaUsed === "number" && quotaUsed > 0) {
     tags.push(`套餐抵扣 ${quotaUsed}`);
   }
+  const returnReason = metadata.returnReason ?? metadata.refundReason;
+  if (typeof returnReason === "string" && returnReason.trim()) {
+    tags.push("失败返还");
+  }
   return tags;
+}
+
+function isReversalRelease(item: CommissionReleaseEvent) {
+  return item.consumedCreditsDelta < 0 || item.releasedAmountDeltaCents < 0;
 }
 
 async function copyText(value: string) {
@@ -186,7 +194,12 @@ function CommissionTracePanel({ commissionId }: { commissionId: string }) {
 
   return (
     <div className="space-y-3">
-      {data.map((item) => (
+      {data.map((item) => {
+        const isReversal = isReversalRelease(item);
+        const amountTone = isReversal ? "text-red-400" : "text-accent";
+        const creditsTone = isReversal ? "text-red-400" : "text-text-primary";
+
+        return (
         <div key={item.id} className="rounded-2xl border border-border bg-surface/65 p-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
@@ -204,12 +217,12 @@ function CommissionTracePanel({ commissionId }: { commissionId: string }) {
             </div>
             <div className="grid min-w-[220px] grid-cols-2 gap-2 text-right text-xs">
               <div className="rounded-2xl border border-border bg-background/60 px-3 py-2">
-                <div className="text-text-muted">本次释放积分</div>
-                <div className="mt-1 font-semibold text-text-primary">{item.consumedCreditsDelta}</div>
+                <div className="text-text-muted">{isReversal ? "本次回退积分" : "本次释放积分"}</div>
+                <div className={`mt-1 font-semibold ${creditsTone}`}>{item.consumedCreditsDelta}</div>
               </div>
               <div className="rounded-2xl border border-border bg-background/60 px-3 py-2">
-                <div className="text-text-muted">新增佣金</div>
-                <div className="mt-1 font-semibold text-accent">{formatCurrency(item.releasedAmountDeltaCents)}</div>
+                <div className="text-text-muted">{isReversal ? "回退佣金" : "新增佣金"}</div>
+                <div className={`mt-1 font-semibold ${amountTone}`}>{formatCurrency(item.releasedAmountDeltaCents)}</div>
               </div>
               <div className="rounded-2xl border border-border bg-background/60 px-3 py-2">
                 <div className="text-text-muted">累计已消耗</div>
@@ -222,7 +235,8 @@ function CommissionTracePanel({ commissionId }: { commissionId: string }) {
             </div>
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

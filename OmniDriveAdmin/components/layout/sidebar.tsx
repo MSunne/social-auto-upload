@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { NAV_GROUPS } from "@/lib/routes";
@@ -7,12 +8,46 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/hooks/useAuth";
 import { LogOut } from "lucide-react";
 
+const SIDEBAR_SCROLL_STORAGE_KEY = "omnidrive-admin-sidebar-scroll-top";
+
 export function Sidebar() {
   const pathname = usePathname();
   const { logout } = useAuth();
+  const navRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const navElement = navRef.current;
+    if (!navElement || typeof window === "undefined") {
+      return;
+    }
+
+    const savedScrollTop = window.sessionStorage.getItem(SIDEBAR_SCROLL_STORAGE_KEY);
+    if (savedScrollTop) {
+      navElement.scrollTop = Number(savedScrollTop) || 0;
+    }
+
+    const handleScroll = () => {
+      window.sessionStorage.setItem(SIDEBAR_SCROLL_STORAGE_KEY, String(navElement.scrollTop));
+    };
+
+    navElement.addEventListener("scroll", handleScroll, { passive: true });
+    return () => navElement.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  useEffect(() => {
+    const navElement = navRef.current;
+    if (!navElement || typeof window === "undefined") {
+      return;
+    }
+
+    const savedScrollTop = window.sessionStorage.getItem(SIDEBAR_SCROLL_STORAGE_KEY);
+    if (savedScrollTop) {
+      navElement.scrollTop = Number(savedScrollTop) || 0;
+    }
+  }, [pathname]);
 
   return (
-    <aside className="border-b border-[var(--color-border)] bg-[var(--color-sidebar)] px-4 py-5 text-white lg:min-h-screen lg:border-b-0 lg:border-r flex flex-col">
+    <aside className="flex flex-col border-b border-[var(--color-border)] bg-[var(--color-sidebar)] px-4 py-5 text-white lg:sticky lg:top-0 lg:h-screen lg:border-b-0 lg:border-r">
       <div className="mb-6 flex items-center justify-between lg:mb-10">
         <div>
           <p className="text-[11px] uppercase tracking-[0.32em] text-white/45">
@@ -25,7 +60,7 @@ export function Sidebar() {
         </div>
       </div>
 
-      <nav className="space-y-6 flex-1 overflow-y-auto">
+      <nav ref={navRef} className="min-h-0 flex-1 space-y-6 overflow-y-auto pr-1">
         {NAV_GROUPS.map((group) => (
           <div key={group.label}>
             <p className="mb-2 px-3 text-[11px] uppercase tracking-[0.24em] text-white/35">

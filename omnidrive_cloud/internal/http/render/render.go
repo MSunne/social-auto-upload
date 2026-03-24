@@ -19,6 +19,16 @@ func Error(w http.ResponseWriter, statusCode int, message string) {
 	})
 }
 
+func ErrorWithFields(w http.ResponseWriter, statusCode int, message string, fields map[string]any) {
+	payload := map[string]any{
+		"error": message,
+	}
+	for key, value := range fields {
+		payload[key] = value
+	}
+	JSON(w, statusCode, payload)
+}
+
 func DecodeJSON(r *http.Request, destination any) error {
 	if r.Body == nil {
 		return errors.New("empty request body")

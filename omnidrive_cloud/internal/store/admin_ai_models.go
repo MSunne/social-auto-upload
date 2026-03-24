@@ -68,18 +68,12 @@ func (s *Store) ListAdminAIModels(ctx context.Context, filter AdminAIModelListFi
 	}
 
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
-		SELECT
-			id, vendor, model_name, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
-			description, pricing_payload,
-			image_reference_limit, image_supported_sizes,
-			video_reference_limit, video_supported_resolutions, video_supported_durations,
-			supported_file_types,
-			is_enabled, created_at, updated_at
+		SELECT %s
 		FROM ai_models
 		%s
 		ORDER BY updated_at DESC, created_at DESC
 		LIMIT $%d OFFSET $%d
-	`, whereClause, argIndex, argIndex+1), append(args, pageSize, offset)...)
+	`, aiModelSelectColumns, whereClause, argIndex, argIndex+1), append(args, pageSize, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -99,13 +93,7 @@ func (s *Store) ListAdminAIModels(ctx context.Context, filter AdminAIModelListFi
 
 func (s *Store) GetAIModelByID(ctx context.Context, id string) (*domain.AIModel, error) {
 	row := s.pool.QueryRow(ctx, `
-		SELECT
-			id, vendor, model_name, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
-			description, pricing_payload,
-			image_reference_limit, image_supported_sizes,
-			video_reference_limit, video_supported_resolutions, video_supported_durations,
-			supported_file_types,
-			is_enabled, created_at, updated_at
+		SELECT `+aiModelSelectColumns+`
 		FROM ai_models
 		WHERE id = $1
 	`, strings.TrimSpace(id))
@@ -158,13 +146,7 @@ func (s *Store) CreateAIModel(ctx context.Context, input CreateAIModelInput) (*d
 			$17,
 			$18, CLOCK_TIMESTAMP(), CLOCK_TIMESTAMP()
 		)
-		RETURNING
-			id, vendor, model_name, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
-			description, pricing_payload,
-			image_reference_limit, image_supported_sizes,
-			video_reference_limit, video_supported_resolutions, video_supported_durations,
-			supported_file_types,
-			is_enabled, created_at, updated_at
+		RETURNING `+aiModelSelectColumns+`
 	`,
 		input.ID,
 		input.Vendor,
@@ -303,13 +285,7 @@ func (s *Store) UpdateAIModel(ctx context.Context, id string, input UpdateAIMode
 	if len(setParts) == 1 {
 		// Nothing to update, return the existing model
 		row := s.pool.QueryRow(ctx, `
-			SELECT
-				id, vendor, model_name, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
-				description, pricing_payload,
-				image_reference_limit, image_supported_sizes,
-				video_reference_limit, video_supported_resolutions, video_supported_durations,
-				supported_file_types,
-				is_enabled, created_at, updated_at
+			SELECT `+aiModelSelectColumns+`
 			FROM ai_models
 			WHERE id = $1
 		`, id)
@@ -322,14 +298,8 @@ func (s *Store) UpdateAIModel(ctx context.Context, id string, input UpdateAIMode
 		UPDATE ai_models
 		SET %s
 		WHERE id = $1
-		RETURNING
-			id, vendor, model_name, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
-			description, pricing_payload,
-			image_reference_limit, image_supported_sizes,
-			video_reference_limit, video_supported_resolutions, video_supported_durations,
-			supported_file_types,
-			is_enabled, created_at, updated_at
-	`, setClause), args...)
+		RETURNING %s
+	`, setClause, aiModelSelectColumns), args...)
 
 	return scanAIModel(row)
 }

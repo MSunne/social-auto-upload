@@ -22,18 +22,19 @@ import (
 )
 
 type adminSystemConfigPatchRequest struct {
-	AIWorkerEnabled           *bool                           `json:"aiWorkerEnabled"`
-	PaymentChannels           []string                        `json:"paymentChannels"`
-	BillingManualSupport      *adminManualSupportPatchRequest `json:"billingManualSupport"`
-	DefaultChatModel          *string                         `json:"defaultChatModel"`
-	DefaultImageModel         *string                         `json:"defaultImageModel"`
-	DefaultVideoModel         *string                         `json:"defaultVideoModel"`
-	StoryboardPrompt          *string                         `json:"storyboardPrompt"`
-	StoryboardModel           *string                         `json:"storyboardModel"`
-	StoryboardReferences      []map[string]any                `json:"storyboardReferences"`
-	ImageStoryboardPrompt     *string                         `json:"imageStoryboardPrompt"`
-	ImageStoryboardModel      *string                         `json:"imageStoryboardModel"`
-	ImageStoryboardReferences []map[string]any                `json:"imageStoryboardReferences"`
+	AIWorkerEnabled           *bool                             `json:"aiWorkerEnabled"`
+	PaymentChannels           []string                          `json:"paymentChannels"`
+	BillingManualSupport      *adminManualSupportPatchRequest   `json:"billingManualSupport"`
+	SMSRegistration           *adminSMSRegistrationPatchRequest `json:"smsRegistration"`
+	DefaultChatModel          *string                           `json:"defaultChatModel"`
+	DefaultImageModel         *string                           `json:"defaultImageModel"`
+	DefaultVideoModel         *string                           `json:"defaultVideoModel"`
+	StoryboardPrompt          *string                           `json:"storyboardPrompt"`
+	StoryboardModel           *string                           `json:"storyboardModel"`
+	StoryboardReferences      []map[string]any                  `json:"storyboardReferences"`
+	ImageStoryboardPrompt     *string                           `json:"imageStoryboardPrompt"`
+	ImageStoryboardModel      *string                           `json:"imageStoryboardModel"`
+	ImageStoryboardReferences []map[string]any                  `json:"imageStoryboardReferences"`
 }
 
 type adminManualSupportPatchRequest struct {
@@ -43,10 +44,28 @@ type adminManualSupportPatchRequest struct {
 	Note      *string `json:"note"`
 }
 
+type adminSMSRegistrationPatchRequest struct {
+	Enabled            *bool   `json:"enabled"`
+	Provider           *string `json:"provider"`
+	Endpoint           *string `json:"endpoint"`
+	AccessKeyID        *string `json:"accessKeyId"`
+	AccessKeySecret    *string `json:"accessKeySecret"`
+	SignName           *string `json:"signName"`
+	TemplateCode       *string `json:"templateCode"`
+	TemplateParam      *string `json:"templateParam"`
+	SchemeName         *string `json:"schemeName"`
+	DefaultCountryCode *string `json:"defaultCountryCode"`
+	ValidMinutes       *int    `json:"validMinutes"`
+	CooldownSeconds    *int    `json:"cooldownSeconds"`
+	DailyLimit         *int    `json:"dailyLimit"`
+	CodeLength         *int    `json:"codeLength"`
+}
+
 type effectiveAdminSystemSettings struct {
 	AIWorkerEnabled           bool
 	PaymentChannels           []string
 	BillingManualSupport      domain.AdminManualSupportConfig
+	SMSRegistration           domain.AdminSMSRegistrationConfig
 	DefaultChatModel          string
 	DefaultImageModel         string
 	DefaultVideoModel         string
@@ -68,6 +87,17 @@ func defaultAdminSystemSettings(cfg config.Config) effectiveAdminSystemSettings 
 			Contact:   strings.TrimSpace(cfg.BillingManualSupportContact),
 			QRCodeURL: strings.TrimSpace(cfg.BillingManualSupportQRCodeURL),
 			Note:      strings.TrimSpace(cfg.BillingManualSupportNote),
+		},
+		SMSRegistration: domain.AdminSMSRegistrationConfig{
+			Enabled:            false,
+			Provider:           "aliyun_dypnsapi",
+			Endpoint:           "dypnsapi.aliyuncs.com",
+			TemplateParam:      `{"code":"##code##"}`,
+			DefaultCountryCode: "86",
+			ValidMinutes:       10,
+			CooldownSeconds:    60,
+			DailyLimit:         10,
+			CodeLength:         6,
 		},
 		DefaultChatModel:          strings.TrimSpace(cfg.DefaultChatModel),
 		DefaultImageModel:         strings.TrimSpace(cfg.DefaultImageModel),
@@ -159,6 +189,7 @@ func loadEffectiveAdminSystemSettings(ctx context.Context, app *appstate.App) (e
 	settings.AIWorkerEnabled = record.AIWorkerEnabled
 	settings.PaymentChannels = append([]string(nil), record.PaymentChannels...)
 	settings.BillingManualSupport = record.BillingManualSupport
+	settings.SMSRegistration = record.SMSRegistration
 	settings.DefaultChatModel = strings.TrimSpace(record.DefaultChatModel)
 	settings.DefaultImageModel = strings.TrimSpace(record.DefaultImageModel)
 	settings.DefaultVideoModel = strings.TrimSpace(record.DefaultVideoModel)
@@ -184,6 +215,11 @@ func buildAdminSystemConfigPayload(app *appstate.App, settings effectiveAdminSys
 	if !settings.AIWorkerEnabled {
 		notes = append(notes, "AI Worker 当前已关闭，新的 AI 任务创建会被阻止，直到后台重新启用。")
 	}
+	if settings.SMSRegistration.Enabled {
+		notes = append(notes, "短信注册已启用，注册页将要求先完成手机验证码校验。")
+	} else {
+		notes = append(notes, "短信注册当前关闭，请先在系统配置中启用并填写阿里云短信参数。")
+	}
 
 	return domain.AdminSystemConfig{
 		AuthMode:                  "database_rbac",
@@ -194,6 +230,7 @@ func buildAdminSystemConfigPayload(app *appstate.App, settings effectiveAdminSys
 		AIWorkerEnabled:           settings.AIWorkerEnabled,
 		PaymentChannels:           append([]string(nil), settings.PaymentChannels...),
 		BillingManualSupport:      settings.BillingManualSupport,
+		SMSRegistration:           settings.SMSRegistration,
 		DefaultChatModel:          settings.DefaultChatModel,
 		DefaultImageModel:         settings.DefaultImageModel,
 		DefaultVideoModel:         settings.DefaultVideoModel,
@@ -244,6 +281,49 @@ func normalizePatchedString(value *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*value)
+}
+
+func normalizePatchedInt(value *int, fallback int) int {
+	if value == nil {
+		return fallback
+	}
+	return *value
+}
+
+func normalizeSMSProvider(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "aliyun", "aliyun_dypnsapi", "aliyun-dypnsapi":
+		return "aliyun_dypnsapi"
+	default:
+		return ""
+	}
+}
+
+func normalizeSMSCountryCode(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	var digits strings.Builder
+	digits.Grow(len(trimmed))
+	for _, char := range trimmed {
+		if char >= '0' && char <= '9' {
+			digits.WriteRune(char)
+		}
+	}
+	return digits.String()
+}
+
+func maskSecretForAudit(value string) string {
+	trimmed := strings.TrimSpace(value)
+	switch {
+	case trimmed == "":
+		return ""
+	case len(trimmed) <= 4:
+		return "****"
+	default:
+		return trimmed[:2] + "****" + trimmed[len(trimmed)-2:]
+	}
 }
 
 func adminTimePtr(value time.Time) *time.Time {
@@ -403,6 +483,71 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 		}
 	}
 
+	if nestedFieldTouched(raw, "smsRegistration") {
+		if payload.SMSRegistration == nil {
+			render.Error(w, http.StatusBadRequest, "smsRegistration must be an object")
+			return
+		}
+
+		smsRaw := map[string]json.RawMessage{}
+		if err := json.Unmarshal(raw["smsRegistration"], &smsRaw); err != nil {
+			render.Error(w, http.StatusBadRequest, "smsRegistration must be an object")
+			return
+		}
+
+		if nestedFieldTouched(smsRaw, "enabled") {
+			if payload.SMSRegistration.Enabled == nil {
+				render.Error(w, http.StatusBadRequest, "smsRegistration.enabled must be a boolean")
+				return
+			}
+			settings.SMSRegistration.Enabled = *payload.SMSRegistration.Enabled
+		}
+		if nestedFieldTouched(smsRaw, "provider") {
+			provider := normalizeSMSProvider(normalizePatchedString(payload.SMSRegistration.Provider))
+			if provider == "" {
+				render.Error(w, http.StatusBadRequest, "smsRegistration.provider only supports aliyun_dypnsapi")
+				return
+			}
+			settings.SMSRegistration.Provider = provider
+		}
+		if nestedFieldTouched(smsRaw, "endpoint") {
+			settings.SMSRegistration.Endpoint = normalizePatchedString(payload.SMSRegistration.Endpoint)
+		}
+		if nestedFieldTouched(smsRaw, "accessKeyId") {
+			settings.SMSRegistration.AccessKeyID = normalizePatchedString(payload.SMSRegistration.AccessKeyID)
+		}
+		if nestedFieldTouched(smsRaw, "accessKeySecret") {
+			settings.SMSRegistration.AccessKeySecret = normalizePatchedString(payload.SMSRegistration.AccessKeySecret)
+		}
+		if nestedFieldTouched(smsRaw, "signName") {
+			settings.SMSRegistration.SignName = normalizePatchedString(payload.SMSRegistration.SignName)
+		}
+		if nestedFieldTouched(smsRaw, "templateCode") {
+			settings.SMSRegistration.TemplateCode = normalizePatchedString(payload.SMSRegistration.TemplateCode)
+		}
+		if nestedFieldTouched(smsRaw, "templateParam") {
+			settings.SMSRegistration.TemplateParam = normalizePatchedString(payload.SMSRegistration.TemplateParam)
+		}
+		if nestedFieldTouched(smsRaw, "schemeName") {
+			settings.SMSRegistration.SchemeName = normalizePatchedString(payload.SMSRegistration.SchemeName)
+		}
+		if nestedFieldTouched(smsRaw, "defaultCountryCode") {
+			settings.SMSRegistration.DefaultCountryCode = normalizeSMSCountryCode(normalizePatchedString(payload.SMSRegistration.DefaultCountryCode))
+		}
+		if nestedFieldTouched(smsRaw, "validMinutes") {
+			settings.SMSRegistration.ValidMinutes = normalizePatchedInt(payload.SMSRegistration.ValidMinutes, settings.SMSRegistration.ValidMinutes)
+		}
+		if nestedFieldTouched(smsRaw, "cooldownSeconds") {
+			settings.SMSRegistration.CooldownSeconds = normalizePatchedInt(payload.SMSRegistration.CooldownSeconds, settings.SMSRegistration.CooldownSeconds)
+		}
+		if nestedFieldTouched(smsRaw, "dailyLimit") {
+			settings.SMSRegistration.DailyLimit = normalizePatchedInt(payload.SMSRegistration.DailyLimit, settings.SMSRegistration.DailyLimit)
+		}
+		if nestedFieldTouched(smsRaw, "codeLength") {
+			settings.SMSRegistration.CodeLength = normalizePatchedInt(payload.SMSRegistration.CodeLength, settings.SMSRegistration.CodeLength)
+		}
+	}
+
 	if nestedFieldTouched(raw, "defaultChatModel") {
 		settings.DefaultChatModel = normalizePatchedString(payload.DefaultChatModel)
 	}
@@ -475,23 +620,84 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 	if strings.TrimSpace(settings.ImageStoryboardModel) == "" {
 		settings.ImageStoryboardModel = settings.DefaultChatModel
 	}
+	if strings.TrimSpace(settings.SMSRegistration.Provider) == "" {
+		settings.SMSRegistration.Provider = "aliyun_dypnsapi"
+	}
+	if strings.TrimSpace(settings.SMSRegistration.Endpoint) == "" {
+		settings.SMSRegistration.Endpoint = "dypnsapi.aliyuncs.com"
+	}
+	if strings.TrimSpace(settings.SMSRegistration.TemplateParam) == "" {
+		settings.SMSRegistration.TemplateParam = `{"code":"##code##"}`
+	}
+	if strings.TrimSpace(settings.SMSRegistration.DefaultCountryCode) == "" {
+		settings.SMSRegistration.DefaultCountryCode = "86"
+	}
+	if settings.SMSRegistration.ValidMinutes <= 0 {
+		settings.SMSRegistration.ValidMinutes = 10
+	}
+	if settings.SMSRegistration.CooldownSeconds <= 0 {
+		settings.SMSRegistration.CooldownSeconds = 60
+	}
+	if settings.SMSRegistration.DailyLimit <= 0 {
+		settings.SMSRegistration.DailyLimit = 10
+	}
+	if settings.SMSRegistration.CodeLength < 4 || settings.SMSRegistration.CodeLength > 8 {
+		render.Error(w, http.StatusBadRequest, "smsRegistration.codeLength must be between 4 and 8")
+		return
+	}
+	if settings.SMSRegistration.Enabled {
+		if strings.TrimSpace(settings.SMSRegistration.AccessKeyID) == "" {
+			render.Error(w, http.StatusBadRequest, "smsRegistration.accessKeyId is required when sms registration is enabled")
+			return
+		}
+		if strings.TrimSpace(settings.SMSRegistration.AccessKeySecret) == "" {
+			render.Error(w, http.StatusBadRequest, "smsRegistration.accessKeySecret is required when sms registration is enabled")
+			return
+		}
+		if strings.TrimSpace(settings.SMSRegistration.SignName) == "" {
+			render.Error(w, http.StatusBadRequest, "smsRegistration.signName is required when sms registration is enabled")
+			return
+		}
+		if strings.TrimSpace(settings.SMSRegistration.TemplateCode) == "" {
+			render.Error(w, http.StatusBadRequest, "smsRegistration.templateCode is required when sms registration is enabled")
+			return
+		}
+		if !strings.Contains(settings.SMSRegistration.TemplateParam, "##code##") {
+			render.Error(w, http.StatusBadRequest, "smsRegistration.templateParam must contain ##code## as the verification placeholder")
+			return
+		}
+	}
 
 	record, err := h.app.Store.UpsertAdminSystemSettings(r.Context(), store.UpsertAdminSystemSettingsInput{
-		AIWorkerEnabled:               settings.AIWorkerEnabled,
-		PaymentChannels:               settings.PaymentChannels,
-		BillingManualSupportName:      settings.BillingManualSupport.Name,
-		BillingManualSupportContact:   settings.BillingManualSupport.Contact,
-		BillingManualSupportQRCodeURL: settings.BillingManualSupport.QRCodeURL,
-		BillingManualSupportNote:      settings.BillingManualSupport.Note,
-		DefaultChatModel:              settings.DefaultChatModel,
-		DefaultImageModel:             settings.DefaultImageModel,
-		DefaultVideoModel:             settings.DefaultVideoModel,
-		StoryboardPrompt:              settings.StoryboardPrompt,
-		StoryboardModel:               settings.StoryboardModel,
-		StoryboardReferences:          settings.StoryboardReferences,
-		ImageStoryboardPrompt:         settings.ImageStoryboardPrompt,
-		ImageStoryboardModel:          settings.ImageStoryboardModel,
-		ImageStoryboardReferences:     settings.ImageStoryboardReferences,
+		AIWorkerEnabled:                   settings.AIWorkerEnabled,
+		PaymentChannels:                   settings.PaymentChannels,
+		BillingManualSupportName:          settings.BillingManualSupport.Name,
+		BillingManualSupportContact:       settings.BillingManualSupport.Contact,
+		BillingManualSupportQRCodeURL:     settings.BillingManualSupport.QRCodeURL,
+		BillingManualSupportNote:          settings.BillingManualSupport.Note,
+		SMSRegistrationEnabled:            settings.SMSRegistration.Enabled,
+		SMSRegistrationProvider:           settings.SMSRegistration.Provider,
+		SMSRegistrationEndpoint:           settings.SMSRegistration.Endpoint,
+		SMSRegistrationAccessKeyID:        settings.SMSRegistration.AccessKeyID,
+		SMSRegistrationAccessKeySecret:    settings.SMSRegistration.AccessKeySecret,
+		SMSRegistrationSignName:           settings.SMSRegistration.SignName,
+		SMSRegistrationTemplateCode:       settings.SMSRegistration.TemplateCode,
+		SMSRegistrationTemplateParam:      settings.SMSRegistration.TemplateParam,
+		SMSRegistrationSchemeName:         settings.SMSRegistration.SchemeName,
+		SMSRegistrationDefaultCountryCode: settings.SMSRegistration.DefaultCountryCode,
+		SMSRegistrationValidMinutes:       settings.SMSRegistration.ValidMinutes,
+		SMSRegistrationCooldownSeconds:    settings.SMSRegistration.CooldownSeconds,
+		SMSRegistrationDailyLimit:         settings.SMSRegistration.DailyLimit,
+		SMSRegistrationCodeLength:         settings.SMSRegistration.CodeLength,
+		DefaultChatModel:                  settings.DefaultChatModel,
+		DefaultImageModel:                 settings.DefaultImageModel,
+		DefaultVideoModel:                 settings.DefaultVideoModel,
+		StoryboardPrompt:                  settings.StoryboardPrompt,
+		StoryboardModel:                   settings.StoryboardModel,
+		StoryboardReferences:              settings.StoryboardReferences,
+		ImageStoryboardPrompt:             settings.ImageStoryboardPrompt,
+		ImageStoryboardModel:              settings.ImageStoryboardModel,
+		ImageStoryboardReferences:         settings.ImageStoryboardReferences,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to update system config")
@@ -512,9 +718,25 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 		Status:       "success",
 		Message:      auditStringPtr("系统配置已更新"),
 		Payload: mustJSONBytes(map[string]any{
-			"aiWorkerEnabled":           settings.AIWorkerEnabled,
-			"paymentChannels":           settings.PaymentChannels,
-			"billingManualSupport":      settings.BillingManualSupport,
+			"aiWorkerEnabled":      settings.AIWorkerEnabled,
+			"paymentChannels":      settings.PaymentChannels,
+			"billingManualSupport": settings.BillingManualSupport,
+			"smsRegistration": map[string]any{
+				"enabled":            settings.SMSRegistration.Enabled,
+				"provider":           settings.SMSRegistration.Provider,
+				"endpoint":           settings.SMSRegistration.Endpoint,
+				"accessKeyId":        maskSecretForAudit(settings.SMSRegistration.AccessKeyID),
+				"accessKeySecret":    maskSecretForAudit(settings.SMSRegistration.AccessKeySecret),
+				"signName":           settings.SMSRegistration.SignName,
+				"templateCode":       settings.SMSRegistration.TemplateCode,
+				"templateParam":      settings.SMSRegistration.TemplateParam,
+				"schemeName":         settings.SMSRegistration.SchemeName,
+				"defaultCountryCode": settings.SMSRegistration.DefaultCountryCode,
+				"validMinutes":       settings.SMSRegistration.ValidMinutes,
+				"cooldownSeconds":    settings.SMSRegistration.CooldownSeconds,
+				"dailyLimit":         settings.SMSRegistration.DailyLimit,
+				"codeLength":         settings.SMSRegistration.CodeLength,
+			},
 			"defaultChatModel":          settings.DefaultChatModel,
 			"defaultImageModel":         settings.DefaultImageModel,
 			"defaultVideoModel":         settings.DefaultVideoModel,

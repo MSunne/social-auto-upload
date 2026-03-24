@@ -37,6 +37,7 @@ type UsageBillingDetail struct {
 	DebitCredits               int64  `json:"debitCredits"`
 	QuotaUsed                  int64  `json:"quotaUsed"`
 	DistributionReleaseCredits int64  `json:"distributionReleaseCredits"`
+	SupportsFailureRefund      bool   `json:"supportsFailureRefund"`
 	ChargeMode                 string `json:"chargeMode"`
 	BillStatus                 string `json:"billStatus"`
 	BillMessage                string `json:"billMessage,omitempty"`
@@ -387,12 +388,7 @@ func loadPricingRulesForUsageTx(ctx context.Context, tx pgx.Tx, modelName string
 
 func loadAIModelForUsageBillingTx(ctx context.Context, tx pgx.Tx, modelName string) (*domain.AIModel, error) {
 	row := tx.QueryRow(ctx, `
-		SELECT
-			id, vendor, model_name, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
-			description, pricing_payload,
-			image_reference_limit, image_supported_sizes,
-			video_reference_limit, video_supported_resolutions, video_supported_durations,
-			is_enabled, created_at, updated_at
+		SELECT `+aiModelSelectColumns+`
 		FROM ai_models
 		WHERE model_name = $1
 	`, strings.TrimSpace(modelName))
@@ -591,6 +587,7 @@ func planUsageCharge(metric ApplyUsageMetricInput, rule pricingRuleRecord, walle
 		ChargeMode:    strings.TrimSpace(rule.ChargeMode),
 		BillStatus:    "billed",
 	}
+	detail.SupportsFailureRefund = supportsFailureRefundForUsage(rule, detail.MeterCode)
 
 	if detail.MeterCode == "" || detail.ChargeMode == "" {
 		detail.BillStatus = "failed"
@@ -649,11 +646,13 @@ func planUsageCharge(metric ApplyUsageMetricInput, rule pricingRuleRecord, walle
 					distributionCommissionItemID: account.DistributionCommissionItemID,
 					releaseUnitCredits:           maxInt64(account.ReleaseUnitCredits, 0),
 					payload: mustJSONMap(map[string]any{
-						"meterCode":  metric.MeterCode,
-						"quantity":   detail.Quantity,
-						"units":      detail.Units,
-						"quotaUsed":  used,
-						"chargeMode": rule.ChargeMode,
+						"meterCode":          metric.MeterCode,
+						"quantity":           detail.Quantity,
+						"units":              detail.Units,
+						"quotaUsed":          used,
+						"chargeMode":         rule.ChargeMode,
+						"releaseUnitCredits": maxInt64(account.ReleaseUnitCredits, 0),
+						"creditValue":        used * maxInt64(account.ReleaseUnitCredits, 0),
 					}),
 				})
 				detail.DistributionReleaseCredits += used * maxInt64(account.ReleaseUnitCredits, 0)
@@ -836,6 +835,7 @@ func insertBilledUsageEventsTx(ctx context.Context, tx pgx.Tx, input ApplyUsageB
 			"quantity":                   detail.Quantity,
 			"units":                      detail.Units,
 			"quotaUsed":                  detail.QuotaUsed,
+			"supportsFailureRefund":      detail.SupportsFailureRefund,
 			"chargeMode":                 detail.ChargeMode,
 			"pricingRuleId":              detail.PricingRuleID,
 		}
@@ -876,6 +876,7 @@ func insertFailedUsageEventsTx(ctx context.Context, tx pgx.Tx, input ApplyUsageB
 			"quantity":                   detail.Quantity,
 			"units":                      detail.Units,
 			"quotaUsed":                  detail.QuotaUsed,
+			"supportsFailureRefund":      detail.SupportsFailureRefund,
 			"chargeMode":                 detail.ChargeMode,
 			"pricingRuleId":              detail.PricingRuleID,
 		}
@@ -1008,4 +1009,18 @@ func usageQuantityValue(value any) int64 {
 		}
 	}
 	return 0
+}
+
+func supportsFailureRefundForUsage(rule pricingRuleRecord, meterCode string) bool {
+	meterCode = strings.TrimSpace(strings.ToLower(meterCode))
+	if meterCode == "" {
+		return false
+	}
+	if strings.HasPrefix(meterCode, "chat_") {
+		return false
+	}
+	if strings.TrimSpace(rule.QuantityMetaKey) != "" {
+		return false
+	}
+	return true
 }

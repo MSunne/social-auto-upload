@@ -24,8 +24,9 @@ export function SettingsView() {
     if (!config) {
       return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
-    setFormData(JSON.parse(JSON.stringify(config)));
+    const nextValue = JSON.parse(JSON.stringify(config));
+    const timer = window.setTimeout(() => setFormData(nextValue), 0);
+    return () => window.clearTimeout(timer);
   }, [config]);
 
   const handleSave = async () => {
@@ -45,6 +46,34 @@ export function SettingsView() {
       ...current,
       billingManualSupport: {
         ...(current.billingManualSupport || { name: "", contact: "", qrCodeUrl: "", note: "" }),
+        [field]: value,
+      },
+    }));
+  };
+
+  const handleSMSRegistrationChange = (
+    field: keyof NonNullable<AdminSystemConfig["smsRegistration"]>,
+    value: string | boolean | number
+  ) => {
+    setFormData((current) => ({
+      ...current,
+      smsRegistration: {
+        ...(current.smsRegistration || {
+          enabled: false,
+          provider: "aliyun_dypnsapi",
+          endpoint: "dypnsapi.aliyuncs.com",
+          accessKeyId: "",
+          accessKeySecret: "",
+          signName: "",
+          templateCode: "",
+          templateParam: '{"code":"##code##"}',
+          schemeName: "",
+          defaultCountryCode: "86",
+          validMinutes: 10,
+          cooldownSeconds: 60,
+          dailyLimit: 10,
+          codeLength: 6,
+        }),
         [field]: value,
       },
     }));
@@ -272,6 +301,128 @@ export function SettingsView() {
               </div>
             </div>
           </div>
+
+          <div className="space-y-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-6">
+            <h3 className="flex items-center gap-2 border-b border-[var(--color-border)] pb-2 text-base font-medium">
+              <MessageSquare className="h-4 w-4 text-[var(--color-primary)]" />
+              短信注册 / 阿里云 Dypnsapi
+            </h3>
+            <p className="text-sm text-[var(--color-text-secondary)]">
+              注册页发送验证码时会读取这里的配置。模板参数里请使用 <code>##code##</code> 作为验证码占位符。
+            </p>
+
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="block text-sm font-medium">启用短信注册</label>
+                  <p className="mt-0.5 text-xs text-[var(--color-text-secondary)]">
+                    开启后，用户注册必须先获取并校验短信验证码。
+                  </p>
+                </div>
+                <label className="relative inline-flex cursor-pointer items-center">
+                  <input
+                    type="checkbox"
+                    checked={formData.smsRegistration?.enabled || false}
+                    onChange={(event) => handleSMSRegistrationChange("enabled", event.target.checked)}
+                    className="peer sr-only"
+                  />
+                  <div className="h-6 w-11 rounded-full bg-[var(--color-bg-secondary)] peer-checked:bg-[var(--color-primary)] peer-checked:after:translate-x-full after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-['']" />
+                </label>
+              </div>
+
+              <InputField
+                label="Provider"
+                value={formData.smsRegistration?.provider || "aliyun_dypnsapi"}
+                onChange={(value) => handleSMSRegistrationChange("provider", value)}
+                placeholder="aliyun_dypnsapi"
+              />
+              <InputField
+                label="Endpoint"
+                value={formData.smsRegistration?.endpoint || ""}
+                onChange={(value) => handleSMSRegistrationChange("endpoint", value)}
+                placeholder="dypnsapi.aliyuncs.com"
+              />
+              <InputField
+                label="AccessKey ID"
+                value={formData.smsRegistration?.accessKeyId || ""}
+                onChange={(value) => handleSMSRegistrationChange("accessKeyId", value)}
+                placeholder="LTAI..."
+              />
+              <InputField
+                label="AccessKey Secret"
+                type="password"
+                value={formData.smsRegistration?.accessKeySecret || ""}
+                onChange={(value) => handleSMSRegistrationChange("accessKeySecret", value)}
+                placeholder="阿里云短信 AccessKey Secret"
+              />
+              <InputField
+                label="签名名称"
+                value={formData.smsRegistration?.signName || ""}
+                onChange={(value) => handleSMSRegistrationChange("signName", value)}
+                placeholder="例如：速通互联验证码"
+              />
+              <InputField
+                label="模板编码"
+                value={formData.smsRegistration?.templateCode || ""}
+                onChange={(value) => handleSMSRegistrationChange("templateCode", value)}
+                placeholder="例如：SMS_100001"
+              />
+              <InputField
+                label="Scheme Name（选填）"
+                value={formData.smsRegistration?.schemeName || ""}
+                onChange={(value) => handleSMSRegistrationChange("schemeName", value)}
+                placeholder="阿里云短信服务名，可留空"
+              />
+              <InputField
+                label="默认国家区号"
+                value={formData.smsRegistration?.defaultCountryCode || "86"}
+                onChange={(value) => handleSMSRegistrationChange("defaultCountryCode", value)}
+                placeholder="86"
+              />
+              <div>
+                <label className="mb-1 block text-xs font-medium text-[var(--color-text-secondary)]">
+                  模板参数
+                </label>
+                <textarea
+                  value={formData.smsRegistration?.templateParam || '{"code":"##code##"}'}
+                  onChange={(event) => handleSMSRegistrationChange("templateParam", event.target.value)}
+                  rows={3}
+                  className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm focus:border-[var(--color-primary)] focus:outline-none"
+                  placeholder='{"code":"##code##"}'
+                />
+              </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <InputField
+                  label="验证码有效期（分钟）"
+                  type="number"
+                  value={String(formData.smsRegistration?.validMinutes ?? 10)}
+                  onChange={(value) => handleSMSRegistrationChange("validMinutes", Number(value) || 0)}
+                  placeholder="10"
+                />
+                <InputField
+                  label="发送冷却（秒）"
+                  type="number"
+                  value={String(formData.smsRegistration?.cooldownSeconds ?? 60)}
+                  onChange={(value) => handleSMSRegistrationChange("cooldownSeconds", Number(value) || 0)}
+                  placeholder="60"
+                />
+                <InputField
+                  label="单日上限"
+                  type="number"
+                  value={String(formData.smsRegistration?.dailyLimit ?? 10)}
+                  onChange={(value) => handleSMSRegistrationChange("dailyLimit", Number(value) || 0)}
+                  placeholder="10"
+                />
+                <InputField
+                  label="验证码长度"
+                  type="number"
+                  value={String(formData.smsRegistration?.codeLength ?? 6)}
+                  onChange={(value) => handleSMSRegistrationChange("codeLength", Number(value) || 0)}
+                  placeholder="6"
+                />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -283,17 +434,19 @@ function InputField({
   value,
   onChange,
   placeholder,
+  type = "text",
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
+  type?: string;
 }) {
   return (
     <div>
       <label className="mb-1 block text-sm font-medium">{label}</label>
       <input
-        type="text"
+        type={type}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
