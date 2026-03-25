@@ -334,13 +334,16 @@ export function SettingsView() {
                 label="Provider"
                 value={formData.smsRegistration?.provider || "aliyun_dypnsapi"}
                 onChange={(value) => handleSMSRegistrationChange("provider", value)}
-                placeholder="aliyun_dypnsapi"
+                placeholder="aliyun_dypnsapi 或 aliyun_dysmsapi"
               />
+              <p className="-mt-2 text-xs text-[var(--color-text-secondary)]">
+                `aliyun_dypnsapi` 适合号码认证赠送签名和赠送模板；`aliyun_dysmsapi` 适合自定义签名和 `SMS_` 模板。
+              </p>
               <InputField
                 label="Endpoint"
                 value={formData.smsRegistration?.endpoint || ""}
                 onChange={(value) => handleSMSRegistrationChange("endpoint", value)}
-                placeholder="dypnsapi.aliyuncs.com"
+                placeholder="dypnsapi.aliyuncs.com / dysmsapi.aliyuncs.com"
               />
               <InputField
                 label="AccessKey ID"
@@ -390,6 +393,9 @@ export function SettingsView() {
                   className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm focus:border-[var(--color-primary)] focus:outline-none"
                   placeholder='{"code":"##code##"}'
                 />
+                <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                  统一使用 `##code##` 作为验证码占位符，系统会根据 Provider 自动改成云端校验或本地安全校验。
+                </p>
               </div>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <InputField

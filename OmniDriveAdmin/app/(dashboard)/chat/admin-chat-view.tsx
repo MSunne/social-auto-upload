@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { PageHeader } from "@/components/ui/common";
+import { adminRuntimeConfig } from "@/lib/config";
 import { Send, Loader2, Bot, User, Trash2, Plus } from "lucide-react";
 
 interface ChatMessage {
@@ -11,9 +12,7 @@ interface ChatMessage {
   createdAt: Date;
 }
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_OMNIDRIVE_ADMIN_API_BASE_URL?.replace(/\/+$/, "") ||
-  "http://127.0.0.1:8410";
+const API_BASE = adminRuntimeConfig.apiBaseUrl;
 const CHAT_STREAM_URL = `${API_BASE}/api/admin/v1/ai/chat/stream`;
 
 export function AdminChatView() {

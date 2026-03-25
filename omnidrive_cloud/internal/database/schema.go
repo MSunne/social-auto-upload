@@ -139,6 +139,7 @@ CREATE TABLE IF NOT EXISTS phone_verification_codes (
     provider_biz_id TEXT,
     provider_code TEXT,
     provider_message TEXT,
+    verification_code_hash TEXT,
     template_code TEXT,
     expires_at TIMESTAMPTZ NOT NULL,
     verified_at TIMESTAMPTZ,
@@ -439,6 +440,7 @@ ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_valid
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_cooldown_seconds INT NOT NULL DEFAULT 60;
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_daily_limit INT NOT NULL DEFAULT 10;
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_code_length INT NOT NULL DEFAULT 6;
+ALTER TABLE phone_verification_codes ADD COLUMN IF NOT EXISTS verification_code_hash TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_chat_model TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_image_model TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_video_model TEXT;

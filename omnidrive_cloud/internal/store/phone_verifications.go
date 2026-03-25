@@ -12,23 +12,24 @@ import (
 const PhoneVerificationSceneRegister = "register"
 
 type PhoneVerificationRecord struct {
-	ID                string
-	Scene             string
-	Phone             string
-	CountryCode       string
-	Status            string
-	Provider          string
-	ProviderRequestID *string
-	ProviderBizID     *string
-	ProviderCode      *string
-	ProviderMessage   *string
-	TemplateCode      *string
-	ExpiresAt         time.Time
-	VerifiedAt        *time.Time
-	ConsumedAt        *time.Time
-	AttemptCount      int
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID                   string
+	Scene                string
+	Phone                string
+	CountryCode          string
+	Status               string
+	Provider             string
+	ProviderRequestID    *string
+	ProviderBizID        *string
+	ProviderCode         *string
+	ProviderMessage      *string
+	VerificationCodeHash *string
+	TemplateCode         *string
+	ExpiresAt            time.Time
+	VerifiedAt           *time.Time
+	ConsumedAt           *time.Time
+	AttemptCount         int
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 type CreatePhoneVerificationInput struct {
@@ -54,6 +55,7 @@ func scanPhoneVerification(scan scanFn) (*PhoneVerificationRecord, error) {
 		&item.ProviderBizID,
 		&item.ProviderCode,
 		&item.ProviderMessage,
+		&item.VerificationCodeHash,
 		&item.TemplateCode,
 		&item.ExpiresAt,
 		&item.VerifiedAt,
@@ -91,6 +93,7 @@ func (s *Store) CreatePhoneVerification(ctx context.Context, input CreatePhoneVe
 			provider_biz_id,
 			provider_code,
 			provider_message,
+			verification_code_hash,
 			template_code,
 			expires_at,
 			verified_at,
@@ -131,6 +134,7 @@ func (s *Store) GetLatestPhoneVerification(ctx context.Context, phone string, co
 			provider_biz_id,
 			provider_code,
 			provider_message,
+			verification_code_hash,
 			template_code,
 			expires_at,
 			verified_at,
@@ -157,7 +161,7 @@ func (s *Store) GetLatestPhoneVerification(ctx context.Context, phone string, co
 	return item, nil
 }
 
-func (s *Store) MarkPhoneVerificationSent(ctx context.Context, id string, providerRequestID string, providerBizID string, providerCode string, providerMessage string) error {
+func (s *Store) MarkPhoneVerificationSent(ctx context.Context, id string, providerRequestID string, providerBizID string, providerCode string, providerMessage string, verificationCodeHash string) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE phone_verification_codes
 		SET
@@ -166,9 +170,10 @@ func (s *Store) MarkPhoneVerificationSent(ctx context.Context, id string, provid
 			provider_biz_id = NULLIF($3, ''),
 			provider_code = NULLIF($4, ''),
 			provider_message = NULLIF($5, ''),
+			verification_code_hash = NULLIF($6, ''),
 			updated_at = NOW()
 		WHERE id = $1
-	`, strings.TrimSpace(id), strings.TrimSpace(providerRequestID), strings.TrimSpace(providerBizID), strings.TrimSpace(providerCode), strings.TrimSpace(providerMessage))
+	`, strings.TrimSpace(id), strings.TrimSpace(providerRequestID), strings.TrimSpace(providerBizID), strings.TrimSpace(providerCode), strings.TrimSpace(providerMessage), strings.TrimSpace(verificationCodeHash))
 	return err
 }
 

@@ -115,7 +115,7 @@ func resolveAuthIdentifiers(phoneInput string, emailInput string) (string, strin
 	if rawPhone != "" {
 		phone := normalizeUserPhone(rawPhone)
 		if phone == "" {
-			return "", "", "Invalid phone"
+			return "", "", "请输入正确的手机号"
 		}
 		if rawEmail != "" {
 			if candidate := normalizeUserPhone(rawEmail); candidate == phone {
@@ -123,7 +123,7 @@ func resolveAuthIdentifiers(phoneInput string, emailInput string) (string, strin
 			}
 			email := normalizeUserEmail(rawEmail)
 			if email == "" {
-				return "", "", "Invalid email"
+				return "", "", "请输入正确的邮箱"
 			}
 			return phone, email, ""
 		}
@@ -131,22 +131,35 @@ func resolveAuthIdentifiers(phoneInput string, emailInput string) (string, strin
 	}
 
 	if rawEmail == "" {
-		return "", "", "Phone or email is required"
+		return "", "", "请输入手机号或邮箱"
 	}
 	if phone := normalizeUserPhone(rawEmail); phone != "" {
 		return phone, "", ""
 	}
 	email := normalizeUserEmail(rawEmail)
 	if email == "" {
-		return "", "", "Invalid phone or email"
+		return "", "", "请输入正确的手机号或邮箱"
 	}
 	return "", email, ""
 }
 
 func normalizeRegisterSMSConfig(settings effectiveAdminSystemSettings) sms.RegistrationConfig {
+	provider := sms.ResolveProvider(settings.SMSRegistration.Provider, settings.SMSRegistration.TemplateCode)
+	endpoint := strings.TrimSpace(settings.SMSRegistration.Endpoint)
+	switch provider {
+	case sms.ProviderAliyunDysmsapi:
+		if endpoint == "" || strings.EqualFold(endpoint, "dypnsapi.aliyuncs.com") {
+			endpoint = "dysmsapi.aliyuncs.com"
+		}
+	default:
+		if endpoint == "" || strings.EqualFold(endpoint, "dysmsapi.aliyuncs.com") {
+			endpoint = "dypnsapi.aliyuncs.com"
+		}
+	}
+
 	return sms.RegistrationConfig{
-		Provider:        strings.TrimSpace(settings.SMSRegistration.Provider),
-		Endpoint:        strings.TrimSpace(settings.SMSRegistration.Endpoint),
+		Provider:        provider,
+		Endpoint:        endpoint,
 		AccessKeyID:     strings.TrimSpace(settings.SMSRegistration.AccessKeyID),
 		AccessKeySecret: strings.TrimSpace(settings.SMSRegistration.AccessKeySecret),
 		SignName:        strings.TrimSpace(settings.SMSRegistration.SignName),
@@ -173,10 +186,17 @@ func ensureRegisterSMSReady(settings effectiveAdminSystemSettings) (sms.Registra
 		return config, "短信模板配置尚未完成，请联系管理员"
 	}
 	if strings.TrimSpace(config.Provider) == "" {
-		config.Provider = "aliyun_dypnsapi"
+		config.Provider = sms.ResolveProvider("", config.TemplateCode)
 	}
-	if strings.TrimSpace(config.Endpoint) == "" {
-		config.Endpoint = "dypnsapi.aliyuncs.com"
+	switch config.Provider {
+	case sms.ProviderAliyunDysmsapi:
+		if strings.TrimSpace(config.Endpoint) == "" || strings.EqualFold(strings.TrimSpace(config.Endpoint), "dypnsapi.aliyuncs.com") {
+			config.Endpoint = "dysmsapi.aliyuncs.com"
+		}
+	default:
+		if strings.TrimSpace(config.Endpoint) == "" || strings.EqualFold(strings.TrimSpace(config.Endpoint), "dysmsapi.aliyuncs.com") {
+			config.Endpoint = "dypnsapi.aliyuncs.com"
+		}
 	}
 	if strings.TrimSpace(config.TemplateParam) == "" {
 		config.TemplateParam = sms.DefaultTemplateParam
@@ -220,8 +240,8 @@ func mapSMSProviderError(err error) (int, string, map[string]any) {
 		return http.StatusTooManyRequests, "该手机号今日验证码发送次数已达上限，请明天再试", fields
 	case "FREQUENCY_FAIL":
 		return http.StatusTooManyRequests, "验证码发送过于频繁，请稍后再试", fields
-	case "INVALID_PARAMETERS":
-		return http.StatusBadRequest, "短信模板或签名配置无效，请联系管理员检查短信配置", fields
+	case "INVALID_PARAMETERS", "isv.INVALID_PARAMETERS":
+		return http.StatusBadRequest, "短信模板或签名配置无效；如果你使用的是自定义签名和 SMS_ 模板，请改用 aliyun_dysmsapi 提供方", fields
 	case "FUNCTION_NOT_OPENED":
 		return http.StatusServiceUnavailable, "短信发送服务尚未开通，请联系管理员完成阿里云配置", fields
 	default:
@@ -249,11 +269,11 @@ func (h *AuthHandler) respondLoginSuccess(w http.ResponseWriter, userWithPasswor
 
 func (h *AuthHandler) verifyLoginPassword(w http.ResponseWriter, userWithPassword *store.UserWithPassword, password string) bool {
 	if userWithPassword == nil {
-		render.Error(w, http.StatusUnauthorized, "Invalid credentials")
+		render.Error(w, http.StatusUnauthorized, "账号或密码错误")
 		return false
 	}
 	if err := h.app.Tokens.VerifyPassword(password, userWithPassword.PasswordHash); err != nil {
-		render.Error(w, http.StatusUnauthorized, "Invalid credentials")
+		render.Error(w, http.StatusUnauthorized, "账号或密码错误")
 		return false
 	}
 	return true
@@ -356,7 +376,22 @@ func (h *AuthHandler) SendRegisterSMSCode(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	sendResult, err := sms.SendRegistrationCode(smsConfig, phone, countryCode, verificationID)
+	localVerificationCode := ""
+	localVerificationHash := ""
+	if sms.UsesLocalCodeVerification(smsConfig.Provider) {
+		localVerificationCode, err = sms.GenerateVerificationCode(smsConfig.CodeLength)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to generate verification code")
+			return
+		}
+		localVerificationHash, err = h.app.Tokens.HashPassword(localVerificationCode)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to secure verification code")
+			return
+		}
+	}
+
+	sendResult, err := sms.SendRegistrationCode(smsConfig, phone, countryCode, verificationID, localVerificationCode)
 	if err != nil {
 		statusCode, message, fields := mapSMSProviderError(err)
 		var providerErr *sms.ProviderError
@@ -369,7 +404,7 @@ func (h *AuthHandler) SendRegisterSMSCode(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := h.app.Store.MarkPhoneVerificationSent(r.Context(), record.ID, sendResult.RequestID, sendResult.BizID, sendResult.Code, sendResult.Message); err != nil {
+	if err := h.app.Store.MarkPhoneVerificationSent(r.Context(), record.ID, sendResult.RequestID, sendResult.BizID, sendResult.Code, sendResult.Message, localVerificationHash); err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to store verification status")
 		return
 	}
@@ -402,11 +437,11 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(payload.Name) == 0 {
-		render.Error(w, http.StatusBadRequest, "Name is required")
+		render.Error(w, http.StatusBadRequest, "请输入用户名")
 		return
 	}
 	if len(payload.Password) < 6 {
-		render.Error(w, http.StatusBadRequest, "Password must be at least 6 characters")
+		render.Error(w, http.StatusBadRequest, "密码至少需要 6 位")
 		return
 	}
 
@@ -417,7 +452,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if existing != nil {
-			render.Error(w, http.StatusConflict, "Phone already exists")
+			render.Error(w, http.StatusConflict, "该手机号已注册，请直接登录")
 			return
 		}
 	}
@@ -429,7 +464,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if existing != nil {
-			render.Error(w, http.StatusConflict, "Email already exists")
+			render.Error(w, http.StatusConflict, "该邮箱已注册，请直接登录")
 			return
 		}
 	}
@@ -472,21 +507,37 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		verifyResult, err := sms.VerifyRegistrationCode(smsConfig, phone, countryCode, payload.SMSCode, verification.ID)
-		if err != nil {
-			_ = h.app.Store.IncrementPhoneVerificationAttempt(r.Context(), verification.ID)
-			statusCode, message, fields := mapSMSProviderError(err)
-			render.ErrorWithFields(w, statusCode, message, fields)
-			return
-		}
-		if !strings.EqualFold(strings.TrimSpace(verifyResult.VerifyResult), "PASS") {
-			_ = h.app.Store.IncrementPhoneVerificationAttempt(r.Context(), verification.ID)
-			render.Error(w, http.StatusBadRequest, "验证码不正确，请重新输入")
-			return
-		}
-		if err := h.app.Store.MarkPhoneVerificationVerified(r.Context(), verification.ID, verifyResult.Code, verifyResult.Message); err != nil {
-			render.Error(w, http.StatusInternalServerError, "Failed to update verification status")
-			return
+		if sms.UsesLocalCodeVerification(verification.Provider) {
+			if verification.VerificationCodeHash == nil || strings.TrimSpace(*verification.VerificationCodeHash) == "" {
+				render.Error(w, http.StatusInternalServerError, "验证码状态异常，请重新获取")
+				return
+			}
+			if err := h.app.Tokens.VerifyPassword(strings.TrimSpace(payload.SMSCode), strings.TrimSpace(*verification.VerificationCodeHash)); err != nil {
+				_ = h.app.Store.IncrementPhoneVerificationAttempt(r.Context(), verification.ID)
+				render.Error(w, http.StatusBadRequest, "验证码不正确，请重新输入")
+				return
+			}
+			if err := h.app.Store.MarkPhoneVerificationVerified(r.Context(), verification.ID, "OK", "local verification passed"); err != nil {
+				render.Error(w, http.StatusInternalServerError, "Failed to update verification status")
+				return
+			}
+		} else {
+			verifyResult, err := sms.VerifyRegistrationCode(smsConfig, phone, countryCode, payload.SMSCode, verification.ID)
+			if err != nil {
+				_ = h.app.Store.IncrementPhoneVerificationAttempt(r.Context(), verification.ID)
+				statusCode, message, fields := mapSMSProviderError(err)
+				render.ErrorWithFields(w, statusCode, message, fields)
+				return
+			}
+			if !strings.EqualFold(strings.TrimSpace(verifyResult.VerifyResult), "PASS") {
+				_ = h.app.Store.IncrementPhoneVerificationAttempt(r.Context(), verification.ID)
+				render.Error(w, http.StatusBadRequest, "验证码不正确，请重新输入")
+				return
+			}
+			if err := h.app.Store.MarkPhoneVerificationVerified(r.Context(), verification.ID, verifyResult.Code, verifyResult.Message); err != nil {
+				render.Error(w, http.StatusInternalServerError, "Failed to update verification status")
+				return
+			}
 		}
 	}
 
@@ -509,7 +560,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrPartnerCodeInvalid):
-			render.Error(w, http.StatusBadRequest, "Invalid partner code")
+			render.Error(w, http.StatusBadRequest, "专属客服码无效，请检查后重试")
 		default:
 			render.Error(w, http.StatusInternalServerError, "Failed to create user")
 		}
@@ -551,7 +602,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if userWithPassword == nil {
-		render.Error(w, http.StatusUnauthorized, "Invalid credentials")
+		render.Error(w, http.StatusUnauthorized, "账号或密码错误")
 		return
 	}
 	if !h.verifyLoginPassword(w, userWithPassword, payload.Password) {
@@ -573,7 +624,7 @@ func (h *AuthHandler) LoginWithPhone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(payload.Password) == "" {
-		render.Error(w, http.StatusBadRequest, "Password is required")
+		render.Error(w, http.StatusBadRequest, "请输入密码")
 		return
 	}
 
@@ -600,21 +651,28 @@ func (h *AuthHandler) LoginWithPassword(w http.ResponseWriter, r *http.Request) 
 		account = strings.TrimSpace(payload.Email)
 	}
 	if account == "" {
-		render.Error(w, http.StatusBadRequest, "Account is required")
+		render.Error(w, http.StatusBadRequest, "请输入手机号或邮箱")
 		return
 	}
 	if strings.TrimSpace(payload.Password) == "" {
-		render.Error(w, http.StatusBadRequest, "Password is required")
+		render.Error(w, http.StatusBadRequest, "请输入密码")
 		return
 	}
 
+	phone := normalizeUserPhone(account)
 	email := normalizeUserEmail(account)
-	if email == "" {
-		render.Error(w, http.StatusBadRequest, "请输入正确的账户邮箱")
+	if phone == "" && email == "" {
+		render.Error(w, http.StatusBadRequest, "请输入正确的手机号或邮箱")
 		return
 	}
 
-	userWithPassword, err := h.app.Store.GetUserByEmail(r.Context(), email)
+	var userWithPassword *store.UserWithPassword
+	var err error
+	if phone != "" {
+		userWithPassword, err = h.app.Store.GetUserByPhone(r.Context(), phone)
+	} else {
+		userWithPassword, err = h.app.Store.GetUserByEmail(r.Context(), email)
+	}
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to query user")
 		return

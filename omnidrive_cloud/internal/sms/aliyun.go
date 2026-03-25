@@ -73,7 +73,7 @@ func normalizeTemplateParam(value string) string {
 	return strings.ReplaceAll(trimmed, "{{code}}", "##code##")
 }
 
-func NewAliyunClient(cfg RegistrationConfig) (*dypnsapi.Client, error) {
+func newAliyunDypnsClient(cfg RegistrationConfig) (*dypnsapi.Client, error) {
 	config := &openapi.Config{
 		AccessKeyId:     dara.String(strings.TrimSpace(cfg.AccessKeyID)),
 		AccessKeySecret: dara.String(strings.TrimSpace(cfg.AccessKeySecret)),
@@ -82,8 +82,8 @@ func NewAliyunClient(cfg RegistrationConfig) (*dypnsapi.Client, error) {
 	return dypnsapi.NewClient(config)
 }
 
-func SendRegistrationCode(cfg RegistrationConfig, phone string, countryCode string, outID string) (*SendCodeResult, error) {
-	client, err := NewAliyunClient(cfg)
+func sendAliyunDypnsRegistrationCode(cfg RegistrationConfig, phone string, countryCode string, outID string) (*SendCodeResult, error) {
+	client, err := newAliyunDypnsClient(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -142,8 +142,8 @@ func SendRegistrationCode(cfg RegistrationConfig, phone string, countryCode stri
 	return result, nil
 }
 
-func VerifyRegistrationCode(cfg RegistrationConfig, phone string, countryCode string, code string, outID string) (*VerifyCodeResult, error) {
-	client, err := NewAliyunClient(cfg)
+func verifyAliyunDypnsRegistrationCode(cfg RegistrationConfig, phone string, countryCode string, code string, outID string) (*VerifyCodeResult, error) {
+	client, err := newAliyunDypnsClient(cfg)
 	if err != nil {
 		return nil, err
 	}

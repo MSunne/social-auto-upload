@@ -294,6 +294,8 @@ func normalizeSMSProvider(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", "aliyun", "aliyun_dypnsapi", "aliyun-dypnsapi":
 		return "aliyun_dypnsapi"
+	case "aliyun_dysmsapi", "aliyun-dysmsapi", "aliyun_sms", "aliyun-sms":
+		return "aliyun_dysmsapi"
 	default:
 		return ""
 	}
@@ -505,7 +507,7 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 		if nestedFieldTouched(smsRaw, "provider") {
 			provider := normalizeSMSProvider(normalizePatchedString(payload.SMSRegistration.Provider))
 			if provider == "" {
-				render.Error(w, http.StatusBadRequest, "smsRegistration.provider only supports aliyun_dypnsapi")
+				render.Error(w, http.StatusBadRequest, "smsRegistration.provider only supports aliyun_dypnsapi or aliyun_dysmsapi")
 				return
 			}
 			settings.SMSRegistration.Provider = provider
@@ -624,7 +626,12 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 		settings.SMSRegistration.Provider = "aliyun_dypnsapi"
 	}
 	if strings.TrimSpace(settings.SMSRegistration.Endpoint) == "" {
-		settings.SMSRegistration.Endpoint = "dypnsapi.aliyuncs.com"
+		switch settings.SMSRegistration.Provider {
+		case "aliyun_dysmsapi":
+			settings.SMSRegistration.Endpoint = "dysmsapi.aliyuncs.com"
+		default:
+			settings.SMSRegistration.Endpoint = "dypnsapi.aliyuncs.com"
+		}
 	}
 	if strings.TrimSpace(settings.SMSRegistration.TemplateParam) == "" {
 		settings.SMSRegistration.TemplateParam = `{"code":"##code##"}`
