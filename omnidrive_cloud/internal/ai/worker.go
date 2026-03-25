@@ -34,11 +34,19 @@ type requeueExecutionError struct {
 	OutputPayload []byte
 }
 
+type executionBillingBlockedError struct {
+	Result *store.ApplyUsageBillingResult
+}
+
 func (e *requeueExecutionError) Error() string {
 	if e == nil || strings.TrimSpace(e.Message) == "" {
 		return "execution should be requeued"
 	}
 	return strings.TrimSpace(e.Message)
+}
+
+func (e *executionBillingBlockedError) Error() string {
+	return BuildUsageBillingBlockMessage(e.Result)
 }
 
 func NewWorker(app *appstate.App) (*Worker, error) {
@@ -189,6 +197,38 @@ func (w *Worker) processJob(ctx context.Context, job domain.AIJob) {
 	}
 	w.app.Logger.Debug("ai worker claimed ai job", "job_id", claimed.ID, "job_type", claimed.JobType, "model_name", claimed.ModelName)
 
+	if err := w.ensureExecutionBilling(ctx, claimed); err != nil {
+		var blockedErr *executionBillingBlockedError
+		if errors.As(err, &blockedErr) {
+			message := blockedErr.Error()
+			if _, failErr := w.failJob(ctx, claimed.ID, leaseToken, message, nil); failErr != nil {
+				w.app.Logger.Error("ai worker failed to mark billing-blocked ai job as failed", "job_id", claimed.ID, "error", failErr)
+				return
+			}
+			w.recordAuditEvent(ctx, claimed, "ai_billing_precheck_failed", "AI 启动前扣费拦截", "failed", stringPtr(message), map[string]any{
+				"jobType":   claimed.JobType,
+				"modelName": claimed.ModelName,
+				"source":    claimed.Source,
+				"billing":   blockedErr.Result,
+			})
+			w.app.Logger.Info("ai worker blocked ai job before execution due to insufficient credits", "job_id", claimed.ID, "job_type", claimed.JobType, "model_name", claimed.ModelName, "bill_message", stringValue(resultBillMessage(blockedErr.Result)))
+			return
+		}
+
+		message := fmt.Sprintf("任务启动前计费失败，请稍后重试: %v", err)
+		if _, failErr := w.failJob(ctx, claimed.ID, leaseToken, message, nil); failErr != nil {
+			w.app.Logger.Error("ai worker failed to mark billing-check ai job as failed", "job_id", claimed.ID, "error", failErr)
+			return
+		}
+		w.recordAuditEvent(ctx, claimed, "ai_billing_precheck_error", "AI 启动前计费失败", "failed", stringPtr(message), map[string]any{
+			"jobType":   claimed.JobType,
+			"modelName": claimed.ModelName,
+			"source":    claimed.Source,
+		})
+		w.app.Logger.Error("ai worker failed execution billing check", "job_id", claimed.ID, "job_type", claimed.JobType, "model_name", claimed.ModelName, "error", err)
+		return
+	}
+
 	if claimed.LeaseExpiresAt != nil {
 		leaseExpiresAt = *claimed.LeaseExpiresAt
 	}
@@ -239,6 +279,7 @@ func (w *Worker) processJob(ctx context.Context, job domain.AIJob) {
 	}
 
 	message := buildAIExecutionFailureMessage(claimed.JobType, execErr)
+	w.returnUsageCreditsForFailure(ctx, claimed, message)
 	if _, err := w.failJob(ctx, claimed.ID, leaseToken, message, nil); err != nil {
 		w.app.Logger.Error("ai worker failed to mark ai job as failed", "job_id", claimed.ID, "error", err)
 		return
@@ -853,6 +894,9 @@ func (w *Worker) applyUsageBilling(ctx context.Context, job *domain.AIJob, input
 
 	switch result.BillStatus {
 	case "billed":
+		if result.AlreadyBilled {
+			return result
+		}
 		message := fmt.Sprintf("AI 计费完成，扣减 %d 积分", result.TotalCredits)
 		w.recordAuditEvent(ctx, job, "ai_billing_billed", "AI 计费完成", "success", stringPtr(message), map[string]any{
 			"jobType":      job.JobType,
@@ -875,6 +919,58 @@ func (w *Worker) applyUsageBilling(ctx context.Context, job *domain.AIJob, input
 	}
 
 	return result
+}
+
+func (w *Worker) ensureExecutionBilling(ctx context.Context, job *domain.AIJob) error {
+	input := BuildEstimatedUsageBillingInput(job)
+	if len(input.Metrics) == 0 {
+		return nil
+	}
+
+	result, err := w.app.Store.ApplyUsageBilling(ctx, input)
+	if err != nil {
+		return err
+	}
+	if result.BillStatus == "failed" {
+		return &executionBillingBlockedError{Result: result}
+	}
+	if result.BillStatus != "billed" {
+		return nil
+	}
+	if result.AlreadyBilled {
+		return nil
+	}
+
+	message := fmt.Sprintf("AI 启动前预扣费完成，扣减 %d 积分", result.TotalCredits)
+	w.recordAuditEvent(ctx, job, "ai_billing_precharged", "AI 启动前预扣费完成", "success", stringPtr(message), map[string]any{
+		"jobType":      job.JobType,
+		"modelName":    job.ModelName,
+		"source":       job.Source,
+		"totalCredits": result.TotalCredits,
+		"details":      result.Details,
+	})
+	return nil
+}
+
+func (w *Worker) returnUsageCreditsForFailure(ctx context.Context, job *domain.AIJob, failureMessage string) {
+	input := BuildEstimatedUsageBillingInput(job)
+	if len(input.Metrics) == 0 {
+		return
+	}
+	if err := w.app.Store.ReturnUsageCreditsForFailedSource(ctx, "ai_job", job.ID, failureMessage); err != nil {
+		w.app.Logger.Error("ai worker failed to return precharged usage credits", "job_id", job.ID, "error", err)
+	}
+}
+
+func resultBillMessage(result *store.ApplyUsageBillingResult) *string {
+	if result == nil {
+		return nil
+	}
+	message := strings.TrimSpace(result.BillMessage)
+	if message == "" {
+		return nil
+	}
+	return &message
 }
 
 type videoExecutionState struct {

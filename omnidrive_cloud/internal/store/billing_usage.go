@@ -110,6 +110,83 @@ type usageLedgerRefs struct {
 	quotaAccountIDs map[string][]string
 }
 
+func (s *Store) PreviewUsageBilling(ctx context.Context, input ApplyUsageBillingInput) (*ApplyUsageBillingResult, error) {
+	if strings.TrimSpace(input.UserID) == "" {
+		return nil, fmt.Errorf("user id is required")
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	rules, err := loadPricingRulesForUsageTx(ctx, tx, input.ModelName, input.JobType)
+	if err != nil {
+		return nil, err
+	}
+
+	metrics := make([]ApplyUsageMetricInput, 0, len(input.Metrics))
+	quotaMeterCodes := make(map[string]struct{})
+	for _, metric := range input.Metrics {
+		if strings.TrimSpace(metric.MeterCode) == "" || metric.Quantity <= 0 {
+			continue
+		}
+		metrics = append(metrics, metric)
+		if rule, ok := rules[strings.TrimSpace(metric.MeterCode)]; ok && rule.QuotaMeterCode != nil && strings.TrimSpace(*rule.QuotaMeterCode) != "" {
+			quotaMeterCodes[strings.TrimSpace(*rule.QuotaMeterCode)] = struct{}{}
+		}
+	}
+	if len(metrics) == 0 {
+		result := &ApplyUsageBillingResult{
+			BillStatus:  "skipped",
+			BillMessage: "no billable usage metrics",
+			Details:     []UsageBillingDetail{},
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+
+	walletBalance, err := ensureWalletAndLockTx(ctx, tx, input.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.backfillDistributionGrantTrackingTx(ctx, tx, input.UserID); err != nil {
+		return nil, err
+	}
+	quotaAccounts, err := loadQuotaAccountsForUsageTx(ctx, tx, input.UserID, quotaMeterCodes)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &ApplyUsageBillingResult{
+		BillStatus: "billed",
+		Details:    make([]UsageBillingDetail, 0, len(metrics)),
+	}
+
+	for _, metric := range metrics {
+		detail, plannedWallet, _, ok := planUsageCharge(metric, rules[strings.TrimSpace(metric.MeterCode)], walletBalance, quotaAccounts)
+		result.Details = append(result.Details, detail)
+		if !ok {
+			result.BillStatus = "failed"
+			if result.BillMessage == "" {
+				result.BillMessage = detail.BillMessage
+			}
+			break
+		}
+		walletBalance -= plannedWallet.debitCredits
+		result.TotalCredits += plannedWallet.debitCredits
+		result.DistributionReleaseCredits += detail.DistributionReleaseCredits
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func (s *Store) ApplyUsageBilling(ctx context.Context, input ApplyUsageBillingInput) (*ApplyUsageBillingResult, error) {
 	if strings.TrimSpace(input.UserID) == "" {
 		return nil, fmt.Errorf("user id is required")

@@ -37,6 +37,16 @@ FINISHED_STATUSES = {
 RESTART_INTERRUPTED_MESSAGE = "OmniBull 重启导致任务中断，请按需重试"
 RECOVERED_SCHEDULED_MESSAGE = "OmniBull 重启后已恢复等待定时发布"
 RECOVERED_PENDING_MESSAGE = "OmniBull 重启后已恢复待执行"
+BROWSER_INTERRUPTED_PENDING_MESSAGE = "浏览器意外关闭，准备自动重试"
+BROWSER_INTERRUPTED_SCHEDULED_MESSAGE = "浏览器意外关闭，等待自动重试"
+RECOVERABLE_INTERRUPT_MARKERS = (
+    "target page, context or browser has been closed",
+    "target closed",
+    "browser has been closed",
+    "page has been closed",
+    "page closed",
+    "context closed",
+)
 
 
 class PublishTaskManager:
@@ -294,7 +304,7 @@ class PublishTaskManager:
         current_message = str(task.get("message") or "").strip()
         if current_status not in {"pending", "scheduled", "failed"}:
             return False
-        if current_status == "failed" and current_message != RESTART_INTERRUPTED_MESSAGE:
+        if current_status == "failed" and not self._is_recoverable_failed_message(current_message):
             return False
 
         with self._connect() as conn:
@@ -713,6 +723,14 @@ class PublishTaskManager:
                 artifact_path,
             )
         except Exception as exc:
+            if self._is_recoverable_interruption(exc):
+                self._requeue_interrupted_task(task_uuid)
+                task_logger.warning(
+                    "publish task interrupted by closed browser and requeued task_uuid={} error={}",
+                    task_uuid,
+                    exc,
+                )
+                return
             self._update_task(
                 task_uuid,
                 status="failed",
@@ -1111,7 +1129,7 @@ class PublishTaskManager:
                 or ai_payload.get("publishAt")
             ) or intended_run_at
 
-            if row["status"] == "failed" and row["message"] != RESTART_INTERRUPTED_MESSAGE:
+            if row["status"] == "failed" and not self._is_recoverable_failed_message(row["message"]):
                 continue
 
             next_status = "scheduled" if self._is_future_datetime(intended_run_at) else "pending"
@@ -1143,6 +1161,54 @@ class PublishTaskManager:
             repaired += cursor.rowcount
 
         return repaired
+
+    @classmethod
+    def _is_recoverable_interruption(cls, error):
+        message = str(error or "").strip().lower()
+        if not message:
+            return False
+        return any(marker in message for marker in RECOVERABLE_INTERRUPT_MARKERS)
+
+    @classmethod
+    def _is_recoverable_failed_message(cls, message):
+        normalized = str(message or "").strip()
+        if not normalized:
+            return False
+        return normalized == RESTART_INTERRUPTED_MESSAGE or cls._is_recoverable_interruption(normalized)
+
+    def _requeue_interrupted_task(self, task_uuid):
+        task = self.get_task(task_uuid)
+        if not task:
+            return False
+
+        next_status = "scheduled" if self._is_future_datetime(task.get("runAt")) else "pending"
+        next_message = (
+            BROWSER_INTERRUPTED_SCHEDULED_MESSAGE
+            if next_status == "scheduled"
+            else BROWSER_INTERRUPTED_PENDING_MESSAGE
+        )
+
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                UPDATE publish_tasks
+                SET status = ?,
+                    message = ?,
+                    worker_name = NULL,
+                    started_at = NULL,
+                    finished_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE task_uuid = ?
+                ''',
+                (next_status, next_message, task_uuid),
+            )
+            changed = cursor.rowcount == 1
+            conn.commit()
+
+        if changed:
+            self._sync_task(task_uuid)
+        return changed
 
     @staticmethod
     def _local_timezone():

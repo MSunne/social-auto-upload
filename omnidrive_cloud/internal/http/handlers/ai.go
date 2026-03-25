@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -359,6 +360,418 @@ func (h *AIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	render.JSON(w, http.StatusOK, sanitizeAIModelListForPublic(items))
+}
+
+func sanitizeOpenAIModelID(model *domain.AIModel) string {
+	if model == nil {
+		return ""
+	}
+	if value := strings.TrimSpace(model.ModelName); value != "" {
+		return value
+	}
+	return strings.TrimSpace(model.ID)
+}
+
+func openAIModelAliasCandidates(value string) []string {
+	cleaned := strings.TrimSpace(value)
+	if cleaned == "" {
+		return nil
+	}
+
+	result := make([]string, 0, 8)
+	seen := make(map[string]struct{}, 8)
+	add := func(candidate string) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			return
+		}
+		if _, ok := seen[candidate]; ok {
+			return
+		}
+		seen[candidate] = struct{}{}
+		result = append(result, candidate)
+	}
+
+	add(cleaned)
+	if strings.Contains(cleaned, "/") {
+		parts := strings.SplitN(cleaned, "/", 2)
+		add(parts[1])
+	}
+
+	queue := append([]string(nil), result...)
+	for len(queue) > 0 {
+		candidate := queue[0]
+		queue = queue[1:]
+		for _, derived := range []string{
+			strings.ReplaceAll(candidate, ".", "-"),
+			strings.ReplaceAll(candidate, "-", "."),
+			strings.ReplaceAll(candidate, "_", "-"),
+			strings.ReplaceAll(candidate, "_", "."),
+		} {
+			if _, ok := seen[derived]; ok || strings.TrimSpace(derived) == "" {
+				continue
+			}
+			add(derived)
+			queue = append(queue, derived)
+		}
+	}
+
+	return result
+}
+
+func isDefaultOpenAIChatModelAlias(model string) bool {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "default-chat", "default", "omnidrive-default-chat":
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *AIHandler) resolveDefaultOpenAIChatModelName(ctx context.Context, ownerUserID string) (string, error) {
+	settings, err := loadEffectiveAdminSystemSettings(ctx, h.app)
+	if err != nil {
+		return "", err
+	}
+
+	devices, err := h.app.Store.ListDevicesByOwner(ctx, ownerUserID)
+	if err != nil {
+		return "", err
+	}
+	for i := range devices {
+		applyEffectiveDeviceModelDefaults(&devices[i], settings)
+		if !devices[i].IsEnabled {
+			continue
+		}
+		if devices[i].DefaultChatModel != nil && strings.TrimSpace(*devices[i].DefaultChatModel) != "" {
+			return strings.TrimSpace(*devices[i].DefaultChatModel), nil
+		}
+	}
+	if strings.TrimSpace(settings.DefaultChatModel) != "" {
+		return strings.TrimSpace(settings.DefaultChatModel), nil
+	}
+	return "", nil
+}
+
+func (h *AIHandler) resolveOpenAIChatModel(ctx context.Context, ownerUserID string, requestedModel string) (*domain.AIModel, error) {
+	requested := strings.TrimSpace(requestedModel)
+	if requested == "" {
+		return nil, nil
+	}
+	if isDefaultOpenAIChatModelAlias(requested) {
+		resolvedDefault, err := h.resolveDefaultOpenAIChatModelName(ctx, ownerUserID)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(resolvedDefault) != "" {
+			requested = strings.TrimSpace(resolvedDefault)
+		}
+	}
+
+	for _, candidate := range openAIModelAliasCandidates(requested) {
+		model, err := h.app.Store.GetAIModelByIDOrName(ctx, candidate)
+		if err != nil {
+			return nil, err
+		}
+		if model != nil {
+			return model, nil
+		}
+	}
+	return nil, nil
+}
+
+func openAIStringValue(value any) string {
+	if value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case json.Number:
+		return strings.TrimSpace(typed.String())
+	default:
+		return strings.TrimSpace(fmt.Sprintf("%v", value))
+	}
+}
+
+func openAIParseBool(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		normalized := strings.ToLower(strings.TrimSpace(typed))
+		return normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+	case float64:
+		return typed != 0
+	case int:
+		return typed != 0
+	case int64:
+		return typed != 0
+	default:
+		return false
+	}
+}
+
+func resolveOpenAIChatEndpoint(baseURL string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if trimmed == "" {
+		return ""
+	}
+	if strings.HasSuffix(trimmed, "/chat/completions") || strings.HasSuffix(trimmed, "/v1/chat/completions") {
+		return trimmed
+	}
+	return trimmed + "/v1/chat/completions"
+}
+
+func openAIProxyUsesMaxCompletionTokens(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-5")
+}
+
+func normalizePositiveOpenAIInteger(value any) (int64, bool) {
+	switch typed := value.(type) {
+	case int:
+		if typed > 0 {
+			return int64(typed), true
+		}
+	case int64:
+		if typed > 0 {
+			return typed, true
+		}
+	case float64:
+		if typed >= 1 {
+			return int64(typed), true
+		}
+	case json.Number:
+		if parsed, err := typed.Int64(); err == nil && parsed > 0 {
+			return parsed, true
+		}
+	case string:
+		if parsed, err := json.Number(strings.TrimSpace(typed)).Int64(); err == nil && parsed > 0 {
+			return parsed, true
+		}
+	}
+	return 0, false
+}
+
+func normalizeOpenAIProxyPayload(payload map[string]any, modelName string) {
+	if payload == nil {
+		return
+	}
+	payload["model"] = modelName
+
+	if value, ok := payload["max_completion_tokens"]; ok {
+		if normalized, valid := normalizePositiveOpenAIInteger(value); valid {
+			payload["max_completion_tokens"] = normalized
+		} else {
+			delete(payload, "max_completion_tokens")
+		}
+	}
+	if value, ok := payload["max_tokens"]; ok {
+		if normalized, valid := normalizePositiveOpenAIInteger(value); valid {
+			payload["max_tokens"] = normalized
+		} else {
+			delete(payload, "max_tokens")
+		}
+	}
+
+	if openAIProxyUsesMaxCompletionTokens(modelName) {
+		if _, exists := payload["max_completion_tokens"]; !exists {
+			if value, ok := payload["max_tokens"]; ok {
+				payload["max_completion_tokens"] = value
+			}
+		}
+		delete(payload, "max_tokens")
+
+		if value, ok := payload["temperature"]; ok {
+			switch typed := value.(type) {
+			case float64:
+				if typed != 1 {
+					delete(payload, "temperature")
+				}
+			case int:
+				if typed != 1 {
+					delete(payload, "temperature")
+				}
+			case int64:
+				if typed != 1 {
+					delete(payload, "temperature")
+				}
+			case json.Number:
+				if parsed, err := typed.Float64(); err != nil || parsed != 1 {
+					delete(payload, "temperature")
+				}
+			}
+		}
+	}
+}
+
+func copyOpenAIProxyHeaders(dst http.Header, src http.Header) {
+	for _, key := range []string{"Content-Type", "Cache-Control", "X-Request-Id"} {
+		if value := strings.TrimSpace(src.Get(key)); value != "" {
+			dst.Set(key, value)
+		}
+	}
+}
+
+func streamOpenAIProxyResponse(w http.ResponseWriter, body io.Reader) error {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		_, err := io.Copy(w, body)
+		return err
+	}
+
+	buffer := make([]byte, 32*1024)
+	for {
+		n, readErr := body.Read(buffer)
+		if n > 0 {
+			if _, writeErr := w.Write(buffer[:n]); writeErr != nil {
+				return writeErr
+			}
+			flusher.Flush()
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				return nil
+			}
+			return readErr
+		}
+	}
+}
+
+func (h *AIHandler) OpenAIModels(w http.ResponseWriter, r *http.Request) {
+	items, err := h.app.Store.ListAIModels(r.Context(), "chat")
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load AI models")
+		return
+	}
+
+	result := make([]map[string]any, 0, len(items)+1)
+	result = append(result, map[string]any{
+		"id":       "default-chat",
+		"object":   "model",
+		"created":  0,
+		"owned_by": "omnidrive",
+	})
+	for _, item := range items {
+		modelID := sanitizeOpenAIModelID(&item)
+		if modelID == "" {
+			continue
+		}
+		result = append(result, map[string]any{
+			"id":       modelID,
+			"object":   "model",
+			"created":  0,
+			"owned_by": strings.TrimSpace(item.Vendor),
+		})
+	}
+
+	render.JSON(w, http.StatusOK, map[string]any{
+		"object": "list",
+		"data":   result,
+	})
+}
+
+func (h *AIHandler) OpenAIChatCompletions(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		render.Error(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rawBody, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, "request body must be valid json")
+		return
+	}
+
+	requestedModel := openAIStringValue(payload["model"])
+	if requestedModel == "" {
+		render.Error(w, http.StatusBadRequest, "model is required")
+		return
+	}
+
+	model, err := h.resolveOpenAIChatModel(r.Context(), user.ID, requestedModel)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to validate AI model")
+		return
+	}
+	if model == nil || !model.IsEnabled {
+		render.Error(w, http.StatusNotFound, "AI model not found")
+		return
+	}
+	if strings.TrimSpace(model.Category) != "chat" {
+		render.Error(w, http.StatusConflict, "AI model category does not match chat")
+		return
+	}
+
+	baseURL := ""
+	if model.BaseURL != nil {
+		baseURL = strings.TrimSpace(*model.BaseURL)
+	}
+	if baseURL == "" {
+		render.Error(w, http.StatusInternalServerError, "AI model baseUrl is not configured")
+		return
+	}
+
+	apiKey := ""
+	if model.APIKey != nil {
+		apiKey = strings.TrimSpace(*model.APIKey)
+	}
+	if apiKey == "" {
+		render.Error(w, http.StatusInternalServerError, "AI model apiKey is not configured")
+		return
+	}
+
+	normalizeOpenAIProxyPayload(payload, strings.TrimSpace(model.ModelName))
+	proxyBody, err := json.Marshal(payload)
+	if err != nil {
+		render.Error(w, http.StatusBadRequest, "request body must be valid json")
+		return
+	}
+
+	endpoint := resolveOpenAIChatEndpoint(baseURL)
+	if endpoint == "" {
+		render.Error(w, http.StatusInternalServerError, "AI model chat endpoint is not configured")
+		return
+	}
+
+	proxyReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, endpoint, bytes.NewReader(proxyBody))
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to build provider request")
+		return
+	}
+	proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
+	proxyReq.Header.Set("Content-Type", "application/json")
+	if strings.TrimSpace(r.Header.Get("Accept")) != "" {
+		proxyReq.Header.Set("Accept", r.Header.Get("Accept"))
+	}
+
+	resp, err := http.DefaultClient.Do(proxyReq)
+	if err != nil {
+		render.Error(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	copyOpenAIProxyHeaders(w.Header(), resp.Header)
+	if openAIParseBool(payload["stream"]) {
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+	}
+	w.WriteHeader(resp.StatusCode)
+
+	if openAIParseBool(payload["stream"]) {
+		if err := streamOpenAIProxyResponse(w, resp.Body); err != nil {
+			h.app.Logger.Warn("stream openai proxy response failed error={}", err)
+		}
+		return
+	}
+
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		h.app.Logger.Warn("copy openai proxy response failed error={}", err)
+	}
 }
 
 func (h *AIHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
@@ -803,9 +1216,26 @@ func (h *AIHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	jobID := uuid.NewString()
+	billingPreview, err := previewAIJobBilling(r.Context(), h.app, &domain.AIJob{
+		ID:           jobID,
+		OwnerUserID:  user.ID,
+		ModelName:    payload.ModelName,
+		JobType:      payload.JobType,
+		InputPayload: inputPayload,
+	})
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to validate billing availability")
+		return
+	}
+	if usageBillingShouldBlock(billingPreview) {
+		renderUsageBillingBlocked(w, billingPreview)
+		return
+	}
+
 	message := "AI 任务已创建，等待 OmniDrive 云端生成"
 	job, err := h.app.Store.CreateAIJob(r.Context(), store.CreateAIJobInput{
-		ID:           uuid.NewString(),
+		ID:           jobID,
 		OwnerUserID:  user.ID,
 		DeviceID:     deviceID,
 		SkillID:      skillID,

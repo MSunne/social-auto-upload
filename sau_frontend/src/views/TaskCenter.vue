@@ -32,19 +32,25 @@
     <el-tabs v-model="activeTab" class="task-tabs">
       <el-tab-pane label="AI 任务" name="ai">
         <div class="glass-card table-card">
-          <el-table :data="aiTasks" stripe empty-text="暂无 AI 任务">
-            <el-table-column prop="taskUuid" label="任务ID" min-width="180" />
+          <el-table :data="aiTasks" class="premium-table" empty-text="暂无 AI 任务">
+            <el-table-column prop="taskUuid" label="任务ID" min-width="180">
+              <template #default="{ row }">
+                <span class="uuid-text">{{ row.taskUuid }}</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="jobType" label="类型" width="100" />
             <el-table-column prop="modelName" label="模型" min-width="160" />
             <el-table-column prop="status" label="状态" width="120">
               <template #default="{ row }">
-                <el-tag :type="tagType(row.status)">{{ row.status }}</el-tag>
+                <el-tag :type="tagType(row.status)" effect="dark" class="status-tag">
+                  {{ row.status }}
+                </el-tag>
               </template>
             </el-table-column>
             <el-table-column prop="message" label="说明" min-width="240" show-overflow-tooltip />
             <el-table-column prop="linkedPublishTaskUuid" label="关联发布任务" min-width="180" />
             <el-table-column prop="updatedAt" label="更新时间" min-width="180">
-              <template #default="{ row }">{{ formatTime(row.updatedAt) }}</template>
+              <template #default="{ row }">{{ formatTime(row.updatedAt, 'utc') }}</template>
             </el-table-column>
           </el-table>
         </div>
@@ -52,22 +58,28 @@
 
       <el-tab-pane label="发布任务" name="publish">
         <div class="glass-card table-card">
-          <el-table :data="publishTasks" stripe empty-text="暂无发布任务">
-            <el-table-column prop="taskUuid" label="任务ID" min-width="180" />
+          <el-table :data="publishTasks" class="premium-table" empty-text="暂无发布任务">
+            <el-table-column prop="taskUuid" label="任务ID" min-width="180">
+              <template #default="{ row }">
+                <span class="uuid-text">{{ row.taskUuid }}</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="platformName" label="平台" width="120" />
             <el-table-column prop="accountName" label="账号" min-width="160" />
             <el-table-column prop="title" label="标题" min-width="220" show-overflow-tooltip />
             <el-table-column prop="status" label="状态" width="120">
               <template #default="{ row }">
-                <el-tag :type="tagType(row.status)">{{ row.status }}</el-tag>
+                <el-tag :type="tagType(row.status)" effect="dark" class="status-tag">
+                  {{ row.status }}
+                </el-tag>
               </template>
             </el-table-column>
             <el-table-column prop="message" label="说明" min-width="240" show-overflow-tooltip />
             <el-table-column prop="runAt" label="执行时间" min-width="180">
-              <template #default="{ row }">{{ formatTime(row.runAt) }}</template>
+              <template #default="{ row }">{{ formatTime(row.runAt, 'local') }}</template>
             </el-table-column>
             <el-table-column prop="finishedAt" label="完成时间" min-width="180">
-              <template #default="{ row }">{{ formatTime(row.finishedAt) }}</template>
+              <template #default="{ row }">{{ formatTime(row.finishedAt, 'utc') }}</template>
             </el-table-column>
           </el-table>
         </div>
@@ -124,9 +136,74 @@ const tagType = (status) => {
   }
 }
 
-const formatTime = (value) => {
+const TIME_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+})
+
+const LOCAL_DATETIME_RE = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?$/
+
+const formatTime = (value, source = 'local') => {
   if (!value) return '-'
-  return new Date(value).toLocaleString('zh-CN')
+
+  const parsed =
+    source === 'utc'
+      ? parseUtcDateTime(value)
+      : parseLocalDateTime(value)
+
+  if (!parsed) return String(value)
+  return TIME_FORMATTER.format(parsed).replace(/\//g, '-')
+}
+
+const parseLocalDateTime = (value) => {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value
+  }
+
+  const raw = String(value).trim()
+  const match = raw.match(LOCAL_DATETIME_RE)
+  if (match) {
+    const [, year, month, day, hour, minute, second = '00'] = match
+    return new Date(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hour),
+      Number(minute),
+      Number(second),
+    )
+  }
+
+  const parsed = new Date(raw)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+const parseUtcDateTime = (value) => {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value
+  }
+
+  const raw = String(value).trim()
+  const match = raw.match(LOCAL_DATETIME_RE)
+  if (match) {
+    const [, year, month, day, hour, minute, second = '00'] = match
+    return new Date(Date.UTC(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hour),
+      Number(minute),
+      Number(second),
+    ))
+  }
+
+  const parsed = new Date(raw)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
 }
 
 onMounted(fetchTasks)
@@ -136,7 +213,7 @@ onMounted(fetchTasks)
 @use '@/styles/variables.scss' as *;
 
 .task-center {
-  max-width: 1200px;
+  width: 100%;
 }
 
 .page-head {
@@ -198,20 +275,75 @@ onMounted(fetchTasks)
 }
 
 :deep(.el-table) {
-  background: transparent;
   --el-table-bg-color: transparent;
   --el-table-tr-bg-color: transparent;
-  --el-table-header-bg-color: rgba(255, 255, 255, 0.03);
-  --el-table-border-color: #{$border-color};
-  --el-table-row-hover-bg-color: rgba(255, 255, 255, 0.03);
-  color: $text-primary;
+  --el-table-header-bg-color: rgba(255, 255, 255, 0.05);
+  --el-table-header-text-color: rgba(255, 255, 255, 0.9);
+  --el-table-border-color: rgba(255, 255, 255, 0.08);
+  --el-table-row-hover-bg-color: rgba(255, 255, 255, 0.08);
+  --el-table-text-color: rgba(255, 255, 255, 0.75);
+  background: transparent;
+  color: var(--el-table-text-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+:deep(.el-table th.el-table__cell) {
+  border-bottom: 1px solid var(--el-table-border-color);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  padding: 12px 0;
+}
+
+:deep(.el-table td.el-table__cell) {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  padding: 14px 0;
+  transition: all 0.3s ease;
+}
+
+:deep(.el-table tr:hover td.el-table__cell) {
+  background-color: var(--el-table-row-hover-bg-color);
+}
+
+:deep(.el-table::before) {
+  display: none;
+}
+
+.uuid-text {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.status-tag {
+  border: none;
+  font-weight: 600;
+  padding: 0 10px;
+  border-radius: 4px;
 }
 
 :deep(.el-tabs__item) {
   color: $text-secondary;
+  font-size: 15px;
+  font-weight: 500;
+  transition: all 0.3s ease;
+}
+
+:deep(.el-tabs__item:hover) {
+  color: $text-primary;
 }
 
 :deep(.el-tabs__item.is-active) {
   color: $accent-color;
+  font-weight: 600;
+}
+
+:deep(.el-tabs__active-bar) {
+  background-color: $accent-color;
+  height: 3px;
+  border-radius: 3px;
 }
 </style>

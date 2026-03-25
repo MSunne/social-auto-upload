@@ -1,11 +1,12 @@
 "use client";
 
-import { Fragment, useMemo, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
   ArrowUpRight,
+  Check,
   BadgePercent,
   Building2,
   ChevronDown,
@@ -137,8 +138,14 @@ async function copyText(value: string) {
   const textarea = document.createElement("textarea");
   textarea.value = value;
   textarea.setAttribute("readonly", "true");
-  textarea.style.position = "absolute";
-  textarea.style.left = "-9999px";
+  Object.assign(textarea.style, {
+    position: "fixed",
+    top: "-9999px",
+    left: "-9999px",
+    width: "1px",
+    height: "1px",
+    opacity: "0",
+  });
   document.body.appendChild(textarea);
   textarea.select();
 
@@ -319,6 +326,12 @@ export default function EnterpriseCooperationPage() {
     setCopyState(copied ? "success" : "error");
   };
 
+  useEffect(() => {
+    if (copyState === "idle") return;
+    const timer = setTimeout(() => setCopyState("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [copyState]);
+
   const handleSubmitWithdrawal = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setWithdrawalError("");
@@ -420,29 +433,35 @@ export default function EnterpriseCooperationPage() {
                   </p>
                 </div>
 
-                <div className="rounded-2xl border border-accent/20 bg-surface/80 p-4 lg:min-w-[260px]">
+                <div className="rounded-2xl border border-accent/20 bg-surface/80 p-5 lg:min-w-[300px]">
                   <div className="text-xs uppercase tracking-[0.2em] text-text-muted">
                     专属客服码
                   </div>
-                  <div className="mt-3 flex items-center gap-3">
-                    <div className="font-mono text-2xl font-bold tracking-[0.22em] text-text-primary">
-                      {profile.partnerCode}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleCopyCode}
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-surface text-text-secondary transition-colors hover:border-accent hover:text-accent"
-                      title="复制客服码"
-                    >
-                      <Copy className="h-4 w-4" />
-                    </button>
+                  <div className="mt-3 font-mono text-3xl font-bold tracking-[0.22em] text-text-primary">
+                    {profile.partnerCode}
                   </div>
+                  <button
+                    type="button"
+                    onClick={handleCopyCode}
+                    className={`mt-4 inline-flex h-10 w-full items-center justify-center gap-2 whitespace-nowrap rounded-xl border text-sm font-medium transition-all ${
+                      copyState === "success"
+                        ? "border-green-500/40 bg-green-500/10 text-green-400"
+                        : copyState === "error"
+                          ? "border-red-500/40 bg-red-500/10 text-red-400"
+                          : "border-accent/30 bg-accent/5 text-accent hover:bg-accent/10"
+                    }`}
+                    title="复制客服码"
+                  >
+                    {copyState === "success" ? (
+                      <><Check className="h-4 w-4" /> 已复制</>
+                    ) : copyState === "error" ? (
+                      <><Copy className="h-4 w-4" /> 复制失败</>
+                    ) : (
+                      <><Copy className="h-4 w-4" /> 复制专属客服码</>
+                    )}
+                  </button>
                   <p className="mt-3 text-xs text-text-muted">
-                    {copyState === "success"
-                      ? "客服码已复制"
-                      : copyState === "error"
-                        ? "复制失败，请手动复制"
-                        : "注册页填写这个客服码，就会自动绑定到你的合作账本。"}
+                    注册页填写这个客服码，就会自动绑定到你的合作账本。
                   </p>
                   <div className="mt-4 flex items-center justify-between">
                     <StatusBadge status={profile.status} />

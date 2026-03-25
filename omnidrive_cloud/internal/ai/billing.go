@@ -2,6 +2,7 @@ package ai
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"omnidrive_cloud/internal/domain"
@@ -86,6 +87,51 @@ func buildVideoBillingInput(job *domain.AIJob) store.ApplyUsageBillingInput {
 				Metadata:  mustJSONBytes(metadata),
 			},
 		},
+	}
+}
+
+func BuildEstimatedUsageBillingInput(job *domain.AIJob) store.ApplyUsageBillingInput {
+	if job == nil {
+		return store.ApplyUsageBillingInput{}
+	}
+	switch strings.TrimSpace(strings.ToLower(job.JobType)) {
+	case "image":
+		payload := decodePayloadMap(job.InputPayload)
+		imageCount := 1
+		if count := intPtrFromMap(payload, "imageCount", "count", "n"); count != nil && *count > 0 {
+			imageCount = *count
+		}
+		return buildImageBillingInput(job, imageCount)
+	case "video":
+		return buildVideoBillingInput(job)
+	default:
+		return store.ApplyUsageBillingInput{
+			UserID:     strings.TrimSpace(job.OwnerUserID),
+			SourceType: "ai_job",
+			SourceID:   strings.TrimSpace(job.ID),
+			ModelName:  strings.TrimSpace(job.ModelName),
+			JobType:    strings.TrimSpace(job.JobType),
+			Metrics:    []store.ApplyUsageMetricInput{},
+		}
+	}
+}
+
+func BuildUsageBillingBlockMessage(result *store.ApplyUsageBillingResult) string {
+	if result == nil {
+		return "当前积分不足，任务开始前需要预扣费，请先充值后再试。"
+	}
+	raw := strings.TrimSpace(strings.ToLower(result.BillMessage))
+	switch {
+	case strings.Contains(raw, "wallet credits insufficient for fallback debit"):
+		return "当前套餐额度已用尽，且钱包积分不足，任务开始前需要预扣费，请先充值后再试。"
+	case strings.Contains(raw, "wallet credits insufficient"):
+		return "当前钱包积分不足，任务开始前需要预扣费，请先充值后再试。"
+	case strings.Contains(raw, "pricing rule not found"):
+		return "当前任务缺少可用计费规则，暂时无法启动，请联系管理员检查计费配置。"
+	case strings.TrimSpace(result.BillMessage) != "":
+		return fmt.Sprintf("任务启动前计费预检未通过：%s", strings.TrimSpace(result.BillMessage))
+	default:
+		return "当前积分不足，任务开始前需要预扣费，请先充值后再试。"
 	}
 }
 

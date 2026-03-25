@@ -97,6 +97,7 @@ function summarizeCachedSession(session) {
     email: session.email || null,
     source: session.source || null,
     loggedInAt: session.loggedInAt || null,
+    apiBaseUrl: session.apiBaseUrl || null,
   };
 }
 
@@ -187,12 +188,15 @@ async function fetchLocalOmniDriveSession(api) {
   const data = payload?.data || payload || {};
   const accessToken = String(data.accessToken || "").trim();
   ensure(accessToken, "本地 OmniBull 未返回可用的 OmniDrive accessToken");
+  const apiBaseUrl = String(data.apiBaseUrl || data.cloudUrl || "").trim();
   cachedSession = {
     accessToken,
     user: data.user || null,
     email: data?.user?.email || null,
     source: "local_agent_session",
     loggedInAt: nowISO(),
+    apiBaseUrl: apiBaseUrl || null,
+    cloudUrl: apiBaseUrl || null,
   };
   return cachedSession;
 }
@@ -222,6 +226,7 @@ function extractErrorMessage(payload, status) {
 
 async function rawRequest(api, path, options = {}, accessToken = "") {
   const cfg = resolveConfig(api);
+  const runtimeBaseUrl = String(cachedSession?.apiBaseUrl || cachedSession?.cloudUrl || "").trim() || cfg.baseUrl;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), cfg.timeoutMs);
   const headers = {
@@ -236,7 +241,7 @@ async function rawRequest(api, path, options = {}, accessToken = "") {
   }
 
   try {
-    const response = await fetch(`${cfg.baseUrl}${path}`, {
+    const response = await fetch(`${runtimeBaseUrl.replace(/\/+$/, "")}${path}`, {
       ...options,
       headers,
       signal: controller.signal,
@@ -310,6 +315,8 @@ async function ensureAccessToken(api, overrides = {}) {
       email: cfg.email || null,
       source: "config_access_token",
       loggedInAt: null,
+      apiBaseUrl: cfg.baseUrl,
+      cloudUrl: cfg.baseUrl,
     };
     return cfg.accessToken;
   }
@@ -543,6 +550,7 @@ async function buildAuthStatusPayload(api, params = {}) {
     cachedSession: summarizeCachedSession(cachedSession),
     sessionUser: summarizeSessionUser(sessionUser),
     baseUrl: cfg.baseUrl,
+    effectiveBaseUrl: cachedSession?.apiBaseUrl || cachedSession?.cloudUrl || cfg.baseUrl,
     localOmniBullBaseUrl: cfg.localOmniBullBaseUrl,
     boundDevice: summarizeBoundDevice(boundDevice),
     recommendedMainChatRoute: {

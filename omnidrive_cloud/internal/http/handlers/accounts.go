@@ -251,8 +251,30 @@ func (h *AccountHandler) CreateSkillRun(w http.ResponseWriter, r *http.Request) 
 			render.Error(w, http.StatusConflict, prepareErr.Error())
 			return
 		}
+		jobID := uuid.NewString()
+		if prepared.Status == "queued" {
+			billingPreview, previewErr := previewAIJobBilling(r.Context(), h.app, &domain.AIJob{
+				ID:           jobID,
+				OwnerUserID:  user.ID,
+				DeviceID:     &account.DeviceID,
+				SkillID:      &skill.ID,
+				Source:       "account_skill_binding",
+				JobType:      prepared.JobType,
+				ModelName:    prepared.ModelName,
+				Prompt:       stringPtr(prepared.Prompt),
+				InputPayload: prepared.InputPayload,
+			})
+			if previewErr != nil {
+				render.Error(w, http.StatusInternalServerError, "Failed to validate billing availability")
+				return
+			}
+			if usageBillingShouldBlock(billingPreview) {
+				renderUsageBillingBlocked(w, billingPreview)
+				return
+			}
+		}
 		job, createErr := h.app.Store.CreateAIJob(r.Context(), store.CreateAIJobInput{
-			ID:           uuid.NewString(),
+			ID:           jobID,
 			OwnerUserID:  user.ID,
 			DeviceID:     &account.DeviceID,
 			SkillID:      &skill.ID,
@@ -295,6 +317,12 @@ func (h *AccountHandler) CreateSkillRun(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	type pendingAccountSkillJob struct {
+		input        store.CreateAIJobInput
+		auditPayload []byte
+	}
+	pendingJobs := make([]pendingAccountSkillJob, 0, len(slots))
+
 	for _, slot := range slots {
 		publishAt, publishErr := workflow.NextAccountSkillPublishAt(slot.TimeOfDay, slot.Timezone, time.Now())
 		if publishErr != nil {
@@ -306,21 +334,64 @@ func (h *AccountHandler) CreateSkillRun(w http.ResponseWriter, r *http.Request) 
 			render.Error(w, http.StatusConflict, prepareErr.Error())
 			return
 		}
-		job, createErr := h.app.Store.CreateAIJob(r.Context(), store.CreateAIJobInput{
-			ID:           uuid.NewString(),
-			OwnerUserID:  user.ID,
-			DeviceID:     &account.DeviceID,
-			SkillID:      &skill.ID,
-			Source:       "account_skill_binding",
-			LocalTaskID:  nil,
-			JobType:      prepared.JobType,
-			ModelName:    prepared.ModelName,
-			Prompt:       stringPtr(prepared.Prompt),
-			InputPayload: prepared.InputPayload,
-			Status:       prepared.Status,
-			Message:      stringPtr(prepared.Message),
-			RunAt:        &prepared.GenerateAt,
+		jobID := uuid.NewString()
+		if prepared.Status == "queued" {
+			billingPreview, previewErr := previewAIJobBilling(r.Context(), h.app, &domain.AIJob{
+				ID:           jobID,
+				OwnerUserID:  user.ID,
+				DeviceID:     &account.DeviceID,
+				SkillID:      &skill.ID,
+				Source:       "account_skill_binding",
+				JobType:      prepared.JobType,
+				ModelName:    prepared.ModelName,
+				Prompt:       stringPtr(prepared.Prompt),
+				InputPayload: prepared.InputPayload,
+			})
+			if previewErr != nil {
+				render.Error(w, http.StatusInternalServerError, "Failed to validate billing availability")
+				return
+			}
+			if usageBillingShouldBlock(billingPreview) {
+				renderUsageBillingBlocked(w, billingPreview)
+				return
+			}
+		}
+		pendingJobs = append(pendingJobs, pendingAccountSkillJob{
+			input: store.CreateAIJobInput{
+				ID:           jobID,
+				OwnerUserID:  user.ID,
+				DeviceID:     &account.DeviceID,
+				SkillID:      &skill.ID,
+				Source:       "account_skill_binding",
+				LocalTaskID:  nil,
+				JobType:      prepared.JobType,
+				ModelName:    prepared.ModelName,
+				Prompt:       stringPtr(prepared.Prompt),
+				InputPayload: prepared.InputPayload,
+				Status:       prepared.Status,
+				Message:      stringPtr(prepared.Message),
+				RunAt:        &prepared.GenerateAt,
+			},
+			auditPayload: mustJSONBytes(map[string]any{
+				"accountId":             account.ID,
+				"accountName":           account.AccountName,
+				"deviceId":              account.DeviceID,
+				"skillId":               skill.ID,
+				"publishAt":             prepared.PublishAt,
+				"generateAt":            prepared.GenerateAt,
+				"jobType":               prepared.JobType,
+				"source":                "account_skill_binding",
+				"timeOfDay":             slot.TimeOfDay,
+				"repeatDaily":           slot.RepeatDaily,
+				"scheduleKey":           slot.ScheduleKey,
+				"scheduleZone":          slot.Timezone,
+				"generationLeadMinutes": slot.GenerationLeadMinutes,
+			}),
 		})
+	}
+
+	for _, pending := range pendingJobs {
+		job, createErr := h.app.Store.CreateAIJob(r.Context(), pending.input)
 		if createErr != nil {
 			render.Error(w, http.StatusInternalServerError, "Failed to create account skill run")
 			return
@@ -334,21 +405,7 @@ func (h *AccountHandler) CreateSkillRun(w http.ResponseWriter, r *http.Request) 
 			Source:       account.Platform,
 			Status:       job.Status,
 			Message:      auditStringPtr("已为账号创建专属技能生成任务"),
-			Payload: mustJSONBytes(map[string]any{
-				"accountId":             account.ID,
-				"accountName":           account.AccountName,
-				"deviceId":              account.DeviceID,
-				"skillId":               skill.ID,
-				"publishAt":             prepared.PublishAt,
-				"generateAt":            prepared.GenerateAt,
-				"jobType":               prepared.JobType,
-				"source":                job.Source,
-				"timeOfDay":             slot.TimeOfDay,
-				"repeatDaily":           slot.RepeatDaily,
-				"scheduleKey":           slot.ScheduleKey,
-				"scheduleZone":          slot.Timezone,
-				"generationLeadMinutes": slot.GenerationLeadMinutes,
-			}),
+			Payload:      pending.auditPayload,
 		})
 		createdJobs = append(createdJobs, *job)
 	}

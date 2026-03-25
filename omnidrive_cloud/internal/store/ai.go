@@ -329,6 +329,23 @@ func (s *Store) GetAIModelByName(ctx context.Context, modelName string) (*domain
 	return model, nil
 }
 
+func (s *Store) GetAIModelByIDOrName(ctx context.Context, value string) (*domain.AIModel, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT `+aiModelSelectColumns+`
+		FROM ai_models
+		WHERE id = $1 OR model_name = $1
+	`, strings.TrimSpace(value))
+
+	model, err := scanAIModel(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return model, nil
+}
+
 func (s *Store) ListAIJobsByOwner(ctx context.Context, ownerUserID string, filter ListAIJobsFilter) ([]domain.AIJob, error) {
 	query := fmt.Sprintf(`
 		SELECT %s

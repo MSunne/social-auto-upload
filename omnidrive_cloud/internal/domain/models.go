@@ -740,6 +740,10 @@ type BillingSummary struct {
 	FrozenCreditBalance  int64                 `json:"frozenCreditBalance"`
 	PendingRechargeCount int64                 `json:"pendingRechargeCount"`
 	QuotaBalances        []BillingQuotaBalance `json:"quotaBalances"`
+	NeedsRecharge        bool                  `json:"needsRecharge"`
+	RechargeAlertReason  *string               `json:"rechargeAlertReason,omitempty"`
+	RechargeAlertMessage *string               `json:"rechargeAlertMessage,omitempty"`
+	LastBillingFailedAt  *time.Time            `json:"lastBillingFailedAt,omitempty"`
 }
 
 type Pagination struct {

@@ -76,18 +76,52 @@ REQUEST_LOG_BODY_LIMIT = 500
 OMNIDRIVE_OPENAI_PROXY_BASE_PATH = "/openai/v1"
 OMNIDRIVE_OPENAI_PROXY_FINAL_JOB_STATUSES = {"success", "completed", "failed", "cancelled", "needs_verify"}
 OMNIDRIVE_OPENAI_SUPPORTED_TOOL_NAMES = {"omnidrive_image", "omnidrive_video"}
-OMNIDRIVE_OPENAI_LOCAL_TOOL_GUARD_TEXT = (
-    "当前这条 OmniDrive 默认聊天接入只支持普通对话，以及 OmniDrive 图片和视频生成。"
-    "\n它不支持 OpenClaw 的本地工具，例如 read、write、edit、exec、process 或 web_search。"
-    "\n所以我不能真实读取本地文件、重启服务、修改配置或列出本地技能，也不会假装这些动作已经执行。"
-    "\n如果你要继续用 OmniDrive，请直接给我图片或视频生成需求；如果你要做本地运维或代码操作，请切回支持 OpenClaw 本地工具的系统模型。"
+OPENCLAW_OMNIDRIVE_CONFIG_PATHS = (
+    Path.home() / ".openclaw" / "openclaw.json",
+    Path.home() / ".openclaw" / "agents" / "main" / "agent" / "models.json",
 )
-OMNIDRIVE_OPENAI_LOCAL_TOOL_SYSTEM_GUARD = (
-    "This OmniDrive route cannot execute OpenClaw local tools such as read, write, edit, exec, process, "
-    "or web_search. Never claim that you ran commands, restarted services, read local files, listed local "
-    "skills, or modified configuration. If asked to do that, clearly say this route currently supports "
-    "plain chat plus OmniDrive image/video generation only."
-)
+OPENCLAW_OMNIDRIVE_MODEL_NAME_OVERRIDES = {
+    "gemini-3.1-pro-preview": "Gemini 3.1 Pro Preview",
+    "gpt-5.4": "GPT-5.4",
+    "qwen3.5-plus": "Qwen3.5 Plus",
+}
+OPENCLAW_OMNIDRIVE_MULTIMODAL_MODELS = {
+    "gemini-3.1-pro-preview",
+    "gpt-5.4",
+    "qwen3.5-plus",
+}
+OMNIDRIVE_OPENAI_LOCAL_TOOL_GUARD_TEXT = str(
+    getattr(
+        app_conf,
+        "OMNIDRIVE_OPENAI_LOCAL_TOOL_GUARD_TEXT",
+        os.getenv(
+            "OMNIDRIVE_OPENAI_LOCAL_TOOL_GUARD_TEXT",
+            (
+                "当前这条 OmniDrive 默认聊天接入只支持普通对话，以及 OmniDrive 图片和视频生成。"
+                "\n它不支持 OpenClaw 的本地工具，例如 read、write、edit、exec、process 或 web_search。"
+                "\n所以我不能真实读取本地文件、重启服务、修改配置或列出本地技能，也不会假装这些动作已经执行。"
+                "\n如果你要继续用 OmniDrive，请直接给我图片或视频生成需求；如果你要做本地运维或代码操作，请切回支持 OpenClaw 本地工具的系统模型。"
+            ),
+        ),
+    )
+    or ""
+).strip()
+OMNIDRIVE_OPENAI_LOCAL_TOOL_SYSTEM_GUARD = str(
+    getattr(
+        app_conf,
+        "OMNIDRIVE_OPENAI_LOCAL_TOOL_SYSTEM_GUARD",
+        os.getenv(
+            "OMNIDRIVE_OPENAI_LOCAL_TOOL_SYSTEM_GUARD",
+            (
+                "This OmniDrive route cannot execute OpenClaw local tools such as read, write, edit, exec, "
+                "process, or web_search. Never claim that you ran commands, restarted services, read local "
+                "files, listed local skills, or modified configuration. If asked to do that, clearly say this "
+                "route currently supports plain chat plus OmniDrive image/video generation only."
+            ),
+        ),
+    )
+    or ""
+).strip()
 
 
 def parse_bool(value):
@@ -658,7 +692,11 @@ def fetch_omnidrive_device_session():
     try:
         with urllib_request.urlopen(req, timeout=15) as response:
             payload = response.read().decode("utf-8")
-            return response.status, json.loads(payload) if payload else {}
+            parsed = json.loads(payload) if payload else {}
+            if isinstance(parsed, dict):
+                parsed.setdefault("apiBaseUrl", OMNIDRIVE_BASE_URL)
+                parsed.setdefault("cloudUrl", parsed.get("apiBaseUrl") or OMNIDRIVE_BASE_URL)
+            return response.status, parsed
     except urllib_error.HTTPError as exc:
         payload = exc.read().decode("utf-8")
         try:
@@ -668,11 +706,17 @@ def fetch_omnidrive_device_session():
         return exc.code, parsed
 
 
-def omnidrive_cloud_json_request(method, path, access_token=None, payload=None, timeout=60, query=None):
-    if not OMNIDRIVE_BASE_URL:
+def _resolve_omnidrive_api_base_url(api_base_url=""):
+    resolved = str(api_base_url or OMNIDRIVE_BASE_URL or "").strip().rstrip("/")
+    if not resolved:
         raise RuntimeError("OMNIDRIVE_BASE_URL 未配置")
+    return resolved
 
-    endpoint = f"{OMNIDRIVE_BASE_URL.rstrip('/')}{path}"
+
+def omnidrive_cloud_json_request(method, path, access_token=None, payload=None, timeout=60, query=None, api_base_url=""):
+    base_url = _resolve_omnidrive_api_base_url(api_base_url)
+
+    endpoint = f"{base_url}{path}"
     if query:
         cleaned = {key: value for key, value in (query or {}).items() if value not in (None, "")}
         if cleaned:
@@ -733,7 +777,236 @@ def get_omnidrive_device_session_data():
         "user": payload.get("user") if isinstance(payload.get("user"), dict) else {},
         "source": str(payload.get("source") or "").strip() or "agent_device_session",
         "expiresAt": payload.get("expiresAt"),
+        "apiBaseUrl": str(payload.get("apiBaseUrl") or payload.get("cloudUrl") or OMNIDRIVE_BASE_URL or "").strip(),
     }
+
+
+def _resolve_openclaw_omnidrive_provider_base_url(api_base_url):
+    return f"{_resolve_omnidrive_api_base_url(api_base_url)}{OMNIDRIVE_OPENAI_PROXY_BASE_PATH}"
+
+
+def _normalize_openclaw_omnidrive_models(models):
+    normalized = []
+    seen = set()
+
+    for item in models or []:
+        if isinstance(item, dict):
+            model_id = str(item.get("modelName") or item.get("name") or item.get("id") or "").strip()
+        else:
+            model_id = str(item or "").strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        normalized.append(model_id)
+
+    return normalized
+
+
+def _iter_openai_model_aliases(value):
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        return []
+
+    variants = []
+    seen = set()
+
+    def add(candidate):
+        candidate = str(candidate or "").strip()
+        if not candidate or candidate in seen:
+            return
+        seen.add(candidate)
+        variants.append(candidate)
+
+    add(cleaned)
+    if "/" in cleaned:
+        add(cleaned.split("/", 1)[1].strip())
+
+    queue = list(variants)
+    while queue:
+        candidate = queue.pop(0)
+        derived = [
+            candidate.replace(".", "-"),
+            candidate.replace("-", "."),
+            candidate.replace("_", "-"),
+            candidate.replace("_", "."),
+        ]
+        for item in derived:
+            if item and item not in seen:
+                add(item)
+                queue.append(item)
+
+    return variants
+
+
+def _build_openclaw_omnidrive_model_entry(model_id, include_api=False):
+    entry = {
+        "id": model_id,
+        "name": OPENCLAW_OMNIDRIVE_MODEL_NAME_OVERRIDES.get(model_id) or model_id,
+        "reasoning": False,
+        "input": ["text", "image"] if model_id in OPENCLAW_OMNIDRIVE_MULTIMODAL_MODELS else ["text"],
+        "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+        },
+        "contextWindow": 128000,
+        "maxTokens": 8192,
+    }
+    if include_api:
+        entry["api"] = "openai-completions"
+    return entry
+
+
+def sync_openclaw_omnidrive_model_configs(models, api_base_url="", access_token="", default_chat_model=""):
+    normalized_ids = _normalize_openclaw_omnidrive_models(models)
+    provider_base_url = _resolve_openclaw_omnidrive_provider_base_url(api_base_url)
+    provider_api_key = str(access_token or "").strip()
+    default_chat_model = str(default_chat_model or "").strip()
+    changed_paths = []
+
+    for path in OPENCLAW_OMNIDRIVE_CONFIG_PATHS:
+        if not path.exists():
+            continue
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except Exception as exc:
+            app_logger.warning("skip OpenClaw model sync because config cannot be read path={} error={}", path, exc)
+            continue
+
+        is_root_config = path.name == "openclaw.json"
+        providers = (data.setdefault("models", {}) if is_root_config else data).setdefault("providers", {})
+        provider = providers.get("omnidrive")
+        if not isinstance(provider, dict):
+            continue
+
+        if provider_base_url:
+            provider["baseUrl"] = provider_base_url
+        if provider_api_key:
+            provider["apiKey"] = provider_api_key
+
+        if normalized_ids:
+            provider["models"] = [
+                _build_openclaw_omnidrive_model_entry(model_id, include_api=not is_root_config)
+                for model_id in normalized_ids
+            ]
+
+        if is_root_config:
+            defaults_config = data.get("agents", {}).get("defaults", {})
+            defaults = defaults_config.get("models")
+            if isinstance(defaults, dict):
+                alias_candidates = {}
+                if default_chat_model:
+                    alias_candidates[f"omnidrive/{default_chat_model}"] = "omni"
+                    defaults.pop("omnidrive/default-chat", None)
+                else:
+                    alias_candidates["omnidrive/default-chat"] = "omni"
+                for model_id, alias in (
+                    ("gemini-3.1-pro-preview", "omni-gemini"),
+                    ("gpt-5.4", "omni-gpt"),
+                    ("qwen3.5-plus", "omni-qwen"),
+                ):
+                    alias_candidates[f"omnidrive/{model_id}"] = alias
+                for key, alias in alias_candidates.items():
+                    defaults.setdefault(key, {"alias": alias})
+
+        serialized = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+        try:
+            with path.open("w", encoding="utf-8") as handle:
+                handle.write(serialized)
+            changed_paths.append(str(path))
+        except Exception as exc:
+            app_logger.warning("failed to write OpenClaw model sync config path={} error={}", path, exc)
+
+    return changed_paths
+
+
+def _extract_omnidrive_chat_models(payload):
+    models = []
+    for item in payload or []:
+        if not isinstance(item, dict):
+            continue
+        model_id = str(item.get("modelName") or item.get("name") or item.get("id") or "").strip()
+        if model_id:
+            models.append(item)
+    return models
+
+
+def _build_omnidrive_chat_model_alias_map(payload):
+    alias_map = {}
+    for item in payload or []:
+        if not isinstance(item, dict):
+            continue
+        canonical = str(item.get("modelName") or item.get("name") or item.get("id") or "").strip()
+        if not canonical:
+            continue
+        for alias in (
+            canonical,
+            str(item.get("id") or "").strip(),
+            str(item.get("name") or "").strip(),
+        ):
+            for alias_variant in _iter_openai_model_aliases(alias):
+                alias_map[alias_variant] = canonical
+    alias_map["default-chat"] = alias_map.get("default-chat") or alias_map.get("gemini-3.1-pro-preview") or "gemini-3.1-pro-preview"
+    alias_map["default"] = alias_map["default-chat"]
+    alias_map["omnidrive-default-chat"] = alias_map["default-chat"]
+    return alias_map
+
+
+def _resolve_requested_omnidrive_chat_model_name(raw_model_name, default_model_name, access_token, api_base_url=""):
+    requested = _normalize_openai_model_name(raw_model_name, default_model_name)
+    try:
+        status_code, payload = omnidrive_cloud_json_request(
+            "GET",
+            "/api/v1/ai/models",
+            access_token=access_token,
+            query={"category": "chat"},
+            timeout=20,
+            api_base_url=api_base_url,
+        )
+    except Exception:
+        return requested
+
+    if status_code >= 400:
+        return requested
+
+    alias_map = _build_omnidrive_chat_model_alias_map(payload)
+    return alias_map.get(requested, requested)
+
+
+def sync_openclaw_omnidrive_models_from_cloud():
+    session = get_omnidrive_device_session_data()
+    status_code, payload = omnidrive_cloud_json_request(
+        "GET",
+        "/api/v1/ai/models",
+        access_token=session["accessToken"],
+        query={"category": "chat"},
+        timeout=30,
+        api_base_url=session.get("apiBaseUrl"),
+    )
+    if status_code >= 400:
+        message = ""
+        if isinstance(payload, dict):
+            message = str(payload.get("error") or payload.get("message") or payload.get("msg") or "").strip()
+        raise RuntimeError(message or "列出 OmniDrive 聊天模型失败")
+
+    model_items = _extract_omnidrive_chat_models(payload)
+    return sync_openclaw_omnidrive_model_configs(
+        model_items,
+        api_base_url=session.get("apiBaseUrl"),
+        access_token=session.get("accessToken"),
+        default_chat_model=session.get("device", {}).get("defaultChatModel"),
+    )
+
+
+def ensure_openclaw_omnidrive_models_synced():
+    try:
+        changed_paths = sync_openclaw_omnidrive_models_from_cloud()
+        if changed_paths:
+            app_logger.info("synced OpenClaw OmniDrive model configs paths={}", ",".join(changed_paths))
+    except Exception as exc:
+        app_logger.warning("sync OpenClaw OmniDrive model configs skipped error={}", exc)
 
 
 def _flatten_openai_message_content(content):
@@ -753,13 +1026,38 @@ def _flatten_openai_message_content(content):
     return ""
 
 
+def _strip_openclaw_sender_metadata(text):
+    if not isinstance(text, str):
+        return ""
+
+    cleaned = text.strip()
+    if not cleaned:
+        return ""
+
+    for _ in range(3):
+        updated = re.sub(
+            r"^\s*Sender \(untrusted metadata\):\s*```json\s*.*?```\s*",
+            "",
+            cleaned,
+            flags=re.DOTALL,
+        )
+        updated = re.sub(r"^\s*\[[^\]]+\]\s*", "", updated)
+        updated = updated.strip()
+        if updated == cleaned:
+            break
+        cleaned = updated
+
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
 def _extract_last_openai_user_prompt(messages):
     for item in reversed(messages or []):
         if not isinstance(item, dict):
             continue
         if str(item.get("role") or "").strip() != "user":
             continue
-        text = _flatten_openai_message_content(item.get("content"))
+        text = _strip_openclaw_sender_metadata(_flatten_openai_message_content(item.get("content")))
         if text:
             return text
     return ""
@@ -871,49 +1169,40 @@ def _prompt_requests_local_system_action(prompt):
     if not normalized:
         return False
 
-    action_keywords = (
-        "重启",
-        "重新加载",
-        "reload",
-        "restart",
-        "read",
-        "读取",
-        "查看",
-        "列出",
-        "list",
-        "执行",
-        "运行",
-        "run",
-        "edit",
-        "修改",
-        "write",
-        "打开",
-        "open",
+    explicit_local_tool_phrases = (
+        "read local",
+        "read file",
+        "write file",
+        "edit file",
+        "edit config",
+        "run command",
+        "run shell",
+        "restart service",
+        "reload service",
+        "list local skills",
+        "web_search",
+        "web search",
+        "读取本地文件",
+        "读取文件",
+        "修改文件",
+        "修改配置",
+        "编辑配置",
+        "执行命令",
+        "执行终端命令",
+        "运行命令",
+        "重启服务",
+        "重新加载服务",
+        "列出本地技能",
+        "查看本地技能",
+        "网页搜索",
+        "联网搜索",
     )
-    target_keywords = (
-        "配置",
-        "config",
-        "技能",
-        "skill",
-        "文件",
-        "file",
-        "路径",
-        "path",
-        "命令",
-        "command",
-        "终端",
-        "shell",
-        "service",
-        "服务",
-        "gateway",
-        "openclaw",
-        "系统",
-        "system",
-        "本地",
-        "local",
-    )
-    return any(keyword in normalized for keyword in action_keywords) and any(
-        keyword in normalized for keyword in target_keywords
+    explicit_tool_names = ("read", "write", "edit", "exec", "process", "web_search")
+    if any(phrase in normalized for phrase in explicit_local_tool_phrases):
+        return True
+    return any(
+        re.search(rf"(^|[^a-z_]){re.escape(name)}([^a-z_]|$)", normalized)
+        for name in explicit_tool_names
     )
 
 
@@ -936,7 +1225,7 @@ def _sanitize_omnidrive_forwarded_openai_messages(messages, unsupported_tool_nam
         if role == "system":
             text = _strip_openclaw_tooling_sections(text)
         else:
-            text = str(text or "").strip()
+            text = _strip_openclaw_sender_metadata(str(text or "").strip())
 
         if role == "assistant" and _is_openai_bridge_error_text(text):
             continue
@@ -1306,10 +1595,16 @@ def _build_openai_chat_stream_chunk(response_id, model_name, delta=None, finish_
 def _prepare_omnidrive_openai_chat_context(openai_payload):
     session = get_omnidrive_device_session_data()
     access_token = session["accessToken"]
+    api_base_url = session.get("apiBaseUrl")
     device = session["device"]
     device_id = str(device.get("id") or "").strip()
     default_model_name = str(device.get("defaultChatModel") or "").strip() or "gemini-3.1-pro-preview"
-    model_name = _normalize_openai_model_name(openai_payload.get("model"), default_model_name)
+    model_name = _resolve_requested_omnidrive_chat_model_name(
+        openai_payload.get("model"),
+        default_model_name,
+        access_token,
+        api_base_url=api_base_url,
+    )
 
     messages = openai_payload.get("messages")
     if not isinstance(messages, list) or not messages:
@@ -1319,6 +1614,7 @@ def _prepare_omnidrive_openai_chat_context(openai_payload):
     if tool_result and tool_result["toolName"] in {"omnidrive_image", "omnidrive_video"}:
         return {
             "accessToken": access_token,
+            "apiBaseUrl": api_base_url,
             "deviceId": device_id,
             "messages": messages,
             "modelName": model_name,
@@ -1339,6 +1635,7 @@ def _prepare_omnidrive_openai_chat_context(openai_payload):
     if clarification_text and _prompt_is_media_capability_question(prompt):
         return {
             "accessToken": access_token,
+            "apiBaseUrl": api_base_url,
             "deviceId": device_id,
             "messages": messages,
             "prompt": prompt,
@@ -1354,6 +1651,7 @@ def _prepare_omnidrive_openai_chat_context(openai_payload):
     if media_tool:
         return {
             "accessToken": access_token,
+            "apiBaseUrl": api_base_url,
             "deviceId": device_id,
             "messages": messages,
             "prompt": prompt,
@@ -1368,6 +1666,7 @@ def _prepare_omnidrive_openai_chat_context(openai_payload):
     if unsupported_tool_names and _prompt_requests_local_system_action(prompt):
         return {
             "accessToken": access_token,
+            "apiBaseUrl": api_base_url,
             "deviceId": device_id,
             "messages": messages,
             "prompt": prompt,
@@ -1386,6 +1685,7 @@ def _prepare_omnidrive_openai_chat_context(openai_payload):
 
     return {
         "accessToken": access_token,
+        "apiBaseUrl": api_base_url,
         "deviceId": device_id,
         "messages": sanitized_messages,
         "prompt": sanitized_prompt,
@@ -1465,7 +1765,7 @@ def stream_omnidrive_openai_chat_completion(openai_payload):
         return _stream_special_openai_completion(special_completion)
 
     request_payload = _build_omnidrive_openai_chat_request_payload(openai_payload, context)
-    endpoint = f"{OMNIDRIVE_BASE_URL.rstrip('/')}/api/v1/ai/chat/stream"
+    endpoint = f"{_resolve_omnidrive_api_base_url(context.get('apiBaseUrl'))}/api/v1/ai/chat/stream"
     headers = {
         "Accept": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -1590,6 +1890,7 @@ def create_omnidrive_openai_chat_completion(openai_payload):
         access_token=access_token,
         payload=request_payload,
         timeout=60,
+        api_base_url=context.get("apiBaseUrl"),
     )
     if status_code >= 400:
         message = ""
@@ -1611,6 +1912,7 @@ def create_omnidrive_openai_chat_completion(openai_payload):
             f"/api/v1/ai/jobs/{job_id}/workspace",
             access_token=access_token,
             timeout=60,
+            api_base_url=context.get("apiBaseUrl"),
         )
         if status_code >= 400:
             message = ""
@@ -2375,6 +2677,17 @@ def skill_omnidrive_session():
             "data": payload if isinstance(payload, dict) else None,
         }), status_code
 
+    try:
+        device = payload.get("device") if isinstance(payload.get("device"), dict) else {}
+        sync_openclaw_omnidrive_model_configs(
+            None,
+            api_base_url=payload.get("apiBaseUrl") or payload.get("cloudUrl"),
+            access_token=payload.get("accessToken"),
+            default_chat_model=device.get("defaultChatModel"),
+        )
+    except Exception as exc:
+        app_logger.warning("sync OpenClaw OmniDrive runtime connection after session fetch failed error={}", exc)
+
     return jsonify({
         "code": 200,
         "msg": "success",
@@ -2396,6 +2709,7 @@ def omnidrive_openai_models():
             access_token=session["accessToken"],
             query={"category": "chat"},
             timeout=30,
+            api_base_url=session.get("apiBaseUrl"),
         )
     except Exception as exc:
         return _openai_error_response(str(exc), status_code=500, error_type="server_error")
@@ -2405,6 +2719,16 @@ def omnidrive_openai_models():
         if isinstance(payload, dict):
             message = str(payload.get("error") or payload.get("message") or "").strip()
         return _openai_error_response(message or "列出 OmniDrive 模型失败", status_code=status_code, error_type="server_error")
+
+    try:
+        sync_openclaw_omnidrive_model_configs(
+            _extract_omnidrive_chat_models(payload),
+            api_base_url=session.get("apiBaseUrl"),
+            access_token=session.get("accessToken"),
+            default_chat_model=session.get("device", {}).get("defaultChatModel"),
+        )
+    except Exception as exc:
+        app_logger.warning("sync OpenClaw OmniDrive model list after models request failed error={}", exc)
 
     model_items = []
     model_items.append(
@@ -2418,7 +2742,7 @@ def omnidrive_openai_models():
     for item in payload or []:
         if not isinstance(item, dict):
             continue
-        model_id = str(item.get("name") or item.get("id") or "").strip()
+        model_id = str(item.get("modelName") or item.get("name") or item.get("id") or "").strip()
         if not model_id:
             continue
         model_items.append(
@@ -3127,6 +3451,7 @@ if should_boot_background_services():
     ensure_publish_task_manager_started()
     ensure_cloud_agent_started()
     ensure_omnidrive_agent_started()
+    ensure_openclaw_omnidrive_models_synced()
 # SSE 流生成器函数
 def sse_stream(status_queue):
     while True:
@@ -3141,5 +3466,6 @@ if __name__ == '__main__':
     ensure_publish_task_manager_started()
     ensure_cloud_agent_started()
     ensure_omnidrive_agent_started()
+    ensure_openclaw_omnidrive_models_synced()
     backend_port = int(os.getenv("SAU_BACKEND_PORT", "5409"))
     app.run(host='0.0.0.0', port=backend_port, threaded=True)

@@ -90,6 +90,51 @@ func TestBuildVideoBillingInputCarriesDurationMetadata(t *testing.T) {
 	}
 }
 
+func TestBuildEstimatedUsageBillingInputForMediaJobs(t *testing.T) {
+	job := &domain.AIJob{
+		ID:          "job-image-estimate",
+		OwnerUserID: "user-4",
+		ModelName:   "gemini-3-pro-image-preview",
+		JobType:     "image",
+		InputPayload: mustJSONBytes(map[string]any{
+			"count": 3,
+		}),
+	}
+
+	imageInput := BuildEstimatedUsageBillingInput(job)
+	if len(imageInput.Metrics) != 1 || imageInput.Metrics[0].Quantity != 3 {
+		t.Fatalf("expected image estimate to honor count, got %#v", imageInput.Metrics)
+	}
+
+	job.JobType = "video"
+	job.ModelName = "veo-3.1-fast-fl"
+	job.InputPayload = mustJSONBytes(map[string]any{
+		"durationSeconds": 6,
+	})
+	videoInput := BuildEstimatedUsageBillingInput(job)
+	if len(videoInput.Metrics) != 1 || videoInput.Metrics[0].MeterCode != "video_generations" {
+		t.Fatalf("expected video estimate metric, got %#v", videoInput.Metrics)
+	}
+}
+
+func TestBuildUsageBillingBlockMessage(t *testing.T) {
+	message := BuildUsageBillingBlockMessage(&store.ApplyUsageBillingResult{
+		BillStatus:  "failed",
+		BillMessage: "wallet credits insufficient for fallback debit",
+	})
+	if message != "当前套餐额度已用尽，且钱包积分不足，任务开始前需要预扣费，请先充值后再试。" {
+		t.Fatalf("unexpected fallback block message: %q", message)
+	}
+
+	message = BuildUsageBillingBlockMessage(&store.ApplyUsageBillingResult{
+		BillStatus:  "failed",
+		BillMessage: "pricing rule not found",
+	})
+	if message != "当前任务缺少可用计费规则，暂时无法启动，请联系管理员检查计费配置。" {
+		t.Fatalf("unexpected pricing block message: %q", message)
+	}
+}
+
 func TestBuildCompletionMessageReflectsBillingState(t *testing.T) {
 	message := buildCompletionMessage("AI 视频生成完成", &store.ApplyUsageBillingResult{
 		BillStatus:   "billed",

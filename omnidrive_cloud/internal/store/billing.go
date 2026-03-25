@@ -395,7 +395,75 @@ func (s *Store) GetBillingSummaryByUser(ctx context.Context, userID string) (*do
 		item.NearestExpiresAt = expiresAt
 		summary.QuotaBalances = append(summary.QuotaBalances, item)
 	}
-	return summary, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var (
+		failedBillingCount  int64
+		lastFailedBillMsg   *string
+		lastFailedBillingAt *time.Time
+	)
+	if err := s.pool.QueryRow(ctx, `
+		SELECT
+			COUNT(1)::BIGINT,
+			(
+				SELECT bill_message
+				FROM billing_usage_events
+				WHERE user_id = $1
+				  AND bill_status = 'failed'
+				ORDER BY updated_at DESC
+				LIMIT 1
+			) AS last_bill_message,
+			(
+				SELECT updated_at
+				FROM billing_usage_events
+				WHERE user_id = $1
+				  AND bill_status = 'failed'
+				ORDER BY updated_at DESC
+				LIMIT 1
+			) AS last_failed_at
+		FROM billing_usage_events
+		WHERE user_id = $1
+		  AND bill_status = 'failed'
+		  AND (
+			COALESCE(bill_message, '') ILIKE '%wallet credits insufficient%'
+			OR COALESCE(bill_message, '') ILIKE '%积分不足%'
+		  )
+	`, userID).Scan(&failedBillingCount, &lastFailedBillMsg, &lastFailedBillingAt); err != nil {
+		return nil, err
+	}
+
+	hasQuotaBalance := false
+	for _, item := range summary.QuotaBalances {
+		if item.RemainingTotal > 0 {
+			hasQuotaBalance = true
+			break
+		}
+	}
+
+	if failedBillingCount > 0 {
+		summary.NeedsRecharge = true
+		reason := "billing_failed"
+		summary.RechargeAlertReason = &reason
+		message := "检测到最近有任务因积分不足计费失败，请及时充值后再继续使用。"
+		if lastFailedBillMsg != nil && strings.TrimSpace(*lastFailedBillMsg) != "" {
+			message = "检测到最近有任务因积分不足计费失败，请及时充值。"
+		}
+		summary.RechargeAlertMessage = &message
+		summary.LastBillingFailedAt = lastFailedBillingAt
+		return summary, nil
+	}
+
+	if summary.CreditBalance <= 0 && !hasQuotaBalance {
+		summary.NeedsRecharge = true
+		reason := "balance_exhausted"
+		message := "当前可用积分不足，继续使用 AI 生成与发布能力前请先充值。"
+		summary.RechargeAlertReason = &reason
+		summary.RechargeAlertMessage = &message
+	}
+
+	return summary, nil
 }
 
 func (s *Store) ListWalletLedgerByUser(ctx context.Context, userID string) ([]domain.WalletLedger, error) {

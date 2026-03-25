@@ -115,6 +115,35 @@ function buildConversationMessages(history: ChatMessage[], nextUserMessage: stri
   return messages;
 }
 
+function createConversationId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `chat-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function extractConversationId(job?: AIJob | null) {
+  const inputPayload = (job?.inputPayload || {}) as Record<string, unknown>;
+  return typeof inputPayload.conversationId === "string" ? inputPayload.conversationId : "";
+}
+
+function getConversationKey(job: AIJob) {
+  return extractConversationId(job) || job.id;
+}
+
+function groupHistoryJobs(historyJobs: AIJob[]) {
+  const grouped = new Map<string, AIJob>();
+
+  for (const job of historyJobs) {
+    const key = getConversationKey(job);
+    if (!grouped.has(key)) {
+      grouped.set(key, job);
+    }
+  }
+
+  return Array.from(grouped.values());
+}
+
 function formatMessageTime(value?: string | null) {
   if (!value) {
     return "--:--";
@@ -841,6 +870,7 @@ export default function ChatPage() {
   const [draftAttachments, setDraftAttachments] = useState<ChatAttachment[]>([]);
   const [pendingHydrationJobId, setPendingHydrationJobId] = useState("");
   const [autoSelectLatestHistory, setAutoSelectLatestHistory] = useState(true);
+  const [conversationId, setConversationId] = useState("");
 
   const {
     data: rawModels = [],
@@ -879,6 +909,7 @@ export default function ChatPage() {
   const filteredModels = useMemo(() => {
     return chatModels.filter((item) => matchesModelQuery(item, modelQuery));
   }, [chatModels, modelQuery]);
+  const groupedHistoryJobs = useMemo(() => groupHistoryJobs(historyJobs), [historyJobs]);
 
   const activeModel = useMemo(() => {
     return chatModels.find((item) => item.modelName === selectedModelName) || chatModels[0] || null;
@@ -905,12 +936,14 @@ export default function ChatPage() {
   }, [chatModels, selectedModelName]);
 
   useEffect(() => {
-    if (autoSelectLatestHistory && !selectedJobId && historyJobs.length > 0 && !sending) {
-      setSelectedJobId(historyJobs[0].id);
-      setPendingHydrationJobId(historyJobs[0].id);
+    if (autoSelectLatestHistory && !selectedJobId && groupedHistoryJobs.length > 0 && !sending) {
+      const latestJob = groupedHistoryJobs[0];
+      setSelectedJobId(latestJob.id);
+      setPendingHydrationJobId(latestJob.id);
+      setConversationId(getConversationKey(latestJob));
       setAutoSelectLatestHistory(false);
     }
-  }, [autoSelectLatestHistory, historyJobs, selectedJobId, sending]);
+  }, [autoSelectLatestHistory, groupedHistoryJobs, selectedJobId, sending]);
 
   useEffect(() => {
     if (!selectedJob || sending || pendingHydrationJobId !== selectedJob.id) {
@@ -925,6 +958,13 @@ export default function ChatPage() {
       setSelectedModelName(selectedJob.modelName);
     }
   }, [selectedJob, selectedJobArtifacts, pendingHydrationJobId, sending]);
+
+  useEffect(() => {
+    if (!selectedJob) {
+      return;
+    }
+    setConversationId((previous) => previous || getConversationKey(selectedJob));
+  }, [selectedJob]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -1052,10 +1092,12 @@ export default function ChatPage() {
     const outboundAttachments = serializeAttachments(draftAttachments);
     const requestedMaxTokens =
       draftAttachments.length > 0 ? ATTACHMENT_HEAVY_CHAT_MAX_TOKENS : DEFAULT_CHAT_MAX_TOKENS;
+    const activeConversationId = conversationId || (selectedJob ? getConversationKey(selectedJob) : "") || createConversationId();
     setDraft("");
     setDraftAttachments([]);
     setSubmitError("");
     setSending(true);
+    setConversationId(activeConversationId);
     setMessages((previous) => [...previous, userMessage, assistantMessage]);
 
     let createdJobId = "";
@@ -1073,6 +1115,7 @@ export default function ChatPage() {
             prompt: nextUserMessage,
             temperature: 0.5,
             maxTokens: requestedMaxTokens,
+            conversationId: activeConversationId,
             messages: buildConversationMessages(messages, nextUserMessage),
             attachments: outboundAttachments,
           },
@@ -1251,11 +1294,15 @@ export default function ChatPage() {
     setSelectedJobId("");
     setPendingHydrationJobId("");
     setAutoSelectLatestHistory(false);
+    setConversationId(createConversationId());
     setMessages(INITIAL_MESSAGES);
     setDraft("");
     setDraftAttachments([]);
     setSubmitError("");
   }
+
+  const selectedConversationKey = conversationId || (selectedJob ? getConversationKey(selectedJob) : "");
+
   return (
     <div className="grid h-[calc(100vh-2rem)] grid-cols-1 gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
       {/* ── Sidebar: History-first ── */}
@@ -1314,7 +1361,7 @@ export default function ChatPage() {
           <div className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-text-muted">历史记录</div>
           {historyLoading ? (
             <div className="flex items-center gap-2 px-3 py-6 text-sm text-text-muted"><Loader2 className="h-4 w-4 animate-spin" /> 加载中</div>
-          ) : historyJobs.length === 0 ? (
+          ) : groupedHistoryJobs.length === 0 ? (
             <div className="flex flex-col items-center gap-3 px-4 py-10 text-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-surface-hover"><MessageSquare className="h-5 w-5 text-text-muted" /></div>
               <p className="text-sm text-text-muted">还没有聊天记录</p>
@@ -1322,10 +1369,10 @@ export default function ChatPage() {
             </div>
           ) : (
             <div className="space-y-1">
-              {historyJobs.map((job) => {
-                const active = selectedJobId === job.id;
+              {groupedHistoryJobs.map((job) => {
+                const active = selectedConversationKey === getConversationKey(job);
                 return (
-                  <button key={job.id} type="button" onClick={() => { setAutoSelectLatestHistory(false); setSelectedJobId(job.id); setPendingHydrationJobId(job.id); }} className={cn("group w-full rounded-xl px-3 py-2.5 text-left transition-all", active ? "bg-accent/10 border border-accent/30 shadow-sm shadow-accent/10" : "border border-transparent hover:bg-surface-hover/80")}>
+                  <button key={getConversationKey(job)} type="button" onClick={() => { setAutoSelectLatestHistory(false); setConversationId(getConversationKey(job)); setSelectedJobId(job.id); setPendingHydrationJobId(job.id); }} className={cn("group w-full rounded-xl px-3 py-2.5 text-left transition-all", active ? "bg-accent/10 border border-accent/30 shadow-sm shadow-accent/10" : "border border-transparent hover:bg-surface-hover/80")}>
                     <div className="line-clamp-2 text-sm font-medium leading-5 text-text-primary">{summarizeHistory(job)}</div>
                     <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-text-muted">
                       <Clock3 className="h-3 w-3" />

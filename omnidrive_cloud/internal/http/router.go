@@ -44,6 +44,11 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 	r.Get("/health", healthHandler.Health)
 	r.Get("/ready", healthHandler.Ready)
 	r.Get("/api/v1/files/*", fileHandler.Get)
+	r.Group(func(openai chi.Router) {
+		openai.Use(authmiddleware.RequireUser(app))
+		openai.Get("/openai/v1/models", aiHandler.OpenAIModels)
+		openai.Post("/openai/v1/chat/completions", aiHandler.OpenAIChatCompletions)
+	})
 
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Route("/auth", func(auth chi.Router) {

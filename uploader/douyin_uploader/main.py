@@ -262,6 +262,17 @@ class DouYinVideo(object):
             ]
         )
 
+    async def _find_cover_editor_modal(self, page):
+        return await self._find_first_visible_locator(
+            [
+                page.locator('div.dy-creator-content-modal:has-text("设置横封面"):has-text("设置竖封面")'),
+                page.locator('div[role="dialog"]:has-text("设置横封面"):has-text("设置竖封面")'),
+                page.locator('div#tooltip-container [class*="modal"]:has-text("上传封面"):has-text("完成")'),
+                page.locator('div#tooltip-container [class*="dialog"]:has-text("上传封面"):has-text("完成")'),
+                page.locator('div:has-text("设置竖封面"):has-text("上传封面"):has-text("完成")'),
+            ]
+        )
+
     async def _find_cover_entry(self, page):
         return await self._find_first_visible_locator(
             [
@@ -271,6 +282,30 @@ class DouYinVideo(object):
                 page.locator('div:has-text("选择封面")'),
             ]
         )
+
+    async def _find_cover_upload_input(self, page):
+        editor_modal = await self._find_cover_editor_modal(page)
+        search_roots = []
+        if editor_modal is not None:
+            search_roots.append(editor_modal)
+        search_roots.append(page)
+
+        selectors = [
+            'input.semi-upload-hidden-input',
+            'input[type="file"]',
+        ]
+
+        for root in search_roots:
+            for selector in selectors:
+                try:
+                    locator = root.locator(selector)
+                    count = await locator.count()
+                except Exception:
+                    continue
+                if count <= 0:
+                    continue
+                return locator.nth(count - 1)
+        return None
 
     async def _find_cover_confirm_button(self, page):
         return await self._find_first_visible_locator(
@@ -284,6 +319,33 @@ class DouYinVideo(object):
             ]
         )
 
+    async def _switch_vertical_cover_tab(self, page):
+        editor_modal = await self._find_cover_editor_modal(page)
+        search_roots = []
+        if editor_modal is not None:
+            search_roots.append(editor_modal)
+        search_roots.append(page)
+
+        for root in search_roots:
+            tab = await self._find_first_visible_locator(
+                [
+                    root.get_by_role("button", name="设置竖封面"),
+                    root.get_by_text("设置竖封面", exact=True),
+                    root.locator('button:has-text("设置竖封面")'),
+                    root.locator('[role="tab"]:has-text("设置竖封面")'),
+                    root.locator('div:has-text("设置竖封面")'),
+                ]
+            )
+            if tab is None:
+                continue
+            try:
+                await tab.click(force=True)
+                await page.wait_for_timeout(500)
+                return True
+            except Exception:
+                continue
+        return False
+
     async def _find_vertical_cover_prompt(self, page):
         return await self._find_first_visible_locator(
             [
@@ -292,6 +354,8 @@ class DouYinVideo(object):
                 page.locator('div#tooltip-container [class*="modal"]:has-text("设置竖封面获取更多流量")'),
                 page.locator('div#tooltip-container [class*="dialog"]:has-text("设置竖封面获取更多流量")'),
                 page.locator('div:has-text("设置竖封面获取更多流量"):has-text("暂不设置")'),
+                page.locator('div[role="dialog"]:has-text("设置竖封面"):has-text("暂不设置")'),
+                page.locator('div:has-text("设置竖封面"):has-text("暂不设置"):has-text("获取更多流量")'),
             ]
         )
 
@@ -320,6 +384,8 @@ class DouYinVideo(object):
                     prompt.locator('button[aria-label="close"]'),
                     prompt.locator('[aria-label="关闭"]'),
                     prompt.locator('[aria-label="close"]'),
+                    prompt.locator('[class*="close"]:visible'),
+                    prompt.locator('button:has(svg)'),
                     prompt.locator('svg[style*="cursor: pointer"]'),
                 ]
             )
@@ -343,6 +409,16 @@ class DouYinVideo(object):
             return await self._find_vertical_cover_prompt(page) is None
         except Exception:
             return True
+
+    async def _wait_for_cover_editor_closed(self, page, timeout_ms=10000):
+        deadline = asyncio.get_event_loop().time() + max(timeout_ms, 1000) / 1000
+        while asyncio.get_event_loop().time() < deadline:
+            await self._dismiss_vertical_cover_prompt(page)
+            editor_modal = await self._find_cover_editor_modal(page)
+            if editor_modal is None:
+                return True
+            await page.wait_for_timeout(400)
+        return False
 
     async def _cover_warning_visible(self, page):
         for text in ["请设置封面后再发布", "请先设置封面", "请选择封面后再发布", "请选择封面"]:
@@ -447,21 +523,35 @@ class DouYinVideo(object):
     async def set_thumbnail(self, page: Page, thumbnail_path: str):
         if thumbnail_path:
             douyin_logger.info('  [-] 正在设置视频封面...')
-            await page.click('text="选择封面"')
-            await page.wait_for_selector("div.dy-creator-content-modal")
-            await page.click('text="设置竖封面"')
-            await page.wait_for_timeout(2000)  # 等待2秒
-            # 定位到上传区域并点击
-            await page.locator("div[class^='semi-upload upload'] >> input.semi-upload-hidden-input").set_input_files(thumbnail_path)
-            await page.wait_for_timeout(2000)  # 等待2秒
-            await page.locator("div#tooltip-container button:visible:has-text('完成')").click()
-            # finish_confirm_element = page.locator("div[class^='confirmBtn'] >> div:has-text('完成')")
-            # if await finish_confirm_element.count():
-            #     await finish_confirm_element.click()
-            # await page.locator("div[class^='footer'] button:has-text('完成')").click()
+            opened = await self._open_cover_picker(page)
+            if not opened:
+                raise RuntimeError("未找到“选择封面”入口")
+
+            editor_modal = await self._find_cover_editor_modal(page)
+            if editor_modal is None:
+                raise RuntimeError("未检测到封面编辑器")
+
+            await self._dismiss_vertical_cover_prompt(page)
+            await self._switch_vertical_cover_tab(page)
+            await page.wait_for_timeout(800)
+
+            upload_input = await self._find_cover_upload_input(page)
+            if upload_input is None:
+                raise RuntimeError("未找到封面上传输入框")
+            await upload_input.set_input_files(thumbnail_path)
+            await page.wait_for_timeout(1800)
+
+            await self._dismiss_vertical_cover_prompt(page)
+            confirmed = await self._confirm_cover_selection(page)
+            if not confirmed:
+                raise RuntimeError("未找到封面编辑器的完成按钮")
+
+            await self._dismiss_vertical_cover_prompt(page)
+            closed = await self._wait_for_cover_editor_closed(page)
+            if not closed:
+                raise RuntimeError("封面编辑器未正常关闭")
+
             douyin_logger.info('  [+] 视频封面设置完成！')
-            # 等待封面设置对话框关闭
-            await page.wait_for_selector("div.extractFooter", state='detached')
             
 
     async def set_location(self, page: Page, location: str = ""):

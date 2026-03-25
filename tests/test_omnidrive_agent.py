@@ -1036,6 +1036,72 @@ class PublishTaskManagerDatetimeTests(unittest.TestCase):
         self.assertEqual(task["status"], "failed")
         self.assertEqual(task["message"], "发布任务执行失败: 本地未找到账号: 抖音 / D001")
 
+    def test_publish_task_manager_realigns_browser_closed_omnidrive_ai_failures_after_restart(self):
+        temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-browser-closed-realign-"))
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "database.db"
+        future_publish_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=1)
+
+        ai_manager = OmniDriveAITaskManager(db_path)
+        ai_manager.init_db()
+        ai_manager.create_task(
+            {
+                "taskUuid": "local-ai-browser-closed",
+                "jobType": "video",
+                "modelName": "veo-3.1-fast-fl",
+                "prompt": "浏览器关闭恢复测试",
+                "runAt": future_publish_at.isoformat().replace("+00:00", "Z"),
+                "publishPayload": {
+                    "runAt": future_publish_at.isoformat().replace("+00:00", "Z"),
+                    "requestedRun": future_publish_at.isoformat().replace("+00:00", "Z"),
+                },
+            }
+        )
+
+        manager = PublishTaskManager(db_path=db_path, material_roots={})
+        manager.init_db()
+
+        broken_local_run_at = future_publish_at.strftime("%Y-%m-%d %H:%M:%S")
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO publish_tasks (
+                    task_uuid, source, platform_type, platform_name, account_name, account_file_path,
+                    file_name, file_path, title, run_at, platform_publish_at, status, message, payload_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "publish-browser-closed",
+                    "omnidrive_ai",
+                    3,
+                    "抖音",
+                    "测试账号",
+                    "cookies/demo.json",
+                    "video.mp4",
+                    "generated:local-ai-browser-closed/video.mp4",
+                    "browser closed recover",
+                    broken_local_run_at,
+                    broken_local_run_at,
+                    "failed",
+                    "发布任务执行失败: Locator.count: Target page, context or browser has been closed",
+                    json.dumps({"omnidriveAITaskUuid": "local-ai-browser-closed"}, ensure_ascii=False),
+                ),
+            )
+            conn.commit()
+
+        manager.init_db()
+        repaired_task = manager.get_task("publish-browser-closed")
+        expected_local_run_at = future_publish_at.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+        self.assertEqual(repaired_task["status"], "scheduled")
+        self.assertEqual(repaired_task["runAt"], expected_local_run_at)
+        self.assertEqual(repaired_task["platformPublishAt"], expected_local_run_at)
+        self.assertEqual(repaired_task["message"], "等待 AI 产物定时发布")
+        self.assertIsNone(repaired_task["startedAt"])
+        self.assertIsNone(repaired_task["finishedAt"])
+
     def test_publish_task_manager_uses_local_schedule_for_enable_timer_tasks(self):
         temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-local-schedule-"))
         self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
@@ -1182,6 +1248,60 @@ class PublishTaskManagerDatetimeTests(unittest.TestCase):
         self.assertIsNone(recovered_task["workerName"])
         self.assertIsNone(recovered_task["startedAt"])
         self.assertIsNone(recovered_task["finishedAt"])
+
+    def test_publish_task_manager_requeues_browser_closed_errors_immediately(self):
+        temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-browser-closed-immediate-"))
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "database.db"
+
+        manager = PublishTaskManager(db_path=db_path, material_roots={})
+        manager.init_db()
+
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO publish_tasks (
+                    task_uuid, source, platform_type, platform_name, account_name, account_file_path,
+                    file_name, file_path, title, run_at, platform_publish_at, status, message, payload_json,
+                    worker_name, started_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    "publish-browser-closed-immediate",
+                    "omnidrive_ai",
+                    4,
+                    "快手",
+                    "测试快手_乔总",
+                    "cookies/demo.json",
+                    "video.mp4",
+                    "generated:job-1/video.mp4",
+                    "browser close immediate retry",
+                    None,
+                    None,
+                    "running",
+                    "任务执行中",
+                    json.dumps({}, ensure_ascii=False),
+                    "worker-1",
+                ),
+            )
+            conn.commit()
+
+        task = manager.get_task("publish-browser-closed-immediate")
+        with mock.patch.object(
+            manager,
+            "_execute_payload",
+            side_effect=RuntimeError("Locator.count: Target page, context or browser has been closed"),
+        ):
+            manager._run_task(task)
+
+        retried_task = manager.get_task("publish-browser-closed-immediate")
+        self.assertEqual(retried_task["status"], "pending")
+        self.assertEqual(retried_task["message"], "浏览器意外关闭，准备自动重试")
+        self.assertIsNone(retried_task["workerName"])
+        self.assertIsNone(retried_task["startedAt"])
+        self.assertIsNone(retried_task["finishedAt"])
 
     def test_publish_task_manager_keeps_historical_failed_tasks_stopped_after_restart(self):
         temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-no-replay-"))

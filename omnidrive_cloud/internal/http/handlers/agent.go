@@ -23,6 +23,28 @@ type AgentHandler struct {
 	app *appstate.App
 }
 
+func requestBaseURL(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	scheme := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
+	if scheme == "" {
+		if r.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = strings.TrimSpace(r.Host)
+	}
+	if host == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s://%s", scheme, host)
+}
+
 type heartbeatRequest struct {
 	DeviceCode     string      `json:"deviceCode"`
 	DeviceName     string      `json:"deviceName"`
@@ -259,6 +281,8 @@ func (h *AgentHandler) IssueDeviceSession(w http.ResponseWriter, r *http.Request
 		"accessToken": token,
 		"tokenType":   "bearer",
 		"expiresAt":   time.Now().UTC().Add(deviceSessionTokenTTL),
+		"apiBaseUrl":  requestBaseURL(r),
+		"cloudUrl":    requestBaseURL(r),
 		"user":        user,
 		"device": map[string]any{
 			"id":                    device.ID,
