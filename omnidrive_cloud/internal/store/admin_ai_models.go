@@ -34,7 +34,7 @@ func (s *Store) ListAdminAIModels(ctx context.Context, filter AdminAIModelListFi
 	argIndex := 1
 
 	if query := strings.TrimSpace(filter.Query); query != "" {
-		whereParts = append(whereParts, fmt.Sprintf("(vendor ILIKE $%[1]d OR model_name ILIKE $%[1]d OR category ILIKE $%[1]d OR COALESCE(base_url, '') ILIKE $%[1]d)", argIndex))
+		whereParts = append(whereParts, fmt.Sprintf("(vendor ILIKE $%[1]d OR model_name ILIKE $%[1]d OR COALESCE(model_alias, '') ILIKE $%[1]d OR category ILIKE $%[1]d OR COALESCE(base_url, '') ILIKE $%[1]d)", argIndex))
 		args = append(args, ilikePattern(query))
 		argIndex++
 	}
@@ -112,6 +112,7 @@ type CreateAIModelInput struct {
 	ID                        string
 	Vendor                    string
 	ModelName                 string
+	ModelAlias                string
 	Category                  string
 	BillingMode               string
 	BaseURL                   *string
@@ -132,25 +133,26 @@ type CreateAIModelInput struct {
 func (s *Store) CreateAIModel(ctx context.Context, input CreateAIModelInput) (*domain.AIModel, error) {
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO ai_models (
-			id, vendor, model_name, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
+			id, vendor, model_name, model_alias, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
 			description, pricing_payload,
 			image_reference_limit, image_supported_sizes,
 			video_reference_limit, video_supported_resolutions, video_supported_durations,
 			supported_file_types,
 			is_enabled, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9,
-			$10, $11,
-			$12, $13,
-			$14, $15, $16,
-			$17,
-			$18, CLOCK_TIMESTAMP(), CLOCK_TIMESTAMP()
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+			$11, $12,
+			$13, $14,
+			$15, $16, $17,
+			$18,
+			$19, CLOCK_TIMESTAMP(), CLOCK_TIMESTAMP()
 		)
 		RETURNING `+aiModelSelectColumns+`
 	`,
 		input.ID,
 		input.Vendor,
 		input.ModelName,
+		input.ModelAlias,
 		input.Category,
 		input.BillingMode,
 		input.BaseURL,
@@ -174,6 +176,7 @@ func (s *Store) CreateAIModel(ctx context.Context, input CreateAIModelInput) (*d
 type UpdateAIModelInput struct {
 	Vendor                    *string
 	ModelName                 *string
+	ModelAlias                *string
 	Category                  *string
 	BillingMode               *string
 	BaseURL                   *string
@@ -204,6 +207,11 @@ func (s *Store) UpdateAIModel(ctx context.Context, id string, input UpdateAIMode
 	if input.ModelName != nil {
 		setParts = append(setParts, fmt.Sprintf("model_name = $%d", argIndex))
 		args = append(args, *input.ModelName)
+		argIndex++
+	}
+	if input.ModelAlias != nil {
+		setParts = append(setParts, fmt.Sprintf("model_alias = $%d", argIndex))
+		args = append(args, *input.ModelAlias)
 		argIndex++
 	}
 	if input.Category != nil {

@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { useAdminAIJobWorkspace } from "@/lib/hooks/useAdminAIJobs";
+import { getModelDisplayName } from "@/lib/model-display";
 import type {
   AIJobArtifact,
   AdminAIJobWorkspace,
@@ -443,7 +444,7 @@ function DrawerBody({
           <CompactPanel title="作业概览">
             <div className="space-y-3">
               <InfoRow label="当前状态" value={<StatusPill status={job.status} />} />
-              <InfoRow label="模型" value={job.modelName || "—"} />
+              <InfoRow label="模型" value={getModelDisplayName(job, "—")} />
               <InfoRow label="类型" value={job.jobType || "—"} />
               <InfoRow label="来源" value={job.source || "—"} />
               <InfoRow label="投递状态" value={job.deliveryStatus || "—"} />

@@ -15,13 +15,15 @@ import (
 )
 
 const aiJobSelectColumns = `
-	id, owner_user_id, device_id, skill_id, source, local_task_id, job_type, model_name, prompt, status,
+	id, owner_user_id, device_id, skill_id, source, local_task_id, job_type, model_name,
+	COALESCE((SELECT am.model_alias FROM ai_models am WHERE am.model_name = ai_jobs.model_name LIMIT 1), ai_jobs.model_name) AS model_alias,
+	prompt, status,
 	input_payload, output_payload, message, cost_credits, lease_owner_device_id, lease_token, lease_expires_at,
 	delivery_status, delivery_message, local_publish_task_id, run_at, created_at, updated_at, delivered_at, finished_at
 `
 
 const aiModelSelectColumns = `
-	id, vendor, model_name, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
+	id, vendor, model_name, model_alias, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
 	description, pricing_payload,
 	image_reference_limit, image_supported_sizes,
 	video_reference_limit, video_supported_resolutions, video_supported_durations,
@@ -69,6 +71,7 @@ func scanAIModel(row pgx.Row) (*domain.AIModel, error) {
 		&model.ID,
 		&model.Vendor,
 		&model.ModelName,
+		&model.ModelAlias,
 		&model.Category,
 		&model.BillingMode,
 		&baseURL,
@@ -189,6 +192,7 @@ func scanAIJob(row pgx.Row) (*domain.AIJob, error) {
 		&localTaskID,
 		&job.JobType,
 		&job.ModelName,
+		&job.ModelAlias,
 		&prompt,
 		&job.Status,
 		&inputPayload,
@@ -293,7 +297,7 @@ func (s *Store) ListAIModels(ctx context.Context, category string) ([]domain.AIM
 		query += ` AND category = $1`
 		args = append(args, category)
 	}
-	query += ` ORDER BY category ASC, model_name ASC`
+	query += ` ORDER BY category ASC, COALESCE(NULLIF(TRIM(model_alias), ''), model_name) ASC`
 
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -590,7 +594,25 @@ func (s *Store) UpdateAIJob(ctx context.Context, jobID string, ownerUserID strin
 	return job, nil
 }
 
-func (s *Store) UpdateAIJobDeliveryByDevice(ctx context.Context, jobID string, deviceID string, status string, message *string, localPublishTaskID *string, deliveredAt *time.Time) (*domain.AIJob, error) {
+func (s *Store) UpdateAIJobDeliveryByDevice(ctx context.Context, jobID string, deviceID string, status string, message *string, localPublishTaskID *string, deliveredAt *time.Time) (*domain.AIJob, bool, error) {
+	currentRow := s.pool.QueryRow(ctx, `
+		SELECT `+aiJobSelectColumns+`
+		FROM ai_jobs
+		WHERE id = $1
+		  AND device_id = $2
+	`, jobID, deviceID)
+
+	current, err := scanAIJob(currentRow)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	if !aiJobDeliveryChanged(current, status, message, localPublishTaskID) {
+		return current, false, nil
+	}
+
 	row := s.pool.QueryRow(ctx, `
 		UPDATE ai_jobs
 		SET delivery_status = COALESCE($3::text, delivery_status),
@@ -606,11 +628,40 @@ func (s *Store) UpdateAIJobDeliveryByDevice(ctx context.Context, jobID string, d
 	job, err := scanAIJob(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
+			return nil, false, nil
 		}
-		return nil, err
+		return nil, false, err
 	}
-	return job, nil
+	return job, true, nil
+}
+
+func aiJobDeliveryChanged(current *domain.AIJob, status string, message *string, localPublishTaskID *string) bool {
+	if current == nil {
+		return true
+	}
+
+	nextStatus := strings.TrimSpace(status)
+	if nextStatus == "" {
+		nextStatus = strings.TrimSpace(current.DeliveryStatus)
+	}
+	if nextStatus != strings.TrimSpace(current.DeliveryStatus) {
+		return true
+	}
+
+	if !sameOptionalDeliveryValue(current.DeliveryMessage, message) {
+		return true
+	}
+	if !sameOptionalDeliveryValue(current.LocalPublishTaskID, localPublishTaskID) {
+		return true
+	}
+	return false
+}
+
+func sameOptionalDeliveryValue(current *string, incoming *string) bool {
+	if incoming == nil {
+		return true
+	}
+	return strings.TrimSpace(valueOrEmpty(current)) == strings.TrimSpace(valueOrEmpty(incoming))
 }
 
 func (s *Store) CancelAIJob(ctx context.Context, jobID string, ownerUserID string, message *string) (*domain.AIJob, error) {
@@ -623,7 +674,7 @@ func (s *Store) CancelAIJob(ctx context.Context, jobID string, ownerUserID strin
 		    lease_expires_at = NULL,
 		    finished_at = NOW(),
 		    updated_at = NOW()
-		WHERE id = $1 AND owner_user_id = $2 AND status IN ('queued', 'running')
+		WHERE id = $1 AND owner_user_id = $2 AND status IN ('queued', 'running', 'waiting_recharge')
 		RETURNING `+aiJobSelectColumns+`
 	`, jobID, ownerUserID, message)
 
@@ -660,6 +711,51 @@ func (s *Store) RetryAIJob(ctx context.Context, jobID string, ownerUserID string
 		return nil, err
 	}
 	return job, nil
+}
+
+func (s *Store) DeleteAccountSkillRunPlanByOwner(ctx context.Context, jobID string, ownerUserID string, scheduleKey string, repeating bool) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+
+	if repeating && strings.TrimSpace(scheduleKey) != "" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE ai_jobs
+			SET input_payload = jsonb_set(
+			        jsonb_set(COALESCE(input_payload, '{}'::jsonb), '{scheduleConfig,repeatDaily}', 'false'::jsonb, true),
+			        '{scheduleConfig,scheduleKey}',
+			        to_jsonb(''::text),
+			        true
+			    ),
+			    updated_at = NOW()
+			WHERE owner_user_id = $1
+			  AND source = 'account_skill_binding'
+			  AND COALESCE(input_payload->'scheduleConfig'->>'scheduleKey', '') = $2
+		`, ownerUserID, strings.TrimSpace(scheduleKey)); err != nil {
+			return false, err
+		}
+	}
+
+	commandTag, err := tx.Exec(ctx, `
+		DELETE FROM ai_jobs
+		WHERE id = $1
+		  AND owner_user_id = $2
+		  AND source = 'account_skill_binding'
+		  AND local_publish_task_id IS NULL
+		  AND status IN ('scheduled', 'queued', 'waiting_recharge', 'failed', 'cancelled')
+	`, jobID, ownerUserID)
+	if err != nil {
+		return false, err
+	}
+	if commandTag.RowsAffected() == 0 {
+		return false, nil
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Store) ForceReleaseAIJobLeaseByOwner(ctx context.Context, jobID string, ownerUserID string, message *string) (*domain.AIJob, error) {
@@ -725,7 +821,7 @@ func (s *Store) HasActiveAIJobsBySkillAndSource(ctx context.Context, ownerUserID
 			WHERE owner_user_id = $1
 			  AND skill_id = $2
 			  AND source = $3
-			  AND status IN ('scheduled', 'queued', 'pending', 'running')
+			  AND status IN ('scheduled', 'queued', 'pending', 'running', 'waiting_recharge')
 		)
 	`, ownerUserID, skillID, source).Scan(&exists)
 	if err != nil {
@@ -777,7 +873,7 @@ func (s *Store) FindActiveAccountSkillJobByScheduleKey(ctx context.Context, sche
 		FROM ai_jobs
 		WHERE source = 'account_skill_binding'
 		  AND COALESCE(input_payload->'scheduleConfig'->>'scheduleKey', '') = $1
-		  AND status IN ('scheduled', 'queued', 'running')
+		  AND status IN ('scheduled', 'queued', 'running', 'waiting_recharge')
 		ORDER BY run_at ASC NULLS FIRST, created_at DESC
 		LIMIT 1
 	`, strings.TrimSpace(scheduleKey))
@@ -798,7 +894,7 @@ func (s *Store) ListPendingAIJobsByDevice(ctx context.Context, deviceID string) 
 		FROM ai_jobs
 		WHERE device_id = $1
 		  AND (
-		      (status = 'queued' AND (lease_expires_at IS NULL OR lease_expires_at < NOW()))
+		      (status IN ('queued', 'waiting_recharge') AND (lease_expires_at IS NULL OR lease_expires_at < NOW()))
 		      OR (status = 'running' AND lease_owner_device_id = $1 AND lease_expires_at >= NOW())
 		  )
 		ORDER BY created_at ASC
@@ -866,16 +962,66 @@ func (s *Store) ListAgentAIJobsByDevice(ctx context.Context, deviceID string, so
 func (s *Store) ListExecutableAIJobs(ctx context.Context, limit int) ([]domain.AIJob, error) {
 	query := `
 		SELECT ` + aiJobSelectColumns + `
-		FROM ai_jobs
-		WHERE status = 'queued'
-		  AND source IN (` + executableAIJobSourcesSQL + `)
-		  AND (run_at IS NULL OR run_at <= NOW())
-		  AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
-		ORDER BY created_at ASC
+		FROM ai_jobs AS target
+		WHERE target.status IN ('queued', 'waiting_recharge')
+		  AND target.source IN (` + executableAIJobSourcesSQL + `)
+		  AND (target.run_at IS NULL OR target.run_at <= NOW())
+		  AND (target.lease_expires_at IS NULL OR target.lease_expires_at < NOW())
+		  AND NOT EXISTS (
+		      SELECT 1
+		      FROM ai_jobs AS prior
+		      WHERE prior.owner_user_id = target.owner_user_id
+		        AND prior.source IN (` + executableAIJobSourcesSQL + `)
+		        AND prior.id <> target.id
+		        AND prior.status IN ('scheduled', 'queued', 'running', 'waiting_recharge')
+		        AND (
+		            COALESCE(prior.run_at, prior.created_at) < COALESCE(target.run_at, target.created_at)
+		            OR (
+		                COALESCE(prior.run_at, prior.created_at) = COALESCE(target.run_at, target.created_at)
+		                AND (
+		                    prior.created_at < target.created_at
+		                    OR (prior.created_at = target.created_at AND prior.id < target.id)
+		                )
+		            )
+		        )
+		  )
+		ORDER BY COALESCE(target.run_at, target.created_at) ASC, target.created_at ASC, target.id ASC
 	`
 	args := []any{}
 	if limit > 0 {
 		query += ` LIMIT $1`
+		args = append(args, limit)
+	}
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.AIJob, 0)
+	for rows.Next() {
+		job, scanErr := scanAIJob(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *job)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) ListPendingExecutableAIJobsBefore(ctx context.Context, endExclusive time.Time, limit int) ([]domain.AIJob, error) {
+	query := `
+		SELECT ` + aiJobSelectColumns + `
+		FROM ai_jobs
+		WHERE source IN (` + executableAIJobSourcesSQL + `)
+		  AND status IN ('scheduled', 'queued', 'waiting_recharge')
+		  AND COALESCE(run_at, NOW()) < $1
+		ORDER BY owner_user_id ASC, COALESCE(run_at, created_at) ASC, created_at ASC, id ASC
+	`
+	args := []any{endExclusive.UTC()}
+	if limit > 0 {
+		query += ` LIMIT $2`
 		args = append(args, limit)
 	}
 
@@ -944,7 +1090,7 @@ func (s *Store) FindScheduledOrActiveAIJobBySkillRun(ctx context.Context, skillI
 		FROM ai_jobs
 		WHERE skill_id = $1
 		  AND run_at = $2
-		  AND status IN ('scheduled', 'queued', 'running')
+		  AND status IN ('scheduled', 'queued', 'running', 'waiting_recharge')
 		ORDER BY created_at DESC
 		LIMIT 1
 	`, skillID, runAt.UTC())
@@ -1060,6 +1206,75 @@ func (s *Store) RecoverInterruptedExecutableAIJobs(ctx context.Context) ([]domai
 	return items, rows.Err()
 }
 
+func (s *Store) FailStaleQueuedExecutableAIJobs(ctx context.Context, queuedBefore time.Time, limit int) ([]domain.AIJob, error) {
+	query := `
+		WITH candidates AS (
+			SELECT target.id
+			FROM ai_jobs AS target
+			WHERE target.source IN (` + executableAIJobSourcesSQL + `)
+			  AND target.status = 'queued'
+			  AND target.lease_owner_device_id IS NULL
+			  AND target.lease_token IS NULL
+			  AND (target.lease_expires_at IS NULL OR target.lease_expires_at < NOW())
+			  AND (target.run_at IS NULL OR target.run_at <= NOW())
+			  AND GREATEST(
+			      COALESCE(target.updated_at, target.created_at),
+			      COALESCE(target.run_at, target.created_at)
+			  ) < $1
+			  AND NOT EXISTS (
+			      SELECT 1
+			      FROM ai_jobs AS prior
+			      WHERE prior.owner_user_id = target.owner_user_id
+			        AND prior.source IN (` + executableAIJobSourcesSQL + `)
+			        AND prior.id <> target.id
+			        AND prior.status IN ('scheduled', 'queued', 'running', 'waiting_recharge')
+			        AND (
+			            COALESCE(prior.run_at, prior.created_at) < COALESCE(target.run_at, target.created_at)
+			            OR (
+			                COALESCE(prior.run_at, prior.created_at) = COALESCE(target.run_at, target.created_at)
+			                AND (
+			                    prior.created_at < target.created_at
+			                    OR (prior.created_at = target.created_at AND prior.id < target.id)
+			                )
+			            )
+			        )
+			  )
+			ORDER BY COALESCE(target.run_at, target.created_at) ASC, target.created_at ASC, target.id ASC
+	`
+	args := []any{queuedBefore.UTC()}
+	if limit > 0 {
+		query += ` LIMIT $2`
+		args = append(args, limit)
+	}
+	query += `
+		)
+		UPDATE ai_jobs AS target
+		SET status = 'failed',
+		    message = 'AI 任务排队超时，已自动终止，请重新发起',
+		    finished_at = NOW(),
+		    updated_at = NOW()
+		FROM candidates
+		WHERE target.id = candidates.id
+		RETURNING ` + aiJobSelectColumns + `
+	`
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.AIJob, 0)
+	for rows.Next() {
+		job, scanErr := scanAIJob(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *job)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) ClaimAIJobLease(ctx context.Context, jobID string, deviceID string, leaseToken string, leaseExpiresAt time.Time) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE ai_jobs
@@ -1087,18 +1302,110 @@ func (s *Store) ClaimAIJobLease(ctx context.Context, jobID string, deviceID stri
 
 func (s *Store) ClaimCloudAIJobLease(ctx context.Context, jobID string, leaseToken string, leaseExpiresAt time.Time) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
-		UPDATE ai_jobs
+		UPDATE ai_jobs AS target
 		SET status = 'running',
 		    lease_owner_device_id = NULL,
 		    lease_token = $2,
 		    lease_expires_at = $3,
 		    updated_at = NOW()
-		WHERE id = $1
-		  AND source IN (`+executableAIJobSourcesSQL+`)
-		  AND status = 'queued'
-		  AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
+		WHERE target.id = $1
+		  AND target.source IN (`+executableAIJobSourcesSQL+`)
+		  AND target.status IN ('queued', 'waiting_recharge')
+		  AND (target.lease_expires_at IS NULL OR target.lease_expires_at < NOW())
+		  AND NOT EXISTS (
+		      SELECT 1
+		      FROM ai_jobs AS prior
+		      WHERE prior.owner_user_id = target.owner_user_id
+		        AND prior.source IN (`+executableAIJobSourcesSQL+`)
+		        AND prior.id <> target.id
+		        AND prior.status IN ('scheduled', 'queued', 'running', 'waiting_recharge')
+		        AND (
+		            COALESCE(prior.run_at, prior.created_at) < COALESCE(target.run_at, target.created_at)
+		            OR (
+		                COALESCE(prior.run_at, prior.created_at) = COALESCE(target.run_at, target.created_at)
+		                AND (
+		                    prior.created_at < target.created_at
+		                    OR (prior.created_at = target.created_at AND prior.id < target.id)
+		                )
+		            )
+		        )
+		  )
 		RETURNING `+aiJobSelectColumns+`
 	`, jobID, leaseToken, leaseExpiresAt)
+
+	job, err := scanAIJob(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return job, nil
+}
+
+func (s *Store) RequeueCloudAIJobWithBackoff(ctx context.Context, jobID string, leaseToken string, retryAt time.Time, message *string, outputPayload []byte) (*domain.AIJob, error) {
+	var payload any
+	if len(outputPayload) > 0 {
+		payload = outputPayload
+	}
+
+	row := s.pool.QueryRow(ctx, `
+		UPDATE ai_jobs
+		SET status = 'queued',
+		    output_payload = CASE
+		        WHEN $4::jsonb IS NULL THEN output_payload
+		        ELSE $4::jsonb
+		    END,
+		    message = COALESCE($5::text, message),
+		    lease_owner_device_id = NULL,
+		    lease_token = NULL,
+		    lease_expires_at = $3,
+		    finished_at = NULL,
+		    updated_at = NOW()
+		WHERE id = $1
+		  AND source IN (`+executableAIJobSourcesSQL+`)
+		  AND lease_owner_device_id IS NULL
+		  AND lease_token = $2
+		  AND status = 'running'
+		RETURNING `+aiJobSelectColumns+`
+	`, jobID, leaseToken, retryAt.UTC(), payload, message)
+
+	job, err := scanAIJob(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return job, nil
+}
+
+func (s *Store) MarkCloudAIJobWaitingRecharge(ctx context.Context, jobID string, leaseToken string, retryAt time.Time, message *string, outputPayload []byte) (*domain.AIJob, error) {
+	var payload any
+	if len(outputPayload) > 0 {
+		payload = outputPayload
+	}
+
+	row := s.pool.QueryRow(ctx, `
+		UPDATE ai_jobs
+		SET status = 'waiting_recharge',
+		    output_payload = CASE
+		        WHEN $4::jsonb IS NULL THEN output_payload
+		        ELSE $4::jsonb
+		    END,
+		    message = COALESCE($5::text, message),
+		    lease_owner_device_id = NULL,
+		    lease_token = NULL,
+		    lease_expires_at = $3,
+		    finished_at = NULL,
+		    updated_at = NOW()
+		WHERE id = $1
+		  AND source IN (`+executableAIJobSourcesSQL+`)
+		  AND lease_owner_device_id IS NULL
+		  AND lease_token = $2
+		  AND status = 'running'
+		RETURNING `+aiJobSelectColumns+`
+	`, jobID, leaseToken, retryAt.UTC(), payload, message)
 
 	job, err := scanAIJob(row)
 	if err != nil {

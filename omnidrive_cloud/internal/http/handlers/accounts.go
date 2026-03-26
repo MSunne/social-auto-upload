@@ -413,6 +413,113 @@ func (h *AccountHandler) CreateSkillRun(w http.ResponseWriter, r *http.Request) 
 	render.JSON(w, http.StatusCreated, createdJobs)
 }
 
+func (h *AccountHandler) DeleteSkillRun(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	accountID := strings.TrimSpace(chi.URLParam(r, "accountId"))
+	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
+	if accountID == "" {
+		render.Error(w, http.StatusBadRequest, "accountId is required")
+		return
+	}
+	if jobID == "" {
+		render.Error(w, http.StatusBadRequest, "jobId is required")
+		return
+	}
+
+	account, err := h.app.Store.GetOwnedAccountByID(r.Context(), accountID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load account")
+		return
+	}
+	if account == nil {
+		render.Error(w, http.StatusNotFound, "Account not found")
+		return
+	}
+
+	job, err := h.app.Store.GetAIJobByOwner(r.Context(), jobID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load account skill run")
+		return
+	}
+	if job == nil || strings.TrimSpace(job.Source) != "account_skill_binding" {
+		render.Error(w, http.StatusNotFound, "Account skill run not found")
+		return
+	}
+	if workflow.ExtractAccountSkillTargetAccountID(job.InputPayload) != accountID {
+		render.Error(w, http.StatusNotFound, "Account skill run not found")
+		return
+	}
+	if strings.TrimSpace(stringValue(job.LocalPublishTaskID)) != "" {
+		render.Error(w, http.StatusConflict, "任务已进入发布链路，不能直接删除")
+		return
+	}
+	if job.Status == "running" {
+		render.Error(w, http.StatusConflict, "任务正在执行中，请稍后再试")
+		return
+	}
+
+	linkedTasks, err := h.app.Store.ListPublishTasksByAIJobOwner(r.Context(), jobID, user.ID, 1)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to inspect linked publish tasks")
+		return
+	}
+	if len(linkedTasks) > 0 {
+		render.Error(w, http.StatusConflict, "任务已进入发布链路，不能直接删除")
+		return
+	}
+
+	artifacts, err := h.app.Store.ListAIJobArtifactsByOwner(r.Context(), jobID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load account skill artifacts")
+		return
+	}
+
+	scheduleConfig, _ := workflow.ParseAccountSkillScheduleConfig(job.InputPayload)
+	scheduleKey := ""
+	repeating := false
+	if scheduleConfig != nil {
+		scheduleKey = scheduleConfig.ScheduleKey
+		repeating = scheduleConfig.RepeatDaily
+	}
+
+	deleted, err := h.app.Store.DeleteAccountSkillRunPlanByOwner(r.Context(), jobID, user.ID, scheduleKey, repeating)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to delete account skill run")
+		return
+	}
+	if !deleted {
+		render.Error(w, http.StatusConflict, "任务当前状态不支持删除")
+		return
+	}
+
+	cleanupAIArtifactFiles(h.app, r.Context(), artifacts)
+
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  user.ID,
+		ResourceType: "ai_job",
+		ResourceID:   &jobID,
+		Action:       "delete",
+		Title:        "删除账号技能计划",
+		Source:       account.Platform,
+		Status:       "success",
+		Message:      auditStringPtr("账号技能计划已删除，重复计划已停止续排"),
+		Payload: mustJSONBytes(map[string]any{
+			"accountId":      account.ID,
+			"accountName":    account.AccountName,
+			"deviceId":       account.DeviceID,
+			"jobId":          jobID,
+			"scheduleKey":    scheduleKey,
+			"repeatDaily":    repeating,
+			"publishAt":      job.RunAt,
+			"localTaskId":    job.LocalTaskID,
+			"jobStatus":      job.Status,
+			"deliveryStatus": job.DeliveryStatus,
+		}),
+	})
+
+	render.JSON(w, http.StatusOK, map[string]any{"deleted": true})
+}
+
 func (h *AccountHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	accountID := strings.TrimSpace(chi.URLParam(r, "accountId"))

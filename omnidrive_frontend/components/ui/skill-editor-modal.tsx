@@ -25,6 +25,7 @@ import {
   uploadSkillAsset,
 } from "@/lib/services";
 import type { AIModel, Skill, SkillAsset } from "@/lib/types";
+import { getModelDisplayName } from "@/lib/model-display";
 import { cn } from "@/lib/utils";
 import {
   getModelReferenceLimit,
@@ -373,12 +374,12 @@ export function SkillEditorModal({
     ? [
         "客户输入图文和提示词",
         "系统先做分镜优化",
-        selectedModel?.modelName || "最终模型待选择",
+        getModelDisplayName(selectedModel, "最终模型待选择"),
       ]
     : [
         "客户输入图文和提示词",
         "跳过分镜，直接执行",
-        selectedModel?.modelName || "最终模型待选择",
+        getModelDisplayName(selectedModel, "最终模型待选择"),
       ];
 
   return (
@@ -592,7 +593,7 @@ export function SkillEditorModal({
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
                                   <div className="flex flex-wrap items-center gap-2">
-                                    <p className="text-base font-semibold text-white">{model.modelName}</p>
+                                    <p className="text-base font-semibold text-white">{getModelDisplayName(model)}</p>
                                     <MiniPill>{model.vendor}</MiniPill>
                                   </div>
                                   <p className="mt-2 text-sm leading-6 text-text-secondary">
@@ -746,7 +747,7 @@ export function SkillEditorModal({
                   <SidebarCard title="执行概览" icon={<Sparkles className="h-4 w-4 text-accent" />}>
                     <div className="grid gap-3">
                       <SummaryLine label="输出类型" value={selectedOutput.label} />
-                      <SummaryLine label="最终模型" value={selectedModel?.modelName || "未选择"} />
+                      <SummaryLine label="最终模型" value={getModelDisplayName(selectedModel, "未选择")} />
                       <SummaryLine label="参考素材" value={`${totalImageCount} 图 / ${totalTextCount} 文`} />
                     </div>
                     <div className="mt-4 space-y-3">

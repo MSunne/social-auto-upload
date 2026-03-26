@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useCreateAIModel, useUpdateAIModel } from "@/lib/hooks/useAIModels";
+import { getModelDisplayName } from "@/lib/model-display";
 import { AIModel } from "@/lib/types";
 import { X } from "lucide-react";
 
@@ -16,6 +17,7 @@ const DEFAULT_FORM = {
   id: "",
   vendor: "",
   modelName: "",
+  modelAlias: "",
   category: "image",
   billingMode: "per_call",
   baseUrl: "",
@@ -68,6 +70,7 @@ function toFormState(model: AIModel | null) {
     id: model.id,
     vendor: model.vendor,
     modelName: model.modelName,
+    modelAlias: model.modelAlias || model.modelName,
     category: model.category,
     billingMode: model.billingMode || (model.category === "chat" ? "per_token" : "per_call"),
     baseUrl: model.baseUrl || "",
@@ -178,6 +181,7 @@ function AIModelDrawerContent({
     const payload = {
       vendor: form.vendor.trim(),
       modelName: form.modelName.trim(),
+      modelAlias: form.modelAlias.trim() || form.modelName.trim(),
       category: form.category,
       billingMode: form.billingMode,
       modelType: form.category,
@@ -243,7 +247,7 @@ function AIModelDrawerContent({
       <div className="fixed inset-y-0 right-0 w-full max-w-lg bg-[var(--color-background)] border-l border-[var(--color-border)] shadow-2xl z-50 flex flex-col">
         <div className="flex items-center justify-between p-5 border-b border-[var(--color-border)] bg-[var(--color-background)]/90 backdrop-blur sticky top-0">
           <h2 className="text-lg font-semibold">
-            {isCreate ? "新增 AI 模型配置" : `编辑模型: ${model?.modelName}`}
+            {isCreate ? "新增 AI 模型配置" : `编辑模型: ${getModelDisplayName(model)}`}
           </h2>
           <button
             onClick={onClose}
@@ -303,6 +307,22 @@ function AIModelDrawerContent({
                 className="w-full px-3 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm focus:outline-none focus:border-[var(--color-accent)]"
               />
             </div>
+          </div>
+
+          <div>
+            <label className="block text-sm text-[var(--color-text-secondary)] mb-1.5">
+              模型别名 *
+            </label>
+            <input
+              required
+              type="text"
+              value={form.modelAlias}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, modelAlias: e.target.value }))
+              }
+              placeholder="例如：至尊文生图 / 极速视频"
+              className="w-full px-3 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm focus:outline-none focus:border-[var(--color-accent)]"
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-4">

@@ -119,6 +119,7 @@ const statusColors: Record<string, string> = {
   needs_verify: "bg-warning/15 text-warning",
   scheduled: "bg-warning/15 text-warning",
   publish_queued: "bg-warning/15 text-warning",
+  waiting_recharge: "bg-warning/15 text-warning",
   cancel_requested: "bg-warning/15 text-warning",
   awaiting_submission: "bg-warning/15 text-warning",
   awaiting_manual_review: "bg-warning/15 text-warning",
@@ -151,6 +152,7 @@ const statusLabels: Record<string, string> = {
   approved: "已通过",
   failed: "失败",
   publish_failed: "发布失败",
+  waiting_recharge: "欠费",
   rejected: "已驳回",
   needs_verify: "待验证",
   awaiting_scan: "等待扫码",
@@ -232,6 +234,7 @@ export function StatusBadge({ status, size = "sm" }: StatusBadgeProps) {
           status.includes("awaiting") ||
           status === "scheduled" ||
           status === "publish_queued" ||
+          status === "waiting_recharge" ||
           status === "cancel_requested" ||
           status === "pending_review" ||
           status === "processing" ||

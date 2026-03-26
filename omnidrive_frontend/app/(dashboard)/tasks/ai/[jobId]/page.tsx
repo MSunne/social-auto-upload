@@ -15,6 +15,7 @@ import {
   Wand2,
 } from "lucide-react";
 import { PageHeader, StatusBadge } from "@/components/ui/common";
+import { getModelDisplayName } from "@/lib/model-display";
 import { getAIJobWorkspace, listDevices } from "@/lib/services";
 import type { AIJobArtifact, AIJobWorkspace, Device } from "@/lib/types";
 import { buildAIJobTitle, formatDateTime, resolveAIJobStage } from "@/lib/workflow";
@@ -286,7 +287,7 @@ export default function AIJobDetailPage() {
                 </div>
                 <div>
                   <p className="text-[11px] text-text-muted">模型</p>
-                  <p className="text-sm font-medium text-text-primary">{job.modelName}</p>
+                  <p className="text-sm font-medium text-text-primary">{getModelDisplayName(job)}</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">

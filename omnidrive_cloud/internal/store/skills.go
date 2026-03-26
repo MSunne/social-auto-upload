@@ -32,6 +32,7 @@ func scanSkill(row pgx.Row) (*domain.ProductSkill, error) {
 		&skill.Description,
 		&skill.OutputType,
 		&skill.ModelName,
+		&skill.ModelAlias,
 		&promptTemplate,
 		&topicsPayload,
 		&referencePayload,
@@ -75,6 +76,7 @@ func scanSkillWithLoad(row pgx.Row) (*domain.ProductSkill, error) {
 		&skill.Description,
 		&skill.OutputType,
 		&skill.ModelName,
+		&skill.ModelAlias,
 		&promptTemplate,
 		&topicsPayload,
 		&referencePayload,
@@ -110,6 +112,7 @@ func scanSkillWithLoad(row pgx.Row) (*domain.ProductSkill, error) {
 
 const skillSelectColumns = `
 	id, owner_user_id, device_id, name, description, output_type, model_name,
+	COALESCE((SELECT am.model_alias FROM ai_models am WHERE am.model_name = product_skills.model_name LIMIT 1), product_skills.model_name) AS model_alias,
 	prompt_template, topics, reference_payload, execution_time, repeat_daily, storyboard_enabled, next_run_at, last_run_at,
 	is_enabled, created_at, updated_at
 `

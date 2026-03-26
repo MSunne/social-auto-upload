@@ -45,6 +45,7 @@ func scanBillingActivity(scan scanFn) (*domain.BillingActivity, error) {
 	var meterCode *string
 	var meterName *string
 	var modelName *string
+	var modelAlias *string
 	var jobType *string
 	var reference *string
 	var referenceType *string
@@ -74,6 +75,7 @@ func scanBillingActivity(scan scanFn) (*domain.BillingActivity, error) {
 		&meterCode,
 		&meterName,
 		&modelName,
+		&modelAlias,
 		&jobType,
 		&reference,
 		&referenceType,
@@ -100,6 +102,7 @@ func scanBillingActivity(scan scanFn) (*domain.BillingActivity, error) {
 	item.MeterCode = meterCode
 	item.MeterName = meterName
 	item.ModelName = modelName
+	item.ModelAlias = modelAlias
 	item.JobType = jobType
 	item.Reference = reference
 	item.ReferenceType = referenceType
@@ -137,20 +140,22 @@ func appendBillingActivityFilters(
 				COALESCE(detail, '') ILIKE $%d OR
 				COALESCE(reference, '') ILIKE $%d OR
 				COALESCE(model_name, '') ILIKE $%d OR
+				COALESCE(model_alias, '') ILIKE $%d OR
 				COALESCE(job_type, '') ILIKE $%d OR
 				COALESCE(status, '') ILIKE $%d OR
 				COALESCE(user_email, '') ILIKE $%d OR
 				COALESCE(user_name, '') ILIKE $%d
-			)`, argIndex, argIndex, argIndex, argIndex, argIndex, argIndex, argIndex, argIndex))
+			)`, argIndex, argIndex, argIndex, argIndex, argIndex, argIndex, argIndex, argIndex, argIndex))
 		} else {
 			whereParts = append(whereParts, fmt.Sprintf(`(
 				COALESCE(title, '') ILIKE $%d OR
 				COALESCE(detail, '') ILIKE $%d OR
 				COALESCE(reference, '') ILIKE $%d OR
 				COALESCE(model_name, '') ILIKE $%d OR
+				COALESCE(model_alias, '') ILIKE $%d OR
 				COALESCE(job_type, '') ILIKE $%d OR
 				COALESCE(status, '') ILIKE $%d
-			)`, argIndex, argIndex, argIndex, argIndex, argIndex, argIndex))
+			)`, argIndex, argIndex, argIndex, argIndex, argIndex, argIndex, argIndex))
 		}
 		args = append(args, ilikePattern(trimmed))
 		argIndex++
@@ -184,7 +189,7 @@ func appendBillingActivityFilters(
 		argIndex++
 	}
 	if trimmed := strings.TrimSpace(modelName); trimmed != "" {
-		whereParts = append(whereParts, fmt.Sprintf("model_name = $%d", argIndex))
+		whereParts = append(whereParts, fmt.Sprintf("(model_name = $%d OR model_alias = $%d)", argIndex, argIndex))
 		args = append(args, trimmed)
 		argIndex++
 	}
@@ -223,6 +228,7 @@ const billingActivitiesUserBaseQuery = `
 			NULL::TEXT AS meter_code,
 			NULL::TEXT AS meter_name,
 			NULL::TEXT AS model_name,
+			NULL::TEXT AS model_alias,
 			NULL::TEXT AS job_type,
 			ro.order_no AS reference,
 			NULL::TEXT AS reference_type,
@@ -256,6 +262,7 @@ const billingActivitiesUserBaseQuery = `
 			wl.meter_code,
 			NULL::TEXT AS meter_name,
 			NULL::TEXT AS model_name,
+			NULL::TEXT AS model_alias,
 			NULL::TEXT AS job_type,
 			COALESCE(wl.reference_id, wl.id) AS reference,
 			wl.reference_type,
@@ -289,6 +296,7 @@ const billingActivitiesUserBaseQuery = `
 			e.meter_code,
 			m.name AS meter_name,
 			e.model_name,
+			COALESCE(am.model_alias, e.model_name) AS model_alias,
 			e.job_type,
 			COALESCE(e.source_id, e.id) AS reference,
 			NULL::TEXT AS reference_type,
@@ -308,6 +316,7 @@ const billingActivitiesUserBaseQuery = `
 			e.payload::JSONB AS payload
 		FROM billing_usage_events e
 		LEFT JOIN billing_meters m ON m.code = e.meter_code
+		LEFT JOIN ai_models am ON am.model_name = e.model_name
 		WHERE e.user_id = $1
 	)
 `
@@ -331,6 +340,7 @@ const billingActivitiesAdminBaseQuery = `
 			NULL::TEXT AS meter_code,
 			NULL::TEXT AS meter_name,
 			NULL::TEXT AS model_name,
+			NULL::TEXT AS model_alias,
 			NULL::TEXT AS job_type,
 			ro.order_no AS reference,
 			NULL::TEXT AS reference_type,
@@ -366,6 +376,7 @@ const billingActivitiesAdminBaseQuery = `
 			wl.meter_code,
 			NULL::TEXT AS meter_name,
 			NULL::TEXT AS model_name,
+			NULL::TEXT AS model_alias,
 			NULL::TEXT AS job_type,
 			COALESCE(wl.reference_id, wl.id) AS reference,
 			wl.reference_type,
@@ -401,6 +412,7 @@ const billingActivitiesAdminBaseQuery = `
 			e.meter_code,
 			m.name AS meter_name,
 			e.model_name,
+			COALESCE(am.model_alias, e.model_name) AS model_alias,
 			e.job_type,
 			COALESCE(e.source_id, e.id) AS reference,
 			NULL::TEXT AS reference_type,
@@ -421,6 +433,7 @@ const billingActivitiesAdminBaseQuery = `
 		FROM billing_usage_events e
 		LEFT JOIN users u ON u.id = e.user_id
 		LEFT JOIN billing_meters m ON m.code = e.meter_code
+		LEFT JOIN ai_models am ON am.model_name = e.model_name
 	)
 `
 
@@ -478,7 +491,7 @@ func (s *Store) ListBillingActivitiesByUser(ctx context.Context, userID string, 
 		%s
 		SELECT
 			id, kind, user_id, occurred_at, result_at, title, detail, status, entry_type, channel,
-			source_type, meter_code, meter_name, model_name, job_type, reference, reference_type,
+			source_type, meter_code, meter_name, model_name, model_alias, job_type, reference, reference_type,
 			reference_id, source_id, amount_cents, credit_delta, usage_quantity, debited_credits,
 			credit_amount, bonus_credit_amount, bill_message, payload
 		FROM activities
@@ -556,7 +569,7 @@ func (s *Store) ListAdminBillingActivities(ctx context.Context, filter AdminBill
 		%s
 		SELECT
 			id, kind, user_id, occurred_at, result_at, title, detail, status, entry_type, channel,
-			source_type, meter_code, meter_name, model_name, job_type, reference, reference_type,
+			source_type, meter_code, meter_name, model_name, model_alias, job_type, reference, reference_type,
 			reference_id, source_id, amount_cents, credit_delta, usage_quantity, debited_credits,
 			credit_amount, bonus_credit_amount, bill_message, payload,
 			user_id, user_email, user_name

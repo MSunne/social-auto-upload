@@ -38,6 +38,48 @@ OMNIDRIVE_DATABASE_DSN='postgres://postgres:YOUR_PASSWORD@127.0.0.1:5432/omnidri
 go run ./cmd/omnidrive-api
 ```
 
+## AI Video Artifact Standardization
+
+Cloud-generated video artifacts are now standardized before they are saved as the final AI output artifact and before they are later mirrored into OmniBull.
+
+Current standardization behavior:
+
+- video codec: `H.264` via `libx264`
+- frame rate: `30fps`
+- scale ratio: `0.98`
+- width / height: rounded down to even numbers to avoid odd dimensions
+- pixel format: `yuv420p`
+- audio codec: `aac`
+- container: `.mp4`
+
+This processing runs inside the Go cloud worker and depends on `ffmpeg` being available on the Linux host.
+
+Recommended deployment check:
+
+```bash
+ffmpeg -version
+which ffmpeg
+```
+
+Optional environment variables:
+
+```bash
+# default true
+OMNIDRIVE_AI_WORKER_ENABLED=true
+
+# default 600 (10 minutes); set 0 to disable stale queued auto-timeout
+OMNIDRIVE_AI_STALE_QUEUE_TIMEOUT_SECONDS=600
+
+# default true
+OMNIDRIVE_AI_VIDEO_STANDARDIZE_ENABLED=true
+
+# default "ffmpeg"
+OMNIDRIVE_AI_VIDEO_FFMPEG_PATH=/usr/bin/ffmpeg
+```
+
+If standardization fails, the AI video job will fail at the cloud worker stage instead of silently producing a mismatched artifact.
+If a head-of-line executable AI job stays queued past the stale timeout, the cloud worker will automatically mark it failed so it no longer blocks newer jobs from the same user.
+
 ## What Works Now
 
 - user register / login / `me`
@@ -120,6 +162,7 @@ go run ./cmd/omnidrive-api
 - AI jobs can optionally reference a product skill, and skill deletion is guarded against both publish-task and AI-job dependencies
 - AI jobs can now also target one `OmniBull` device as the later publish handoff node, while generation itself remains cloud-first
 - AI job workspace now includes generated artifacts, linked publish tasks, and a normalized bridge object for the cloud-to-OmniBull handoff
+- AI video jobs now standardize final video artifacts to `H.264 + 30fps + 0.98 scale with even dimensions` before artifact storage and OmniBull sync
 - completed AI jobs can upload output artifacts, mark those artifacts as mirrored into a target device material root, and create publish tasks directly from those mirrored outputs
 - AI job list supports `jobType/status/skillId/limit` filtering for richer cloud control views
 - billing package list and wallet ledger read

@@ -36,6 +36,7 @@ import {
   resolveSupportedFileTypes,
 } from "@/lib/ai-file-types";
 import { getAIJob, getAIJobArtifacts, listAIJobs, listAIModels } from "@/lib/services";
+import { getModelDisplayName } from "@/lib/model-display";
 import type { AIJob, AIJobArtifact, AIModel } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -201,7 +202,7 @@ function matchesModelQuery(model: AIModel, query: string) {
   if (!normalized) {
     return true;
   }
-  return [model.modelName, model.description]
+  return [model.modelAlias, model.modelName, model.description]
     .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
     .some((item) => item.toLowerCase().includes(normalized));
 }
@@ -211,7 +212,10 @@ function sortChatModels(items: AIModel[]) {
     if (left.isEnabled !== right.isEnabled) {
       return left.isEnabled ? -1 : 1;
     }
-    return left.modelName.localeCompare(right.modelName, "zh-CN");
+    return getModelDisplayName(left).localeCompare(
+      getModelDisplayName(right),
+      "zh-CN",
+    );
   });
 }
 
@@ -491,7 +495,7 @@ function buildMessagesFromHistory(job?: AIJob | null, artifacts: AIJobArtifact[]
       rawContent,
       timestamp: job.updatedAt,
       state: "done",
-      modelName: role === "assistant" ? job.modelName : null,
+      modelName: role === "assistant" ? getModelDisplayName(job) : null,
       attachments: attachmentsByMessageIndex.get(index) || [],
       jobId: job.id,
     });
@@ -511,7 +515,7 @@ function buildMessagesFromHistory(job?: AIJob | null, artifacts: AIJobArtifact[]
       rawContent: outputText.trim(),
       timestamp: job.finishedAt || job.updatedAt,
       state: job.status === "failed" ? "error" : "done",
-      modelName: job.modelName,
+      modelName: getModelDisplayName(job),
       jobId: job.id,
     });
   }
@@ -578,7 +582,7 @@ function summarizeHistory(job: AIJob) {
       return prompt;
     }
   }
-  return `${job.modelName} 对话`;
+  return `${getModelDisplayName(job, "聊天模型")} 对话`;
 }
 
 function attachmentIcon(kind: ChatAttachmentKind) {
@@ -1083,7 +1087,7 @@ export default function ChatPage() {
       rawContent: "",
       timestamp: now,
       state: "pending",
-      modelName: activeModel.modelName,
+      modelName: getModelDisplayName(activeModel),
     };
 
     const controller = new AbortController();
@@ -1160,7 +1164,7 @@ export default function ChatPage() {
                     content: receivedText,
                     rawContent: receivedText,
                     state: "streaming",
-                    modelName: payload.modelName || item.modelName,
+                    modelName: item.modelName,
                     jobId: createdJobId || item.jobId,
                   }
                 : item,
@@ -1176,7 +1180,7 @@ export default function ChatPage() {
                 ? {
                     ...item,
                     state: "streaming",
-                    modelName: payload.modelName || item.modelName,
+                    modelName: item.modelName,
                     jobId: createdJobId || item.jobId,
                   }
                 : item,
@@ -1318,7 +1322,7 @@ export default function ChatPage() {
           <button type="button" onClick={() => setModelDropdownOpen(!modelDropdownOpen)} className="flex w-full items-center justify-between rounded-xl border border-border bg-surface-hover/70 px-3 py-2.5 text-left transition-all hover:border-accent/30">
             <div className="flex items-center gap-2 min-w-0">
               <Bot className="h-4 w-4 shrink-0 text-accent" />
-              <span className="truncate text-sm font-medium text-text-primary">{activeModel?.modelName || "选择模型"}</span>
+              <span className="truncate text-sm font-medium text-text-primary">{getModelDisplayName(activeModel, "选择模型")}</span>
             </div>
             <ChevronDown className={cn("h-4 w-4 shrink-0 text-text-muted transition-transform", modelDropdownOpen && "rotate-180")} />
           </button>
@@ -1342,7 +1346,7 @@ export default function ChatPage() {
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
                               {selected && <CheckCircle2 className="h-3 w-3 text-accent" />}
-                              <span className="truncate text-xs font-semibold">{model.modelName}</span>
+                              <span className="truncate text-xs font-semibold">{getModelDisplayName(model)}</span>
                             </div>
                             <div className="mt-0.5 truncate text-[11px] text-text-muted">{model.description || "聊天模型"}</div>
                           </div>
@@ -1378,7 +1382,7 @@ export default function ChatPage() {
                       <Clock3 className="h-3 w-3" />
                       <span>{formatHistoryTime(job.updatedAt)}</span>
                       <span className="text-text-muted/40">·</span>
-                      <span className="truncate">{job.modelName}</span>
+                      <span className="truncate">{getModelDisplayName(job)}</span>
                     </div>
                   </button>
                 );
@@ -1396,7 +1400,7 @@ export default function ChatPage() {
             <div className="min-w-0 flex-1">
               <h2 className="text-sm font-semibold text-text-primary">OmniDrive Chat</h2>
               <div className="flex items-center gap-2 text-[11px] text-text-muted">
-                <span className="truncate">{activeModel?.modelName || "未选择模型"}</span>
+                <span className="truncate">{getModelDisplayName(activeModel, "未选择模型")}</span>
                 {activeModel && (<><span className="text-text-muted/30">·</span><span className="flex items-center gap-1"><Coins className="h-3 w-3" />{formatModelPrice(activeModel)}</span></>)}
               </div>
               <div className="mt-1 space-y-1">

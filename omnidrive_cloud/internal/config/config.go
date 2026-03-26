@@ -30,8 +30,11 @@ type Config struct {
 	AIWorkerEnabled               bool
 	AIWorkerPollSeconds           int
 	AIWorkerConcurrency           int
+	AIStaleQueueTimeoutSeconds    int
 	AIVideoPollSeconds            int
 	AIVideoTimeoutSeconds         int
+	AIVideoStandardizeEnabled     bool
+	AIVideoFFmpegPath             string
 	DefaultChatModel              string
 	DefaultImageModel             string
 	DefaultVideoModel             string
@@ -85,8 +88,11 @@ func Load() Config {
 		AIWorkerEnabled:               envAsBool("OMNIDRIVE_AI_WORKER_ENABLED", true),
 		AIWorkerPollSeconds:           envAsInt("OMNIDRIVE_AI_WORKER_POLL_SECONDS", 5),
 		AIWorkerConcurrency:           envAsInt("OMNIDRIVE_AI_WORKER_CONCURRENCY", 2),
+		AIStaleQueueTimeoutSeconds:    envAsInt("OMNIDRIVE_AI_STALE_QUEUE_TIMEOUT_SECONDS", 600),
 		AIVideoPollSeconds:            envAsInt("OMNIDRIVE_AI_VIDEO_POLL_SECONDS", 6),
 		AIVideoTimeoutSeconds:         envAsInt("OMNIDRIVE_AI_VIDEO_TIMEOUT_SECONDS", 600),
+		AIVideoStandardizeEnabled:     envAsBool("OMNIDRIVE_AI_VIDEO_STANDARDIZE_ENABLED", true),
+		AIVideoFFmpegPath:             envOrDefault("OMNIDRIVE_AI_VIDEO_FFMPEG_PATH", "ffmpeg"),
 		DefaultChatModel:              envOrDefault("OMNIDRIVE_DEFAULT_CHAT_MODEL", "gemini-3.1-pro-preview"),
 		DefaultImageModel:             envOrDefault("OMNIDRIVE_DEFAULT_IMAGE_MODEL", "gemini-3-pro-image-preview"),
 		DefaultVideoModel:             envOrDefault("OMNIDRIVE_DEFAULT_VIDEO_MODEL", "veo-3.1-fast-fl"),

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useAdminSkills, useUpdateAdminSkill } from "@/lib/hooks/useSkills";
+import { getModelDisplayName } from "@/lib/model-display";
 import { PageHeader } from "@/components/ui/common";
 import { Search, Loader2, RefreshCw, Layers, CheckCircle, XCircle } from "lucide-react";
 import { AdminSkillSummary } from "@/lib/types";
@@ -101,7 +102,7 @@ export function SkillsView() {
                   </td>
                   <td className="px-5 py-3.5">
                     <div className="inline-flex items-center px-2 py-1 rounded bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-xs font-mono">
-                      {row.modelName}
+                      {getModelDisplayName(row)}
                     </div>
                   </td>
                   <td className="px-5 py-3.5 text-center">

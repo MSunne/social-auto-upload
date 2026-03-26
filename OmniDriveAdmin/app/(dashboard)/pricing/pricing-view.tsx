@@ -5,6 +5,7 @@ import { usePricingPackages, usePricingRules, useUpdatePricingPackage } from "@/
 import { PageHeader } from "@/components/ui/common";
 import { Plus, Loader2, CheckCircle, XCircle, Edit2 } from "lucide-react";
 import { BillingPackage } from "@/lib/types";
+import { getModelDisplayName } from "@/lib/model-display";
 import { PricingPackageDrawer } from "./pricing-package-drawer";
 
 export function PricingView() {
@@ -152,7 +153,11 @@ export function PricingView() {
                     <td className="px-6 py-4 font-mono text-xs">{rule.meterCode}</td>
                     <td className="px-6 py-4 text-xs">
                       <div>{rule.appliesTo}</div>
-                      {rule.modelName && <div className="text-[var(--color-text-secondary)]">{rule.modelName}</div>}
+                      {rule.modelName && (
+                        <div className="text-[var(--color-text-secondary)]">
+                          {getModelDisplayName(rule, rule.modelName)}
+                        </div>
+                      )}
                     </td>
                     <td className="px-6 py-4">
                       <span className="px-2 py-0.5 text-xs rounded bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">{rule.chargeMode}</span>

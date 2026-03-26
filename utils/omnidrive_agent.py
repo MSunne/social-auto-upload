@@ -2680,6 +2680,8 @@ class OmniDriveBridge:
             }[delivery_status]
         if job_status == "scheduled":
             return "scheduled"
+        if job_status == "waiting_recharge":
+            return "waiting_recharge"
         if job_status in {"queued", "pending"}:
             return "queued_cloud"
         if job_status == "running":

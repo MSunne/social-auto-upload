@@ -93,6 +93,14 @@ func New(cfg config.Config, logger *slog.Logger) (*http.Server, func(), error) {
 	stopQuotaExpiryScheduler := quotaExpiryScheduler.Start(context.Background())
 	cleanupFns = append(cleanupFns, stopQuotaExpiryScheduler)
 
+	billingAlertScheduler, err := workflow.NewBillingAlertScheduler(app)
+	if err != nil {
+		db.Close()
+		return nil, nil, fmt.Errorf("init billing alert scheduler: %w", err)
+	}
+	stopBillingAlertScheduler := billingAlertScheduler.Start(context.Background())
+	cleanupFns = append(cleanupFns, stopBillingAlertScheduler)
+
 	cleanup := func() {
 		logger.Info("shutting down omnidrive api")
 		for _, fn := range cleanupFns {

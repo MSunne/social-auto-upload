@@ -43,7 +43,7 @@
             <el-table-column prop="status" label="状态" width="120">
               <template #default="{ row }">
                 <el-tag :type="tagType(row.status)" effect="dark" class="status-tag">
-                  {{ row.status }}
+                  {{ statusLabel(row.status) }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -70,7 +70,7 @@
             <el-table-column prop="status" label="状态" width="120">
               <template #default="{ row }">
                 <el-tag :type="tagType(row.status)" effect="dark" class="status-tag">
-                  {{ row.status }}
+                  {{ statusLabel(row.status) }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -118,6 +118,8 @@ const tagType = (status) => {
     case 'scheduled':
       return 'info'
     case 'storyboarding':
+    case 'waiting_recharge':
+    case 'needs_verify':
       return 'warning'
     case 'success':
     case 'output_ready':
@@ -129,10 +131,43 @@ const tagType = (status) => {
       return 'primary'
     case 'failed':
       return 'danger'
-    case 'needs_verify':
-      return 'warning'
     default:
       return 'info'
+  }
+}
+
+const statusLabel = (status) => {
+  switch (status) {
+    case 'queued_cloud':
+      return '等待云端'
+    case 'scheduled':
+      return '未开始'
+    case 'storyboarding':
+      return '优化分镜中'
+    case 'running':
+      return '执行中'
+    case 'generating':
+      return '生成中'
+    case 'output_ready':
+      return '制作完成'
+    case 'publish_pending':
+      return '待发布'
+    case 'publishing':
+      return '发布中'
+    case 'waiting_recharge':
+      return '欠费'
+    case 'needs_verify':
+      return '待人工确认'
+    case 'success':
+      return '已完成'
+    case 'failed':
+      return '失败'
+    case 'cancelled':
+      return '已取消'
+    case 'pending':
+      return '等待中'
+    default:
+      return status || '未知'
   }
 }
 

@@ -901,6 +901,16 @@ class OmniDriveBridgeTests(unittest.TestCase):
         self.assertEqual(agent_module.OmniDriveBridge._normalize_datetime(remote_run_at), expected_local)
         self.assertEqual(agent_module.OmniDriveBridge._to_rfc3339(expected_local), expected_rfc3339)
 
+    def test_local_ai_status_from_remote_job_maps_waiting_recharge(self):
+        status = agent_module.OmniDriveBridge._local_ai_status_from_remote_job(
+            {
+                "status": "waiting_recharge",
+                "deliveryStatus": "",
+            }
+        )
+
+        self.assertEqual(status, "waiting_recharge")
+
 
 class PublishTaskManagerDatetimeTests(unittest.TestCase):
     def test_publish_task_manager_keeps_timezone_aware_publish_times_local(self):
@@ -1608,6 +1618,123 @@ class OmniDriveAITaskManagerRecoveryTests(unittest.TestCase):
                     manager._worker_loop("worker-1")
 
         run_task.assert_called_once_with(claimed_task)
+
+    def test_ai_task_manager_imports_waiting_recharge_without_finishing_task(self):
+        temp_dir = Path(tempfile.mkdtemp(prefix="ai-task-manager-waiting-recharge-"))
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "database.db"
+        manager = OmniDriveAITaskManager(db_path)
+        manager.init_db()
+
+        task = manager.import_remote_task(
+            {
+                "taskUuid": "local-ai-waiting-recharge",
+                "source": "account_skill_binding",
+                "jobType": "video",
+                "modelName": "veo-3.1-fast-fl",
+                "prompt": "生成玩具短视频",
+                "cloudStatus": "waiting_recharge",
+                "message": "当前积分不足，充值后会自动继续执行",
+                "payload": {},
+            }
+        )
+
+        self.assertEqual(task["status"], "waiting_recharge")
+        self.assertIsNone(task["finishedAt"])
+
+    def test_ai_task_manager_update_cloud_binding_preserves_local_publish_progress(self):
+        temp_dir = Path(tempfile.mkdtemp(prefix="ai-task-manager-cloud-binding-"))
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "database.db"
+        manager = OmniDriveAITaskManager(db_path)
+        manager.init_db()
+
+        manager.import_remote_task(
+            {
+                "taskUuid": "local-ai-publish-progress",
+                "source": "omnidrive_cloud",
+                "jobType": "video",
+                "modelName": "veo-3.1-fast-fl",
+                "prompt": "生成玩具短视频",
+                "status": "publish_pending",
+                "cloudStatus": "success",
+                "message": "AI 产物已回流 OmniBull，并进入 SAU 发布队列",
+                "payload": {},
+                "cloudJobId": "cloud-job-1",
+                "linkedPublishTaskUuid": "publish-task-1",
+            }
+        )
+
+        updated = manager.update_cloud_binding(
+            "local-ai-publish-progress",
+            "cloud-job-1",
+            "success",
+            "云端轮询再次对齐",
+        )
+
+        self.assertEqual(updated["status"], "publish_pending")
+        self.assertEqual(updated["cloudStatus"], "success")
+
+    def test_publish_task_manager_forces_single_worker(self):
+        temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-single-worker-"))
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "database.db"
+        manager = PublishTaskManager(db_path=db_path, worker_count=3, material_roots={})
+
+        self.assertEqual(manager.worker_count, 1)
+        self.assertEqual(manager.configured_worker_count, 3)
+
+    def test_publish_task_manager_defers_claim_until_dispatch_interval_elapsed(self):
+        temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-dispatch-interval-"))
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "database.db"
+        manager = PublishTaskManager(
+            db_path=db_path,
+            material_roots={},
+            dispatch_interval_seconds=5,
+        )
+        manager.init_db()
+
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO publish_tasks (
+                    task_uuid, source, platform_type, platform_name, account_name, account_file_path,
+                    file_name, file_path, title, run_at, platform_publish_at, status, message, payload_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "publish-dispatch-interval-1",
+                    "omnidrive_ai",
+                    3,
+                    "抖音",
+                    "光001",
+                    "cookies/guang001.json",
+                    "video.mp4",
+                    "generated:job-1/video.mp4",
+                    "dispatch gate test",
+                    None,
+                    None,
+                    "pending",
+                    "等待发布",
+                    json.dumps({}, ensure_ascii=False),
+                ),
+            )
+            conn.commit()
+
+        manager._next_dispatch_after_monotonic = 100.0
+        with mock.patch("utils.publish_task_manager.time.monotonic", return_value=99.0):
+            blocked = manager._claim_next_ready_task("worker-1")
+        self.assertIsNone(blocked)
+
+        with mock.patch("utils.publish_task_manager.time.monotonic", side_effect=[100.5, 100.5]):
+            claimed = manager._claim_next_ready_task("worker-1")
+
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed["taskUuid"], "publish-dispatch-interval-1")
+        self.assertAlmostEqual(manager._next_dispatch_after_monotonic, 105.5)
 
     def test_publish_task_manager_worker_loop_keeps_running_after_worker_error(self):
         temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-worker-recover-"))

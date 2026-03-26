@@ -1276,7 +1276,7 @@ func (h *AgentHandler) UpdateAIJobDelivery(w http.ResponseWriter, r *http.Reques
 		deliveredAt = &now
 	}
 
-	job, err := h.app.Store.UpdateAIJobDeliveryByDevice(r.Context(), jobID, device.ID, payload.Status, payload.Message, payload.LocalPublishTaskID, deliveredAt)
+	job, changed, err := h.app.Store.UpdateAIJobDeliveryByDevice(r.Context(), jobID, device.ID, payload.Status, payload.Message, payload.LocalPublishTaskID, deliveredAt)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to update AI delivery state")
 		return
@@ -1286,7 +1286,7 @@ func (h *AgentHandler) UpdateAIJobDelivery(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if device.OwnerUserID != nil {
+	if device.OwnerUserID != nil && changed {
 		recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
 			OwnerUserID:  *device.OwnerUserID,
 			ResourceType: "ai_job",

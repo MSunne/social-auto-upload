@@ -1,6 +1,10 @@
 package handlers
 
-import "testing"
+import (
+	"testing"
+
+	"omnidrive_cloud/internal/domain"
+)
 
 func TestIsAllowedAIJobTransition(t *testing.T) {
 	tests := []struct {
@@ -33,6 +37,18 @@ func TestIsAllowedAIJobTransition(t *testing.T) {
 			next:    "queued",
 			want:    true,
 		},
+		{
+			name:    "running_can_pause_for_recharge",
+			current: "running",
+			next:    "waiting_recharge",
+			want:    true,
+		},
+		{
+			name:    "waiting_recharge_can_resume_running",
+			current: "waiting_recharge",
+			next:    "running",
+			want:    true,
+		},
 	}
 
 	for _, tc := range tests {
@@ -42,5 +58,32 @@ func TestIsAllowedAIJobTransition(t *testing.T) {
 				t.Fatalf("isAllowedAIJobTransition(%q, %q) = %v, want %v", tc.current, tc.next, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestComputeAIJobActionsWaitingRecharge(t *testing.T) {
+	job := &domain.AIJob{Status: "waiting_recharge"}
+	actions := computeAIJobActions(job, 0)
+
+	if !actions.CanEdit {
+		t.Fatalf("expected waiting_recharge job to remain editable")
+	}
+	if !actions.CanCancel {
+		t.Fatalf("expected waiting_recharge job to remain cancellable")
+	}
+	if actions.CanRetry {
+		t.Fatalf("expected waiting_recharge job to rely on auto resume instead of manual retry")
+	}
+}
+
+func TestBuildAIJobBridgeStateWaitingRecharge(t *testing.T) {
+	job := &domain.AIJob{
+		Status: "waiting_recharge",
+		Source: "account_skill_binding",
+	}
+
+	state := buildAIJobBridgeState(job, nil, nil)
+	if state.DeliveryStage != "waiting_recharge" {
+		t.Fatalf("expected waiting_recharge stage, got %q", state.DeliveryStage)
 	}
 }

@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getModelDisplayName } from "@/lib/model-display";
 import {
   buildAIJobTitle,
   formatDateTime,
@@ -300,24 +301,80 @@ function VideoPreviewSurfaceInner({
   controls = false,
   compact = false,
 }: VideoPreviewSurfaceInnerProps) {
-  const [status, setStatus] = useState<"loading" | "ready" | "failed">(
-    "loading",
+  const [status, setStatus] = useState<"idle" | "loading" | "ready" | "failed">(
+    compact ? "idle" : "loading",
   );
+  const containerRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const retriedRef = useRef(false);
+  const activeSrcRef = useRef("");
+
+  // Lazy-load compact thumbnails via IntersectionObserver
+  useEffect(() => {
+    if (!compact || !previewSrc) return;
+    const container = containerRef.current;
+    if (!container) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          observer.disconnect();
+          setStatus("loading");
+          const el = videoRef.current;
+          if (el) {
+            activeSrcRef.current = previewSrc;
+            el.src = previewSrc;
+            el.load();
+          }
+        }
+      },
+      { rootMargin: "100px" },
+    );
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [compact, previewSrc]);
+
+  // Non-compact: set src directly
+  useEffect(() => {
+    if (compact) return;
+    activeSrcRef.current = previewSrc;
+  }, [compact, previewSrc]);
+
+  const handleReady = () => setStatus("ready");
+
+  const handleError = () => {
+    if (status === "idle") return;
+    if (!retriedRef.current && activeSrcRef.current) {
+      retriedRef.current = true;
+      const el = videoRef.current;
+      if (el) {
+        const sep = activeSrcRef.current.includes("?") ? "&" : "?";
+        const retrySrc = `${activeSrcRef.current}${sep}_r=${Date.now()}`;
+        activeSrcRef.current = retrySrc;
+        el.src = retrySrc;
+        el.load();
+        return;
+      }
+    }
+    setStatus("failed");
+  };
 
   return (
-    <div className={cn("relative overflow-hidden bg-black", className)}>
+    <div ref={containerRef} className={cn("relative overflow-hidden bg-black", className)}>
       <video
-        key={previewSrc}
-        src={previewSrc}
+        ref={videoRef}
+        key={compact ? undefined : previewSrc}
+        src={compact ? undefined : previewSrc}
         controls={controls}
-        autoPlay
+        autoPlay={!compact}
         muted
-        loop
+        loop={!compact}
         playsInline
         preload={compact ? "metadata" : "auto"}
-        onLoadedData={() => setStatus("ready")}
-        onCanPlay={() => setStatus("ready")}
-        onError={() => setStatus("failed")}
+        onLoadedMetadata={compact ? handleReady : undefined}
+        onLoadedData={handleReady}
+        onCanPlay={handleReady}
+        onError={handleError}
         className={cn(
           "h-full w-full transition-opacity duration-300",
           controls ? "object-contain" : "object-cover",
@@ -327,18 +384,31 @@ function VideoPreviewSurfaceInner({
       />
 
       {status !== "ready" ? (
-        <div className="cyber-grid absolute inset-0 flex flex-col items-center justify-center gap-2 bg-surface-elevated/95 text-text-muted">
-          <Video
-            className={cn(
-              compact ? "h-5 w-5" : "h-8 w-8",
-              status === "loading" ? "animate-pulse" : "",
-            )}
-          />
-          <span
-            className={cn("tracking-wide", compact ? "text-[10px]" : "text-xs")}
-          >
-            {status === "failed" ? "预览加载失败" : "正在加载预览"}
-          </span>
+        <div className={cn(
+          "absolute inset-0 flex flex-col items-center justify-center gap-2",
+          compact && status === "failed"
+            ? "bg-gradient-to-br from-surface-elevated via-surface to-surface-elevated text-text-muted/50"
+            : "cyber-grid bg-surface-elevated/95 text-text-muted",
+        )}>
+          {compact && status === "failed" ? (
+            <Play className="h-5 w-5" />
+          ) : (
+            <>
+              <Video
+                className={cn(
+                  compact ? "h-5 w-5" : "h-8 w-8",
+                  status === "loading" ? "animate-pulse" : "",
+                )}
+              />
+              {status !== "idle" ? (
+                <span
+                  className={cn("tracking-wide", compact ? "text-[10px]" : "text-xs")}
+                >
+                  {status === "failed" ? "预览加载失败" : "正在加载预览"}
+                </span>
+              ) : null}
+            </>
+          )}
         </div>
       ) : null}
     </div>
@@ -368,6 +438,46 @@ function VideoPreviewSurface({
 
 function getPrimaryVideoPreviewItem(job?: AIJob | null) {
   return extractVideoArtifactsFromPayload(job)[0] || null;
+}
+
+function VideoJobThumbnail({ job }: { job: AIJob }) {
+  const isCompleted = isTerminalJob(job) && isSuccessJob(job);
+  const payloadPreview = getPrimaryVideoPreviewItem(job);
+
+  const { data: freshArtifacts } = useQuery<AIJobArtifact[]>({
+    queryKey: ["aiJobArtifacts", "thumb", job.id],
+    queryFn: () => getAIJobArtifacts(job.id),
+    enabled: isCompleted,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+  });
+
+  const freshUrl = useMemo(() => {
+    if (!freshArtifacts || freshArtifacts.length === 0) return null;
+    const videos = pickVideoArtifacts(
+      freshArtifacts.map((a) => toPreviewItem(a)),
+    );
+    return videos[0]?.publicUrl || null;
+  }, [freshArtifacts]);
+
+  const videoUrl = freshUrl || payloadPreview?.publicUrl || null;
+
+  if (!videoUrl) {
+    return (
+      <div className="cyber-grid flex h-full w-full items-center justify-center bg-surface-elevated">
+        <Video className="h-6 w-6 text-text-muted/60" />
+      </div>
+    );
+  }
+
+  return (
+    <VideoPreviewSurface
+      src={videoUrl}
+      compact
+      className="h-full w-full"
+      videoClassName="h-full w-full"
+    />
+  );
 }
 
 function clampPercent(value: number, min = 0, max = 100) {
@@ -565,7 +675,7 @@ function pickPreferredVideoJob(
     }
   }
 
-  return secondary;
+  return primary;
 }
 
 function mergeVideoJobs(items: AIJob[]) {
@@ -633,6 +743,14 @@ function buildVideoProgress(job?: AIJob | null) {
       label: stage.label,
       tone: "progress" as ProgressTone,
       hint: stage.description || "到易正在合成视频镜头，请稍候。",
+    };
+  }
+  if (stage.key === "waiting_recharge") {
+    return {
+      value: normalizeVideoProgress(stage.key, actualProgress),
+      label: stage.label,
+      tone: "danger" as const,
+      hint: stage.description || "当前积分不足，充值后任务会自动恢复执行。",
     };
   }
   if (
@@ -838,6 +956,7 @@ export default function VideoCreationPage() {
           limit: 50,
         }),
       refetchInterval: currentJobId ? 4000 : false,
+      refetchIntervalInBackground: true,
     },
   );
 
@@ -850,6 +969,7 @@ export default function VideoCreationPage() {
       const job = query.state.data as AIJob | undefined;
       return currentJobId && !isTerminalJob(job) ? 3000 : false;
     },
+    refetchIntervalInBackground: true,
   });
 
   const effectiveCurrentJob = useMemo(() => {
@@ -888,6 +1008,7 @@ export default function VideoCreationPage() {
       !isTerminalJob(effectiveCurrentJob)
         ? 3000
         : false,
+    refetchIntervalInBackground: true,
   });
 
   const selectedPreviewItems = useMemo(() => {
@@ -1272,8 +1393,10 @@ export default function VideoCreationPage() {
               className="flex w-full items-center justify-between rounded-xl border border-border bg-surface px-4 py-3 text-sm font-medium transition-all hover:border-accent/50 focus:border-accent"
             >
               <span className="text-text-primary">
-                {activeModel?.modelName ||
-                  (modelsLoading ? "加载中..." : "暂无可用模型")}
+                {getModelDisplayName(
+                  activeModel,
+                  modelsLoading ? "加载中..." : "暂无可用模型",
+                )}
               </span>
               <ChevronDown
                 className={cn(
@@ -1309,7 +1432,7 @@ export default function VideoCreationPage() {
                             : "text-text-primary",
                         )}
                       >
-                        {model.modelName}
+                        {getModelDisplayName(model)}
                       </span>
                       {selectedModel === model.modelName && (
                         <Check className="h-4 w-4 text-accent" />
@@ -1406,69 +1529,6 @@ export default function VideoCreationPage() {
           </div>
         </motion.div>
 
-        {(effectiveCurrentJob || submitError) && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className={cn(
-              "glass-card p-4",
-              submitError && !effectiveCurrentJob && "border border-danger/30",
-            )}
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">
-                任务进度
-              </span>
-              {effectiveCurrentJob ? (
-                <span className="text-[11px] text-text-secondary">
-                  {currentProgress.label}
-                </span>
-              ) : null}
-            </div>
-
-            {effectiveCurrentJob ? (
-              <>
-                <div className="h-2 overflow-hidden rounded-full bg-surface">
-                  <div
-                    className={cn(
-                      "h-full rounded-full transition-all duration-500",
-                      currentProgress.tone === "success" &&
-                        "bg-gradient-to-r from-emerald-400 to-cyan",
-                      currentProgress.tone === "danger" &&
-                        "bg-gradient-to-r from-rose-500 to-orange-400",
-                      currentProgress.tone === "progress" &&
-                        "bg-gradient-to-r from-cyan to-accent",
-                      currentProgress.tone === "idle" && "bg-border",
-                    )}
-                    style={{ width: `${currentProgress.value}%` }}
-                  />
-                </div>
-                <div className="mt-3 space-y-2 text-sm">
-                  <p className="font-medium text-text-primary">
-                    {currentProgress.hint}
-                  </p>
-                  <p className="text-xs text-text-secondary">
-                    任务 ID: {effectiveCurrentJob.id}
-                  </p>
-                  {effectiveCurrentJob.message ? (
-                    <p className="text-xs text-text-muted">
-                      {effectiveCurrentJob.message}
-                    </p>
-                  ) : null}
-                </div>
-              </>
-            ) : null}
-
-            {submitError ? (
-              <div className="mt-3 flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3 py-3 text-sm text-danger">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{submitError}</span>
-              </div>
-            ) : null}
-          </motion.div>
-        )}
-
         <div className="flex-1" />
 
         <motion.button
@@ -1500,8 +1560,10 @@ export default function VideoCreationPage() {
         <p className="mt-2 text-center text-[10px] text-text-muted">
           {submitting
             ? currentProgress.hint
+            : submitError
+              ? submitError
             : hasRunningJob
-              ? `后台仍有任务在执行：${currentProgress.hint}`
+              ? "后台仍有视频任务执行中，进度会自动刷新。"
               : submitHelperText}
         </p>
       </div>
@@ -1545,7 +1607,7 @@ export default function VideoCreationPage() {
                   />
                   <span className="text-xs font-medium text-white">
                     {selectedJob
-                      ? `${selectedJob.modelName} • ${selectedProgress.label}`
+                      ? `${getModelDisplayName(selectedJob)} • ${selectedProgress.label}`
                       : "视频预览"}
                   </span>
                 </div>
@@ -1670,7 +1732,6 @@ export default function VideoCreationPage() {
               const stage = resolveAIJobStage(job);
               const durationLabel = extractDurationLabel(job);
               const isSelected = selectedJob?.id === job.id;
-              const cardPreview = getPrimaryVideoPreviewItem(job);
 
               return (
                 <button
@@ -1687,19 +1748,8 @@ export default function VideoCreationPage() {
                       : "border-border hover:border-accent/40 hover:bg-surface-hover",
                   )}
                 >
-                  <div className="relative aspect-video w-full shrink-0 border-b border-border/50 bg-black">
-                    {cardPreview?.publicUrl ? (
-                      <VideoPreviewSurface
-                        src={cardPreview.publicUrl}
-                        compact
-                        className="h-full w-full"
-                        videoClassName="h-full w-full"
-                      />
-                    ) : (
-                      <div className="cyber-grid flex h-full w-full items-center justify-center bg-surface-elevated">
-                        <Video className="h-6 w-6 text-text-muted/60" />
-                      </div>
-                    )}
+                  <div className="relative aspect-video max-h-[140px] w-full shrink-0 overflow-hidden border-b border-border/50 bg-black">
+                    <VideoJobThumbnail job={job} />
                     <div className="absolute bottom-1 right-1 rounded bg-black/80 px-1.5 py-0.5 text-[9px] text-white backdrop-blur">
                       {durationLabel || stage.label}
                     </div>
@@ -1711,7 +1761,7 @@ export default function VideoCreationPage() {
                     </p>
                     <div className="flex items-center justify-between gap-2">
                       <span className="truncate text-[9px] uppercase text-text-muted">
-                        {job.modelName}
+                        {getModelDisplayName(job)}
                       </span>
                       {stage.key === "output_ready" ||
                       stage.key === "imported" ||

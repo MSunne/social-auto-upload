@@ -280,12 +280,14 @@ func (s *Store) GetBillingPackageByID(ctx context.Context, packageID string) (*d
 
 func (s *Store) ListBillingPricingRules(ctx context.Context) ([]domain.BillingPricingRule, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT r.id, r.name, r.meter_code, m.name, r.applies_to, r.model_name, r.job_type,
+		SELECT r.id, r.name, r.meter_code, m.name, r.applies_to, r.model_name,
+		       COALESCE(am.model_alias, r.model_name) AS model_alias, r.job_type,
 		       r.charge_mode, r.quota_meter_code, qm.name, r.unit_size, r.wallet_debit_amount,
 		       r.sort_order, r.description, r.is_enabled, r.created_at, r.updated_at
 		FROM billing_pricing_rules r
 		LEFT JOIN billing_meters m ON m.code = r.meter_code
 		LEFT JOIN billing_meters qm ON qm.code = r.quota_meter_code
+		LEFT JOIN ai_models am ON am.model_name = r.model_name
 		WHERE r.is_enabled = TRUE
 		ORDER BY r.sort_order ASC, r.created_at ASC
 	`)
@@ -299,6 +301,7 @@ func (s *Store) ListBillingPricingRules(ctx context.Context) ([]domain.BillingPr
 		var item domain.BillingPricingRule
 		var meterName *string
 		var modelName *string
+		var modelAlias *string
 		var jobType *string
 		var quotaMeterCode *string
 		var quotaMeterName *string
@@ -310,6 +313,7 @@ func (s *Store) ListBillingPricingRules(ctx context.Context) ([]domain.BillingPr
 			&meterName,
 			&item.AppliesTo,
 			&modelName,
+			&modelAlias,
 			&jobType,
 			&item.ChargeMode,
 			&quotaMeterCode,
@@ -326,6 +330,7 @@ func (s *Store) ListBillingPricingRules(ctx context.Context) ([]domain.BillingPr
 		}
 		item.MeterName = meterName
 		item.ModelName = modelName
+		item.ModelAlias = modelAlias
 		item.JobType = jobType
 		item.QuotaMeterCode = quotaMeterCode
 		item.QuotaMeterName = quotaMeterName
@@ -399,41 +404,6 @@ func (s *Store) GetBillingSummaryByUser(ctx context.Context, userID string) (*do
 		return nil, err
 	}
 
-	var (
-		failedBillingCount  int64
-		lastFailedBillMsg   *string
-		lastFailedBillingAt *time.Time
-	)
-	if err := s.pool.QueryRow(ctx, `
-		SELECT
-			COUNT(1)::BIGINT,
-			(
-				SELECT bill_message
-				FROM billing_usage_events
-				WHERE user_id = $1
-				  AND bill_status = 'failed'
-				ORDER BY updated_at DESC
-				LIMIT 1
-			) AS last_bill_message,
-			(
-				SELECT updated_at
-				FROM billing_usage_events
-				WHERE user_id = $1
-				  AND bill_status = 'failed'
-				ORDER BY updated_at DESC
-				LIMIT 1
-			) AS last_failed_at
-		FROM billing_usage_events
-		WHERE user_id = $1
-		  AND bill_status = 'failed'
-		  AND (
-			COALESCE(bill_message, '') ILIKE '%wallet credits insufficient%'
-			OR COALESCE(bill_message, '') ILIKE '%积分不足%'
-		  )
-	`, userID).Scan(&failedBillingCount, &lastFailedBillMsg, &lastFailedBillingAt); err != nil {
-		return nil, err
-	}
-
 	hasQuotaBalance := false
 	for _, item := range summary.QuotaBalances {
 		if item.RemainingTotal > 0 {
@@ -442,17 +412,64 @@ func (s *Store) GetBillingSummaryByUser(ctx context.Context, userID string) (*do
 		}
 	}
 
-	if failedBillingCount > 0 {
+	var (
+		waitingRechargeCount int64
+		lastWaitingMessage   *string
+		lastWaitingAt        *time.Time
+	)
+	if err := s.pool.QueryRow(ctx, `
+		SELECT
+			COUNT(1)::BIGINT,
+			(
+				SELECT message
+				FROM ai_jobs
+				WHERE owner_user_id = $1
+				  AND status = 'waiting_recharge'
+				ORDER BY updated_at DESC
+				LIMIT 1
+			) AS last_waiting_message,
+			(
+				SELECT updated_at
+				FROM ai_jobs
+				WHERE owner_user_id = $1
+				  AND status = 'waiting_recharge'
+				ORDER BY updated_at DESC
+				LIMIT 1
+			) AS last_waiting_at
+		FROM ai_jobs
+		WHERE owner_user_id = $1
+		  AND status = 'waiting_recharge'
+	`, userID).Scan(&waitingRechargeCount, &lastWaitingMessage, &lastWaitingAt); err != nil {
+		return nil, err
+	}
+	applyRechargeAlert(summary, hasQuotaBalance, waitingRechargeCount, lastWaitingMessage, lastWaitingAt)
+
+	return summary, nil
+}
+
+func applyRechargeAlert(summary *domain.BillingSummary, hasQuotaBalance bool, waitingRechargeCount int64, lastWaitingMessage *string, lastWaitingAt *time.Time) {
+	if summary == nil {
+		return
+	}
+	summary.NeedsRecharge = false
+	summary.RechargeAlertReason = nil
+	summary.RechargeAlertMessage = nil
+	summary.LastBillingFailedAt = nil
+
+	if waitingRechargeCount > 0 {
 		summary.NeedsRecharge = true
-		reason := "billing_failed"
-		summary.RechargeAlertReason = &reason
-		message := "检测到最近有任务因积分不足计费失败，请及时充值后再继续使用。"
-		if lastFailedBillMsg != nil && strings.TrimSpace(*lastFailedBillMsg) != "" {
-			message = "检测到最近有任务因积分不足计费失败，请及时充值。"
+		reason := "waiting_recharge"
+		message := "当前有 1 个任务因积分不足暂停，充值后会自动继续执行。"
+		if waitingRechargeCount > 1 {
+			message = fmt.Sprintf("当前有 %d 个任务因积分不足暂停，充值后会自动继续执行。", waitingRechargeCount)
 		}
+		if lastWaitingMessage != nil && strings.TrimSpace(*lastWaitingMessage) != "" {
+			message = strings.TrimSpace(*lastWaitingMessage)
+		}
+		summary.RechargeAlertReason = &reason
 		summary.RechargeAlertMessage = &message
-		summary.LastBillingFailedAt = lastFailedBillingAt
-		return summary, nil
+		summary.LastBillingFailedAt = lastWaitingAt
+		return
 	}
 
 	if summary.CreditBalance <= 0 && !hasQuotaBalance {
@@ -462,8 +479,6 @@ func (s *Store) GetBillingSummaryByUser(ctx context.Context, userID string) (*do
 		summary.RechargeAlertReason = &reason
 		summary.RechargeAlertMessage = &message
 	}
-
-	return summary, nil
 }
 
 func (s *Store) ListWalletLedgerByUser(ctx context.Context, userID string) ([]domain.WalletLedger, error) {

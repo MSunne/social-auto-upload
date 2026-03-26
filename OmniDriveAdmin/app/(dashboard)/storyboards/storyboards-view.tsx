@@ -3,6 +3,7 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { PageHeader } from "@/components/ui/common";
 import { useAIModels } from "@/lib/hooks/useAIModels";
+import { getModelDisplayName } from "@/lib/model-display";
 import { useSystemConfig, useUpdateSystemConfig } from "@/lib/hooks/useSettings";
 import { adminApi, adminPaths } from "@/lib/api";
 import { AdminSystemConfig } from "@/lib/types";
@@ -146,7 +147,10 @@ export function StoryboardsView() {
           promptValue={formData.storyboardPrompt || ""}
           modelValue={formData.storyboardModel || ""}
           references={formData.storyboardReferences || []}
-          modelOptions={modelOptions.map((item) => item.modelName)}
+          modelOptions={modelOptions.map((item) => ({
+            value: item.modelName,
+            label: getModelDisplayName(item),
+          }))}
           uploading={uploadingField === "storyboardReferences"}
           onPromptChange={(value) => setFormData((current) => ({ ...current, storyboardPrompt: value }))}
           onModelChange={(value) => setFormData((current) => ({ ...current, storyboardModel: value }))}
@@ -161,7 +165,10 @@ export function StoryboardsView() {
           promptValue={formData.imageStoryboardPrompt || ""}
           modelValue={formData.imageStoryboardModel || ""}
           references={formData.imageStoryboardReferences || []}
-          modelOptions={modelOptions.map((item) => item.modelName)}
+          modelOptions={modelOptions.map((item) => ({
+            value: item.modelName,
+            label: getModelDisplayName(item),
+          }))}
           uploading={uploadingField === "imageStoryboardReferences"}
           onPromptChange={(value) => setFormData((current) => ({ ...current, imageStoryboardPrompt: value }))}
           onModelChange={(value) => setFormData((current) => ({ ...current, imageStoryboardModel: value }))}
@@ -193,7 +200,7 @@ function StoryboardSection({
   promptValue: string;
   modelValue: string;
   references: StoryboardReference[];
-  modelOptions: string[];
+  modelOptions: Array<{ value: string; label: string }>;
   uploading: boolean;
   onPromptChange: (value: string) => void;
   onModelChange: (value: string) => void;
@@ -218,8 +225,8 @@ function StoryboardSection({
           >
             <option value="">默认使用系统 Chat 模型</option>
             {modelOptions.map((item) => (
-              <option key={item} value={item}>
-                {item}
+              <option key={item.value} value={item.value}>
+                {item.label}
               </option>
             ))}
           </select>

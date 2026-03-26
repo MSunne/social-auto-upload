@@ -7,6 +7,7 @@ import {
   useUpdateAIModel,
 } from "@/lib/hooks/useAIModels";
 import { PageHeader } from "@/components/ui/common";
+import { getModelDisplayName } from "@/lib/model-display";
 import { Search, Plus, Loader2, ChevronRight, Trash2 } from "lucide-react";
 import { AIModel } from "@/lib/types";
 import { AIModelDrawer } from "./ai-model-drawer";
@@ -96,7 +97,7 @@ export function AIModelsView() {
   };
 
   const handleDeleteModel = async (model: AIModel) => {
-    if (!confirm(`确定要删除模型 ${model.modelName} (${model.id}) 吗？删除后不可恢复！`)) return;
+    if (!confirm(`确定要删除模型 ${getModelDisplayName(model)} (${model.id}) 吗？删除后不可恢复！`)) return;
     try {
       await deleteModel.mutateAsync(model.id);
       if (selectedModel?.id === model.id) {
@@ -231,7 +232,7 @@ export function AIModelsView() {
                   >
                     <td className="px-6 py-4">
                       <div className="font-medium text-[var(--color-text-primary)]">
-                        {model.modelName}
+                        {getModelDisplayName(model)}
                       </div>
                       <div className="text-xs font-mono text-[var(--color-text-secondary)] mt-0.5">
                         {model.id}

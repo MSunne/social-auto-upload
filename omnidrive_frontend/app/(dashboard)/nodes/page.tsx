@@ -6,13 +6,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Server,
   Plus,
-  Shield,
-  Activity,
-  Link2,
   ChevronLeft,
   ChevronRight,
   ExternalLink,
-  Pencil,
   BookOpen,
   Search,
   X,
@@ -21,7 +17,7 @@ import {
 import Link from "next/link";
 import { listDevices, claimDevice } from "@/lib/services";
 import type { Device } from "@/lib/types";
-import { PageHeader, EmptyState } from "@/components/ui/common";
+import { EmptyState } from "@/components/ui/common";
 
 const PAGE_SIZE = 5;
 
@@ -124,10 +120,6 @@ export default function NodesPage() {
   const startIdx = filteredDevices.length === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const endIdx = Math.min(page * PAGE_SIZE, filteredDevices.length);
 
-  /* stats */
-  const onlineCount = devices.filter((d) => d.status === "online").length;
-  const enabledCount = devices.filter((d) => d.isEnabled).length;
-
   async function handleClaimSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!claimInputCode.trim()) return;
@@ -201,69 +193,6 @@ export default function NodesPage() {
           {error}
         </div>
       )}
-
-      {/* ───── Stats Cards ───── */}
-      <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <motion.div
-          initial={{ opacity: 0, y: 15 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="glass-card px-6 py-5"
-        >
-          <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan/10">
-              <Shield className="h-6 w-6 text-cyan" />
-            </div>
-            <div>
-              <p className="text-xs text-text-muted">安全审计评分</p>
-              <div className="flex items-baseline gap-1">
-                <span className="text-2xl font-bold text-text-primary">98.4</span>
-                <span className="text-sm font-medium text-emerald-400">Excellent</span>
-              </div>
-            </div>
-          </div>
-        </motion.div>
-        <motion.div
-          initial={{ opacity: 0, y: 15 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="glass-card px-6 py-5"
-        >
-          <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/10">
-              <Activity className="h-6 w-6 text-accent" />
-            </div>
-            <div>
-              <p className="text-xs text-text-muted">实时吞吐量</p>
-              <div className="flex items-baseline gap-1">
-                <span className="text-2xl font-bold text-text-primary">1.2</span>
-                <span className="text-sm font-medium text-text-secondary">GB/s</span>
-              </div>
-            </div>
-          </div>
-        </motion.div>
-        <motion.div
-          initial={{ opacity: 0, y: 15 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-          className="glass-card px-6 py-5"
-        >
-          <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-500/10">
-              <Link2 className="h-6 w-6 text-rose-400" />
-            </div>
-            <div>
-              <p className="text-xs text-text-muted">总节点链路</p>
-              <div className="flex items-baseline gap-1">
-                <span className="text-2xl font-bold text-text-primary">
-                  {filteredDevices.length > 0 ? (filteredDevices.length * 104).toLocaleString() : "0"}
-                </span>
-                <span className="text-sm font-medium text-text-secondary">活跃</span>
-              </div>
-            </div>
-          </div>
-        </motion.div>
-      </div>
 
       {/* ───── Main Table ───── */}
       {filteredDevices.length > 0 || devices.length > 0 ? (

@@ -79,7 +79,7 @@ const adminPlatformAccountSelectColumns = `
 
 const adminAIJobSelectColumns = `
 	aj.id, aj.owner_user_id, aj.device_id, aj.skill_id, aj.source, aj.local_task_id,
-	aj.job_type, aj.model_name, aj.prompt, aj.status, aj.input_payload, aj.output_payload,
+	aj.job_type, aj.model_name, COALESCE(am.model_alias, aj.model_name) AS model_alias, aj.prompt, aj.status, aj.input_payload, aj.output_payload,
 	aj.message, aj.notes, aj.exception_reason, aj.risk_tags, aj.cost_credits, aj.lease_owner_device_id, aj.lease_token,
 	aj.lease_expires_at, aj.delivery_status, aj.delivery_message, aj.local_publish_task_id,
 	aj.run_at, aj.created_at, aj.updated_at, aj.delivered_at, aj.finished_at
@@ -431,6 +431,7 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 	var skillIsEnabled *bool
 	var modelID *string
 	var modelVendor *string
+	var modelAlias *string
 	var modelCategory *string
 	var modelIsEnabled *bool
 
@@ -443,6 +444,7 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 		&localTaskID,
 		&item.Job.JobType,
 		&item.Job.ModelName,
+		&item.Job.ModelAlias,
 		&prompt,
 		&item.Job.Status,
 		&inputPayload,
@@ -478,6 +480,7 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 		&skillIsEnabled,
 		&modelID,
 		&modelVendor,
+		&modelAlias,
 		&modelCategory,
 		&modelIsEnabled,
 		&item.ArtifactCount,
@@ -543,11 +546,12 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 
 	if modelID != nil {
 		item.Model = &domain.AdminAIModelSummary{
-			ID:        strings.TrimSpace(*modelID),
-			Vendor:    stringOrEmpty(modelVendor),
-			ModelName: item.Job.ModelName,
-			Category:  stringOrEmpty(modelCategory),
-			IsEnabled: modelIsEnabled != nil && *modelIsEnabled,
+			ID:         strings.TrimSpace(*modelID),
+			Vendor:     stringOrEmpty(modelVendor),
+			ModelName:  item.Job.ModelName,
+			ModelAlias: stringOrEmpty(modelAlias),
+			Category:   stringOrEmpty(modelCategory),
+			IsEnabled:  modelIsEnabled != nil && *modelIsEnabled,
 		}
 	}
 
@@ -984,7 +988,7 @@ func (s *Store) ListAdminAIJobs(ctx context.Context, filter AdminAIJobListFilter
 			u.id, u.email, u.name,
 			d.id, d.device_code, d.name, d.is_enabled, d.last_seen_at,
 			ps.id, ps.name, ps.output_type, ps.model_name, ps.is_enabled,
-			am.id, am.vendor, am.category, am.is_enabled,
+			am.id, am.vendor, am.model_alias, am.category, am.is_enabled,
 			COALESCE((SELECT COUNT(*) FROM ai_job_artifacts a WHERE a.job_id = aj.id), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM ai_job_artifacts a WHERE a.job_id = aj.id AND a.device_id IS NOT NULL AND a.root_name IS NOT NULL AND a.relative_path IS NOT NULL), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.id = aj.local_publish_task_id OR (pt.media_payload ->> 'aiJobId') = aj.id), 0)::BIGINT
@@ -1016,7 +1020,7 @@ func (s *Store) GetAdminAIJobByID(ctx context.Context, jobID string) (*domain.Ad
 			u.id, u.email, u.name,
 			d.id, d.device_code, d.name, d.is_enabled, d.last_seen_at,
 			ps.id, ps.name, ps.output_type, ps.model_name, ps.is_enabled,
-			am.id, am.vendor, am.category, am.is_enabled,
+			am.id, am.vendor, am.model_alias, am.category, am.is_enabled,
 			COALESCE((SELECT COUNT(*) FROM ai_job_artifacts a WHERE a.job_id = aj.id), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM ai_job_artifacts a WHERE a.job_id = aj.id AND a.device_id IS NOT NULL AND a.root_name IS NOT NULL AND a.relative_path IS NOT NULL), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.id = aj.local_publish_task_id OR (pt.media_payload ->> 'aiJobId') = aj.id), 0)::BIGINT

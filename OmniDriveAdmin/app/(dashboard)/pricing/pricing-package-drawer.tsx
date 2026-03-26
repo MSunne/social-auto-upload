@@ -73,19 +73,25 @@ export function PricingPackageDrawer({ pkg, isOpen, onClose, isCreate }: Pricing
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      // Build a plain object with entitlements in the shape the API needs
-      const basePayload = { ...form };
+      const { id, ...basePayload } = form;
       if (isCreate) {
-        await createPackage.mutateAsync({ ...basePayload, entitlements } as Parameters<typeof createPackage.mutateAsync>[0]);
+        await createPackage.mutateAsync({
+          ...basePayload,
+          id,
+          entitlements,
+        } as Parameters<typeof createPackage.mutateAsync>[0]);
       } else if (pkg) {
         await updatePackage.mutateAsync({
           packageId: pkg.id,
-          payload: { ...basePayload, entitlements } as Parameters<typeof updatePackage.mutateAsync>[0]["payload"],
+          payload: {
+            ...basePayload,
+            entitlements,
+          } as Parameters<typeof updatePackage.mutateAsync>[0]["payload"],
         });
       }
       onClose();
-    } catch {
-      alert("操作失败，请重试");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "操作失败，请重试");
     }
   };
 

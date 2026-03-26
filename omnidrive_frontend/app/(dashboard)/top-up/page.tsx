@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowUpRight,
+  Check,
   Copy,
   CreditCard,
   Gift,
@@ -158,9 +159,17 @@ export default function TopUpPage() {
   const activeSubmission = getManualSubmission(activeOrder);
 
   const copyActivationCode = async (code: string) => {
+    setActivationCopied("idle");
+    await new Promise((r) => setTimeout(r, 50));
     const copied = await copyText(code);
     setActivationCopied(copied ? "success" : "error");
   };
+
+  useEffect(() => {
+    if (activationCopied === "idle") return;
+    const timer = setTimeout(() => setActivationCopied("idle"), 2500);
+    return () => clearTimeout(timer);
+  }, [activationCopied]);
 
   const createOrderMutation = useMutation({
     mutationFn: (payload: { packageId: string; channel: string; subject?: string }) =>
@@ -664,10 +673,18 @@ export default function TopUpPage() {
                     <button
                       type="button"
                       onClick={() => void copyActivationCode(activationOrder.orderNo)}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-medium text-white/80 transition-all hover:border-white/20 hover:bg-white/[0.08] hover:text-white"
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-xl border px-4 py-2 text-xs font-medium transition-all",
+                        activationCopied === "success"
+                          ? "border-success/40 bg-success/10 text-success"
+                          : "border-white/10 bg-white/[0.04] text-white/80 hover:border-white/20 hover:bg-white/[0.08] hover:text-white",
+                      )}
                     >
-                      <Copy className="h-3.5 w-3.5" />
-                      复制
+                      {activationCopied === "success" ? (
+                        <><Check className="h-3.5 w-3.5" /> 已复制</>
+                      ) : (
+                        <><Copy className="h-3.5 w-3.5" /> 复制</>
+                      )}
                     </button>
                     <button
                       type="button"

@@ -456,6 +456,7 @@ CREATE TABLE IF NOT EXISTS ai_models (
     id TEXT PRIMARY KEY,
     vendor TEXT NOT NULL,
     model_name TEXT NOT NULL,
+    model_alias TEXT NOT NULL,
     category TEXT NOT NULL,
     billing_mode TEXT NOT NULL DEFAULT 'per_call',
     base_url TEXT,
@@ -476,6 +477,10 @@ CREATE TABLE IF NOT EXISTS ai_models (
 );
 
 ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS base_url TEXT;
+ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS model_alias TEXT;
+UPDATE ai_models
+SET model_alias = model_name
+WHERE model_alias IS NULL OR TRIM(model_alias) = '';
 ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS billing_mode TEXT;
 UPDATE ai_models
 SET billing_mode = CASE

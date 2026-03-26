@@ -86,6 +86,19 @@ func SendRegistrationCode(cfg RegistrationConfig, phone string, countryCode stri
 	}
 }
 
+func SendTemplateSMS(cfg RegistrationConfig, phone string, outID string, signName string, templateCode string, templateParam string) (*SendCodeResult, error) {
+	normalizedProvider := ResolveProvider(cfg.Provider, templateCode)
+	switch normalizedProvider {
+	case ProviderAliyunDysmsapi:
+		return sendAliyunDysmsTemplateSMS(cfg, phone, outID, signName, templateCode, templateParam)
+	default:
+		return nil, &ProviderError{
+			Provider: providerOrUnknown(normalizedProvider),
+			Message:  fmt.Sprintf("unsupported sms provider for template sms: %s", strings.TrimSpace(normalizedProvider)),
+		}
+	}
+}
+
 func VerifyRegistrationCode(cfg RegistrationConfig, phone string, countryCode string, code string, outID string) (*VerifyCodeResult, error) {
 	switch ResolveProvider(cfg.Provider, cfg.TemplateCode) {
 	case ProviderAliyunDypnsapi:

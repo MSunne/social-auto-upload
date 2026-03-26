@@ -128,6 +128,7 @@ type ProductSkill struct {
 	Description       string           `json:"description"`
 	OutputType        string           `json:"outputType"`
 	ModelName         string           `json:"modelName"`
+	ModelAlias        string           `json:"modelAlias,omitempty"`
 	PromptTemplate    *string          `json:"promptTemplate"`
 	Topics            []string         `json:"topics"`
 	ReferencePayload  json.RawMessage  `json:"referencePayload,omitempty"`
@@ -554,6 +555,7 @@ type AIModel struct {
 	ID                        string          `json:"id"`
 	Vendor                    string          `json:"vendor"`
 	ModelName                 string          `json:"modelName"`
+	ModelAlias                string          `json:"modelAlias,omitempty"`
 	Category                  string          `json:"category"`
 	BillingMode               string          `json:"billingMode"`
 	BaseURL                   *string         `json:"baseUrl,omitempty"`
@@ -586,6 +588,7 @@ type AIJob struct {
 	LocalTaskID        *string         `json:"localTaskId"`
 	JobType            string          `json:"jobType"`
 	ModelName          string          `json:"modelName"`
+	ModelAlias         string          `json:"modelAlias,omitempty"`
 	Prompt             *string         `json:"prompt"`
 	Status             string          `json:"status"`
 	InputPayload       json.RawMessage `json:"inputPayload,omitempty"`
@@ -714,6 +717,7 @@ type BillingPricingRule struct {
 	MeterName         *string   `json:"meterName,omitempty"`
 	AppliesTo         string    `json:"appliesTo"`
 	ModelName         *string   `json:"modelName,omitempty"`
+	ModelAlias        *string   `json:"modelAlias,omitempty"`
 	JobType           *string   `json:"jobType,omitempty"`
 	ChargeMode        string    `json:"chargeMode"`
 	QuotaMeterCode    *string   `json:"quotaMeterCode,omitempty"`
@@ -768,6 +772,7 @@ type BillingActivity struct {
 	MeterCode         *string         `json:"meterCode,omitempty"`
 	MeterName         *string         `json:"meterName,omitempty"`
 	ModelName         *string         `json:"modelName,omitempty"`
+	ModelAlias        *string         `json:"modelAlias,omitempty"`
 	JobType           *string         `json:"jobType,omitempty"`
 	Reference         *string         `json:"reference,omitempty"`
 	ReferenceType     *string         `json:"referenceType,omitempty"`

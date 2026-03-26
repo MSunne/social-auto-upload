@@ -15,6 +15,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { EmptyState, PageHeader, StatCard, StatusBadge } from "@/components/ui/common";
+import { getModelDisplayName } from "@/lib/model-display";
 import { getBillingSummary, listBillingActivities } from "@/lib/services";
 import type { BillingActivity, BillingActivityListResponse, BillingSummary } from "@/lib/types";
 
@@ -186,7 +187,11 @@ function getActivityAmount(item: BillingActivity) {
 }
 
 function buildActivityMeta(item: BillingActivity) {
-  const parts = [item.modelName, item.meterName || item.meterCode, item.reference];
+  const modelLabel =
+    item.modelName || item.modelAlias
+      ? getModelDisplayName(item, "")
+      : "";
+  const parts = [modelLabel, item.meterName || item.meterCode, item.reference];
   return parts.filter(Boolean).join(" · ");
 }
 

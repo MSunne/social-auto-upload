@@ -8,6 +8,7 @@
     "description": "测试玩具的种草视频",
     "outputType": "视文模式",
     "modelName": "veo-3.1-fast-fl",
+    "modelAlias": "veo-3.1-fast-fl",
     "promptTemplate": "做一个抖音风格视频，不要字幕",
     "topics": [],
     "repeatDaily": false,
@@ -22,7 +23,7 @@
       "runningTaskCount": 0,
       "needsVerifyTaskCount": 0,
       "failedTaskCount": 0,
-      "aiJobCount": 14,
+      "aiJobCount": 15,
       "activeAiJobCount": 0
     }
   },
@@ -56,13 +57,13 @@
     "needsSync": false,
     "assetCount": 1,
     "message": null,
-    "lastSyncedAt": "2026-03-25T21:36:28.896662+08:00",
+    "lastSyncedAt": "2026-03-26T18:15:54.851316+08:00",
     "createdAt": "2026-03-21T16:32:04.522283+08:00",
-    "updatedAt": "2026-03-25T21:36:28.906229+08:00"
+    "updatedAt": "2026-03-26T18:15:54.86343+08:00"
   },
   "cache": {
     "manifestPath": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/02f463ee-04ce-4dc9-ab99-d60900f4fd26/manifest.json",
     "assetsDir": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/02f463ee-04ce-4dc9-ab99-d60900f4fd26/assets",
-    "syncedAt": "2026-03-25T13:37:22.287538Z"
+    "syncedAt": "2026-03-26T10:17:55.590310Z"
   }
 }

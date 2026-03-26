@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getModelDisplayName } from "@/lib/model-display";
 import { buildAIJobTitle, formatDateTime, resolveAIJobStage } from "@/lib/workflow";
 import {
   createAIJob,
@@ -221,6 +222,14 @@ function buildProgress(job?: AIJob | null) {
       label: stage.label,
       tone: "progress" as const,
       hint: stage.description || "模型正在生成图片。",
+    };
+  }
+  if (stage.key === "waiting_recharge") {
+    return {
+      value: 78,
+      label: stage.label,
+      tone: "danger" as const,
+      hint: stage.description || "当前积分不足，充值后任务会自动恢复执行。",
     };
   }
   if (stage.key === "output_ready" || stage.key === "imported" || isSuccessJob(job)) {
@@ -788,7 +797,7 @@ export default function ImageCreationPage() {
             <div className="flex items-center gap-3">
               <span className="text-[11px] text-text-muted">
                 {activeOptimizeModel
-                  ? `优化模型：${activeOptimizeModel.modelName}`
+                  ? `优化模型：${getModelDisplayName(activeOptimizeModel)}`
                   : chatModelsLoading
                     ? "正在加载优化模型..."
                     : "未配置 AI 优化模型"}
@@ -902,7 +911,10 @@ export default function ImageCreationPage() {
             >
               <div className="flex items-center gap-2">
                 <span className="text-glow text-text-primary">
-                  {activeModel?.modelName || (modelsLoading ? "加载中..." : "暂无可用模型")}
+                  {getModelDisplayName(
+                    activeModel,
+                    modelsLoading ? "加载中..." : "暂无可用模型",
+                  )}
                 </span>
               </div>
               <ChevronDown
@@ -934,7 +946,7 @@ export default function ImageCreationPage() {
                           selectedModel === model.modelName ? "font-bold text-accent" : "text-text-primary",
                         )}
                       >
-                        {model.modelName}
+                        {getModelDisplayName(model)}
                       </span>
                       {selectedModel === model.modelName && <Check className="h-4 w-4 text-accent" />}
                     </button>
@@ -1111,7 +1123,7 @@ export default function ImageCreationPage() {
                     )}
                   />
                   <span className="text-xs font-medium text-white">
-                    {selectedJob ? `${selectedJob.modelName} • ${selectedProgress.label}` : "预览结果"}
+                    {selectedJob ? `${getModelDisplayName(selectedJob)} • ${selectedProgress.label}` : "预览结果"}
                   </span>
                 </div>
 
@@ -1284,7 +1296,7 @@ export default function ImageCreationPage() {
                       {buildAIJobTitle(job)}
                     </p>
                     <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-[9px] uppercase text-text-muted">{job.modelName}</span>
+                      <span className="truncate text-[9px] uppercase text-text-muted">{getModelDisplayName(job)}</span>
                       {isSuccessJob(job) ? (
                         <span className="text-[9px] text-success">已完成</span>
                       ) : job.status === "failed" ? (

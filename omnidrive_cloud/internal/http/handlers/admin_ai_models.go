@@ -29,6 +29,7 @@ type adminCreateAIModelRequest struct {
 	ID                        string          `json:"id"`
 	Vendor                    string          `json:"vendor"`
 	ModelName                 string          `json:"modelName"`
+	ModelAlias                string          `json:"modelAlias"`
 	Category                  string          `json:"category"`
 	BillingMode               string          `json:"billingMode"`
 	ModelType                 string          `json:"modelType"`
@@ -54,6 +55,7 @@ type adminCreateAIModelRequest struct {
 type adminUpdateAIModelRequest struct {
 	Vendor                    *string          `json:"vendor"`
 	ModelName                 *string          `json:"modelName"`
+	ModelAlias                *string          `json:"modelAlias"`
 	Category                  *string          `json:"category"`
 	BillingMode               *string          `json:"billingMode"`
 	ModelType                 *string          `json:"modelType"`
@@ -192,15 +194,20 @@ func normalizeCreateAIModelPayload(payload adminCreateAIModelRequest) (store.Cre
 
 	vendor := strings.TrimSpace(payload.Vendor)
 	modelName := strings.TrimSpace(payload.ModelName)
+	modelAlias := strings.TrimSpace(payload.ModelAlias)
 	baseURL := normalizeOptionalAdminText(payload.BaseURL)
 	if vendor == "" || modelName == "" || baseURL == nil {
 		return store.CreateAIModelInput{}, renderableError("vendor, modelName, and baseUrl are required")
+	}
+	if modelAlias == "" {
+		modelAlias = modelName
 	}
 
 	input := store.CreateAIModelInput{
 		ID:                 strings.TrimSpace(payload.ID),
 		Vendor:             vendor,
 		ModelName:          modelName,
+		ModelAlias:         modelAlias,
 		Category:           category,
 		BillingMode:        billingMode,
 		BaseURL:            baseURL,
@@ -244,6 +251,7 @@ func normalizeUpdateAIModelPayload(payload adminUpdateAIModelRequest) (store.Upd
 	input := store.UpdateAIModelInput{
 		Vendor:         trimmedStringPtr(strings.TrimSpace(valueOrEmpty(payload.Vendor))),
 		ModelName:      trimmedStringPtr(strings.TrimSpace(valueOrEmpty(payload.ModelName))),
+		ModelAlias:     trimmedStringPtr(strings.TrimSpace(valueOrEmpty(payload.ModelAlias))),
 		BaseURL:        normalizeOptionalAdminText(payload.BaseURL),
 		APIKey:         normalizeAdminUpdateOptionalText(payload.APIKey),
 		RawRate:        payload.RawRate,

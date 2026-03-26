@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/common";
 import {
   createAccountSkillRun,
+  deleteAccountSkillRun,
   deleteTask,
   getAccountWorkspace,
   getDevice,
@@ -32,6 +33,7 @@ import {
   listTasks,
   updateAIJob,
 } from "@/lib/services";
+import { getModelDisplayName } from "@/lib/model-display";
 import type {
   AIJob,
   AccountSkillScheduleSlot,
@@ -57,6 +59,7 @@ type TimelineItem = {
   updatedAt: string;
   href?: string;
   label: string;
+  deletable?: boolean;
 };
 
 type AccountSkillPlan = {
@@ -70,6 +73,7 @@ type AccountSkillPlan = {
   stageDescription?: string;
   generationLeadMinutes: number;
   editable: boolean;
+  deletable: boolean;
 };
 
 const DEFAULT_GENERATION_LEAD_MINUTES = 0;
@@ -227,6 +231,16 @@ function isEditableAccountSkillRun(job: AIJob) {
   return (
     job.source === "account_skill_binding" &&
     (job.status === "scheduled" || job.status === "queued") &&
+    !job.localPublishTaskId
+  );
+}
+
+function isDeletableAccountSkillRun(job: AIJob) {
+  return (
+    job.source === "account_skill_binding" &&
+    ["scheduled", "queued", "waiting_recharge", "failed", "cancelled"].includes(
+      job.status,
+    ) &&
     !job.localPublishTaskId
   );
 }
@@ -427,6 +441,28 @@ export default function AccountTaskPage({
     },
   });
 
+  const deleteSkillRunMutation = useMutation({
+    mutationFn: async (job: AIJob) => deleteAccountSkillRun(accountId, job.id),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["aiJobs", "account", accountId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["tasks", "account", accountId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["accountWorkspace", accountId],
+        }),
+      ]);
+    },
+    onError: (error) => {
+      window.alert(
+        error instanceof Error ? error.message : "删除账号计划失败，请稍后重试",
+      );
+    },
+  });
+
   const skillMap = useMemo(
     () => new Map(skills.map((item) => [item.id, item])),
     [skills],
@@ -441,12 +477,13 @@ export default function AccountTaskPage({
         title: buildAIJobTitle(job),
         subtitle: job.skillId
           ? `技能 ${skillMap.get(job.skillId)?.name || job.skillId}`
-          : job.modelName,
+          : getModelDisplayName(job),
         status: toTimelineStatus(job, "ai_job"),
         scheduledAt: getAIJobPublishAt(job),
         updatedAt: job.updatedAt,
         href: `/tasks/ai/${job.id}`,
         label: "技能生成",
+        deletable: isDeletableAccountSkillRun(job),
       }));
     const publishItems: TimelineItem[] = tasks.map((task) => ({
       id: task.id,
@@ -478,7 +515,9 @@ export default function AccountTaskPage({
       .filter(
         (job) =>
           job.source === "account_skill_binding" &&
-          ["scheduled", "queued", "running"].includes(job.status),
+          ["scheduled", "queued", "running", "waiting_recharge"].includes(
+            job.status,
+          ),
       )
       .map((job) => {
         const stage = resolveAIJobStage(job);
@@ -495,6 +534,7 @@ export default function AccountTaskPage({
             getAIJobScheduleConfig(job)?.generationLeadMinutes,
           ),
           editable: isEditableAccountSkillRun(job),
+          deletable: isDeletableAccountSkillRun(job),
         };
       })
       .sort((left, right) => {
@@ -527,6 +567,19 @@ export default function AccountTaskPage({
       return;
     }
     await deleteTaskMutation.mutateAsync(taskId);
+  };
+
+  const handleDeleteSkillRun = async (job: AIJob, title: string) => {
+    const schedule = getAIJobScheduleConfig(job);
+    const confirmed = window.confirm(
+      schedule?.repeatDaily
+        ? `确认删除计划“${title}”吗？删除后会停止这条每天重复的账号计划。`
+        : `确认删除计划“${title}”吗？删除后无法恢复。`,
+    );
+    if (!confirmed) {
+      return;
+    }
+    await deleteSkillRunMutation.mutateAsync(job);
   };
 
   if (workspaceLoading || tasksLoading || aiLoading) {
@@ -590,7 +643,8 @@ export default function AccountTaskPage({
               (item) =>
                 item.status === "scheduled" ||
                 item.status === "queued" ||
-                item.status === "running",
+                item.status === "running" ||
+                item.status === "waiting_recharge",
             ).length
           }
           icon={<Sparkles className="h-5 w-5" />}
@@ -670,43 +724,89 @@ export default function AccountTaskPage({
                         {plan.skill?.name || buildAIJobTitle(plan.job)}
                       </p>
                       <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-text-secondary">
-                        {plan.skill?.description || "这条计划先生成内容，再进入发布链路。"}
+                        {plan.skill?.description ||
+                          "这条计划先生成内容，再进入发布链路。"}
                       </p>
 
                       <div className="mt-3 flex flex-wrap gap-2">
                         <span className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-surface-hover/50 px-2.5 py-1 text-xs text-text-secondary">
                           <CalendarClock className="h-3 w-3 text-cyan" />
-                          发布 <span className="font-medium text-text-primary">{plan.publishAt ? formatDateTime(plan.publishAt) : "未设置"}</span>
+                          发布{" "}
+                          <span className="font-medium text-text-primary">
+                            {plan.publishAt
+                              ? formatDateTime(plan.publishAt)
+                              : "未设置"}
+                          </span>
                         </span>
                         <span className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-surface-hover/50 px-2.5 py-1 text-xs text-text-secondary">
                           <Sparkles className="h-3 w-3 text-accent" />
-                          生成 <span className="font-medium text-text-primary">{plan.generateAt ? formatDateTime(plan.generateAt) : "未设置"}</span>
+                          生成{" "}
+                          <span className="font-medium text-text-primary">
+                            {plan.generateAt
+                              ? formatDateTime(plan.generateAt)
+                              : "未设置"}
+                          </span>
                         </span>
                         <span className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-surface-hover/50 px-2.5 py-1 text-xs text-text-secondary">
-                          提前 <span className="font-medium text-text-primary">{formatGenerationLeadMinutes(plan.generationLeadMinutes)}</span>
+                          提前{" "}
+                          <span className="font-medium text-text-primary">
+                            {formatGenerationLeadMinutes(
+                              plan.generationLeadMinutes,
+                            )}
+                          </span>
                         </span>
                       </div>
                     </div>
 
                     <div className="flex shrink-0 flex-col items-start gap-2 xl:items-end">
                       <span className="rounded-lg bg-white/6 px-2 py-1 text-[11px] text-text-muted">
-                        {plan.stageLabel}{plan.stageDescription ? ` · ${plan.stageDescription}` : ""}
+                        {plan.stageLabel}
+                        {plan.stageDescription
+                          ? ` · ${plan.stageDescription}`
+                          : ""}
                       </span>
                       <span className="text-[11px] text-text-muted">
                         更新 {formatDateTime(plan.job.updatedAt)}
                       </span>
-                      {plan.editable ? (
-                        <button
-                          type="button"
-                          onClick={() => setEditingJob(plan.job)}
-                          className="mt-1 inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-accent/15 to-cyan/10 border border-accent/25 px-3.5 py-1.5 text-xs font-semibold text-accent transition-all hover:from-accent/25 hover:to-cyan/15 hover:shadow-md hover:shadow-accent/10"
-                        >
-                          <Pencil className="h-3 w-3" />
-                          修改时间
-                        </button>
-                      ) : (
-                        <span className="mt-1 text-[11px] text-text-muted italic">不可修改</span>
-                      )}
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        {plan.editable ? (
+                          <button
+                            type="button"
+                            onClick={() => setEditingJob(plan.job)}
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-accent/25 bg-gradient-to-r from-accent/15 to-cyan/10 px-3.5 py-1.5 text-xs font-semibold text-accent transition-all hover:from-accent/25 hover:to-cyan/15 hover:shadow-md hover:shadow-accent/10"
+                          >
+                            <Pencil className="h-3 w-3" />
+                            修改时间
+                          </button>
+                        ) : null}
+                        {plan.deletable ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleDeleteSkillRun(
+                                plan.job,
+                                plan.skill?.name || buildAIJobTitle(plan.job),
+                              )
+                            }
+                            disabled={deleteSkillRunMutation.isPending}
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-red-500/25 bg-red-500/8 px-3.5 py-1.5 text-xs font-semibold text-red-300 transition-all hover:border-red-400/50 hover:bg-red-500/14 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {deleteSkillRunMutation.isPending &&
+                            deleteSkillRunMutation.variables?.id ===
+                              plan.job.id ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3 w-3" />
+                            )}
+                            删除计划
+                          </button>
+                        ) : null}
+                        {!plan.editable && !plan.deletable ? (
+                          <span className="text-[11px] italic text-text-muted">
+                            当前状态不可操作
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -764,11 +864,15 @@ export default function AccountTaskPage({
                 className="group overflow-hidden rounded-2xl border border-border bg-surface transition-all hover:border-accent/30 hover:shadow-lg hover:shadow-accent/5"
               >
                 <div className="flex">
-                  <div className={`w-1 shrink-0 ${item.kind === "ai_job" ? "bg-gradient-to-b from-accent to-pink" : "bg-gradient-to-b from-cyan to-emerald-400"}`} />
+                  <div
+                    className={`w-1 shrink-0 ${item.kind === "ai_job" ? "bg-gradient-to-b from-accent to-pink" : "bg-gradient-to-b from-cyan to-emerald-400"}`}
+                  />
                   <div className="flex flex-1 flex-col gap-4 p-5 md:flex-row md:items-start md:justify-between">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className={`rounded-lg px-2 py-0.5 text-[11px] font-semibold ${item.kind === "ai_job" ? "bg-accent/12 text-accent" : "bg-cyan/12 text-cyan"}`}>
+                        <span
+                          className={`rounded-lg px-2 py-0.5 text-[11px] font-semibold ${item.kind === "ai_job" ? "bg-accent/12 text-accent" : "bg-cyan/12 text-cyan"}`}
+                        >
                           {item.label}
                         </span>
                         <StatusBadge status={item.status} />
@@ -782,7 +886,9 @@ export default function AccountTaskPage({
                       <div className="mt-2.5 flex flex-wrap items-center gap-2">
                         <span className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-surface-hover/50 px-2.5 py-1 text-[11px] text-text-secondary">
                           <CalendarClock className="h-3 w-3 text-cyan" />
-                          {item.scheduledAt ? formatDateTime(item.scheduledAt) : "未设置"}
+                          {item.scheduledAt
+                            ? formatDateTime(item.scheduledAt)
+                            : "未设置"}
                         </span>
                         <span className="text-[11px] text-text-muted">
                           更新 {formatDateTime(item.updatedAt)}
@@ -801,7 +907,9 @@ export default function AccountTaskPage({
                         {item.kind === "publish_task" ? (
                           <button
                             type="button"
-                            onClick={() => handleDeleteTask(item.id, item.title)}
+                            onClick={() =>
+                              handleDeleteTask(item.id, item.title)
+                            }
                             disabled={deleteTaskMutation.isPending}
                             className="inline-flex items-center gap-1.5 rounded-xl border border-red-500/25 bg-red-500/8 px-3 py-1.5 text-xs font-medium text-red-300 transition-all hover:border-red-400/50 hover:bg-red-500/14 disabled:cursor-not-allowed disabled:opacity-50"
                           >
@@ -812,6 +920,29 @@ export default function AccountTaskPage({
                               <Trash2 className="h-3 w-3" />
                             )}
                             删除
+                          </button>
+                        ) : item.kind === "ai_job" && item.deletable ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const job = skillRuns.find(
+                                (entry) => entry.id === item.id,
+                              );
+                              if (!job) {
+                                return;
+                              }
+                              void handleDeleteSkillRun(job, item.title);
+                            }}
+                            disabled={deleteSkillRunMutation.isPending}
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-red-500/25 bg-red-500/8 px-3 py-1.5 text-xs font-medium text-red-300 transition-all hover:border-red-400/50 hover:bg-red-500/14 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {deleteSkillRunMutation.isPending &&
+                            deleteSkillRunMutation.variables?.id === item.id ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3 w-3" />
+                            )}
+                            删除计划
                           </button>
                         ) : null}
                       </div>

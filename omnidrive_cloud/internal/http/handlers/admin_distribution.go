@@ -35,6 +35,10 @@ type openPartnerProfileRequest struct {
 	UserIdentifier string `json:"userIdentifier"`
 }
 
+type updatePartnerProfileRequest struct {
+	Status string `json:"status"`
+}
+
 type createDistributionRuleRequest struct {
 	Name                     string  `json:"name"`
 	PromoterUserID           *string `json:"promoterUserId"`
@@ -47,6 +51,11 @@ type createDistributionRuleRequest struct {
 type createDistributionSettlementRequest struct {
 	PromoterUserID *string `json:"promoterUserId"`
 	Note           *string `json:"note"`
+}
+
+type updateDistributionRelationRequest struct {
+	Status string  `json:"status"`
+	Notes  *string `json:"notes"`
 }
 
 func NewAdminDistributionHandler(app *appstate.App) *AdminDistributionHandler {
@@ -123,6 +132,54 @@ func (h *AdminDistributionHandler) OpenPartner(w http.ResponseWriter, r *http.Re
 	})
 
 	render.JSON(w, http.StatusCreated, profile)
+}
+
+func (h *AdminDistributionHandler) UpdatePartner(w http.ResponseWriter, r *http.Request) {
+	userID := strings.TrimSpace(chi.URLParam(r, "userId"))
+	if userID == "" {
+		render.Error(w, http.StatusBadRequest, "userId is required")
+		return
+	}
+
+	var payload updatePartnerProfileRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	admin := httpcontext.CurrentAdmin(r.Context())
+	profile, err := h.app.Store.SetPartnerProfileStatus(r.Context(), userID, payload.Status)
+	if err != nil {
+		switch err {
+		case store.ErrPartnerProfileUserMiss:
+			render.Error(w, http.StatusNotFound, "Partner profile not found")
+		case store.ErrPartnerProfileStatusInvalid:
+			render.Error(w, http.StatusBadRequest, err.Error())
+		default:
+			render.Error(w, http.StatusInternalServerError, "Failed to update partner profile")
+		}
+		return
+	}
+
+	recordAdminAuditLog(h.app, r.Context(), store.CreateAdminAuditLogInput{
+		AdminUserID:  stringPtr(admin.ID),
+		AdminEmail:   stringPtr(admin.Email),
+		AdminName:    stringPtr(admin.Name),
+		ResourceType: "partner_profile",
+		ResourceID:   stringPtr(profile.UserID),
+		Action:       "status_update",
+		Title:        "更新分销员资格",
+		Source:       "admin_console",
+		Status:       "success",
+		Message:      auditStringPtr("分销员档案状态已更新"),
+		Payload: mustJSONBytes(map[string]any{
+			"userId":      profile.UserID,
+			"partnerCode": profile.PartnerCode,
+			"status":      profile.Status,
+		}),
+	})
+
+	render.JSON(w, http.StatusOK, profile)
 }
 
 func (h *AdminDistributionHandler) ListRelations(w http.ResponseWriter, r *http.Request) {
@@ -205,6 +262,59 @@ func (h *AdminDistributionHandler) CreateRelation(w http.ResponseWriter, r *http
 	})
 
 	render.JSON(w, http.StatusCreated, record)
+}
+
+func (h *AdminDistributionHandler) UpdateRelation(w http.ResponseWriter, r *http.Request) {
+	relationID := strings.TrimSpace(chi.URLParam(r, "relationId"))
+	if relationID == "" {
+		render.Error(w, http.StatusBadRequest, "relationId is required")
+		return
+	}
+
+	var payload updateDistributionRelationRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	admin := httpcontext.CurrentAdmin(r.Context())
+	record, err := h.app.Store.UpdateDistributionRelation(r.Context(), store.UpdateDistributionRelationInput{
+		RelationID: relationID,
+		Status:     payload.Status,
+		Notes:      payload.Notes,
+	})
+	if err != nil {
+		switch err {
+		case store.ErrDistributionRelationNotFound:
+			render.Error(w, http.StatusNotFound, "Distribution relation not found")
+		case store.ErrDistributionRelationStatusInvalid:
+			render.Error(w, http.StatusBadRequest, err.Error())
+		default:
+			render.Error(w, http.StatusInternalServerError, "Failed to update distribution relation")
+		}
+		return
+	}
+
+	recordAdminAuditLog(h.app, r.Context(), store.CreateAdminAuditLogInput{
+		AdminUserID:  stringPtr(admin.ID),
+		AdminEmail:   stringPtr(admin.Email),
+		AdminName:    stringPtr(admin.Name),
+		ResourceType: "distribution_relation",
+		ResourceID:   stringPtr(record.ID),
+		Action:       "status_update",
+		Title:        "更新分销关系",
+		Source:       "admin_console",
+		Status:       "success",
+		Message:      auditStringPtr("分销关系状态已更新"),
+		Payload: mustJSONBytes(map[string]any{
+			"relationId":     record.ID,
+			"promoterUserId": record.Promoter.ID,
+			"inviteeUserId":  record.Invitee.ID,
+			"status":         record.Status,
+		}),
+	})
+
+	render.JSON(w, http.StatusOK, record)
 }
 
 func (h *AdminDistributionHandler) ListRules(w http.ResponseWriter, r *http.Request) {

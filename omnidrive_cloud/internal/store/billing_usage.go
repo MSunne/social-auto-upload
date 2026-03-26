@@ -53,6 +53,19 @@ type ApplyUsageBillingResult struct {
 	Details                    []UsageBillingDetail `json:"details"`
 }
 
+type UsageBillingQueuePreviewItem struct {
+	Input               ApplyUsageBillingInput  `json:"input"`
+	Result              ApplyUsageBillingResult `json:"result"`
+	CreditBalanceBefore int64                   `json:"creditBalanceBefore"`
+	CreditBalanceAfter  int64                   `json:"creditBalanceAfter"`
+}
+
+type usageBillingQueueEvaluation struct {
+	Input   ApplyUsageBillingInput
+	Metrics []ApplyUsageMetricInput
+	Rules   map[string]pricingRuleRecord
+}
+
 type pricingRuleRecord struct {
 	ID                string
 	MeterCode         string
@@ -185,6 +198,150 @@ func (s *Store) PreviewUsageBilling(ctx context.Context, input ApplyUsageBilling
 		return nil, err
 	}
 	return result, nil
+}
+
+func (s *Store) PreviewUsageBillingQueue(ctx context.Context, inputs []ApplyUsageBillingInput) ([]UsageBillingQueuePreviewItem, error) {
+	if len(inputs) == 0 {
+		return []UsageBillingQueuePreviewItem{}, nil
+	}
+
+	userID := strings.TrimSpace(inputs[0].UserID)
+	if userID == "" {
+		return nil, fmt.Errorf("user id is required")
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	walletBalance, err := ensureWalletAndLockTx(ctx, tx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	quotaAccounts := make(map[string][]*quotaAccountRecord)
+	loadedQuotaMeters := make(map[string]struct{})
+	evaluations := make([]usageBillingQueueEvaluation, 0, len(inputs))
+
+	for _, input := range inputs {
+		if strings.TrimSpace(input.UserID) != userID {
+			return nil, fmt.Errorf("preview usage billing queue requires a single user")
+		}
+
+		rules, err := loadPricingRulesForUsageTx(ctx, tx, input.ModelName, input.JobType)
+		if err != nil {
+			return nil, err
+		}
+
+		metrics := make([]ApplyUsageMetricInput, 0, len(input.Metrics))
+		missingQuotaMeterCodes := make(map[string]struct{})
+		for _, metric := range input.Metrics {
+			if strings.TrimSpace(metric.MeterCode) == "" || metric.Quantity <= 0 {
+				continue
+			}
+			metrics = append(metrics, metric)
+			if rule, ok := rules[strings.TrimSpace(metric.MeterCode)]; ok && rule.QuotaMeterCode != nil {
+				quotaMeterCode := strings.TrimSpace(*rule.QuotaMeterCode)
+				if quotaMeterCode != "" {
+					if _, loaded := loadedQuotaMeters[quotaMeterCode]; !loaded {
+						missingQuotaMeterCodes[quotaMeterCode] = struct{}{}
+					}
+				}
+			}
+		}
+
+		if len(missingQuotaMeterCodes) > 0 {
+			loadedAccounts, err := loadQuotaAccountsForUsageTx(ctx, tx, userID, missingQuotaMeterCodes)
+			if err != nil {
+				return nil, err
+			}
+			for meterCode, accounts := range loadedAccounts {
+				quotaAccounts[meterCode] = accounts
+				loadedQuotaMeters[meterCode] = struct{}{}
+			}
+			for meterCode := range missingQuotaMeterCodes {
+				if _, exists := loadedQuotaMeters[meterCode]; !exists {
+					loadedQuotaMeters[meterCode] = struct{}{}
+				}
+			}
+		}
+
+		evaluations = append(evaluations, usageBillingQueueEvaluation{
+			Input:   input,
+			Metrics: metrics,
+			Rules:   rules,
+		})
+	}
+
+	return previewUsageBillingQueueEvaluations(evaluations, walletBalance, quotaAccounts), nil
+}
+
+func previewUsageBillingQueueEvaluations(evaluations []usageBillingQueueEvaluation, walletBalance int64, quotaAccounts map[string][]*quotaAccountRecord) []UsageBillingQueuePreviewItem {
+	items := make([]UsageBillingQueuePreviewItem, 0, len(evaluations))
+	for _, evaluation := range evaluations {
+		localWalletBalance := walletBalance
+		localQuotaAccounts := cloneQuotaAccountsForPreview(quotaAccounts)
+		item := UsageBillingQueuePreviewItem{
+			Input:               evaluation.Input,
+			CreditBalanceBefore: walletBalance,
+			Result: ApplyUsageBillingResult{
+				BillStatus: "billed",
+				Details:    make([]UsageBillingDetail, 0, len(evaluation.Metrics)),
+			},
+		}
+		if len(evaluation.Metrics) == 0 {
+			item.Result.BillStatus = "skipped"
+			item.Result.BillMessage = "no billable usage metrics"
+			item.CreditBalanceAfter = walletBalance
+			items = append(items, item)
+			continue
+		}
+
+		for _, metric := range evaluation.Metrics {
+			detail, plannedWallet, _, ok := planUsageCharge(metric, evaluation.Rules[strings.TrimSpace(metric.MeterCode)], localWalletBalance, localQuotaAccounts)
+			item.Result.Details = append(item.Result.Details, detail)
+			if !ok {
+				item.Result.BillStatus = "failed"
+				if item.Result.BillMessage == "" {
+					item.Result.BillMessage = detail.BillMessage
+				}
+				break
+			}
+			localWalletBalance -= plannedWallet.debitCredits
+			item.Result.TotalCredits += plannedWallet.debitCredits
+			item.Result.DistributionReleaseCredits += detail.DistributionReleaseCredits
+		}
+
+		if item.Result.BillStatus == "billed" {
+			walletBalance = localWalletBalance
+			quotaAccounts = localQuotaAccounts
+		}
+		item.CreditBalanceAfter = walletBalance
+		items = append(items, item)
+	}
+	return items
+}
+
+func cloneQuotaAccountsForPreview(source map[string][]*quotaAccountRecord) map[string][]*quotaAccountRecord {
+	if len(source) == 0 {
+		return map[string][]*quotaAccountRecord{}
+	}
+
+	cloned := make(map[string][]*quotaAccountRecord, len(source))
+	for meterCode, accounts := range source {
+		copiedAccounts := make([]*quotaAccountRecord, 0, len(accounts))
+		for _, account := range accounts {
+			if account == nil {
+				continue
+			}
+			copied := *account
+			copiedAccounts = append(copiedAccounts, &copied)
+		}
+		cloned[meterCode] = copiedAccounts
+	}
+	return cloned
 }
 
 func (s *Store) ApplyUsageBilling(ctx context.Context, input ApplyUsageBillingInput) (*ApplyUsageBillingResult, error) {

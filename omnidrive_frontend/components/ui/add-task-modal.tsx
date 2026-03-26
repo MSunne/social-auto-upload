@@ -19,6 +19,7 @@ import {
   FileText,
 } from "lucide-react";
 import type { Skill } from "@/lib/types";
+import { getModelDisplayName } from "@/lib/model-display";
 
 interface AddTaskModalProps {
   isOpen: boolean;
@@ -434,7 +435,7 @@ export function AddTaskModal({
                           <Zap className="h-3 w-3" /> 生成主模型 (CORE MODEL)
                         </span>
                         <span className="text-base font-bold text-white flex items-center gap-2">
-                          {detailSkill.modelName}
+                          {getModelDisplayName(detailSkill)}
                         </span>
                       </div>
                       

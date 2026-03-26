@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Cpu, Loader2, RefreshCw, RotateCcw, Search, XCircle } from "lucide-react";
 import { PageHeader } from "@/components/ui/common";
 import { useAdminAIJobs, useBulkActionAIJobs } from "@/lib/hooks/useAdminAIJobs";
+import { getModelDisplayName } from "@/lib/model-display";
 import type { AdminAIJobRow } from "@/lib/types";
 import { AIJobDetailDrawer } from "./ai-job-detail-drawer";
 import { describeJobSchedule, extractJobScheduleMeta } from "./schedule-meta";
@@ -118,7 +119,7 @@ function JobRow({
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <p className="font-medium text-[var(--color-text-primary)]">{row.job.modelName}</p>
+              <p className="font-medium text-[var(--color-text-primary)]">{getModelDisplayName(row.job)}</p>
               <StatusPill status={row.job.status} />
             </div>
             <p className="mt-1 text-xs text-[var(--color-text-secondary)]">

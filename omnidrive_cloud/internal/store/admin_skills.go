@@ -26,7 +26,7 @@ func (s *Store) ListAdminSkills(ctx context.Context, filter AdminSkillListFilter
 	argIndex := 1
 
 	if query := strings.TrimSpace(filter.Query); query != "" {
-		whereParts = append(whereParts, fmt.Sprintf("(name ILIKE $%d OR output_type ILIKE $%d OR model_name ILIKE $%d)", argIndex, argIndex, argIndex))
+		whereParts = append(whereParts, fmt.Sprintf("(name ILIKE $%d OR output_type ILIKE $%d OR model_name ILIKE $%d OR COALESCE((SELECT am.model_alias FROM ai_models am WHERE am.model_name = product_skills.model_name LIMIT 1), '') ILIKE $%d)", argIndex, argIndex, argIndex, argIndex))
 		args = append(args, ilikePattern(query))
 		argIndex++
 	}
@@ -54,7 +54,9 @@ func (s *Store) ListAdminSkills(ctx context.Context, filter AdminSkillListFilter
 	}
 
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
-		SELECT id, name, output_type, model_name, is_enabled
+		SELECT id, name, output_type, model_name,
+		       COALESCE((SELECT am.model_alias FROM ai_models am WHERE am.model_name = product_skills.model_name LIMIT 1), product_skills.model_name) AS model_alias,
+		       is_enabled
 		FROM product_skills
 		%s
 		ORDER BY created_at DESC
@@ -73,6 +75,7 @@ func (s *Store) ListAdminSkills(ctx context.Context, filter AdminSkillListFilter
 			&item.Name,
 			&item.OutputType,
 			&item.ModelName,
+			&item.ModelAlias,
 			&item.IsEnabled,
 		); err != nil {
 			return nil, 0, err

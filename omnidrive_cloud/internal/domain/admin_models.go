@@ -124,15 +124,17 @@ type AdminSkillSummary struct {
 	Name       string `json:"name"`
 	OutputType string `json:"outputType"`
 	ModelName  string `json:"modelName"`
+	ModelAlias string `json:"modelAlias,omitempty"`
 	IsEnabled  bool   `json:"isEnabled"`
 }
 
 type AdminAIModelSummary struct {
-	ID        string `json:"id"`
-	Vendor    string `json:"vendor"`
-	ModelName string `json:"modelName"`
-	Category  string `json:"category"`
-	IsEnabled bool   `json:"isEnabled"`
+	ID         string `json:"id"`
+	Vendor     string `json:"vendor"`
+	ModelName  string `json:"modelName"`
+	ModelAlias string `json:"modelAlias,omitempty"`
+	Category   string `json:"category"`
+	IsEnabled  bool   `json:"isEnabled"`
 }
 
 type AdminMediaAccountRow struct {

@@ -705,19 +705,12 @@ func (h *AIHandler) OpenAIChatCompletions(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	baseURL := ""
-	if model.BaseURL != nil {
-		baseURL = strings.TrimSpace(*model.BaseURL)
-	}
+	baseURL, apiKey := aiclient.ResolveModelRuntimeConfig(h.app.Config, model)
 	if baseURL == "" {
 		render.Error(w, http.StatusInternalServerError, "AI model baseUrl is not configured")
 		return
 	}
 
-	apiKey := ""
-	if model.APIKey != nil {
-		apiKey = strings.TrimSpace(*model.APIKey)
-	}
 	if apiKey == "" {
 		render.Error(w, http.StatusInternalServerError, "AI model apiKey is not configured")
 		return
@@ -764,13 +757,13 @@ func (h *AIHandler) OpenAIChatCompletions(w http.ResponseWriter, r *http.Request
 
 	if openAIParseBool(payload["stream"]) {
 		if err := streamOpenAIProxyResponse(w, resp.Body); err != nil {
-			h.app.Logger.Warn("stream openai proxy response failed error={}", err)
+			h.app.Logger.Warn("stream openai proxy response failed", "error", err)
 		}
 		return
 	}
 
 	if _, err := io.Copy(w, resp.Body); err != nil {
-		h.app.Logger.Warn("copy openai proxy response failed error={}", err)
+		h.app.Logger.Warn("copy openai proxy response failed", "error", err)
 	}
 }
 
@@ -2651,9 +2644,11 @@ func isAllowedAIJobTransition(current string, next string) bool {
 	case "scheduled":
 		return next == "queued" || next == "running" || next == "cancelled" || next == "failed"
 	case "queued":
-		return next == "scheduled" || next == "running" || next == "cancelled" || next == "failed"
+		return next == "scheduled" || next == "running" || next == "waiting_recharge" || next == "cancelled" || next == "failed"
 	case "running":
-		return next == "queued" || next == "success" || next == "completed" || next == "failed" || next == "cancelled"
+		return next == "queued" || next == "waiting_recharge" || next == "success" || next == "completed" || next == "failed" || next == "cancelled"
+	case "waiting_recharge":
+		return next == "queued" || next == "running" || next == "scheduled" || next == "cancelled" || next == "failed"
 	case "failed", "cancelled", "success", "completed":
 		return false
 	default:
@@ -2673,6 +2668,9 @@ func computeAIJobActions(job *domain.AIJob, artifactCount int) domain.AIJobActio
 
 	switch job.Status {
 	case "queued":
+		state.CanEdit = true
+		state.CanCancel = true
+	case "waiting_recharge":
 		state.CanEdit = true
 		state.CanCancel = true
 	case "running":
@@ -2696,6 +2694,8 @@ func buildAIJobBridgeState(job *domain.AIJob, artifacts []domain.AIJobArtifact, 
 		switch job.Status {
 		case "running":
 			stage = "generating"
+		case "waiting_recharge":
+			stage = "waiting_recharge"
 		case "success", "completed":
 			stage = "awaiting_omnibull_import"
 		case "failed":
@@ -2723,6 +2723,8 @@ func buildAIJobBridgeState(job *domain.AIJob, artifacts []domain.AIJobArtifact, 
 		switch job.Status {
 		case "running":
 			stage = "generating"
+		case "waiting_recharge":
+			stage = "waiting_recharge"
 		case "success", "completed":
 			stage = "output_ready"
 		case "failed":

@@ -8,6 +8,7 @@ import threading
 import time
 import uuid
 import socket
+from datetime import datetime, timezone
 from urllib import error as urllib_error
 from urllib.parse import urlencode
 from urllib import request as urllib_request
@@ -90,6 +91,18 @@ OPENCLAW_OMNIDRIVE_MULTIMODAL_MODELS = {
     "gpt-5.4",
     "qwen3.5-plus",
 }
+OPENCLAW_OMNIDRIVE_RUNTIME_SYNC_INTERVAL_SECONDS = max(
+    60,
+    int(getattr(app_conf, "OPENCLAW_OMNIDRIVE_RUNTIME_SYNC_INTERVAL_SECONDS", 300)),
+)
+OPENCLAW_OMNIDRIVE_MODEL_SYNC_INTERVAL_SECONDS = max(
+    OPENCLAW_OMNIDRIVE_RUNTIME_SYNC_INTERVAL_SECONDS,
+    int(getattr(app_conf, "OPENCLAW_OMNIDRIVE_MODEL_SYNC_INTERVAL_SECONDS", 1800)),
+)
+OPENCLAW_OMNIDRIVE_TOKEN_REFRESH_MARGIN_SECONDS = max(
+    30,
+    int(getattr(app_conf, "OPENCLAW_OMNIDRIVE_TOKEN_REFRESH_MARGIN_SECONDS", 300)),
+)
 OMNIDRIVE_OPENAI_LOCAL_TOOL_GUARD_TEXT = str(
     getattr(
         app_conf,
@@ -221,7 +234,11 @@ OMNIDRIVE_MATERIAL_SYNC_INTERVAL = int(getattr(app_conf, 'OMNIDRIVE_MATERIAL_SYN
 OMNIDRIVE_SKILL_SYNC_INTERVAL = int(getattr(app_conf, 'OMNIDRIVE_SKILL_SYNC_INTERVAL', 120))
 OMNIDRIVE_PUBLISH_SYNC_INTERVAL = int(getattr(app_conf, 'OMNIDRIVE_PUBLISH_SYNC_INTERVAL', 5))
 OMNIDRIVE_MATERIAL_SYNC_MAX_FILES = int(getattr(app_conf, 'OMNIDRIVE_MATERIAL_SYNC_MAX_FILES', 1000))
-OMNIBULL_PUBLISH_WORKERS = int(getattr(app_conf, 'OMNIBULL_PUBLISH_WORKERS', 3))
+OMNIBULL_PUBLISH_WORKERS = int(getattr(app_conf, 'OMNIBULL_PUBLISH_WORKERS', 1))
+OMNIBULL_PUBLISH_DISPATCH_INTERVAL_SECONDS = max(
+    0,
+    int(getattr(app_conf, 'OMNIBULL_PUBLISH_DISPATCH_INTERVAL_SECONDS', 5)),
+)
 OMNIBULL_TASK_RETENTION_DAYS = int(getattr(app_conf, 'OMNIBULL_TASK_RETENTION_DAYS', 7))
 OMNIBULL_API_KEY = str(getattr(app_conf, 'OMNIBULL_API_KEY', '')).strip()
 OMNIBULL_MATERIAL_ROOTS = build_material_roots(
@@ -273,7 +290,11 @@ publish_task_manager = PublishTaskManager(
     retention_days=OMNIBULL_TASK_RETENTION_DAYS,
     sync_client=CloudSyncClient(CLOUD_DEMO_URL, RESOLVED_DEVICE_NAME, CLOUD_AGENT_KEY) if CLOUD_DEMO_URL and CLOUD_AGENT_KEY else None,
     material_roots=OMNIBULL_MATERIAL_ROOTS,
+    dispatch_interval_seconds=OMNIBULL_PUBLISH_DISPATCH_INTERVAL_SECONDS,
 )
+openclaw_omnidrive_runtime_sync_thread = None
+openclaw_omnidrive_runtime_sync_lock = threading.Lock()
+openclaw_omnidrive_runtime_sync_stop = threading.Event()
 
 # 限制上传文件大小为160MB
 app.config['MAX_CONTENT_LENGTH'] = 160 * 1024 * 1024
@@ -896,10 +917,18 @@ def sync_openclaw_omnidrive_model_configs(models, api_base_url="", access_token=
             defaults_config = data.get("agents", {}).get("defaults", {})
             defaults = defaults_config.get("models")
             if isinstance(defaults, dict):
+                for legacy_key in (
+                    "omnidrive/default-chat",
+                    "omnidrive/default",
+                    "omnidrive/omnidrive-default-chat",
+                    "omnidrive/gemini-3-1-pro-preview",
+                    "omnidrive/gpt-5-4",
+                    "omnidrive/qwen3-5-plus",
+                ):
+                    defaults.pop(legacy_key, None)
                 alias_candidates = {}
                 if default_chat_model:
                     alias_candidates[f"omnidrive/{default_chat_model}"] = "omni"
-                    defaults.pop("omnidrive/default-chat", None)
                 else:
                     alias_candidates["omnidrive/default-chat"] = "omni"
                 for model_id, alias in (
@@ -909,7 +938,7 @@ def sync_openclaw_omnidrive_model_configs(models, api_base_url="", access_token=
                 ):
                     alias_candidates[f"omnidrive/{model_id}"] = alias
                 for key, alias in alias_candidates.items():
-                    defaults.setdefault(key, {"alias": alias})
+                    defaults[key] = {"alias": alias}
 
         serialized = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
         try:
@@ -976,28 +1005,62 @@ def _resolve_requested_omnidrive_chat_model_name(raw_model_name, default_model_n
 
 
 def sync_openclaw_omnidrive_models_from_cloud():
-    session = get_omnidrive_device_session_data()
-    status_code, payload = omnidrive_cloud_json_request(
-        "GET",
-        "/api/v1/ai/models",
-        access_token=session["accessToken"],
-        query={"category": "chat"},
-        timeout=30,
-        api_base_url=session.get("apiBaseUrl"),
-    )
-    if status_code >= 400:
-        message = ""
-        if isinstance(payload, dict):
-            message = str(payload.get("error") or payload.get("message") or payload.get("msg") or "").strip()
-        raise RuntimeError(message or "列出 OmniDrive 聊天模型失败")
+    result = refresh_openclaw_omnidrive_runtime_config(include_models=True)
+    return result["changedPaths"]
 
-    model_items = _extract_omnidrive_chat_models(payload)
-    return sync_openclaw_omnidrive_model_configs(
+
+def refresh_openclaw_omnidrive_runtime_config(include_models=False):
+    session = get_omnidrive_device_session_data()
+    model_items = None
+    if include_models:
+        status_code, payload = omnidrive_cloud_json_request(
+            "GET",
+            "/api/v1/ai/models",
+            access_token=session["accessToken"],
+            query={"category": "chat"},
+            timeout=30,
+            api_base_url=session.get("apiBaseUrl"),
+        )
+        if status_code >= 400:
+            message = ""
+            if isinstance(payload, dict):
+                message = str(payload.get("error") or payload.get("message") or payload.get("msg") or "").strip()
+            raise RuntimeError(message or "列出 OmniDrive 聊天模型失败")
+        model_items = _extract_omnidrive_chat_models(payload)
+
+    changed_paths = sync_openclaw_omnidrive_model_configs(
         model_items,
         api_base_url=session.get("apiBaseUrl"),
         access_token=session.get("accessToken"),
         default_chat_model=session.get("device", {}).get("defaultChatModel"),
     )
+    return {
+        "session": session,
+        "modelItems": model_items,
+        "changedPaths": changed_paths,
+    }
+
+
+def _parse_omnidrive_expiry_epoch(expires_at):
+    if not expires_at:
+        return None
+    if isinstance(expires_at, (int, float)):
+        return float(expires_at)
+
+    text = str(expires_at or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
 
 
 def ensure_openclaw_omnidrive_models_synced():
@@ -1007,6 +1070,66 @@ def ensure_openclaw_omnidrive_models_synced():
             app_logger.info("synced OpenClaw OmniDrive model configs paths={}", ",".join(changed_paths))
     except Exception as exc:
         app_logger.warning("sync OpenClaw OmniDrive model configs skipped error={}", exc)
+
+
+def _openclaw_omnidrive_runtime_sync_loop():
+    next_model_sync_at = 0.0
+    while not openclaw_omnidrive_runtime_sync_stop.is_set():
+        sleep_seconds = OPENCLAW_OMNIDRIVE_RUNTIME_SYNC_INTERVAL_SECONDS
+        include_models = time.time() >= next_model_sync_at
+
+        try:
+            result = refresh_openclaw_omnidrive_runtime_config(include_models=include_models)
+            expires_epoch = _parse_omnidrive_expiry_epoch(result["session"].get("expiresAt"))
+            if include_models:
+                next_model_sync_at = time.time() + OPENCLAW_OMNIDRIVE_MODEL_SYNC_INTERVAL_SECONDS
+            if expires_epoch:
+                seconds_until_expiry = expires_epoch - time.time()
+                if seconds_until_expiry > 0:
+                    refresh_after = seconds_until_expiry - OPENCLAW_OMNIDRIVE_TOKEN_REFRESH_MARGIN_SECONDS
+                    sleep_seconds = min(sleep_seconds, refresh_after)
+        except Exception as exc:
+            log_throttled(
+                app_logger,
+                "WARNING",
+                "openclaw_omnidrive_runtime_sync:error",
+                OPENCLAW_OMNIDRIVE_RUNTIME_SYNC_INTERVAL_SECONDS,
+                "OpenClaw OmniDrive runtime sync failed interval={} error={}",
+                OPENCLAW_OMNIDRIVE_RUNTIME_SYNC_INTERVAL_SECONDS,
+                exc,
+            )
+
+        openclaw_omnidrive_runtime_sync_stop.wait(max(60, int(sleep_seconds)))
+
+
+def ensure_openclaw_omnidrive_runtime_sync_started():
+    global openclaw_omnidrive_runtime_sync_thread
+
+    if not OMNIDRIVE_AGENT_ENABLED or not OMNIDRIVE_BASE_URL or not OMNIDRIVE_AGENT_KEY:
+        return
+    if not any(path.exists() for path in OPENCLAW_OMNIDRIVE_CONFIG_PATHS):
+        return
+
+    with openclaw_omnidrive_runtime_sync_lock:
+        if (
+            openclaw_omnidrive_runtime_sync_thread is not None
+            and openclaw_omnidrive_runtime_sync_thread.is_alive()
+        ):
+            return
+
+        openclaw_omnidrive_runtime_sync_stop.clear()
+        openclaw_omnidrive_runtime_sync_thread = threading.Thread(
+            target=_openclaw_omnidrive_runtime_sync_loop,
+            name="openclaw-omnidrive-runtime-sync",
+            daemon=True,
+        )
+        openclaw_omnidrive_runtime_sync_thread.start()
+        app_logger.info(
+            "started OpenClaw OmniDrive runtime sync interval={} model_sync_interval={} refresh_margin={}",
+            OPENCLAW_OMNIDRIVE_RUNTIME_SYNC_INTERVAL_SECONDS,
+            OPENCLAW_OMNIDRIVE_MODEL_SYNC_INTERVAL_SECONDS,
+            OPENCLAW_OMNIDRIVE_TOKEN_REFRESH_MARGIN_SECONDS,
+        )
 
 
 def _flatten_openai_message_content(content):
@@ -3452,6 +3575,7 @@ if should_boot_background_services():
     ensure_cloud_agent_started()
     ensure_omnidrive_agent_started()
     ensure_openclaw_omnidrive_models_synced()
+    ensure_openclaw_omnidrive_runtime_sync_started()
 # SSE 流生成器函数
 def sse_stream(status_queue):
     while True:
@@ -3467,5 +3591,6 @@ if __name__ == '__main__':
     ensure_cloud_agent_started()
     ensure_omnidrive_agent_started()
     ensure_openclaw_omnidrive_models_synced()
+    ensure_openclaw_omnidrive_runtime_sync_started()
     backend_port = int(os.getenv("SAU_BACKEND_PORT", "5409"))
     app.run(host='0.0.0.0', port=backend_port, threaded=True)

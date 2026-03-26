@@ -1,6 +1,9 @@
 package store
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 func (s *Store) CreateAuditEvent(ctx context.Context, input CreateAuditEventInput) error {
 	_, err := s.pool.Exec(ctx, `
@@ -10,6 +13,23 @@ func (s *Store) CreateAuditEvent(ctx context.Context, input CreateAuditEventInpu
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`, input.ID, input.OwnerUserID, input.ResourceType, input.ResourceID, input.Action, input.Title, input.Source, input.Status, input.Message, input.Payload)
 	return err
+}
+
+func (s *Store) HasRecentAuditEvent(ctx context.Context, ownerUserID string, action string, since time.Time) (bool, error) {
+	var exists bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM audit_events
+			WHERE owner_user_id = $1
+			  AND action = $2
+			  AND created_at >= $3
+		)
+	`, ownerUserID, action, since.UTC()).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
 }
 
 type CreateAdminAuditLogInput struct {

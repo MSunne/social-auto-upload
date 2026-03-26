@@ -272,7 +272,9 @@ class OmniDriveAITaskManager:
         prompt=None,
         payload=None,
     ):
-        local_status = self._map_cloud_to_local_status(cloud_status, current_status="queued_cloud")
+        current_task = self.get_task(task_uuid)
+        current_status = str((current_task or {}).get("status") or "queued_cloud").strip() or "queued_cloud"
+        local_status = self._map_cloud_to_local_status(cloud_status, current_status=current_status)
         finished_at = self._finished_at_for_status(local_status)
         payload_json = None
         if payload is not None:
@@ -538,6 +540,8 @@ class OmniDriveAITaskManager:
         cloud_status = str(cloud_status or "").strip()
         if cloud_status == "scheduled":
             return "scheduled"
+        if cloud_status == "waiting_recharge":
+            return "waiting_recharge"
         if cloud_status in {"queued", "pending"}:
             return "queued_cloud"
         if cloud_status == "running":

@@ -18,6 +18,7 @@ import {
   ChevronUp,
 } from "lucide-react";
 import { deleteSkill, listSkills, listSkillAssets } from "@/lib/services";
+import { getModelDisplayName } from "@/lib/model-display";
 import type { Skill, SkillAsset } from "@/lib/types";
 import { PageHeader, EmptyState } from "@/components/ui/common";
 import { SkillEditorModal } from "@/components/ui/skill-editor-modal";
@@ -284,7 +285,7 @@ export default function SkillsPage() {
                     产出 <span className="text-text-primary">{getOutputLabel(skill.outputType)}</span>
                   </span>
                   <span className="inline-flex items-center gap-1 rounded-lg bg-white/6 px-2 py-1 text-[11px] font-medium text-text-secondary">
-                    模型 <span className="text-text-primary truncate max-w-[120px]">{skill.modelName || "未配置"}</span>
+                    模型 <span className="text-text-primary truncate max-w-[120px]">{getModelDisplayName(skill)}</span>
                   </span>
                   <span className="inline-flex items-center gap-1 rounded-lg bg-white/6 px-2 py-1 text-[11px] font-medium text-text-secondary">
                     分镜 <span className="text-text-primary">{skill.storyboardEnabled !== false ? "启用" : "关闭"}</span>

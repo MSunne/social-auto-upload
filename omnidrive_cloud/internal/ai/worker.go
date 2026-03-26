@@ -24,6 +24,7 @@ type Worker struct {
 	pollInterval      time.Duration
 	videoPollInterval time.Duration
 	videoTimeout      time.Duration
+	staleQueueTimeout time.Duration
 	concurrency       int
 	activeJobs        sync.Map
 	sem               chan struct{}
@@ -37,6 +38,8 @@ type requeueExecutionError struct {
 type executionBillingBlockedError struct {
 	Result *store.ApplyUsageBillingResult
 }
+
+const executionBillingRetryDelay = time.Minute
 
 func (e *requeueExecutionError) Error() string {
 	if e == nil || strings.TrimSpace(e.Message) == "" {
@@ -74,6 +77,7 @@ func NewWorker(app *appstate.App) (*Worker, error) {
 	if videoTimeoutSeconds <= 0 {
 		videoTimeoutSeconds = 600
 	}
+	staleQueueTimeoutSeconds := app.Config.AIStaleQueueTimeoutSeconds
 
 	return &Worker{
 		app:               app,
@@ -81,6 +85,7 @@ func NewWorker(app *appstate.App) (*Worker, error) {
 		pollInterval:      time.Duration(pollSeconds) * time.Second,
 		videoPollInterval: time.Duration(videoPollSeconds) * time.Second,
 		videoTimeout:      time.Duration(videoTimeoutSeconds) * time.Second,
+		staleQueueTimeout: time.Duration(staleQueueTimeoutSeconds) * time.Second,
 		concurrency:       concurrency,
 		sem:               make(chan struct{}, concurrency),
 	}, nil
@@ -95,6 +100,7 @@ func (w *Worker) Start(parent context.Context) func() {
 		"poll_interval", w.pollInterval.String(),
 		"video_poll_interval", w.videoPollInterval.String(),
 		"video_timeout", w.videoTimeout.String(),
+		"stale_queue_timeout", w.staleQueueTimeout.String(),
 		"concurrency", w.concurrency,
 	)
 
@@ -153,6 +159,14 @@ func (w *Worker) runOnce(ctx context.Context) {
 	if limit < 8 {
 		limit = 8
 	}
+	if w.staleQueueTimeout > 0 {
+		timedOut, err := w.app.Store.FailStaleQueuedExecutableAIJobs(pollCtx, time.Now().UTC().Add(-w.staleQueueTimeout), limit)
+		if err != nil {
+			w.app.Logger.Error("ai worker failed to auto-fail stale queued ai jobs", "error", err, "timeout", w.staleQueueTimeout.String())
+		} else if len(timedOut) > 0 {
+			w.app.Logger.Warn("ai worker auto-failed stale queued ai jobs", "count", len(timedOut), "timeout", w.staleQueueTimeout.String())
+		}
+	}
 	jobs, err := w.app.Store.ListExecutableAIJobs(pollCtx, limit)
 	if err != nil {
 		w.app.Logger.Error("ai worker failed to list executable ai jobs", "error", err, "limit", limit)
@@ -201,17 +215,12 @@ func (w *Worker) processJob(ctx context.Context, job domain.AIJob) {
 		var blockedErr *executionBillingBlockedError
 		if errors.As(err, &blockedErr) {
 			message := blockedErr.Error()
-			if _, failErr := w.failJob(ctx, claimed.ID, leaseToken, message, nil); failErr != nil {
-				w.app.Logger.Error("ai worker failed to mark billing-blocked ai job as failed", "job_id", claimed.ID, "error", failErr)
+			if _, pauseErr := w.pauseJobForRecharge(ctx, claimed.ID, leaseToken, message, nil, executionBillingRetryDelay); pauseErr != nil {
+				w.app.Logger.Error("ai worker failed to pause billing-blocked ai job", "job_id", claimed.ID, "error", pauseErr)
 				return
 			}
-			w.recordAuditEvent(ctx, claimed, "ai_billing_precheck_failed", "AI 启动前扣费拦截", "failed", stringPtr(message), map[string]any{
-				"jobType":   claimed.JobType,
-				"modelName": claimed.ModelName,
-				"source":    claimed.Source,
-				"billing":   blockedErr.Result,
-			})
-			w.app.Logger.Info("ai worker blocked ai job before execution due to insufficient credits", "job_id", claimed.ID, "job_type", claimed.JobType, "model_name", claimed.ModelName, "bill_message", stringValue(resultBillMessage(blockedErr.Result)))
+			w.recordBillingBlockedAudit(ctx, claimed, message, blockedErr.Result)
+			w.app.Logger.Info("ai worker paused ai job before execution due to insufficient credits", "job_id", claimed.ID, "job_type", claimed.JobType, "model_name", claimed.ModelName, "bill_message", stringValue(resultBillMessage(blockedErr.Result)), "retry_after", executionBillingRetryDelay.String())
 			return
 		}
 
@@ -545,6 +554,27 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 			if artifactKey == "" {
 				artifactKey = safeArtifactKey(artifact.FileName, "video.mp4")
 			}
+			if w.app.Config.AIVideoStandardizeEnabled {
+				originalFileName := artifact.FileName
+				originalSizeBytes := len(artifact.Data)
+				standardizedArtifact, standardizeErr := standardizeVideoArtifact(ctx, *artifact, w.app.Config.AIVideoFFmpegPath)
+				if standardizeErr != nil {
+					return standardizeErr
+				}
+				artifact = &standardizedArtifact
+				w.app.Logger.Info(
+					"ai worker standardized video artifact",
+					"job_id", job.ID,
+					"model_name", job.ModelName,
+					"source_file_name", originalFileName,
+					"output_file_name", artifact.FileName,
+					"source_size_bytes", originalSizeBytes,
+					"output_size_bytes", len(artifact.Data),
+					"video_codec", "h264",
+					"fps", standardizedVideoFPS,
+					"scale_ratio", standardizedVideoScaleRatio,
+				)
+			}
 			input, err := w.saveBinaryArtifact(ctx, job, "video", artifactKey, "apiyi", *artifact)
 			if err != nil {
 				return err
@@ -725,6 +755,22 @@ func (w *Worker) requeueJob(ctx context.Context, jobID string, leaseToken string
 	})
 }
 
+func (w *Worker) requeueJobWithBackoff(ctx context.Context, jobID string, leaseToken string, message string, outputPayload []byte, delay time.Duration) (*domain.AIJob, error) {
+	if delay <= 0 {
+		return w.requeueJob(ctx, jobID, leaseToken, message, outputPayload)
+	}
+	retryAt := time.Now().UTC().Add(delay)
+	return w.app.Store.RequeueCloudAIJobWithBackoff(ctx, jobID, leaseToken, retryAt, stringPtr(message), outputPayload)
+}
+
+func (w *Worker) pauseJobForRecharge(ctx context.Context, jobID string, leaseToken string, message string, outputPayload []byte, delay time.Duration) (*domain.AIJob, error) {
+	retryAt := time.Now().UTC()
+	if delay > 0 {
+		retryAt = retryAt.Add(delay)
+	}
+	return w.app.Store.MarkCloudAIJobWaitingRecharge(ctx, jobID, leaseToken, retryAt, stringPtr(message), outputPayload)
+}
+
 func buildAIExecutionFailureMessage(jobType string, err error) string {
 	if err == nil {
 		return "AI 云端执行失败"
@@ -866,6 +912,22 @@ func (w *Worker) recordAuditEvent(ctx context.Context, job *domain.AIJob, action
 		Payload:      mustJSON(payload),
 	}
 	_ = w.app.Store.CreateAuditEvent(ctx, input)
+}
+
+func (w *Worker) recordBillingBlockedAudit(ctx context.Context, job *domain.AIJob, message string, result *store.ApplyUsageBillingResult) {
+	if job == nil {
+		return
+	}
+	hasRecent, err := w.app.Store.HasRecentAuditEvent(ctx, job.OwnerUserID, "ai_billing_precheck_waiting_recharge", time.Now().UTC().Add(-6*time.Hour))
+	if err == nil && hasRecent {
+		return
+	}
+	w.recordAuditEvent(ctx, job, "ai_billing_precheck_waiting_recharge", "AI 启动前余额不足，等待充值", "waiting_recharge", stringPtr(message), map[string]any{
+		"jobType":   job.JobType,
+		"modelName": job.ModelName,
+		"source":    job.Source,
+		"billing":   result,
+	})
 }
 
 func (w *Worker) applyUsageBilling(ctx context.Context, job *domain.AIJob, input store.ApplyUsageBillingInput) *store.ApplyUsageBillingResult {
@@ -1087,16 +1149,7 @@ func (w *Worker) resolveModelRuntimeConfig(ctx context.Context, modelName string
 	if model == nil {
 		return "", "", fmt.Errorf("ai model not found: %s", modelName)
 	}
-	baseURL := ""
-	if model.BaseURL == nil {
-		baseURL = ""
-	} else {
-		baseURL = strings.TrimSpace(*model.BaseURL)
-	}
-	apiKey := ""
-	if model.APIKey != nil {
-		apiKey = strings.TrimSpace(*model.APIKey)
-	}
+	baseURL, apiKey := ResolveModelRuntimeConfig(w.app.Config, model)
 	return baseURL, apiKey, nil
 }
 

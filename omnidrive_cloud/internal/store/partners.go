@@ -14,8 +14,9 @@ import (
 )
 
 var (
-	ErrPartnerCodeInvalid     = errors.New("partner code is invalid")
-	ErrPartnerProfileUserMiss = errors.New("partner profile user not found")
+	ErrPartnerCodeInvalid          = errors.New("partner code is invalid")
+	ErrPartnerProfileUserMiss      = errors.New("partner profile user not found")
+	ErrPartnerProfileStatusInvalid = errors.New("partner profile status must be active or inactive")
 )
 
 const partnerCodeAlphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
@@ -161,6 +162,57 @@ func (s *Store) OpenPartnerProfile(ctx context.Context, userID string) (*domain.
 		return nil, err
 	}
 	return created, nil
+}
+
+func (s *Store) SetPartnerProfileStatus(ctx context.Context, userID string, status string) (*domain.PartnerProfile, error) {
+	trimmedUserID := strings.TrimSpace(userID)
+	trimmedStatus := strings.TrimSpace(status)
+	if trimmedUserID == "" {
+		return nil, ErrPartnerProfileUserMiss
+	}
+	if trimmedStatus != "active" && trimmedStatus != "inactive" {
+		return nil, ErrPartnerProfileStatusInvalid
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	existing, err := getPartnerProfileByUserIDTx(ctx, tx, trimmedUserID)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		return nil, ErrPartnerProfileUserMiss
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE partner_profiles
+		SET status = $2,
+		    updated_at = NOW()
+		WHERE user_id = $1
+	`, trimmedUserID, trimmedStatus); err != nil {
+		return nil, err
+	}
+
+	if trimmedStatus == "inactive" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE distribution_referrals
+			SET status = 'inactive',
+			    updated_at = NOW()
+			WHERE promoter_user_id = $1
+			  AND status = 'active'
+		`, trimmedUserID); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return s.GetPartnerProfileByUserID(ctx, trimmedUserID)
 }
 
 func getPartnerProfileByUserIDTx(ctx context.Context, tx pgx.Tx, userID string) (*domain.PartnerProfile, error) {

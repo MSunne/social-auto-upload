@@ -51,7 +51,7 @@ export default function DashboardPage() {
         initial="initial"
         animate="animate"
         transition={{ duration: 0.4, delay: 0.1 }}
-        className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
+        className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
       >
         <StatCard
           label="设备总数"
@@ -59,13 +59,6 @@ export default function DashboardPage() {
           change={`${onlineDevices} 台在线`}
           changeType={onlineDevices > 0 ? "positive" : "neutral"}
           icon={<Server className="h-5 w-5" />}
-        />
-        <StatCard
-          label="AI 算力效率"
-          value="84.2%"
-          change="稳定运行中"
-          changeType="positive"
-          icon={<Cpu className="h-5 w-5" />}
         />
         <StatCard
           label="待处理任务"

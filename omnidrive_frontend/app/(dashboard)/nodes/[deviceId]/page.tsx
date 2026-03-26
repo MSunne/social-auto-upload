@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { PageHeader, EmptyState, StatusBadge } from "@/components/ui/common";
+import { getModelDisplayName } from "@/lib/model-display";
 import { SkillEditorModal } from "@/components/ui/skill-editor-modal";
 import { deleteSkill, getDevice, listSkillAssets, listSkills } from "@/lib/services";
 import type { Device, Skill, SkillAsset } from "@/lib/types";
@@ -190,7 +191,7 @@ export default function NodeDetailPage({
                           <div className="inline-flex rounded-full bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent">
                             {normalizeSkillOutputLabel(skill.outputType)}
                           </div>
-                          <div className="text-sm text-text-primary">{skill.modelName}</div>
+                          <div className="text-sm text-text-primary">{getModelDisplayName(skill)}</div>
                           {skill.promptTemplate ? (
                             <p className="max-w-xs text-xs leading-5 text-text-secondary">
                               {skill.promptTemplate.slice(0, 96)}

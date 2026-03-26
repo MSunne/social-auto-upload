@@ -5,13 +5,16 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, Film, ListTodo, Wand2 } from "lucide-react";
 import Link from "next/link";
 import { PageHeader, StatusBadge, EmptyState } from "@/components/ui/common";
+import { getModelDisplayName } from "@/lib/model-display";
 import { listAIJobs, listDevices, listTasks } from "@/lib/services";
 import type { AIJob, Device, Task } from "@/lib/types";
 import {
   buildAIJobTitle,
   formatDateTime,
   resolveAIJobStage,
+  resolveAIJobWorkflowTime,
   resolvePublishTaskStage,
+  resolvePublishTaskWorkflowTime,
   shouldShowAIJobInWorkflow,
 } from "@/lib/workflow";
 
@@ -27,6 +30,7 @@ type WorkflowRow = {
   deviceName: string;
   accountLabel: string;
   modelLabel: string;
+  workflowTime?: string | null;
   updatedAt?: string | null;
   href?: string;
 };
@@ -40,6 +44,7 @@ const SOURCE_FILTERS = [
 const STAGE_FILTERS = [
   { key: "all", label: "全部状态" },
   { key: "scheduled", label: "未开始" },
+  { key: "waiting_recharge", label: "欠费" },
   { key: "generating", label: "正在做内容" },
   { key: "publishing", label: "正在发布" },
   { key: "published", label: "已发布" },
@@ -49,6 +54,9 @@ const STAGE_FILTERS = [
 function stageGroup(stageKey: string) {
   if (stageKey === "scheduled" || stageKey === "publish_queued" || stageKey === "queued_generation") {
     return "scheduled";
+  }
+  if (stageKey === "waiting_recharge") {
+    return "waiting_recharge";
   }
   if (stageKey === "storyboarding" || stageKey === "generating" || stageKey === "output_ready" || stageKey === "imported") {
     return "generating";
@@ -100,7 +108,8 @@ export default function TasksPage() {
         description: stage.description,
         deviceName: job.deviceId ? deviceMap[job.deviceId] || job.deviceId : "未绑定节点",
         accountLabel: job.localPublishTaskId ? `已生成本地发布任务 ${job.localPublishTaskId}` : "尚未进入发布",
-        modelLabel: job.modelName,
+        modelLabel: getModelDisplayName(job),
+        workflowTime: resolveAIJobWorkflowTime(job),
         updatedAt: job.updatedAt,
         href: `/tasks/ai/${job.id}`,
       };
@@ -120,13 +129,17 @@ export default function TasksPage() {
         deviceName: deviceMap[task.deviceId] || task.deviceId,
         accountLabel: `${task.platform} / ${task.accountName}`,
         modelLabel: task.skillId ? `技能 ${task.skillId}` : "直接发布",
+        workflowTime: resolvePublishTaskWorkflowTime(task),
         updatedAt: task.updatedAt,
         href: `/tasks/${task.id}`,
       };
     });
 
     return [...aiRows, ...publishRows].sort((left, right) => {
-      return new Date(right.updatedAt || 0).getTime() - new Date(left.updatedAt || 0).getTime();
+      return (
+        new Date(right.workflowTime || right.updatedAt || 0).getTime() -
+        new Date(left.workflowTime || left.updatedAt || 0).getTime()
+      );
     });
   }, [aiJobs, deviceMap, publishTasks]);
 
@@ -198,7 +211,7 @@ export default function TasksPage() {
                   <th className="px-5 py-4">类型</th>
                   <th className="px-5 py-4">节点 / 账号</th>
                   <th className="px-5 py-4">当前阶段</th>
-                  <th className="px-5 py-4">最近更新时间</th>
+                  <th className="px-5 py-4">最近进度时间</th>
                   <th className="px-5 py-4 text-right">操作</th>
                 </tr>
               </thead>
@@ -241,7 +254,7 @@ export default function TasksPage() {
                       </div>
                     </td>
                     <td className="px-5 py-4 align-top text-text-secondary">
-                      {formatDateTime(row.updatedAt)}
+                      {formatDateTime(row.workflowTime || row.updatedAt)}
                     </td>
                     <td className="px-5 py-4 align-top">
                       <div className="flex justify-end">

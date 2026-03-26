@@ -3,8 +3,9 @@
 import { useState } from "react";
 import { Loader2, Plus, RefreshCw, Search, TicketPercent, Users } from "lucide-react";
 import { PageHeader } from "@/components/ui/common";
-import { useDistributionPartners } from "@/lib/hooks/useDistribution";
+import { useDistributionPartners, useUpdatePartnerProfile } from "@/lib/hooks/useDistribution";
 import { PartnerDrawer } from "./partner-drawer";
+import type { AdminPartnerProfileRow } from "@/lib/types";
 
 function formatCurrency(amountCents: number) {
   return `¥ ${(amountCents / 100).toFixed(2)}`;
@@ -16,6 +17,7 @@ export function PartnersView() {
   const [searchInput, setSearchInput] = useState("");
   const [status, setStatus] = useState("");
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [actionUserId, setActionUserId] = useState<string | null>(null);
 
   const { data, isLoading, error, refetch } = useDistributionPartners({
     page,
@@ -23,11 +25,43 @@ export function PartnersView() {
     query: query || undefined,
     status: status || undefined,
   });
+  const updatePartner = useUpdatePartnerProfile();
 
   const handleSearch = (event: React.FormEvent) => {
     event.preventDefault();
     setPage(1);
     setQuery(searchInput);
+  };
+
+  const renderStatus = (partnerStatus: string) => {
+    if (partnerStatus === "active") {
+      return <span className="inline-flex rounded-full border border-green-500/20 bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-400">生效中</span>;
+    }
+    return <span className="inline-flex rounded-full border border-gray-500/20 bg-gray-500/10 px-2 py-0.5 text-xs font-medium text-gray-400">已停用</span>;
+  };
+
+  const handleTogglePartner = async (item: AdminPartnerProfileRow) => {
+    const nextStatus = item.status === "active" ? "inactive" : "active";
+    const confirmMessage =
+      nextStatus === "inactive"
+        ? `确认取消分销员 ${item.user.name || item.user.email} 的分销资格吗？这会同时让该分销员当前生效中的下级关系失效。`
+        : `确认恢复分销员 ${item.user.name || item.user.email} 的分销资格吗？`;
+    if (!confirm(confirmMessage)) {
+      return;
+    }
+
+    setActionUserId(item.user.id);
+    try {
+      await updatePartner.mutateAsync({ userId: item.user.id, status: nextStatus });
+    } catch (actionError) {
+      if (actionError instanceof Error && actionError.message.trim()) {
+        alert(actionError.message.trim());
+      } else {
+        alert(nextStatus === "inactive" ? "取消分销资格失败，请稍后重试" : "恢复分销资格失败，请稍后重试");
+      }
+    } finally {
+      setActionUserId(null);
+    }
   };
 
   return (
@@ -112,16 +146,18 @@ export function PartnersView() {
               <tr>
                 <th className="px-5 py-3.5 font-medium">分销员</th>
                 <th className="px-5 py-3.5 font-medium">合作码</th>
+                <th className="px-5 py-3.5 font-medium">状态</th>
                 <th className="px-5 py-3.5 font-medium text-right">当前佣金比例</th>
                 <th className="px-5 py-3.5 font-medium text-right">下级人数</th>
                 <th className="px-5 py-3.5 font-medium text-right">待结算 / 已结算</th>
                 <th className="px-5 py-3.5 font-medium text-right">可提现</th>
+                <th className="px-5 py-3.5 font-medium text-right">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
               {isLoading && (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center">
+                  <td colSpan={8} className="px-6 py-12 text-center">
                     <Loader2 className="mx-auto h-6 w-6 animate-spin text-[var(--color-text-secondary)]" />
                     <p className="mt-2 text-sm text-[var(--color-text-secondary)]">加载分销员档案...</p>
                   </td>
@@ -129,7 +165,7 @@ export function PartnersView() {
               )}
               {error && (
                 <tr>
-                  <td colSpan={6} className="px-6 py-10 text-center text-sm text-red-500">
+                  <td colSpan={8} className="px-6 py-10 text-center text-sm text-red-500">
                     {error instanceof Error && error.message.trim()
                       ? `加载失败：${error.message.trim()}`
                       : "加载失败，请稍后重试"}
@@ -138,7 +174,7 @@ export function PartnersView() {
               )}
               {data && data.items.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-sm text-[var(--color-text-secondary)]">
+                  <td colSpan={8} className="px-6 py-12 text-center text-sm text-[var(--color-text-secondary)]">
                     暂无分销员档案
                   </td>
                 </tr>
@@ -155,6 +191,7 @@ export function PartnersView() {
                       {item.partnerCode}
                     </div>
                   </td>
+                  <td className="px-5 py-4">{renderStatus(item.status)}</td>
                   <td className="px-5 py-4 text-right font-medium">{(item.currentCommissionRate * 100).toFixed(2)}%</td>
                   <td className="px-5 py-4 text-right">
                     <div className="inline-flex items-center gap-1 text-[var(--color-text-primary)]">
@@ -168,6 +205,25 @@ export function PartnersView() {
                   </td>
                   <td className="px-5 py-4 text-right font-semibold text-[var(--color-primary)]">
                     {formatCurrency(item.availableWithdrawalAmountCents)}
+                  </td>
+                  <td className="px-5 py-4 text-right">
+                    <button
+                      onClick={() => handleTogglePartner(item)}
+                      disabled={actionUserId === item.user.id}
+                      className={`inline-flex min-w-20 items-center justify-center rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                        item.status === "active"
+                          ? "border-red-500/30 text-red-400 hover:bg-red-500/10"
+                          : "border-green-500/30 text-green-400 hover:bg-green-500/10"
+                      }`}
+                    >
+                      {actionUserId === item.user.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : item.status === "active" ? (
+                        "取消资格"
+                      ) : (
+                        "恢复资格"
+                      )}
+                    </button>
                   </td>
                 </tr>
               ))}

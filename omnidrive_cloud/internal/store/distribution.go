@@ -19,6 +19,8 @@ var (
 	ErrDistributionRelationUserNotFound   = errors.New("distribution relation user not found")
 	ErrDistributionRelationSelfInvite     = errors.New("promoter and invitee must be different users")
 	ErrDistributionRelationInviteeBound   = errors.New("invitee already has a distribution relation")
+	ErrDistributionRelationNotFound       = errors.New("distribution relation not found")
+	ErrDistributionRelationStatusInvalid  = errors.New("distribution relation status must be active or inactive")
 	ErrDistributionRuleInvalidRate        = errors.New("distribution commission rate must be between 0 and 1")
 	ErrDistributionSettlementNoEligible   = errors.New("no eligible commission items for settlement")
 	ErrDistributionSettlementPromoterMiss = errors.New("distribution settlement promoter not found")
@@ -47,6 +49,12 @@ type CreateDistributionRelationInput struct {
 	InviteeUserID    string
 	Notes            *string
 	CreatedByAdminID *string
+}
+
+type UpdateDistributionRelationInput struct {
+	RelationID string
+	Status     string
+	Notes      *string
 }
 
 type CreateDistributionRuleInput struct {
@@ -509,6 +517,35 @@ func (s *Store) CreateDistributionRelation(ctx context.Context, input CreateDist
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
+	}
+	return s.GetAdminDistributionRelationByID(ctx, relationID)
+}
+
+func (s *Store) UpdateDistributionRelation(ctx context.Context, input UpdateDistributionRelationInput) (*domain.AdminDistributionRelationRow, error) {
+	relationID := strings.TrimSpace(input.RelationID)
+	status := strings.TrimSpace(input.Status)
+	if relationID == "" {
+		return nil, ErrDistributionRelationNotFound
+	}
+	if status != "active" && status != "inactive" {
+		return nil, ErrDistributionRelationStatusInvalid
+	}
+
+	commandTag, err := s.pool.Exec(ctx, `
+		UPDATE distribution_referrals
+		SET status = $2,
+		    notes = CASE
+		      WHEN $3::TEXT IS NULL THEN notes
+		      ELSE $3::TEXT
+		    END,
+		    updated_at = NOW()
+		WHERE id = $1
+	`, relationID, status, trimOptionalString(input.Notes))
+	if err != nil {
+		return nil, err
+	}
+	if commandTag.RowsAffected() == 0 {
+		return nil, ErrDistributionRelationNotFound
 	}
 	return s.GetAdminDistributionRelationByID(ctx, relationID)
 }

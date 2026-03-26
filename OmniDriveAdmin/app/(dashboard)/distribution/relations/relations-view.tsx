@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useDistributionRelations } from "@/lib/hooks/useDistribution";
+import { useDistributionRelations, useUpdateDistributionRelation } from "@/lib/hooks/useDistribution";
 import { PageHeader } from "@/components/ui/common";
 import { Search, Loader2, RefreshCw, Network, Plus } from "lucide-react";
 import { RelationDrawer } from "./relation-drawer";
+import type { AdminDistributionRelationRow } from "@/lib/types";
 
 export function RelationsView() {
   const [page, setPage] = useState(1);
@@ -12,6 +13,7 @@ export function RelationsView() {
   const [searchInput, setSearchInput] = useState("");
   const [statusParam, setStatusParam] = useState("");
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [actionRelationId, setActionRelationId] = useState<string | null>(null);
 
   const { data, isLoading, error, refetch } = useDistributionRelations({ 
     page, 
@@ -19,6 +21,7 @@ export function RelationsView() {
     query: query || undefined, 
     status: statusParam || undefined 
   });
+  const updateRelation = useUpdateDistributionRelation();
 
   const handleSearch = (e: React.FormEvent) => { e.preventDefault(); setQuery(searchInput); setPage(1); };
 
@@ -27,6 +30,30 @@ export function RelationsView() {
       return <span className="px-2 py-0.5 text-xs font-medium rounded bg-green-500/10 text-green-400 border border-green-500/20">生效中</span>;
     }
     return <span className="px-2 py-0.5 text-xs font-medium rounded bg-gray-500/10 text-gray-400 border border-gray-500/20">已失效</span>;
+  };
+
+  const handleToggleRelation = async (row: AdminDistributionRelationRow) => {
+    const nextStatus = row.status === "active" ? "inactive" : "active";
+    const confirmMessage =
+      nextStatus === "inactive"
+        ? `确认解绑 ${row.promoter.name || row.promoter.email} 与 ${row.invitee.name || row.invitee.email} 的分销关系吗？`
+        : `确认恢复 ${row.promoter.name || row.promoter.email} 与 ${row.invitee.name || row.invitee.email} 的分销关系吗？`;
+    if (!confirm(confirmMessage)) {
+      return;
+    }
+
+    setActionRelationId(row.id);
+    try {
+      await updateRelation.mutateAsync({ relationId: row.id, status: nextStatus });
+    } catch (actionError) {
+      if (actionError instanceof Error && actionError.message.trim()) {
+        alert(actionError.message.trim());
+      } else {
+        alert(nextStatus === "inactive" ? "解绑失败，请稍后重试" : "恢复关系失败，请稍后重试");
+      }
+    } finally {
+      setActionRelationId(null);
+    }
   };
 
   return (
@@ -89,17 +116,18 @@ export function RelationsView() {
                 <th className="px-5 py-3.5 font-medium">绑定时间</th>
                 <th className="px-5 py-3.5 font-medium">状态</th>
                 <th className="px-5 py-3.5 font-medium">备注摘要</th>
+                <th className="px-5 py-3.5 font-medium text-right">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
               {isLoading && (
-                <tr><td colSpan={6} className="px-6 py-12 text-center">
+                <tr><td colSpan={7} className="px-6 py-12 text-center">
                   <Loader2 className="h-6 w-6 animate-spin mx-auto text-[var(--color-text-secondary)]" />
                   <p className="mt-2 text-sm text-[var(--color-text-secondary)]">加载关系网络...</p>
                 </td></tr>
               )}
-              {error && <tr><td colSpan={6} className="px-6 py-10 text-center text-red-500 text-sm">加载失败，请重试</td></tr>}
-              {data && data.items.length === 0 && <tr><td colSpan={6} className="px-6 py-12 text-center text-[var(--color-text-secondary)] text-sm">暂无符合条件的绑定关系</td></tr>}
+              {error && <tr><td colSpan={7} className="px-6 py-10 text-center text-red-500 text-sm">加载失败，请重试</td></tr>}
+              {data && data.items.length === 0 && <tr><td colSpan={7} className="px-6 py-12 text-center text-[var(--color-text-secondary)] text-sm">暂无符合条件的绑定关系</td></tr>}
               {data && data.items.map(row => (
                 <tr key={row.id} className="hover:bg-[var(--color-bg-secondary)]/50 transition-colors">
                   <td className="px-5 py-3.5">
@@ -122,6 +150,25 @@ export function RelationsView() {
                     <div className="text-xs text-[var(--color-text-secondary)] max-w-[200px] truncate" title={row.notes || ""}>
                       {row.notes || "—"}
                     </div>
+                  </td>
+                  <td className="px-5 py-3.5 text-right">
+                    <button
+                      onClick={() => handleToggleRelation(row)}
+                      disabled={actionRelationId === row.id}
+                      className={`inline-flex min-w-16 items-center justify-center rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                        row.status === "active"
+                          ? "border-red-500/30 text-red-400 hover:bg-red-500/10"
+                          : "border-green-500/30 text-green-400 hover:bg-green-500/10"
+                      }`}
+                    >
+                      {actionRelationId === row.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : row.status === "active" ? (
+                        "解绑"
+                      ) : (
+                        "恢复"
+                      )}
+                    </button>
                   </td>
                 </tr>
               ))}

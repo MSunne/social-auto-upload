@@ -175,6 +175,118 @@ func TestQuotaUsageReturnCredits(t *testing.T) {
 	}
 }
 
+func TestPreviewUsageBillingQueueEvaluationsStopsAtInsufficientTask(t *testing.T) {
+	evaluations := []usageBillingQueueEvaluation{
+		{
+			Input: ApplyUsageBillingInput{
+				UserID:     "user-1",
+				SourceType: "ai_job",
+				SourceID:   "job-1",
+			},
+			Metrics: []ApplyUsageMetricInput{
+				{MeterCode: "video_generations", Quantity: 1},
+			},
+			Rules: map[string]pricingRuleRecord{
+				"video_generations": {
+					MeterCode:         "video_generations",
+					ChargeMode:        "wallet_only",
+					UnitSize:          1,
+					WalletDebitAmount: 400,
+				},
+			},
+		},
+		{
+			Input: ApplyUsageBillingInput{
+				UserID:     "user-1",
+				SourceType: "ai_job",
+				SourceID:   "job-2",
+			},
+			Metrics: []ApplyUsageMetricInput{
+				{MeterCode: "video_generations", Quantity: 1},
+			},
+			Rules: map[string]pricingRuleRecord{
+				"video_generations": {
+					MeterCode:         "video_generations",
+					ChargeMode:        "wallet_only",
+					UnitSize:          1,
+					WalletDebitAmount: 400,
+				},
+			},
+		},
+	}
+
+	items := previewUsageBillingQueueEvaluations(evaluations, 398, map[string][]*quotaAccountRecord{})
+	if len(items) != 2 {
+		t.Fatalf("expected 2 preview items, got %d", len(items))
+	}
+	if items[0].Result.BillStatus != "failed" || items[0].CreditBalanceBefore != 398 || items[0].CreditBalanceAfter != 398 {
+		t.Fatalf("unexpected first preview item: %#v", items[0])
+	}
+	if items[1].Result.BillStatus != "failed" || items[1].CreditBalanceBefore != 398 {
+		t.Fatalf("expected later task to remain blocked behind the same insufficient balance, got %#v", items[1])
+	}
+}
+
+func TestPreviewUsageBillingQueueEvaluationsDoesNotConsumeQuotaForFailedTask(t *testing.T) {
+	quotaCode := "image_generation_quota"
+	evaluations := []usageBillingQueueEvaluation{
+		{
+			Input: ApplyUsageBillingInput{
+				UserID:     "user-1",
+				SourceType: "ai_job",
+				SourceID:   "job-failed",
+			},
+			Metrics: []ApplyUsageMetricInput{
+				{MeterCode: "image_generations", Quantity: 2},
+			},
+			Rules: map[string]pricingRuleRecord{
+				"image_generations": {
+					MeterCode:         "image_generations",
+					ChargeMode:        "quota_first_wallet_fallback",
+					QuotaMeterCode:    &quotaCode,
+					UnitSize:          1,
+					WalletDebitAmount: 100,
+				},
+			},
+		},
+		{
+			Input: ApplyUsageBillingInput{
+				UserID:     "user-1",
+				SourceType: "ai_job",
+				SourceID:   "job-next",
+			},
+			Metrics: []ApplyUsageMetricInput{
+				{MeterCode: "image_generations", Quantity: 1},
+			},
+			Rules: map[string]pricingRuleRecord{
+				"image_generations": {
+					MeterCode:         "image_generations",
+					ChargeMode:        "quota_first_wallet_fallback",
+					QuotaMeterCode:    &quotaCode,
+					UnitSize:          1,
+					WalletDebitAmount: 100,
+				},
+			},
+		},
+	}
+	quotaAccounts := map[string][]*quotaAccountRecord{
+		quotaCode: {
+			{ID: "quota-1", MeterCode: quotaCode, RemainingTotal: 1, ReleaseUnitCredits: 80},
+		},
+	}
+
+	items := previewUsageBillingQueueEvaluations(evaluations, 50, quotaAccounts)
+	if len(items) != 2 {
+		t.Fatalf("expected 2 preview items, got %d", len(items))
+	}
+	if items[0].Result.BillStatus != "failed" {
+		t.Fatalf("expected first task to fail because fallback wallet debit is insufficient, got %#v", items[0])
+	}
+	if items[1].Result.BillStatus != "billed" || items[1].Result.Details[0].QuotaUsed != 1 {
+		t.Fatalf("expected next task to still see the original quota, got %#v", items[1])
+	}
+}
+
 func TestAIModelSelectColumnsIncludeSupportedFileTypes(t *testing.T) {
 	if !strings.Contains(aiModelSelectColumns, "supported_file_types") {
 		t.Fatalf("aiModelSelectColumns must include supported_file_types for scanAIModel")

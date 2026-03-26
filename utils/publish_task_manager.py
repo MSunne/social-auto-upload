@@ -50,12 +50,23 @@ RECOVERABLE_INTERRUPT_MARKERS = (
 
 
 class PublishTaskManager:
-    def __init__(self, db_path, worker_count=2, retention_days=7, sync_client=None, material_roots=None):
+    def __init__(
+        self,
+        db_path,
+        worker_count=2,
+        retention_days=7,
+        sync_client=None,
+        material_roots=None,
+        dispatch_interval_seconds=5,
+    ):
         self.db_path = Path(db_path)
-        self.worker_count = max(1, int(worker_count))
+        configured_worker_count = max(1, int(worker_count))
+        self.worker_count = 1
+        self.configured_worker_count = configured_worker_count
         self.retention_days = max(1, int(retention_days))
         self.sync_client = sync_client
         self.material_roots = material_roots or {}
+        self.dispatch_interval_seconds = max(0, int(dispatch_interval_seconds))
 
         self._started = False
         self._start_lock = threading.Lock()
@@ -63,6 +74,8 @@ class PublishTaskManager:
         self._workers = []
         self._account_locks = {}
         self._account_locks_lock = threading.Lock()
+        self._dispatch_gate_lock = threading.Lock()
+        self._next_dispatch_after_monotonic = 0.0
         self._artifact_dir = Path(BASE_DIR / "taskArtifacts" / "publish_verify")
         self._artifact_dir.mkdir(parents=True, exist_ok=True)
         self._generated_root_paths = self._discover_generated_root_paths()
@@ -88,9 +101,16 @@ class PublishTaskManager:
             cleanup_worker.start()
             self._workers.append(cleanup_worker)
             self._started = True
+            if self.configured_worker_count != self.worker_count:
+                task_logger.info(
+                    "publish task manager forcing serialized execution configured_worker_count={} effective_worker_count={}",
+                    self.configured_worker_count,
+                    self.worker_count,
+                )
             task_logger.info(
-                "publish task manager started worker_count={} retention_days={} db_path={}",
+                "publish task manager started worker_count={} dispatch_interval_seconds={} retention_days={} db_path={}",
                 self.worker_count,
+                self.dispatch_interval_seconds,
                 self.retention_days,
                 self.db_path,
             )
@@ -625,47 +645,53 @@ class PublishTaskManager:
             )
 
     def _claim_next_ready_task(self, worker_name):
-        ready_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        with self._connect() as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute("BEGIN IMMEDIATE")
-            cursor.execute(
-                '''
-                SELECT * FROM publish_tasks
-                WHERE status IN ('pending', 'scheduled')
-                  AND (run_at IS NULL OR run_at = '' OR run_at <= ?)
-                ORDER BY CASE WHEN run_at IS NULL OR run_at = '' THEN 0 ELSE 1 END,
-                         run_at ASC,
-                         created_at ASC,
-                         id ASC
-                LIMIT 1
-                ''',
-                (ready_at,),
-            )
-            row = cursor.fetchone()
-            if not row:
-                conn.commit()
+        with self._dispatch_gate_lock:
+            now_monotonic = time.monotonic()
+            if now_monotonic < self._next_dispatch_after_monotonic:
                 return None
 
-            cursor.execute(
-                '''
-                UPDATE publish_tasks
-                SET status = 'running',
-                    message = '任务执行中',
-                    worker_name = ?,
-                    started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE task_uuid = ?
-                  AND status IN ('pending', 'scheduled')
-                ''',
-                (worker_name, row["task_uuid"]),
-            )
-            if cursor.rowcount != 1:
+            ready_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            with self._connect() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("BEGIN IMMEDIATE")
+                cursor.execute(
+                    '''
+                    SELECT * FROM publish_tasks
+                    WHERE status IN ('pending', 'scheduled')
+                      AND (run_at IS NULL OR run_at = '' OR run_at <= ?)
+                    ORDER BY CASE WHEN run_at IS NULL OR run_at = '' THEN 0 ELSE 1 END,
+                             run_at ASC,
+                             created_at ASC,
+                             id ASC
+                    LIMIT 1
+                    ''',
+                    (ready_at,),
+                )
+                row = cursor.fetchone()
+                if not row:
+                    conn.commit()
+                    return None
+
+                cursor.execute(
+                    '''
+                    UPDATE publish_tasks
+                    SET status = 'running',
+                        message = '任务执行中',
+                        worker_name = ?,
+                        started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE task_uuid = ?
+                      AND status IN ('pending', 'scheduled')
+                    ''',
+                    (worker_name, row["task_uuid"]),
+                )
+                if cursor.rowcount != 1:
+                    conn.commit()
+                    return None
                 conn.commit()
-                return None
-            conn.commit()
+            self._next_dispatch_after_monotonic = time.monotonic() + self.dispatch_interval_seconds
 
         task = self.get_task(row["task_uuid"])
         self._sync_task(row["task_uuid"])

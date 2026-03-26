@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Loader2, RefreshCw, Search } from "lucide-react";
 import { useBillingActivities } from "@/lib/hooks/useFinance";
 import { PageHeader } from "@/components/ui/common";
+import { getModelDisplayName } from "@/lib/model-display";
 import type { BillingActivity } from "@/lib/types";
 
 const KIND_OPTIONS = [
@@ -330,7 +331,11 @@ export function WalletLedgersView() {
               ) : (
                 data.items.map((row) => {
                   const amount = getActivityAmount(row.activity);
-                  const meta = [row.activity.modelName, row.activity.meterName || row.activity.meterCode, row.activity.reference].filter(Boolean).join(" · ");
+                  const modelLabel =
+                    row.activity.modelName || row.activity.modelAlias
+                      ? getModelDisplayName(row.activity, "")
+                      : "";
+                  const meta = [modelLabel, row.activity.meterName || row.activity.meterCode, row.activity.reference].filter(Boolean).join(" · ");
                   return (
                     <tr key={`${row.activity.kind}-${row.activity.id}`} className="transition-colors hover:bg-[var(--color-bg-secondary)]/50">
                       <td className="whitespace-nowrap px-5 py-3.5 text-xs text-[var(--color-text-secondary)]">
