@@ -45,6 +45,7 @@ from utils.materials import (
 from utils.omnidrive_agent import OmniDriveBridge
 from utils.omnidrive_ai_task_manager import OmniDriveAITaskManager
 from utils.publish_task_manager import PublishTaskManager
+from utils.runtime_health import build_runtime_health, log_runtime_health
 from utils.log import (
     agent_logger,
     ai_logger,
@@ -279,6 +280,13 @@ OMNIBULL_GENERATED_ROOT_NAME = str(getattr(app_conf, 'OMNIBULL_GENERATED_ROOT_NA
 OMNIBULL_GENERATED_ROOT_PATH = Path(BASE_DIR / "omnidriveSync" / "generated").resolve()
 OMNIBULL_GENERATED_ROOT_PATH.mkdir(parents=True, exist_ok=True)
 OMNIBULL_MATERIAL_ROOTS.setdefault(OMNIBULL_GENERATED_ROOT_NAME, OMNIBULL_GENERATED_ROOT_PATH)
+OMNIBULL_RUNTIME_HEALTH = build_runtime_health(
+    base_dir=BASE_DIR,
+    material_roots=OMNIBULL_MATERIAL_ROOTS,
+    device_identity_path=DEVICE_IDENTITY.get("path"),
+    generated_root_path=OMNIBULL_GENERATED_ROOT_PATH,
+    headless=parse_bool(getattr(app_conf, 'LOCAL_CHROME_HEADLESS', False)),
+)
 RESOLVED_DEVICE_NAME = DEVICE_IDENTITY.get("deviceName") or CLOUD_DEVICE_NAME or socket.gethostname()
 DEVICE_CODE = DEVICE_IDENTITY.get("deviceCode") or str(getattr(app_conf, 'CLOUD_DEVICE_CODE', '')).strip() or get_device_code()
 OMNIDRIVE_AGENT_KEY = DEVICE_IDENTITY.get("agentKey") or OMNIDRIVE_AGENT_KEY
@@ -298,6 +306,7 @@ publish_task_manager = PublishTaskManager(
 openclaw_omnidrive_runtime_sync_thread = None
 openclaw_omnidrive_runtime_sync_lock = threading.Lock()
 openclaw_omnidrive_runtime_sync_stop = threading.Event()
+log_runtime_health(app_logger, OMNIBULL_RUNTIME_HEALTH)
 
 # 限制上传文件大小为160MB
 app.config['MAX_CONTENT_LENGTH'] = 160 * 1024 * 1024
@@ -571,6 +580,7 @@ def build_skill_status_payload():
         "deviceCode": DEVICE_CODE,
         "deviceIdentitySource": DEVICE_IDENTITY.get("source"),
         "deviceIdentityPath": DEVICE_IDENTITY.get("path"),
+        "runtimeHealth": OMNIBULL_RUNTIME_HEALTH,
         "materialRoots": list_material_roots(OMNIBULL_MATERIAL_ROOTS),
         "skillApiAuthEnabled": bool(OMNIBULL_API_KEY),
         "cloudAgentConfig": get_cloud_agent_config(),

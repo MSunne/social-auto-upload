@@ -1,0 +1,18 @@
+[Unit]
+Description=OmniBull local agent
+After=network-online.target graphical.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=omnibull
+Group=omnibull
+WorkingDirectory=/opt/omnibull/social-auto-upload
+EnvironmentFile=-/etc/omnibull/omnibull.env
+ExecStart=/opt/omnibull/venv/bin/python /opt/omnibull/social-auto-upload/sau_backend.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

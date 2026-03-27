@@ -1,24 +1,14 @@
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.resolve()
-XHS_SERVER = "http://127.0.0.1:11901"
-LOCAL_CHROME_PATH = ""   # change me necessary！ for example C:/Program Files/Google/Chrome/Application/chrome.exe
+
+LOCAL_CHROME_PATH = "/usr/bin/google-chrome"
 LOCAL_CHROME_HEADLESS = False
 SAU_LOG_LEVEL = "INFO"
 
-# cloud demo minimal agent config
-CLOUD_AGENT_ENABLED = False
-CLOUD_DEMO_URL = ""  # for example: https://your-cloud-demo.example.com
-CLOUD_DEVICE_NAME = ""
-CLOUD_AGENT_KEY = "change-me"
-CLOUD_AGENT_POLL_INTERVAL = 5
-CLOUD_AGENT_HEARTBEAT_INTERVAL = 30
-CLOUD_DEVICE_CODE = ""
-
-# production OmniDrive agent bridge
-OMNIDRIVE_AGENT_ENABLED = False
-OMNIDRIVE_BASE_URL = ""  # for example: https://omnidrive.example.com
-OMNIDRIVE_AGENT_KEY = "change-me"
+OMNIDRIVE_AGENT_ENABLED = True
+OMNIDRIVE_BASE_URL = "https://omnidrive.example.com"
+OMNIDRIVE_AGENT_KEY = ""
 OMNIDRIVE_AGENT_POLL_INTERVAL = 5
 OMNIDRIVE_AGENT_HEARTBEAT_INTERVAL = 30
 OMNIDRIVE_ACCOUNT_SYNC_INTERVAL = 60
@@ -27,18 +17,21 @@ OMNIDRIVE_MATERIAL_SYNC_INTERVAL = 300
 OMNIDRIVE_SKILL_SYNC_INTERVAL = 120
 OMNIDRIVE_PUBLISH_SYNC_INTERVAL = 5
 OMNIDRIVE_MATERIAL_SYNC_MAX_FILES = 1000
-OMNIBULL_DEVICE_IDENTITY_FILE = "/etc/omnibull/device.json"  # first boot auto-creates this file when missing
+
+OMNIBULL_DEVICE_IDENTITY_FILE = "/etc/omnibull/device.json"
 
 OMNIBULL_PUBLISH_WORKERS = 1
 OMNIBULL_PUBLISH_DISPATCH_INTERVAL_SECONDS = 5
 OMNIBULL_TASK_RETENTION_DAYS = 7
 OMNIBULL_API_KEY = ""
-OMNIBULL_CORS_ALLOWED_ORIGINS = "*"  # dev 默认允许所有来源；生产可改成逗号分隔白名单
+
+OMNIBULL_CORS_ALLOWED_ORIGINS = "https://omnidrive.example.com,https://admin.example.com"
 OMNIBULL_CORS_ALLOWED_METHODS = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
 OMNIBULL_CORS_ALLOWED_HEADERS = "Authorization,Content-Type,X-Requested-With,X-Omnibull-Key"
 OMNIBULL_CORS_EXPOSE_HEADERS = "Content-Disposition,X-Accel-Buffering"
 OMNIBULL_CORS_ALLOW_CREDENTIALS = False
 OMNIBULL_CORS_MAX_AGE = 86400
+
 OMNIBULL_MATERIAL_ROOTS = {
-    # "openclawWorkspace": "/Users/yourname/.openclaw/workspace",
+    "localWorkspace": "/data/omnibull/workspace",
 }

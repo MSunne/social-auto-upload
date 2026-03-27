@@ -1,0 +1,18 @@
+[Unit]
+Description=OmniDrive customer frontend
+After=network-online.target omnidrive-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=omnidrive
+Group=omnidrive
+WorkingDirectory=/opt/omnidrive/omnidrive_frontend
+EnvironmentFile=/etc/omnidrive/omnidrive-frontend.env
+ExecStart=/usr/bin/env npm run start
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

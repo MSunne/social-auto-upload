@@ -1,0 +1,19 @@
+[Unit]
+Description=OmniDrive Go API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=omnidrive
+Group=omnidrive
+WorkingDirectory=/opt/omnidrive/omnidrive_cloud
+EnvironmentFile=/etc/omnidrive/omnidrive-api.env
+ExecStart=/opt/omnidrive/bin/omnidrive-api
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
