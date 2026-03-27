@@ -102,7 +102,7 @@ export default function NodesPage() {
 
   // Modal State
   const [isClaimModalOpen, setIsClaimModalOpen] = useState(false);
-  const [claimInputCode, setClaimInputCode] = useState("");
+  const [claimActivationCode, setClaimActivationCode] = useState("");
 
   /* filtering and pagination math */
   const filteredDevices = devices.filter(
@@ -122,16 +122,16 @@ export default function NodesPage() {
 
   async function handleClaimSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!claimInputCode.trim()) return;
+    if (!claimActivationCode.trim()) return;
     setClaiming(true);
     setError("");
     try {
-      await claimDevice(claimInputCode.trim());
+      await claimDevice(claimActivationCode.trim());
       setIsClaimModalOpen(false);
-      setClaimInputCode("");
+      setClaimActivationCode("");
       refetch();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "认领失败，请检查全平台授权");
+      setError(err instanceof Error ? err.message : "激活失败，请检查激活码");
     } finally {
       setClaiming(false);
     }
@@ -177,7 +177,7 @@ export default function NodesPage() {
         <button
           onClick={() => {
             setError("");
-            setClaimInputCode("");
+            setClaimActivationCode("");
             setIsClaimModalOpen(true);
           }}
           disabled={claiming}
@@ -378,7 +378,7 @@ export default function NodesPage() {
         <EmptyState
           icon={<Server className="h-6 w-6" />}
           title="暂无设备"
-          description="在 OmniBull 所在的 Linux 主机启动 Agent 后，输入设备编码进行认领。"
+          description="在 OmniBull 所在的 Linux 主机启动 Agent 后，输入激活码完成绑定。"
         />
       )}
 
@@ -411,10 +411,10 @@ export default function NodesPage() {
                     </div>
                     <div>
                       <h3 className="text-lg font-black tracking-wide text-white">
-                        认领新设备节点
+                        激活新设备节点
                       </h3>
                       <p className="text-xs font-medium text-text-muted/80">
-                        绑定 OmniBull 终端到当前账户
+                        输入客服提供的激活码完成绑定
                       </p>
                     </div>
                   </div>
@@ -433,17 +433,20 @@ export default function NodesPage() {
                 <div className="mb-5 space-y-4">
                   <div>
                     <label className="mb-1.5 block text-xs font-bold uppercase tracking-widest text-text-muted">
-                      设备认领凭证 (Device Code)
+                      设备激活码 (Activation Code)
                     </label>
                     <input
                       type="text"
-                      autoFocus
                       required
-                      placeholder="例如: 8A9B2C3D"
-                      value={claimInputCode}
-                      onChange={(e) => setClaimInputCode(e.target.value)}
+                      autoFocus
+                      placeholder="例如: M7KD4Q9P"
+                      value={claimActivationCode}
+                      onChange={(e) => setClaimActivationCode(e.target.value)}
                       className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3.5 text-sm font-medium text-white placeholder-text-muted/50 transition-all focus:border-cyan/50 focus:bg-white/10 focus:outline-none focus:ring-4 focus:ring-cyan/10 uppercase"
                     />
+                    <p className="mt-2 text-xs text-text-muted/70">
+                      激活码由客服单独发送，用户只需要输入这一项即可。
+                    </p>
                   </div>
                 </div>
 
@@ -459,15 +462,15 @@ export default function NodesPage() {
                   </button>
                   <button
                     type="submit"
-                    disabled={claiming || !claimInputCode.trim()}
+                    disabled={claiming || !claimActivationCode.trim()}
                     className={`relative flex items-center justify-center overflow-hidden rounded-full px-8 py-2.5 text-sm font-black shadow-xl transition-all duration-300 ${
-                      claiming || !claimInputCode.trim()
+                      claiming || !claimActivationCode.trim()
                         ? "bg-white/10 text-white/30 cursor-not-allowed"
                         : "bg-gradient-to-r from-cyan to-blue-500 text-white hover:scale-[1.03] hover:shadow-[0_0_30px_rgba(0,245,212,0.4)]"
                     }`}
                   >
                     <span className="relative z-10 drop-shadow-sm">
-                      {claiming ? "认领中..." : "确认认领"}
+                      {claiming ? "激活中..." : "确认激活"}
                     </span>
                   </button>
                 </div>

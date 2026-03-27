@@ -96,9 +96,10 @@ type AdminDeviceActionState struct {
 }
 
 type AdminDeviceRow struct {
-	Device  Device                 `json:"device"`
-	Owner   *AdminUserSummary      `json:"owner,omitempty"`
-	Actions AdminDeviceActionState `json:"actions"`
+	Device     Device                  `json:"device"`
+	Owner      *AdminUserSummary       `json:"owner,omitempty"`
+	Activation *DeviceActivationConfig `json:"activation,omitempty"`
+	Actions    AdminDeviceActionState  `json:"actions"`
 }
 
 type AdminDeviceSummary struct {

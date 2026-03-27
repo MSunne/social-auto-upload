@@ -172,6 +172,23 @@ CREATE TABLE IF NOT EXISTS devices (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS device_activation_configs (
+    id TEXT PRIMARY KEY,
+    device_id TEXT NOT NULL UNIQUE REFERENCES devices(id) ON DELETE CASCADE,
+    order_no TEXT,
+    activation_code_hash TEXT NOT NULL,
+    activation_code_hint TEXT,
+    status TEXT NOT NULL DEFAULT 'ready',
+    activated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    activated_at TIMESTAMPTZ,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_activation_configs_order_no
+    ON device_activation_configs (order_no);
+
 CREATE TABLE IF NOT EXISTS platform_accounts (
     id TEXT PRIMARY KEY,
     device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -18,7 +19,7 @@ type DeviceHandler struct {
 }
 
 type claimDeviceRequest struct {
-	DeviceCode string `json:"deviceCode"`
+	ActivationCode string `json:"activationCode"`
 }
 
 type updateDeviceRequest struct {
@@ -184,19 +185,29 @@ func (h *DeviceHandler) Claim(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	payload.DeviceCode = strings.TrimSpace(payload.DeviceCode)
-	if payload.DeviceCode == "" {
-		render.Error(w, http.StatusBadRequest, "deviceCode is required")
+	payload.ActivationCode = strings.TrimSpace(payload.ActivationCode)
+	if payload.ActivationCode == "" {
+		render.Error(w, http.StatusBadRequest, "activationCode is required")
 		return
 	}
 
-	device, err := h.app.Store.ClaimDevice(r.Context(), payload.DeviceCode, user.ID)
+	device, err := h.app.Store.ClaimDeviceWithActivation(r.Context(), payload.ActivationCode, user.ID)
 	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrDeviceAlreadyClaimed):
+			render.Error(w, http.StatusConflict, "Device has already been claimed by another user")
+			return
+		case errors.Is(err, store.ErrDeviceActivationNotConfigured):
+			render.Error(w, http.StatusConflict, "This device has not been configured with an activation code yet")
+			return
+		case errors.Is(err, store.ErrDeviceActivationDisabled):
+			render.Error(w, http.StatusForbidden, "This device activation has been disabled")
+			return
+		case errors.Is(err, store.ErrDeviceActivationCodeInvalid):
+			render.Error(w, http.StatusBadRequest, "Activation code is invalid")
+			return
+		}
 		render.Error(w, http.StatusInternalServerError, "Failed to claim device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device code not found or already claimed by another user")
 		return
 	}
 	settings, err := loadEffectiveAdminSystemSettings(r.Context(), h.app)

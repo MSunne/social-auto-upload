@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -29,6 +30,13 @@ type adminUpdateDeviceRequest struct {
 	Name                  *string `json:"name"`
 	DefaultReasoningModel *string `json:"defaultReasoningModel"`
 	IsEnabled             *bool   `json:"isEnabled"`
+}
+
+type adminUpdateDeviceActivationRequest struct {
+	OrderNo        *string `json:"orderNo"`
+	ActivationCode *string `json:"activationCode"`
+	Status         *string `json:"status"`
+	Notes          *string `json:"notes"`
 }
 
 type adminUpdateMediaAccountRequest struct {
@@ -1379,6 +1387,130 @@ func (h *AdminConsoleHandler) UpdateDevice(w http.ResponseWriter, r *http.Reques
 				"name":                  payload.Name,
 				"defaultReasoningModel": payload.DefaultReasoningModel,
 				"isEnabled":             payload.IsEnabled,
+			}),
+		})
+	}
+
+	render.JSON(w, http.StatusOK, record)
+}
+
+func (h *AdminConsoleHandler) UpdateDeviceActivation(w http.ResponseWriter, r *http.Request) {
+	deviceID := strings.TrimSpace(chi.URLParam(r, "deviceId"))
+	if deviceID == "" {
+		render.Error(w, http.StatusBadRequest, "deviceId is required")
+		return
+	}
+
+	var payload adminUpdateDeviceActivationRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	orderTouched := payload.OrderNo != nil
+	activationTouched := payload.ActivationCode != nil
+	notesTouched := payload.Notes != nil
+
+	if payload.Status != nil {
+		status := strings.TrimSpace(*payload.Status)
+		if status == "" {
+			render.Error(w, http.StatusBadRequest, "status cannot be empty")
+			return
+		}
+		if status != "ready" && status != "disabled" {
+			render.Error(w, http.StatusBadRequest, "status must be ready or disabled")
+			return
+		}
+		payload.Status = &status
+	}
+	if payload.OrderNo != nil {
+		value := strings.TrimSpace(*payload.OrderNo)
+		payload.OrderNo = &value
+	}
+	if payload.ActivationCode != nil {
+		value := strings.TrimSpace(*payload.ActivationCode)
+		if value == "" {
+			render.Error(w, http.StatusBadRequest, "activationCode cannot be empty")
+			return
+		}
+		payload.ActivationCode = &value
+	}
+	if payload.Notes != nil {
+		value := strings.TrimSpace(*payload.Notes)
+		payload.Notes = &value
+	}
+	if !orderTouched && !activationTouched && !notesTouched && payload.Status == nil {
+		render.Error(w, http.StatusBadRequest, "at least one field must be provided")
+		return
+	}
+
+	record, err := h.app.Store.UpdateAdminDeviceActivationConfig(r.Context(), deviceID, store.UpdateDeviceActivationConfigInput{
+		OrderNo:           payload.OrderNo,
+		OrderNoTouched:    orderTouched,
+		ActivationCode:    payload.ActivationCode,
+		ActivationTouched: activationTouched,
+		Status:            payload.Status,
+		Notes:             payload.Notes,
+		NotesTouched:      notesTouched,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrDeviceActivationCodeRequired):
+			render.Error(w, http.StatusBadRequest, "activationCode is required when creating or rotating activation config")
+			return
+		case errors.Is(err, store.ErrDeviceActivationCodeConflict):
+			render.Error(w, http.StatusConflict, "activationCode has already been assigned to another device")
+			return
+		case errors.Is(err, store.ErrDeviceActivationResetRequiresUnbind):
+			render.Error(w, http.StatusConflict, "Please unbind the device before resetting its activation code or status")
+			return
+		}
+		render.Error(w, http.StatusInternalServerError, "Failed to update device activation")
+		return
+	}
+	if record == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+	h.decorateAdminDeviceRow(record)
+
+	admin := httpcontext.CurrentAdmin(r.Context())
+	if record.Owner != nil {
+		recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+			OwnerUserID:  record.Owner.ID,
+			ResourceType: "device",
+			ResourceID:   &record.Device.ID,
+			Action:       "admin_update_activation",
+			Title:        "运营后台更新设备激活配置",
+			Source:       "admin_console",
+			Status:       "success",
+			Message:      auditStringPtr("设备激活配置已由运营后台更新"),
+			Payload: mustJSONBytes(map[string]any{
+				"orderNo":        payload.OrderNo,
+				"status":         payload.Status,
+				"activationCode": activationTouched,
+				"notes":          payload.Notes,
+			}),
+		})
+	}
+	if admin != nil {
+		recordAdminAuditLog(h.app, r.Context(), store.CreateAdminAuditLogInput{
+			AdminUserID:  stringPtr(admin.ID),
+			AdminEmail:   stringPtr(admin.Email),
+			AdminName:    stringPtr(admin.Name),
+			ResourceType: "device",
+			ResourceID:   &record.Device.ID,
+			Action:       "update_activation",
+			Title:        "更新设备激活配置",
+			Source:       "admin_console",
+			Status:       "success",
+			Message:      auditStringPtr("设备激活配置已更新"),
+			Payload: mustJSONBytes(map[string]any{
+				"orderNo":            payload.OrderNo,
+				"status":             payload.Status,
+				"activationRotated":  activationTouched,
+				"activationCodeHint": record.Activation,
+				"notes":              payload.Notes,
 			}),
 		})
 	}

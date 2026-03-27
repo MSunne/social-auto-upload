@@ -530,13 +530,15 @@ func (s *Store) ListAdminDevices(ctx context.Context, filter AdminDeviceListFilt
 			%s,
 			u.id,
 			u.email,
-			u.name
+			u.name,
+			%s
 		FROM devices
 		LEFT JOIN users u ON u.id = devices.owner_user_id
+		LEFT JOIN device_activation_configs dac ON dac.device_id = devices.id
 		%s
 		ORDER BY devices.updated_at DESC
 		LIMIT $%d OFFSET $%d
-	`, deviceSelectColumnsQualified, deviceLoadColumns, whereClause, argIndex, argIndex+1), append(args, pageSize, offset)...)
+	`, deviceSelectColumnsQualified, deviceLoadColumns, adminDeviceActivationSelectColumns, whereClause, argIndex, argIndex+1), append(args, pageSize, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}

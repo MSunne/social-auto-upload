@@ -41,6 +41,19 @@ func (d Device) GetAgentKey() string {
 	return d.AgentKey
 }
 
+type DeviceActivationConfig struct {
+	ID                 string     `json:"id"`
+	DeviceID           string     `json:"deviceId"`
+	OrderNo            *string    `json:"orderNo,omitempty"`
+	ActivationCodeHint *string    `json:"activationCodeHint,omitempty"`
+	Status             string     `json:"status"`
+	ActivatedByUserID  *string    `json:"activatedByUserId,omitempty"`
+	ActivatedAt        *time.Time `json:"activatedAt,omitempty"`
+	Notes              *string    `json:"notes,omitempty"`
+	CreatedAt          time.Time  `json:"createdAt"`
+	UpdatedAt          time.Time  `json:"updatedAt"`
+}
+
 type DeviceLoad struct {
 	AccountCount                  int64 `json:"accountCount"`
 	ActiveAccountCount            int64 `json:"activeAccountCount"`

@@ -342,7 +342,13 @@ func (s *Store) UpsertHeartbeatDevice(ctx context.Context, input HeartbeatInput)
 }
 
 func (s *Store) UnbindDevice(ctx context.Context, deviceID string, ownerUserID string) (*domain.Device, error) {
-	row := s.pool.QueryRow(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
 		UPDATE devices
 		SET owner_user_id = NULL,
 		    is_enabled = FALSE,
@@ -362,6 +368,19 @@ func (s *Store) UnbindDevice(ctx context.Context, deviceID string, ownerUserID s
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE device_activation_configs
+		SET status = 'ready',
+		    activated_by_user_id = NULL,
+		    activated_at = NULL,
+		    updated_at = NOW()
+		WHERE device_id = $1
+	`, device.ID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return device, nil

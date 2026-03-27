@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   Image,
   Video,
+  History,
   MessageSquare,
   Server,
   ListTodo,
@@ -33,6 +34,7 @@ const navGroups = [
     items: [
       { href: "/creation/image", label: "图片制作", icon: Image },
       { href: "/creation/video", label: "视频制作", icon: Video },
+      { href: "/creation/video/history", label: "视频历史", icon: History },
       { href: "/chat", label: "聊天助手", icon: MessageSquare },
     ],
   },
@@ -85,7 +87,14 @@ export function Sidebar() {
                 const isActive =
                   pathname === item.href ||
                   (item.href !== "/dashboard" &&
-                    pathname.startsWith(item.href));
+                    pathname.startsWith(item.href + "/") &&
+                    !group.items.some(
+                      (other) =>
+                        other.href !== item.href &&
+                        other.href.startsWith(item.href + "/") &&
+                        (pathname === other.href ||
+                          pathname.startsWith(other.href + "/")),
+                    ));
                 return (
                   <Link key={item.href} href={item.href}>
                     <motion.div

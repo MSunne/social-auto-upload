@@ -72,6 +72,11 @@ func decodeAdminStringList(raw []byte) []string {
 	return items
 }
 
+const adminDeviceActivationSelectColumns = `
+	dac.id, dac.device_id, dac.order_no, dac.activation_code_hint, dac.status,
+	dac.activated_by_user_id, dac.activated_at, dac.notes, dac.created_at, dac.updated_at
+`
+
 const adminPlatformAccountSelectColumns = `
 	pa.id, pa.device_id, pa.platform, pa.account_name, pa.status, pa.last_message,
 	pa.last_authenticated_at, pa.notes, pa.created_at, pa.updated_at
@@ -128,6 +133,16 @@ func scanAdminDeviceRow(scan scanFn) (*domain.AdminDeviceRow, error) {
 	var ownerSummaryID *string
 	var ownerEmail *string
 	var ownerName *string
+	var activationID *string
+	var activationDeviceID *string
+	var activationOrderNo *string
+	var activationCodeHint *string
+	var activationStatus *string
+	var activationActivatedByUserID *string
+	var activationActivatedAt *time.Time
+	var activationNotes *string
+	var activationCreatedAt *time.Time
+	var activationUpdatedAt *time.Time
 
 	if err := scan(
 		&item.Device.ID,
@@ -163,6 +178,16 @@ func scanAdminDeviceRow(scan scanFn) (*domain.AdminDeviceRow, error) {
 		&ownerSummaryID,
 		&ownerEmail,
 		&ownerName,
+		&activationID,
+		&activationDeviceID,
+		&activationOrderNo,
+		&activationCodeHint,
+		&activationStatus,
+		&activationActivatedByUserID,
+		&activationActivatedAt,
+		&activationNotes,
+		&activationCreatedAt,
+		&activationUpdatedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -187,6 +212,20 @@ func scanAdminDeviceRow(scan scanFn) (*domain.AdminDeviceRow, error) {
 			ID:    strings.TrimSpace(*ownerSummaryID),
 			Email: stringOrEmpty(ownerEmail),
 			Name:  stringOrEmpty(ownerName),
+		}
+	}
+	if activationID != nil && activationDeviceID != nil && activationStatus != nil && activationCreatedAt != nil && activationUpdatedAt != nil {
+		item.Activation = &domain.DeviceActivationConfig{
+			ID:                 strings.TrimSpace(*activationID),
+			DeviceID:           strings.TrimSpace(*activationDeviceID),
+			OrderNo:            activationOrderNo,
+			ActivationCodeHint: activationCodeHint,
+			Status:             strings.TrimSpace(*activationStatus),
+			ActivatedByUserID:  activationActivatedByUserID,
+			ActivatedAt:        activationActivatedAt,
+			Notes:              activationNotes,
+			CreatedAt:          activationCreatedAt.UTC(),
+			UpdatedAt:          activationUpdatedAt.UTC(),
 		}
 	}
 
@@ -631,11 +670,13 @@ func (s *Store) GetAdminUserByID(ctx context.Context, userID string) (*domain.Ad
 func (s *Store) GetAdminDeviceByID(ctx context.Context, deviceID string) (*domain.AdminDeviceRow, error) {
 	row := s.pool.QueryRow(ctx, fmt.Sprintf(`
 		SELECT %s, %s,
-		       u.id, u.email, u.name
+		       u.id, u.email, u.name,
+		       %s
 		FROM devices
 		LEFT JOIN users u ON u.id = devices.owner_user_id
+		LEFT JOIN device_activation_configs dac ON dac.device_id = devices.id
 		WHERE devices.id = $1
-	`, deviceSelectColumnsQualified, deviceLoadColumns), deviceID)
+	`, deviceSelectColumnsQualified, deviceLoadColumns, adminDeviceActivationSelectColumns), deviceID)
 
 	item, err := scanAdminDeviceRow(row.Scan)
 	if err != nil {

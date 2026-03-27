@@ -233,6 +233,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 			private.With(authmiddleware.RequireAdminPermission("device.read")).Get("/devices/{deviceId}", adminConsoleHandler.DetailDevice)
 			private.With(authmiddleware.RequireAdminPermission("device.read")).Get("/devices/{deviceId}/workspace", adminConsoleHandler.DeviceWorkspace)
 			private.With(authmiddleware.RequireAdminPermission("device.update")).Patch("/devices/{deviceId}", adminConsoleHandler.UpdateDevice)
+			private.With(authmiddleware.RequireAdminPermission("device.update")).Patch("/devices/{deviceId}/activation", adminConsoleHandler.UpdateDeviceActivation)
 			private.With(authmiddleware.RequireAdminPermission("device.update")).Post("/devices/{deviceId}/force-release", adminConsoleHandler.ForceReleaseDevice)
 			private.With(authmiddleware.RequireAdminPermission("task.read")).Get("/media-accounts", adminConsoleHandler.ListMediaAccounts)
 			private.With(authmiddleware.RequireAdminPermission("task.operate")).Post("/media-accounts/bulk-action", adminConsoleHandler.BulkActionMediaAccounts)

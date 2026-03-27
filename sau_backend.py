@@ -33,6 +33,7 @@ from utils.account_storage import (
 from utils.cloud_agent import CloudAgent
 from utils.cloud_qr_bridge import CloudLoginBridge
 from utils.cloud_sync import CloudSyncClient
+from utils.device_identity import load_device_identity
 from utils.device_meta import get_device_code
 from utils.materials import (
     build_material_roots,
@@ -234,13 +235,14 @@ OMNIDRIVE_MATERIAL_SYNC_INTERVAL = int(getattr(app_conf, 'OMNIDRIVE_MATERIAL_SYN
 OMNIDRIVE_SKILL_SYNC_INTERVAL = int(getattr(app_conf, 'OMNIDRIVE_SKILL_SYNC_INTERVAL', 120))
 OMNIDRIVE_PUBLISH_SYNC_INTERVAL = int(getattr(app_conf, 'OMNIDRIVE_PUBLISH_SYNC_INTERVAL', 5))
 OMNIDRIVE_MATERIAL_SYNC_MAX_FILES = int(getattr(app_conf, 'OMNIDRIVE_MATERIAL_SYNC_MAX_FILES', 1000))
+DEVICE_IDENTITY = load_device_identity(app_conf, base_dir=BASE_DIR)
 OMNIBULL_PUBLISH_WORKERS = int(getattr(app_conf, 'OMNIBULL_PUBLISH_WORKERS', 1))
 OMNIBULL_PUBLISH_DISPATCH_INTERVAL_SECONDS = max(
     0,
     int(getattr(app_conf, 'OMNIBULL_PUBLISH_DISPATCH_INTERVAL_SECONDS', 5)),
 )
 OMNIBULL_TASK_RETENTION_DAYS = int(getattr(app_conf, 'OMNIBULL_TASK_RETENTION_DAYS', 7))
-OMNIBULL_API_KEY = str(getattr(app_conf, 'OMNIBULL_API_KEY', '')).strip()
+OMNIBULL_API_KEY = DEVICE_IDENTITY.get("localApiKey") or str(getattr(app_conf, 'OMNIBULL_API_KEY', '')).strip()
 OMNIBULL_MATERIAL_ROOTS = build_material_roots(
     BASE_DIR,
     getattr(app_conf, 'OMNIBULL_MATERIAL_ROOTS', None),
@@ -277,8 +279,9 @@ OMNIBULL_GENERATED_ROOT_NAME = str(getattr(app_conf, 'OMNIBULL_GENERATED_ROOT_NA
 OMNIBULL_GENERATED_ROOT_PATH = Path(BASE_DIR / "omnidriveSync" / "generated").resolve()
 OMNIBULL_GENERATED_ROOT_PATH.mkdir(parents=True, exist_ok=True)
 OMNIBULL_MATERIAL_ROOTS.setdefault(OMNIBULL_GENERATED_ROOT_NAME, OMNIBULL_GENERATED_ROOT_PATH)
-RESOLVED_DEVICE_NAME = CLOUD_DEVICE_NAME or socket.gethostname()
-DEVICE_CODE = str(getattr(app_conf, 'CLOUD_DEVICE_CODE', '')).strip() or get_device_code()
+RESOLVED_DEVICE_NAME = DEVICE_IDENTITY.get("deviceName") or CLOUD_DEVICE_NAME or socket.gethostname()
+DEVICE_CODE = DEVICE_IDENTITY.get("deviceCode") or str(getattr(app_conf, 'CLOUD_DEVICE_CODE', '')).strip() or get_device_code()
+OMNIDRIVE_AGENT_KEY = DEVICE_IDENTITY.get("agentKey") or OMNIDRIVE_AGENT_KEY
 cloud_agent = None
 cloud_agent_lock = threading.Lock()
 omnidrive_agent = None
@@ -566,6 +569,8 @@ def build_skill_status_payload():
     return {
         "deviceName": RESOLVED_DEVICE_NAME,
         "deviceCode": DEVICE_CODE,
+        "deviceIdentitySource": DEVICE_IDENTITY.get("source"),
+        "deviceIdentityPath": DEVICE_IDENTITY.get("path"),
         "materialRoots": list_material_roots(OMNIBULL_MATERIAL_ROOTS),
         "skillApiAuthEnabled": bool(OMNIBULL_API_KEY),
         "cloudAgentConfig": get_cloud_agent_config(),
