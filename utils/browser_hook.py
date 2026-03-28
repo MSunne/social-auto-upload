@@ -1,7 +1,11 @@
 import os
+import subprocess
+import sys
+import threading
 from pathlib import Path
 
 from conf import LOCAL_CHROME_HEADLESS, LOCAL_CHROME_PATH
+from utils.log import get_logger
 
 
 COMMON_BROWSER_PATHS = [
@@ -19,13 +23,20 @@ COMMON_PLAYWRIGHT_BROWSER_DIRS = [
     Path.home() / ".cache" / "ms-playwright",
 ]
 
+PLAYWRIGHT_EXECUTABLE_RELATIVE_PATHS = [
+    Path("chrome-linux/chrome"),
+    Path("chrome-mac/Chromium.app/Contents/MacOS/Chromium"),
+    Path("chrome-win/chrome.exe"),
+    Path("chrome-headless-shell-linux/headless_shell"),
+    Path("chrome-headless-shell-mac/headless_shell"),
+    Path("chrome-headless-shell-win/headless_shell.exe"),
+]
 
-def resolve_browser_executable_path(*, headless=False):
-    if headless:
-        # Headless validation works better with Playwright's bundled Chromium.
-        # Avoid forcing the local Chrome app so macOS does not briefly bounce the
-        # dock icon for background cookie checks.
-        return None
+_BROWSER_INSTALL_LOCK = threading.Lock()
+browser_logger = get_logger("browser")
+
+
+def _resolve_system_browser_executable_path():
     for candidate in COMMON_BROWSER_PATHS:
         if not candidate:
             continue
@@ -35,35 +46,133 @@ def resolve_browser_executable_path(*, headless=False):
     return None
 
 
-def resolve_playwright_browser_dir():
+def _playwright_browser_roots():
     env_path = str(os.getenv("PLAYWRIGHT_BROWSERS_PATH", "")).strip()
     candidate_roots = []
-    if env_path and env_path != "0":
+
+    if env_path == "0":
+        candidate_roots.append(_resolve_playwright_package_root() / ".local-browsers")
+    elif env_path:
         candidate_roots.append(Path(env_path).expanduser())
 
     candidate_roots.extend(COMMON_PLAYWRIGHT_BROWSER_DIRS)
 
     seen = set()
+    roots = []
     for root in candidate_roots:
         resolved_root = root.resolve()
         key = str(resolved_root)
         if key in seen:
             continue
         seen.add(key)
-        if not resolved_root.exists() or not resolved_root.is_dir():
+        roots.append(resolved_root)
+    return roots
+
+
+def _resolve_playwright_package_root():
+    import playwright
+
+    return Path(playwright.__file__).resolve().parent / "driver" / "package"
+
+
+def resolve_playwright_browser_executable_path():
+    for root in _playwright_browser_roots():
+        if not root.exists() or not root.is_dir():
             continue
-        for child in resolved_root.iterdir():
+        for child in sorted(root.iterdir()):
             if not child.is_dir():
                 continue
             name = child.name.lower()
-            if name.startswith("chromium") or name.startswith("chrome-linux"):
+            if not (
+                name.startswith("chromium")
+                or name.startswith("chrome-linux")
+                or name.startswith("chrome-headless-shell")
+            ):
+                continue
+            for relative_path in PLAYWRIGHT_EXECUTABLE_RELATIVE_PATHS:
+                executable_path = child / relative_path
+                if executable_path.exists():
+                    return str(executable_path)
+    return None
+
+
+def install_playwright_browser(browser_name="chromium"):
+    command = [sys.executable, "-m", "playwright", "install", browser_name]
+    browser_logger.info(
+        "No usable browser runtime found. Installing Playwright browser browser_name={} command={}",
+        browser_name,
+        " ".join(command),
+    )
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        stdout = (result.stdout or "").strip()
+        details = stderr or stdout or "unknown error"
+        browser_logger.error(
+            "Playwright browser installation failed browser_name={} returncode={} details={}",
+            browser_name,
+            result.returncode,
+            details,
+        )
+        raise RuntimeError(f"Playwright browser installation failed: {details}")
+    browser_logger.info("Playwright browser installation completed browser_name={}", browser_name)
+
+
+def _ensure_playwright_browser_executable_path(browser_name="chromium"):
+    executable_path = resolve_playwright_browser_executable_path()
+    if executable_path:
+        return executable_path
+
+    with _BROWSER_INSTALL_LOCK:
+        executable_path = resolve_playwright_browser_executable_path()
+        if executable_path:
+            return executable_path
+        install_playwright_browser(browser_name=browser_name)
+        executable_path = resolve_playwright_browser_executable_path()
+        if executable_path:
+            return executable_path
+
+    raise RuntimeError(
+        "Playwright browser was installed, but no Chromium executable was found in the installation path."
+    )
+
+
+def resolve_browser_executable_path(*, headless=False):
+    bundled_browser_path = resolve_playwright_browser_executable_path()
+    if bundled_browser_path:
+        return bundled_browser_path
+
+    if headless:
+        return None
+
+    return _resolve_system_browser_executable_path()
+
+
+def resolve_playwright_browser_dir():
+    for root in _playwright_browser_roots():
+        if not root.exists() or not root.is_dir():
+            continue
+        for child in root.iterdir():
+            if not child.is_dir():
+                continue
+            name = child.name.lower()
+            if (
+                name.startswith("chromium")
+                or name.startswith("chrome-linux")
+                or name.startswith("chrome-headless-shell")
+            ):
                 return str(child)
     return None
 
 
 def describe_browser_runtime(*, headless=None):
     actual_headless = LOCAL_CHROME_HEADLESS if headless is None else bool(headless)
-    system_browser_path = resolve_browser_executable_path(headless=False)
+    system_browser_path = _resolve_system_browser_executable_path()
     bundled_browser_dir = resolve_playwright_browser_dir()
     issues = []
 
@@ -80,15 +189,16 @@ def describe_browser_runtime(*, headless=None):
                 "System browser was not found, but Playwright bundled Chromium is available."
             )
     else:
-        if system_browser_path:
-            available = True
-            source = "system_browser"
-        elif bundled_browser_dir:
+        if bundled_browser_dir:
             available = True
             source = "playwright_bundled"
-            issues.append(
-                "System browser was not found. OmniBull will fall back to Playwright bundled Chromium."
-            )
+            if not system_browser_path:
+                issues.append(
+                    "System browser was not found. OmniBull will fall back to Playwright bundled Chromium."
+                )
+        elif system_browser_path:
+            available = True
+            source = "system_browser"
         else:
             available = False
             source = None
@@ -136,6 +246,8 @@ def get_browser_options(headless=None, extra_args=None):
     }
 
     executable_path = resolve_browser_executable_path(headless=actual_headless)
+    if not executable_path:
+        executable_path = _ensure_playwright_browser_executable_path("chromium")
     if executable_path:
         options["executable_path"] = executable_path
 

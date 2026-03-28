@@ -225,7 +225,7 @@ export default function FinancePage() {
       }),
   });
 
-  const activeQuotaCount = summary?.quotaBalances.filter((item) => item.remainingTotal > 0).length ?? 0;
+  const activeQuotaCount = (Array.isArray(summary?.quotaBalances) ? summary!.quotaBalances : []).filter((item) => item.remainingTotal > 0).length;
 
   return (
     <>
@@ -274,7 +274,7 @@ export default function FinancePage() {
         />
       </div>
 
-      {summary && summary.quotaBalances.length > 0 ? (
+      {summary && Array.isArray(summary.quotaBalances) && summary.quotaBalances.length > 0 ? (
         <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {summary.quotaBalances.map((quota, index) => (
             <motion.div
@@ -389,7 +389,7 @@ export default function FinancePage() {
           </div>
         ) : error ? (
           <div className="p-6 text-sm text-danger">加载财务明细失败，请刷新页面重试。</div>
-        ) : !activitiesData || activitiesData.items.length === 0 ? (
+        ) : !activitiesData || !Array.isArray(activitiesData.items) || activitiesData.items.length === 0 ? (
           <div className="p-6">
             <EmptyState
               icon={<Wallet className="h-6 w-6" />}

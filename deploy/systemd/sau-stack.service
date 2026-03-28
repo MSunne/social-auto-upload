@@ -1,0 +1,18 @@
+[Unit]
+Description=SAU backend and sau_frontend stack
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=omnibull
+Group=omnibull
+WorkingDirectory=/opt/omnibull/social-auto-upload
+EnvironmentFile=-/etc/omnibull/omnibull.env
+ExecStart=/opt/omnibull/social-auto-upload/scripts/sau_linux.sh run
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

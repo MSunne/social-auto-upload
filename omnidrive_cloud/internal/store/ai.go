@@ -14,13 +14,52 @@ import (
 	"omnidrive_cloud/internal/domain"
 )
 
-const aiJobSelectColumns = `
-	id, owner_user_id, device_id, skill_id, source, local_task_id, job_type, model_name,
-	COALESCE((SELECT am.model_alias FROM ai_models am WHERE am.model_name = ai_jobs.model_name LIMIT 1), ai_jobs.model_name) AS model_alias,
-	prompt, status,
-	input_payload, output_payload, message, cost_credits, lease_owner_device_id, lease_token, lease_expires_at,
-	delivery_status, delivery_message, local_publish_task_id, run_at, created_at, updated_at, delivered_at, finished_at
-`
+func aiJobQualifiedColumn(alias string, column string) string {
+	trimmedAlias := strings.TrimSpace(alias)
+	if trimmedAlias == "" {
+		return column
+	}
+	return trimmedAlias + "." + column
+}
+
+func aiJobSelectColumnsFor(alias string) string {
+	qualifiedModelName := aiJobQualifiedColumn(alias, "model_name")
+	columns := []string{
+		aiJobQualifiedColumn(alias, "id"),
+		aiJobQualifiedColumn(alias, "owner_user_id"),
+		aiJobQualifiedColumn(alias, "device_id"),
+		aiJobQualifiedColumn(alias, "skill_id"),
+		aiJobQualifiedColumn(alias, "source"),
+		aiJobQualifiedColumn(alias, "local_task_id"),
+		aiJobQualifiedColumn(alias, "job_type"),
+		qualifiedModelName,
+		fmt.Sprintf(
+			"COALESCE((SELECT am.model_alias FROM ai_models am WHERE am.model_name = %s LIMIT 1), %s) AS model_alias",
+			qualifiedModelName,
+			qualifiedModelName,
+		),
+		aiJobQualifiedColumn(alias, "prompt"),
+		aiJobQualifiedColumn(alias, "status"),
+		aiJobQualifiedColumn(alias, "input_payload"),
+		aiJobQualifiedColumn(alias, "output_payload"),
+		aiJobQualifiedColumn(alias, "message"),
+		aiJobQualifiedColumn(alias, "cost_credits"),
+		aiJobQualifiedColumn(alias, "lease_owner_device_id"),
+		aiJobQualifiedColumn(alias, "lease_token"),
+		aiJobQualifiedColumn(alias, "lease_expires_at"),
+		aiJobQualifiedColumn(alias, "delivery_status"),
+		aiJobQualifiedColumn(alias, "delivery_message"),
+		aiJobQualifiedColumn(alias, "local_publish_task_id"),
+		aiJobQualifiedColumn(alias, "run_at"),
+		aiJobQualifiedColumn(alias, "created_at"),
+		aiJobQualifiedColumn(alias, "updated_at"),
+		aiJobQualifiedColumn(alias, "delivered_at"),
+		aiJobQualifiedColumn(alias, "finished_at"),
+	}
+	return "\n\t" + strings.Join(columns, ",\n\t") + "\n"
+}
+
+var aiJobSelectColumns = aiJobSelectColumnsFor("ai_jobs")
 
 const aiModelSelectColumns = `
 	id, vendor, model_name, model_alias, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
@@ -832,7 +871,7 @@ func (s *Store) HasActiveAIJobsBySkillAndSource(ctx context.Context, ownerUserID
 
 func (s *Store) ListRecurringAccountSkillTemplateJobs(ctx context.Context, limit int) ([]domain.AIJob, error) {
 	query := `
-		SELECT ` + aiJobSelectColumns + `
+		SELECT ` + aiJobSelectColumnsFor("recurring_jobs") + `
 		FROM (
 			SELECT DISTINCT ON (COALESCE(input_payload->'scheduleConfig'->>'scheduleKey', ''))
 				` + aiJobSelectColumns + `
@@ -961,7 +1000,7 @@ func (s *Store) ListAgentAIJobsByDevice(ctx context.Context, deviceID string, so
 
 func (s *Store) ListExecutableAIJobs(ctx context.Context, limit int) ([]domain.AIJob, error) {
 	query := `
-		SELECT ` + aiJobSelectColumns + `
+		SELECT ` + aiJobSelectColumnsFor("target") + `
 		FROM ai_jobs AS target
 		WHERE target.status IN ('queued', 'waiting_recharge')
 		  AND target.source IN (` + executableAIJobSourcesSQL + `)
@@ -1255,7 +1294,7 @@ func (s *Store) FailStaleQueuedExecutableAIJobs(ctx context.Context, queuedBefor
 		    updated_at = NOW()
 		FROM candidates
 		WHERE target.id = candidates.id
-		RETURNING ` + aiJobSelectColumns + `
+		RETURNING ` + aiJobSelectColumnsFor("target") + `
 	`
 
 	rows, err := s.pool.Query(ctx, query, args...)
@@ -1328,9 +1367,9 @@ func (s *Store) ClaimCloudAIJobLease(ctx context.Context, jobID string, leaseTok
 		                    OR (prior.created_at = target.created_at AND prior.id < target.id)
 		                )
 		            )
-		        )
+	          )
 		  )
-		RETURNING `+aiJobSelectColumns+`
+		RETURNING `+aiJobSelectColumnsFor("target")+`
 	`, jobID, leaseToken, leaseExpiresAt)
 
 	job, err := scanAIJob(row)

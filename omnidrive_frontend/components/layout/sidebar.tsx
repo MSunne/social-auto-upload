@@ -33,6 +33,7 @@ const navGroups = [
     label: "AI 创作",
     items: [
       { href: "/creation/image", label: "图片制作", icon: Image },
+      { href: "/creation/image/history", label: "图片历史", icon: History },
       { href: "/creation/video", label: "视频制作", icon: Video },
       { href: "/creation/video/history", label: "视频历史", icon: History },
       { href: "/chat", label: "聊天助手", icon: MessageSquare },

@@ -302,7 +302,7 @@ export default function TopUpPage() {
               <div className="mt-5 flex-1 rounded-2xl border border-border/70 bg-surface/60 p-4">
                 <p className="text-xs uppercase tracking-wide text-text-muted">套餐权益</p>
                 <div className="mt-3 space-y-2">
-                  {pkg.entitlements.length > 0 ? (
+                  {Array.isArray(pkg.entitlements) && pkg.entitlements.length > 0 ? (
                     pkg.entitlements.map((item) => (
                       <div key={item.id} className="flex items-start justify-between gap-3 text-sm">
                         <div className="text-text-primary">
@@ -326,7 +326,7 @@ export default function TopUpPage() {
               <div className="mt-5">
                 <p className="mb-3 text-xs uppercase tracking-wide text-text-muted">选择充值渠道</p>
                 <div className="flex flex-wrap gap-3">
-                  {pkg.paymentChannels.map((channel) => {
+                  {(pkg.paymentChannels || []).map((channel) => {
                     const isManual = channel === "manual_cs";
                     return (
                       <button
@@ -396,7 +396,7 @@ export default function TopUpPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {orders.map((order) => {
+                  {(Array.isArray(orders) ? orders : []).map((order) => {
                     const isManual = order.channel === "manual_cs";
                     return (
                       <tr

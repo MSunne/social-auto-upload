@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -1560,8 +1561,6 @@ export default function VideoCreationPage() {
         <p className="mt-2 text-center text-[10px] text-text-muted">
           {submitting
             ? currentProgress.hint
-            : submitError
-              ? submitError
             : hasRunningJob
               ? "后台仍有视频任务执行中，进度会自动刷新。"
               : submitHelperText}
@@ -1718,9 +1717,17 @@ export default function VideoCreationPage() {
       </div>
 
       <div className="flex h-full flex-col gap-4 overflow-hidden pb-4 lg:col-span-2 lg:border-l lg:border-border/50 lg:pl-5 xl:col-span-2">
-        <h3 className="flex shrink-0 items-center gap-2 border-b border-border/50 pb-3 text-sm font-semibold uppercase tracking-widest text-text-secondary">
-          <Layers className="h-4 w-4 text-accent" /> 最近视频任务
-        </h3>
+        <div className="flex shrink-0 items-center justify-between border-b border-border/50 pb-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-text-secondary">
+            <Layers className="h-4 w-4 text-accent" /> 最近视频任务
+          </h3>
+          <Link
+            href="/creation/video/history"
+            className="text-xs font-medium text-accent transition-colors hover:text-accent-glow hover:underline"
+          >
+            查看全部历史 &rarr;
+          </Link>
+        </div>
 
         <div className="custom-scrollbar flex-1 space-y-3 overflow-y-auto pr-1">
           {mergedJobs.length === 0 ? (
@@ -1796,6 +1803,42 @@ export default function VideoCreationPage() {
           )}
         </div>
       </div>
+
+      {/* Error Popup Modal */}
+      <AnimatePresence>
+        {submitError && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSubmitError("")}
+              className="absolute inset-0 bg-background/80 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="glass-card relative z-10 flex w-full max-w-sm flex-col items-center overflow-hidden p-8 text-center"
+            >
+              <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-danger/20">
+                <AlertTriangle className="h-7 w-7 text-danger" />
+              </div>
+              <h3 className="mb-3 text-lg font-bold text-text-primary">无法启动视频制作</h3>
+              <p className="mb-6 text-sm leading-relaxed text-text-muted">
+                {submitError}
+              </p>
+              <button
+                type="button"
+                onClick={() => setSubmitError("")}
+                className="w-full rounded-xl bg-accent px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-accent/20 transition-all hover:bg-accent-strong hover:shadow-accent/40"
+              >
+                我知道了
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

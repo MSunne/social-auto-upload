@@ -378,7 +378,7 @@ export default function NodesPage() {
         <EmptyState
           icon={<Server className="h-6 w-6" />}
           title="暂无设备"
-          description="在 OmniBull 所在的 Linux 主机启动 Agent 后，输入激活码完成绑定。"
+          description="在 OmniBull 设备上通电并且链接网线，输入激活码完成绑定。"
         />
       )}
 
