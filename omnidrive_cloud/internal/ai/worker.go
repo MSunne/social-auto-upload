@@ -40,6 +40,8 @@ type executionBillingBlockedError struct {
 }
 
 const executionBillingRetryDelay = time.Minute
+const mediaFailureAutoRetryLimit = 1
+const mediaFailureAutoRetryDelay = 30 * time.Second
 
 func (e *requeueExecutionError) Error() string {
 	if e == nil || strings.TrimSpace(e.Message) == "" {
@@ -288,6 +290,28 @@ func (w *Worker) processJob(ctx context.Context, job domain.AIJob) {
 	}
 
 	message := buildAIExecutionFailureMessage(claimed.JobType, execErr)
+	if shouldAutoRetryMediaFailure(claimed) {
+		retryCount := mediaAutoRetryCountFromPayload(claimed.OutputPayload) + 1
+		retryMessage := buildMediaAutoRetryMessage(claimed.JobType, retryCount)
+		retryPayload := buildMediaAutoRetryPayload(claimed, message, retryCount)
+		w.returnUsageCreditsForFailure(ctx, claimed, message)
+		if _, err := w.requeueJobWithBackoff(ctx, claimed.ID, leaseToken, retryMessage, retryPayload, mediaFailureAutoRetryDelay); err != nil {
+			w.app.Logger.Error("ai worker failed to auto-retry media ai job", "job_id", claimed.ID, "job_type", claimed.JobType, "error", err)
+			return
+		}
+		w.recordAuditEvent(ctx, claimed, "cloud_generate_auto_retry", "AI 云端生成失败后自动重试", "queued", stringPtr(retryMessage), map[string]any{
+			"jobType":        claimed.JobType,
+			"modelName":      claimed.ModelName,
+			"source":         claimed.Source,
+			"autoRetryCount": retryCount,
+			"maxRetryCount":  mediaFailureAutoRetryLimit,
+			"failureMessage": message,
+			"retryAfter":     mediaFailureAutoRetryDelay.String(),
+		})
+		w.app.Logger.Warn("ai worker auto-retrying failed media ai job", "job_id", claimed.ID, "job_type", claimed.JobType, "retry_count", retryCount, "max_retry_count", mediaFailureAutoRetryLimit, "retry_after", mediaFailureAutoRetryDelay.String(), "error", execErr)
+		return
+	}
+
 	w.returnUsageCreditsForFailure(ctx, claimed, message)
 	if _, err := w.failJob(ctx, claimed.ID, leaseToken, message, nil); err != nil {
 		w.app.Logger.Error("ai worker failed to mark ai job as failed", "job_id", claimed.ID, "error", err)
@@ -482,6 +506,19 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 	if strings.TrimSpace(state.BaseURL) == "" {
 		state.BaseURL = baseURL
 	}
+	if err := w.prepareSkillVideoReferenceFrames(ctx, job, &req, &state); err != nil {
+		state.FrameRedesign = map[string]any{
+			"enabled": true,
+			"status":  "fallback",
+			"error":   strings.TrimSpace(err.Error()),
+		}
+		w.app.Logger.Warn("ai worker failed to redesign skill video frames, falling back to original references",
+			"job_id", job.ID,
+			"model_name", job.ModelName,
+			"error", err,
+		)
+	}
+	req.Model = normalizeVideoModel(strings.TrimSpace(job.ModelName), req.AspectRatio, len(req.ReferenceImages) > 0)
 	if strings.TrimSpace(state.RemoteVideoID) == "" {
 		submission, err := w.provider.SubmitVideo(ctx, req)
 		if err != nil {
@@ -801,6 +838,49 @@ func buildTemporaryVideoRequeueError(job *domain.AIJob, state videoExecutionStat
 	}
 }
 
+func shouldAutoRetryMediaFailure(job *domain.AIJob) bool {
+	if job == nil {
+		return false
+	}
+	jobType := strings.TrimSpace(strings.ToLower(job.JobType))
+	if jobType != "image" && jobType != "video" {
+		return false
+	}
+	return mediaAutoRetryCountFromPayload(job.OutputPayload) < mediaFailureAutoRetryLimit
+}
+
+func mediaAutoRetryCountFromPayload(raw []byte) int {
+	payload := decodePayloadMap(raw)
+	executionPayload, _ := payload["execution"].(map[string]any)
+	return intValue(executionPayload["autoRetryCount"])
+}
+
+func buildMediaAutoRetryMessage(jobType string, retryCount int) string {
+	label := "内容"
+	switch strings.TrimSpace(strings.ToLower(jobType)) {
+	case "image":
+		label = "图片"
+	case "video":
+		label = "视频"
+	}
+	return fmt.Sprintf("AI %s生成失败，系统将自动重试第 %d/%d 次", label, retryCount, mediaFailureAutoRetryLimit)
+}
+
+func buildMediaAutoRetryPayload(job *domain.AIJob, failureMessage string, retryCount int) []byte {
+	payload := map[string]any{
+		"provider": "apiyi",
+		"kind":     strings.TrimSpace(strings.ToLower(job.JobType)),
+		"model":    job.ModelName,
+		"execution": map[string]any{
+			"autoRetryCount":     retryCount,
+			"maxAutoRetry":       mediaFailureAutoRetryLimit,
+			"lastFailureAt":      time.Now().UTC().Format(time.RFC3339),
+			"lastFailureMessage": strings.TrimSpace(failureMessage),
+		},
+	}
+	return mustJSON(payload)
+}
+
 func shouldRequeueVideoSubmissionError(err error) bool {
 	if err == nil {
 		return false
@@ -853,6 +933,27 @@ func truncateFailureMessage(message string, limit int) string {
 		return message
 	}
 	return strings.TrimSpace(string(runes[:limit])) + "..."
+}
+
+func intValue(value any) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return 0
+		}
+		var parsed int
+		_, _ = fmt.Sscanf(trimmed, "%d", &parsed)
+		return parsed
+	default:
+		return 0
+	}
 }
 
 func errorString(err error) string {
@@ -1045,6 +1146,8 @@ type videoExecutionState struct {
 	FailureCode     string
 	SubmittedAt     time.Time
 	UpdatedAt       time.Time
+	ReferenceFrames []map[string]any
+	FrameRedesign   map[string]any
 }
 
 func buildVideoOutputPayload(job *domain.AIJob, state videoExecutionState, artifacts []domain.AIJobArtifact) []byte {
@@ -1065,6 +1168,13 @@ func buildVideoOutputPayload(job *domain.AIJob, state videoExecutionState, artif
 		"baseUrl":   state.BaseURL,
 		"video":     videoPayload,
 		"artifacts": summarizeArtifacts(artifacts),
+	}
+	if len(state.ReferenceFrames) > 0 {
+		videoPayload["referenceFrames"] = state.ReferenceFrames
+		payload["videoReferenceFrames"] = state.ReferenceFrames
+	}
+	if len(state.FrameRedesign) > 0 {
+		payload["videoFrameRedesign"] = state.FrameRedesign
 	}
 	if state.ProgressPercent != nil {
 		videoPayload["progressPercent"] = *state.ProgressPercent
@@ -1138,6 +1248,11 @@ func parseVideoExecutionState(raw []byte) videoExecutionState {
 	if parsed, ok := parseRFC3339(firstNonEmptyString(stringValue(payload["updatedAt"]), stringValue(videoPayload["updatedAt"]))); ok {
 		state.UpdatedAt = parsed
 	}
+	state.ReferenceFrames = firstNonEmptyObjectSlice(
+		normalizeObjectSlice(payload["videoReferenceFrames"]),
+		normalizeObjectSlice(videoPayload["referenceFrames"]),
+	)
+	state.FrameRedesign = normalizeObject(payload["videoFrameRedesign"])
 	return state
 }
 
@@ -1169,6 +1284,109 @@ func summarizeArtifacts(items []domain.AIJobArtifact) []map[string]any {
 		})
 	}
 	return result
+}
+
+func (w *Worker) prepareSkillVideoReferenceFrames(ctx context.Context, job *domain.AIJob, req *VideoRequest, state *videoExecutionState) error {
+	if job == nil || req == nil || state == nil {
+		return nil
+	}
+
+	payload := decodePayloadMap(job.InputPayload)
+	if !shouldPrepareSkillVideoReferenceFrames(job, payload) {
+		return nil
+	}
+
+	if existingRefs := mediaInputsFromVideoReferenceFrames(state.ReferenceFrames); len(existingRefs) > 0 {
+		req.ReferenceImages = existingRefs
+		state.FrameRedesign = map[string]any{
+			"enabled":    true,
+			"status":     "reused",
+			"frameCount": len(existingRefs),
+		}
+		return nil
+	}
+
+	sourceReferenceImages := collectSkillVideoSourceImages(payload)
+	referenceTexts := normalizeStoryboardTexts(payload["referenceTexts"])
+	frameModelName := strings.TrimSpace(w.app.Config.DefaultImageModel)
+	if frameModelName == "" {
+		frameModelName = "gemini-3-pro-image-preview"
+	}
+	imageBaseURL, imageAPIKey, err := w.resolveModelRuntimeConfig(ctx, frameModelName)
+	if err != nil {
+		return err
+	}
+
+	roles := []string{"first"}
+	if len(sourceReferenceImages) > 1 {
+		roles = append(roles, "last")
+	}
+
+	inputs := make([]store.UpsertAIJobArtifactInput, 0, len(roles))
+	frameMetadata := make([]map[string]any, 0, len(roles))
+	for _, role := range roles {
+		prompt := buildSkillVideoFramePrompt(job, payload, req.Prompt, referenceTexts, role, len(sourceReferenceImages))
+		result, err := w.provider.GenerateImage(ctx, ImageRequest{
+			Model:           frameModelName,
+			BaseURL:         imageBaseURL,
+			APIKey:          imageAPIKey,
+			Prompt:          prompt,
+			ReferenceImages: sourceReferenceImages,
+			AspectRatio:     req.AspectRatio,
+			Resolution:      req.Resolution,
+		})
+		if err != nil {
+			return err
+		}
+		if len(result.Images) == 0 {
+			return fmt.Errorf("frame redesign did not return any image")
+		}
+
+		image := result.Images[0]
+		artifactKey := fmt.Sprintf("video-%s-frame%s", role, extensionForMIME(image.MIMEType, ".png"))
+		input, err := w.saveBinaryArtifact(ctx, job, "image", artifactKey, "apiyi", image)
+		if err != nil {
+			return err
+		}
+		inputs = append(inputs, input)
+		frameMetadata = append(frameMetadata, map[string]any{
+			"role":        role,
+			"artifactKey": input.ArtifactKey,
+			"prompt":      prompt,
+			"modelName":   frameModelName,
+		})
+	}
+
+	artifacts, err := w.app.Store.UpsertAIJobArtifacts(ctx, inputs)
+	if err != nil {
+		return err
+	}
+	artifactByKey := make(map[string]domain.AIJobArtifact, len(artifacts))
+	for _, item := range artifacts {
+		artifactByKey[item.ArtifactKey] = item
+	}
+	for index := range frameMetadata {
+		key := strings.TrimSpace(stringValue(frameMetadata[index]["artifactKey"]))
+		if artifact, ok := artifactByKey[key]; ok {
+			frameMetadata[index]["fileName"] = stringValue(artifact.FileName)
+			frameMetadata[index]["mimeType"] = stringValue(artifact.MimeType)
+			frameMetadata[index]["publicUrl"] = stringValue(artifact.PublicURL)
+			frameMetadata[index]["storageKey"] = stringValue(artifact.StorageKey)
+			frameMetadata[index]["sizeBytes"] = artifact.SizeBytes
+		}
+	}
+
+	state.ReferenceFrames = frameMetadata
+	state.FrameRedesign = map[string]any{
+		"enabled":                   true,
+		"status":                    "generated",
+		"modelName":                 frameModelName,
+		"frameCount":                len(frameMetadata),
+		"sourceReferenceImageCount": len(sourceReferenceImages),
+		"sourceReferenceTextCount":  len(referenceTexts),
+	}
+	req.ReferenceImages = mediaInputsFromVideoReferenceFrames(frameMetadata)
+	return nil
 }
 
 func buildStoryboardPrompt(job *domain.AIJob, originalPrompt string, payload map[string]any, referenceTexts []map[string]string, referenceImages []map[string]string, references any) string {
@@ -1222,6 +1440,64 @@ func buildStoryboardPrompt(job *domain.AIJob, originalPrompt string, payload map
 		}
 	}
 	builder.WriteString("\n请直接输出最终可执行脚本，不要解释过程。")
+	return builder.String()
+}
+
+func buildSkillVideoFramePrompt(job *domain.AIJob, payload map[string]any, optimizedVideoPrompt string, referenceTexts []map[string]string, role string, sourceImageCount int) string {
+	var builder strings.Builder
+	role = strings.TrimSpace(strings.ToLower(role))
+	frameName := "首帧"
+	if role == "last" {
+		frameName = "尾帧"
+	}
+
+	builder.WriteString("请为一个即将生成的营销短视频设计")
+	builder.WriteString(frameName)
+	builder.WriteString("关键帧图片，后续会把这张图继续交给视频模型作为参考。\n")
+	builder.WriteString("硬性要求:\n")
+	builder.WriteString("1. 主体必须是客户的主要产品，不能替换产品、不能偏离产品特性、卖点、材质、包装、颜色和使用场景。\n")
+	builder.WriteString("2. 不要直接复用客户当前固定首帧或固定构图；要在保留产品识别度的前提下，重新设计镜头、景别、布光、背景、陈列关系和视觉焦点。\n")
+	builder.WriteString("3. 画面必须适合短视频")
+	builder.WriteString(frameName)
+	builder.WriteString("，有明确主体、强点击感和可延展的运动空间。\n")
+	builder.WriteString("4. 不要生成拼贴、多宫格、边框、水印、二维码，也不要把产品做成无关的抽象物。\n")
+	if role == "last" {
+		builder.WriteString("5. 尾帧要和首帧保持同一产品与风格体系，但更偏收束和成交氛围，不要做纯字幕尾卡。\n")
+	} else {
+		builder.WriteString("5. 首帧需要更强的吸引力和开场张力，但不能靠夸张到脱离产品真实信息。\n")
+	}
+	builder.WriteString("\n任务信息:\n")
+	builder.WriteString("任务类型: video\n")
+	builder.WriteString("来源: 技能中心视文模式\n")
+	if name := strings.TrimSpace(stringValueFromMap(payload, "skillName")); name != "" {
+		builder.WriteString("技能名称: ")
+		builder.WriteString(name)
+		builder.WriteString("\n")
+	}
+	if desc := strings.TrimSpace(stringValueFromMap(payload, "skillDescription")); desc != "" {
+		builder.WriteString("技能说明: ")
+		builder.WriteString(desc)
+		builder.WriteString("\n")
+	}
+	if prompt := strings.TrimSpace(optimizedVideoPrompt); prompt != "" {
+		builder.WriteString("视频生成提示词: ")
+		builder.WriteString(prompt)
+		builder.WriteString("\n")
+	}
+	builder.WriteString("客户上传参考图数量: ")
+	builder.WriteString(fmt.Sprintf("%d", sourceImageCount))
+	builder.WriteString("\n")
+	if len(referenceTexts) > 0 {
+		builder.WriteString("\n客户参考文本:\n")
+		for _, item := range referenceTexts {
+			builder.WriteString("- ")
+			builder.WriteString(strings.TrimSpace(item["fileName"]))
+			builder.WriteString(": ")
+			builder.WriteString(strings.TrimSpace(item["content"]))
+			builder.WriteString("\n")
+		}
+	}
+	builder.WriteString("\n输出要求: 直接输出一张可用于视频参考的高质量画面，不要返回解释文字。")
 	return builder.String()
 }
 
@@ -1300,6 +1576,83 @@ func normalizeStoryboardImages(raw any) []map[string]string {
 		})
 	}
 	return result
+}
+
+func shouldPrepareSkillVideoReferenceFrames(job *domain.AIJob, payload map[string]any) bool {
+	if job == nil || !strings.EqualFold(strings.TrimSpace(job.JobType), "video") {
+		return false
+	}
+	source := strings.TrimSpace(job.Source)
+	switch source {
+	case "account_skill_binding":
+		return true
+	case "openclaw_skill":
+		return strings.TrimSpace(stringValue(job.SkillID)) != ""
+	default:
+		return false
+	}
+}
+
+func collectSkillVideoSourceImages(payload map[string]any) []MediaInput {
+	if payload == nil {
+		return nil
+	}
+	return collectMediaInputs(map[string]any{
+		"referenceImages": payload["referenceImages"],
+	})
+}
+
+func mediaInputsFromVideoReferenceFrames(items []map[string]any) []MediaInput {
+	result := make([]MediaInput, 0, len(items))
+	for _, item := range items {
+		url := strings.TrimSpace(stringValue(item["publicUrl"]))
+		if url == "" {
+			continue
+		}
+		result = append(result, MediaInput{
+			URL:      url,
+			FileName: strings.TrimSpace(stringValue(item["fileName"])),
+			MIMEType: strings.TrimSpace(stringValue(item["mimeType"])),
+			Role:     strings.TrimSpace(stringValue(item["role"])),
+		})
+	}
+	return result
+}
+
+func normalizeObjectSlice(raw any) []map[string]any {
+	items, ok := raw.([]any)
+	if !ok {
+		if typed, ok := raw.([]map[string]any); ok {
+			return typed
+		}
+		return nil
+	}
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		typed, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		result = append(result, typed)
+	}
+	return result
+}
+
+func normalizeObject(raw any) map[string]any {
+	typed, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return typed
+}
+
+func firstNonEmptyObjectSlice(values ...[]map[string]any) []map[string]any {
+	for _, value := range values {
+		if len(value) > 0 {
+			return value
+		}
+	}
+	return nil
 }
 
 func boolValue(value any) bool {

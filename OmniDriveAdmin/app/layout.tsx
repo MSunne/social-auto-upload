@@ -3,6 +3,9 @@ import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import { Providers } from "./providers";
 import "./globals.css";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 const plexSans = IBM_Plex_Sans({
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],

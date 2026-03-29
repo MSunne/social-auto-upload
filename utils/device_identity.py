@@ -56,9 +56,17 @@ def _now_iso():
 
 
 def _build_runtime_defaults(app_conf):
-    device_name = _clean_string(getattr(app_conf, "CLOUD_DEVICE_NAME", "")) or socket.gethostname()
+    device_name = (
+        _clean_string(getattr(app_conf, "OMNIBULL_DEVICE_NAME", ""))
+        or _clean_string(getattr(app_conf, "OMNIDRIVE_DEVICE_NAME", ""))
+        or socket.gethostname()
+    )
     return {
-        "deviceCode": _clean_string(getattr(app_conf, "CLOUD_DEVICE_CODE", "")) or get_device_code(),
+        "deviceCode": (
+            _clean_string(getattr(app_conf, "OMNIBULL_DEVICE_CODE", ""))
+            or _clean_string(getattr(app_conf, "OMNIDRIVE_DEVICE_CODE", ""))
+            or get_device_code()
+        ),
         "agentKey": _clean_string(getattr(app_conf, "OMNIDRIVE_AGENT_KEY", "")),
         "deviceName": device_name,
         "localApiKey": _clean_string(getattr(app_conf, "OMNIBULL_API_KEY", "")),

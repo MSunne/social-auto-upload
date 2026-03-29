@@ -339,8 +339,8 @@ export function DevicesView() {
                       </div>
                     </td>
                     <td className="px-4 py-4 font-mono text-xs text-[var(--color-text-secondary)]">
-                      <div>{row.device.localIp || "—"}</div>
-                      <div className="mt-0.5">{row.device.publicIp || ""}</div>
+                      <div>公网: {row.device.publicIp || "—"}</div>
+                      <div className="mt-0.5">内网: {row.device.localIp || "—"}</div>
                     </td>
                     <td className="px-4 py-4 text-xs text-[var(--color-text-secondary)]">
                       {formatLastSeen(row.device.lastSeenAt)}

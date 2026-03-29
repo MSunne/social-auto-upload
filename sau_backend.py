@@ -287,8 +287,18 @@ OMNIBULL_RUNTIME_HEALTH = build_runtime_health(
     generated_root_path=OMNIBULL_GENERATED_ROOT_PATH,
     headless=parse_bool(getattr(app_conf, 'LOCAL_CHROME_HEADLESS', False)),
 )
-RESOLVED_DEVICE_NAME = DEVICE_IDENTITY.get("deviceName") or CLOUD_DEVICE_NAME or socket.gethostname()
-DEVICE_CODE = DEVICE_IDENTITY.get("deviceCode") or str(getattr(app_conf, 'CLOUD_DEVICE_CODE', '')).strip() or get_device_code()
+RESOLVED_DEVICE_NAME = (
+    DEVICE_IDENTITY.get("deviceName")
+    or str(getattr(app_conf, 'OMNIBULL_DEVICE_NAME', '')).strip()
+    or str(getattr(app_conf, 'OMNIDRIVE_DEVICE_NAME', '')).strip()
+    or socket.gethostname()
+)
+DEVICE_CODE = (
+    DEVICE_IDENTITY.get("deviceCode")
+    or str(getattr(app_conf, 'OMNIBULL_DEVICE_CODE', '')).strip()
+    or str(getattr(app_conf, 'OMNIDRIVE_DEVICE_CODE', '')).strip()
+    or get_device_code()
+)
 OMNIDRIVE_AGENT_KEY = DEVICE_IDENTITY.get("agentKey") or OMNIDRIVE_AGENT_KEY
 cloud_agent = None
 cloud_agent_lock = threading.Lock()

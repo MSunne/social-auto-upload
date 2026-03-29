@@ -19,6 +19,11 @@ LAUNCHER_LOG_FILE="${LOG_DIR}/sau_stack.log"
 BACKEND_PORT="${SAU_BACKEND_PORT:-5409}"
 FRONTEND_PORT="${SAU_FRONTEND_PORT:-5173}"
 FRONTEND_HOST="${SAU_FRONTEND_HOST:-0.0.0.0}"
+FRONTEND_MODE="${SAU_FRONTEND_MODE:-preview}"
+FRONTEND_BUILD_ON_START="${SAU_FRONTEND_BUILD_ON_START:-auto}"
+FRONTEND_INSTALL_ON_START="${SAU_FRONTEND_INSTALL_ON_START:-1}"
+FRONTEND_DIR="${ROOT_DIR}/sau_frontend"
+FRONTEND_DIST_FILE="${FRONTEND_DIR}/dist/index.html"
 
 mkdir -p "${RUNTIME_DIR}" "${LOG_DIR}"
 
@@ -55,6 +60,7 @@ pick_npm_bin() {
   local configured="${SAU_NPM_BIN:-}"
   local candidates=(
     "${configured}"
+    "${HOME}/.local/node-current/bin/npm"
     "$(command -v npm || true)"
   )
   local candidate
@@ -154,6 +160,85 @@ start_backend() {
 }
 
 
+install_frontend_dependencies_if_needed() {
+  local npm_bin="$1"
+  if [[ "${FRONTEND_INSTALL_ON_START}" != "1" ]]; then
+    return 0
+  fi
+  if [[ -d "${FRONTEND_DIR}/node_modules" ]]; then
+    return 0
+  fi
+
+  log INFO "Installing sau_frontend dependencies"
+  (
+    cd "${FRONTEND_DIR}"
+    export CI=1
+    if [[ -f package-lock.json ]]; then
+      exec "${npm_bin}" ci
+    fi
+    exec "${npm_bin}" install
+  ) >> "${FRONTEND_LOG_FILE}" 2>&1
+}
+
+
+frontend_sources_newer_than_dist() {
+  if [[ ! -f "${FRONTEND_DIST_FILE}" ]]; then
+    return 0
+  fi
+  if [[ "${FRONTEND_DIR}/package.json" -nt "${FRONTEND_DIST_FILE}" ]]; then
+    return 0
+  fi
+  if [[ -f "${FRONTEND_DIR}/package-lock.json" && "${FRONTEND_DIR}/package-lock.json" -nt "${FRONTEND_DIST_FILE}" ]]; then
+    return 0
+  fi
+  if [[ -d "${FRONTEND_DIR}/src" ]] && find "${FRONTEND_DIR}/src" -type f -newer "${FRONTEND_DIST_FILE}" -print -quit 2>/dev/null | grep -q .; then
+    return 0
+  fi
+  if [[ -d "${FRONTEND_DIR}/public" ]] && find "${FRONTEND_DIR}/public" -type f -newer "${FRONTEND_DIST_FILE}" -print -quit 2>/dev/null | grep -q .; then
+    return 0
+  fi
+  return 1
+}
+
+
+build_frontend_if_needed() {
+  local npm_bin="$1"
+  local should_build=0
+
+  case "${FRONTEND_BUILD_ON_START}" in
+    1|always)
+      should_build=1
+      ;;
+    0|never)
+      if [[ ! -f "${FRONTEND_DIST_FILE}" ]]; then
+        log ERROR "sau_frontend build output not found and SAU_FRONTEND_BUILD_ON_START=never"
+        exit 1
+      fi
+      ;;
+    auto)
+      if frontend_sources_newer_than_dist; then
+        should_build=1
+      fi
+      ;;
+    *)
+      log ERROR "Unsupported SAU_FRONTEND_BUILD_ON_START=${FRONTEND_BUILD_ON_START}"
+      exit 1
+      ;;
+  esac
+
+  if [[ "${should_build}" -eq 0 ]]; then
+    return 0
+  fi
+
+  log INFO "Building sau_frontend for ${FRONTEND_MODE} mode"
+  (
+    cd "${FRONTEND_DIR}"
+    export CI=1
+    exec "${npm_bin}" run build
+  ) >> "${FRONTEND_LOG_FILE}" 2>&1
+}
+
+
 start_frontend() {
   local npm_bin="$1"
   if is_running_from_pid_file "${FRONTEND_PID_FILE}"; then
@@ -161,10 +246,18 @@ start_frontend() {
     return 0
   fi
 
-  log INFO "Starting SAU frontend on ${FRONTEND_HOST}:${FRONTEND_PORT}"
+  install_frontend_dependencies_if_needed "${npm_bin}"
+  if [[ "${FRONTEND_MODE}" == "preview" ]]; then
+    build_frontend_if_needed "${npm_bin}"
+  fi
+
+  log INFO "Starting SAU frontend in ${FRONTEND_MODE} mode on ${FRONTEND_HOST}:${FRONTEND_PORT}"
   (
-    cd "${ROOT_DIR}/sau_frontend"
+    cd "${FRONTEND_DIR}"
     export CI=1
+    if [[ "${FRONTEND_MODE}" == "preview" ]]; then
+      exec "${npm_bin}" run preview -- --host "${FRONTEND_HOST}" --port "${FRONTEND_PORT}" --strictPort
+    fi
     exec "${npm_bin}" run dev -- --host "${FRONTEND_HOST}" --port "${FRONTEND_PORT}" --strictPort
   ) >> "${FRONTEND_LOG_FILE}" 2>&1 &
   write_pid "${FRONTEND_PID_FILE}" "$!"
@@ -289,6 +382,9 @@ Environment overrides:
   SAU_BACKEND_PORT    Backend port, default 5409.
   SAU_FRONTEND_HOST   Frontend bind host, default 0.0.0.0.
   SAU_FRONTEND_PORT   Frontend port, default 5173.
+  SAU_FRONTEND_MODE   Frontend runtime mode: preview or dev. Default preview.
+  SAU_FRONTEND_BUILD_ON_START  Build policy: auto, always, never. Default auto.
+  SAU_FRONTEND_INSTALL_ON_START  Install node_modules when missing. Default 1.
   SAU_RUNTIME_DIR     PID directory, default ${ROOT_DIR}/runtime.
   SAU_LOG_DIR         Log directory, default ${ROOT_DIR}/logs.
 EOF

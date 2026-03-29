@@ -314,8 +314,8 @@ func (s *Store) UpsertHeartbeatDevice(ctx context.Context, input HeartbeatInput)
 				ELSE devices.agent_key
 			END,
 		    name = EXCLUDED.name,
-		    local_ip = EXCLUDED.local_ip,
-		    public_ip = EXCLUDED.public_ip,
+		    local_ip = COALESCE(EXCLUDED.local_ip, devices.local_ip),
+		    public_ip = COALESCE(EXCLUDED.public_ip, devices.public_ip),
 		    runtime_payload = EXCLUDED.runtime_payload,
 		    last_seen_at = EXCLUDED.last_seen_at,
 		    updated_at = NOW()

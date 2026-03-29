@@ -1,9 +1,12 @@
 package ai
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+
+	"omnidrive_cloud/internal/domain"
 )
 
 func TestBuildAIExecutionFailureMessageUsesFriendlyLMRootCopy(t *testing.T) {
@@ -30,5 +33,57 @@ func TestBuildAIExecutionFailureMessageTruncatesLongErrors(t *testing.T) {
 	}
 	if len([]rune(got)) > len([]rune("AI 云端执行失败: "))+283 {
 		t.Fatalf("expected truncated message length, got %d runes", len([]rune(got)))
+	}
+}
+
+func TestShouldAutoRetryMediaFailureForFirstImageFailure(t *testing.T) {
+	job := &domain.AIJob{JobType: "image"}
+
+	if !shouldAutoRetryMediaFailure(job) {
+		t.Fatalf("expected first image failure to auto retry")
+	}
+}
+
+func TestShouldAutoRetryMediaFailureStopsAfterOneRetry(t *testing.T) {
+	job := &domain.AIJob{
+		JobType: "video",
+		OutputPayload: buildMediaAutoRetryPayload(&domain.AIJob{
+			JobType:   "video",
+			ModelName: "veo-3.1-fast-fl",
+		}, "first failure", 1),
+	}
+
+	if shouldAutoRetryMediaFailure(job) {
+		t.Fatalf("expected auto retry to stop after one retry")
+	}
+}
+
+func TestBuildMediaAutoRetryPayloadResetsVideoExecutionState(t *testing.T) {
+	job := &domain.AIJob{
+		JobType:   "video",
+		ModelName: "veo-3.1-fast-fl",
+		OutputPayload: mustJSON(map[string]any{
+			"video": map[string]any{
+				"id":     "video_123",
+				"status": "failed",
+			},
+		}),
+	}
+
+	raw := buildMediaAutoRetryPayload(job, "provider request failed with status 500", 1)
+
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("unexpected payload json error: %v", err)
+	}
+	if _, exists := payload["video"]; exists {
+		t.Fatalf("expected video execution state to be cleared before retry")
+	}
+	execution, _ := payload["execution"].(map[string]any)
+	if got := int(execution["autoRetryCount"].(float64)); got != 1 {
+		t.Fatalf("expected autoRetryCount=1, got %d", got)
+	}
+	if got := payload["kind"]; got != "video" {
+		t.Fatalf("expected kind=video, got %#v", got)
 	}
 }

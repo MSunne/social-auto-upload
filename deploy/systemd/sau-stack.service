@@ -1,6 +1,6 @@
 [Unit]
 Description=SAU backend and sau_frontend stack
-After=network-online.target
+After=network-online.target graphical.target
 Wants=network-online.target
 
 [Service]
@@ -15,4 +15,4 @@ RestartSec=5
 TimeoutStopSec=30
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=graphical.target

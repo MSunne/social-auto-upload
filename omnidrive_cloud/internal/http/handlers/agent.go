@@ -218,7 +218,7 @@ func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 		AgentKey:       payload.AgentKey,
 		DeviceName:     payload.DeviceName,
 		LocalIP:        payload.LocalIP,
-		PublicIP:       payload.PublicIP,
+		PublicIP:       resolveHeartbeatPublicIP(r, payload.PublicIP),
 		RuntimePayload: runtimePayload,
 	})
 	if err != nil {
