@@ -134,6 +134,8 @@ OMNIBULL_FACTORY_TARGET_DISK=/dev/nvme0n1 ./restore.sh
 默认情况下，恢复脚本会清理这些身份信息：
 
 - `/etc/omnibull/device.json`
+- `~/.local/state/omnibull/device.json`
+- `~/Library/Application Support/OmniBull/device.json`
 - 任意 `runtime/device.identity.json`
 - `machine-id`
 

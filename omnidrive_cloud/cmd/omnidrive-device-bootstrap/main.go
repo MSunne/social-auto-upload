@@ -154,7 +154,7 @@ func main() {
 
 func parseFlags() bootstrapOptions {
 	var opts bootstrapOptions
-	flag.StringVar(&opts.deviceCode, "device-code", "", "OmniBull device code (MAC-based code)")
+	flag.StringVar(&opts.deviceCode, "device-code", "", "OmniBull device code (stable persisted code)")
 	flag.StringVar(&opts.deviceName, "device-name", "A001", "Display name stored for the OmniBull device")
 	flag.StringVar(&opts.agentKey, "agent-key", "", "Agent key used by the OmniBull bridge")
 	flag.StringVar(&opts.ownerEmail, "owner-email", "", "Existing OmniDrive user email to bind the device to")

@@ -238,7 +238,11 @@ reset_cloned_identity() {
   fi
 
   rm -f "${TARGET_ROOT}/etc/omnibull/device.json" 2>/dev/null || true
-  find "${TARGET_ROOT}" "${TARGET_ROOT}/persistent" -type f -name 'device.identity.json' -delete 2>/dev/null || true
+  find "${TARGET_ROOT}" "${TARGET_ROOT}/persistent" -type f \( \
+    -name 'device.identity.json' -o \
+    -path '*/.local/state/omnibull/device.json' -o \
+    -path '*/Library/Application Support/OmniBull/device.json' \
+  \) -delete 2>/dev/null || true
 
   : > "${TARGET_ROOT}/etc/machine-id"
   rm -f "${TARGET_ROOT}/var/lib/dbus/machine-id" 2>/dev/null || true

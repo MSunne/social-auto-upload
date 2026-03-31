@@ -18,7 +18,13 @@ import conf as app_conf
 from myUtils.auth import check_cookie_detail
 from flask import Flask, request, jsonify, Response, render_template, send_from_directory
 from conf import BASE_DIR
-from myUtils.login import get_tencent_cookie, douyin_cookie_gen, get_ks_cookie, xiaohongshu_cookie_gen
+from myUtils.login import (
+    get_tencent_cookie,
+    douyin_cookie_gen,
+    get_ks_cookie,
+    xiaohongshu_cookie_gen,
+    push_login_failed_status,
+)
 from utils.account_storage import (
     account_storage_exists,
     clear_account_storage_state,
@@ -3593,6 +3599,7 @@ def run_async_function(type,id,status_queue,command_queue=None):
     except Exception as exc:
         login_logger.exception("login thread execution failed platform_type={} account_name={} error={}", type, id, exc)
         if status_queue is not None:
+            push_login_failed_status(status_queue, command_queue, str(exc))
             status_queue.put("500")
 
 

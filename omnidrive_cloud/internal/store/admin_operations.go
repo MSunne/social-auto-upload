@@ -48,7 +48,7 @@ func adminDeviceSummary(id string, deviceCode string, name string, isEnabled boo
 		ID:         id,
 		DeviceCode: deviceCode,
 		Name:       name,
-		Status:     computeDeviceStatus(lastSeenAt),
+		Status:     computeDeviceStatus(lastSeenAt, nil),
 		IsEnabled:  isEnabled,
 		LastSeenAt: lastSeenAt,
 	}
@@ -207,7 +207,7 @@ func scanAdminDeviceRow(scan scanFn) (*domain.AdminDeviceRow, error) {
 	item.Device.RuntimePayload = bytesOrNil(runtimePayload)
 	item.Device.LastSeenAt = lastSeenAt
 	item.Device.Notes = notes
-	item.Device.Status = computeDeviceStatus(lastSeenAt)
+	item.Device.Status = computeDeviceStatus(lastSeenAt, runtimePayload)
 
 	if ownerSummaryID != nil {
 		item.Owner = &domain.AdminUserSummary{
@@ -279,7 +279,7 @@ func scanAdminMediaAccountRow(scan scanFn) (*domain.AdminMediaAccountRow, error)
 	item.Account.LastMessage = lastMessage
 	item.Account.LastAuthenticatedAt = lastAuthenticatedAt
 	item.Notes = notes
-	item.Device.Status = computeDeviceStatus(deviceLastSeenAt)
+	item.Device.Status = computeDeviceStatus(deviceLastSeenAt, nil)
 	item.Device.LastSeenAt = deviceLastSeenAt
 
 	if ownerID != nil {
@@ -393,7 +393,7 @@ func scanAdminPublishTaskRow(scan scanFn) (*domain.AdminPublishTaskRow, error) {
 	item.Task.CancelRequestedAt = cancelRequestedAt
 	item.Task.RunAt = runAt
 	item.Task.FinishedAt = finishedAt
-	item.Device.Status = computeDeviceStatus(deviceLastSeenAt)
+	item.Device.Status = computeDeviceStatus(deviceLastSeenAt, nil)
 	item.Device.LastSeenAt = deviceLastSeenAt
 
 	if ownerID != nil {

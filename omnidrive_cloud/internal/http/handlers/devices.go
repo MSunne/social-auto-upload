@@ -263,6 +263,14 @@ func (h *DeviceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if payload.Name != nil {
+		trimmed := strings.TrimSpace(*payload.Name)
+		if trimmed == "" {
+			render.Error(w, http.StatusBadRequest, "name cannot be empty")
+			return
+		}
+		payload.Name = &trimmed
+	}
 
 	device, err := h.app.Store.UpdateDevice(r.Context(), deviceID, user.ID, store.UpdateDeviceInput{
 		Name:                  payload.Name,

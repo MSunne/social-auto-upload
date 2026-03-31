@@ -192,6 +192,7 @@ cookiesFile
 uploadFile
 videoFile
 .codex_tmp
+runtime/device.identity.json
 
 # OmniDrive runtime data
 omnidrive_cloud/data/

@@ -2872,6 +2872,7 @@ class OmniDriveBridge:
         login_worker = self._get_active_login_worker()
         return {
             "deviceFingerprint": self.device_fingerprint or None,
+            "heartbeatIntervalSeconds": self.heartbeat_interval,
             "publishTasks": by_status,
             "publishTasksBySource": by_source,
             "aiTasks": self.ai_task_manager.summary() if self.ai_task_manager else {},

@@ -10,7 +10,9 @@ import (
 	"omnidrive_cloud/internal/domain"
 )
 
-const onlineWindow = 45 * time.Second
+const onlineWindow = 2 * time.Minute
+const minOnlineWindow = 90 * time.Second
+const maxOnlineWindow = 5 * time.Minute
 const publishTaskLeaseWindow = 90 * time.Second
 const aiJobLeaseWindow = 90 * time.Second
 
@@ -22,14 +24,47 @@ func New(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
 }
 
-func computeDeviceStatus(lastSeenAt *time.Time) string {
+type deviceRuntimeHeartbeatHints struct {
+	HeartbeatIntervalSeconds int `json:"heartbeatIntervalSeconds"`
+	HeartbeatInterval        int `json:"heartbeatInterval"`
+}
+
+func computeDeviceStatus(lastSeenAt *time.Time, runtimePayload []byte) string {
 	if lastSeenAt == nil {
 		return "offline"
 	}
-	if time.Since(lastSeenAt.UTC()) <= onlineWindow {
+	if time.Since(lastSeenAt.UTC()) <= onlineWindowForRuntimePayload(runtimePayload) {
 		return "online"
 	}
 	return "offline"
+}
+
+func onlineWindowForRuntimePayload(runtimePayload []byte) time.Duration {
+	if len(runtimePayload) == 0 {
+		return onlineWindow
+	}
+
+	var hints deviceRuntimeHeartbeatHints
+	if err := json.Unmarshal(runtimePayload, &hints); err != nil {
+		return onlineWindow
+	}
+
+	intervalSeconds := hints.HeartbeatIntervalSeconds
+	if intervalSeconds <= 0 {
+		intervalSeconds = hints.HeartbeatInterval
+	}
+	if intervalSeconds <= 0 {
+		return onlineWindow
+	}
+
+	window := time.Duration(intervalSeconds) * time.Second * 4
+	if window < minOnlineWindow {
+		return minOnlineWindow
+	}
+	if window > maxOnlineWindow {
+		return maxOnlineWindow
+	}
+	return window
 }
 
 func stringPtr(value string) *string {

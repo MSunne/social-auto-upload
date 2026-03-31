@@ -61,7 +61,7 @@ func scanDevice(row pgx.Row) (*domain.Device, error) {
 	device.RuntimePayload = bytesOrNil(runtimePayload)
 	device.LastSeenAt = lastSeenAt
 	device.Notes = notes
-	device.Status = computeDeviceStatus(lastSeenAt)
+	device.Status = computeDeviceStatus(lastSeenAt, runtimePayload)
 	return &device, nil
 }
 
@@ -127,7 +127,7 @@ func scanDeviceWithLoad(row pgx.Row) (*domain.Device, error) {
 	device.RuntimePayload = bytesOrNil(runtimePayload)
 	device.LastSeenAt = lastSeenAt
 	device.Notes = notes
-	device.Status = computeDeviceStatus(lastSeenAt)
+	device.Status = computeDeviceStatus(lastSeenAt, runtimePayload)
 
 	return &device, nil
 }

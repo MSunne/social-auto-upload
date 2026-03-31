@@ -1,3 +1,4 @@
+import hashlib
 import ipaddress
 import os
 import socket
@@ -44,6 +45,16 @@ def get_device_fingerprint():
         if value:
             return value
     return ""
+
+
+def get_stable_device_code():
+    fingerprint = get_device_fingerprint()
+    if fingerprint:
+        digest = hashlib.sha256(fingerprint.encode("utf-8", errors="ignore")).hexdigest()[:12]
+        first_octet = (int(digest[:2], 16) | 0b10) & 0b11111110
+        normalized = f"{first_octet:02x}{digest[2:]}"
+        return ":".join(normalized[index:index + 2] for index in range(0, 12, 2))
+    return get_device_code()
 
 
 def _read_linux_machine_id():

@@ -34,6 +34,14 @@ PLAYWRIGHT_EXECUTABLE_RELATIVE_PATHS = [
 
 _BROWSER_INSTALL_LOCK = threading.Lock()
 browser_logger = get_logger("browser")
+LINUX_GUI_ENV_KEYS = (
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XAUTHORITY",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "XDG_RUNTIME_DIR",
+    "XDG_SESSION_TYPE",
+)
 
 
 def _resolve_system_browser_executable_path():
@@ -94,6 +102,117 @@ def resolve_playwright_browser_executable_path():
                 if executable_path.exists():
                     return str(executable_path)
     return None
+
+
+def _is_linux():
+    return sys.platform.startswith("linux")
+
+
+def _normalize_gui_env_value(value):
+    text = str(value or "").strip()
+    return text or None
+
+
+def _extract_gui_env(source):
+    env = {}
+    for key in LINUX_GUI_ENV_KEYS:
+        value = _normalize_gui_env_value(source.get(key) if source else None)
+        if value:
+            env[key] = value
+    return env
+
+
+def _finalize_linux_gui_env(env):
+    normalized = dict(env or {})
+    home = Path.home()
+    xauthority_path = home / ".Xauthority"
+    runtime_dir = Path(f"/run/user/{os.getuid()}")
+
+    if not normalized.get("XAUTHORITY") and xauthority_path.exists():
+        normalized["XAUTHORITY"] = str(xauthority_path)
+
+    if not normalized.get("XDG_RUNTIME_DIR") and runtime_dir.exists():
+        normalized["XDG_RUNTIME_DIR"] = str(runtime_dir)
+
+    if not normalized.get("DBUS_SESSION_BUS_ADDRESS"):
+        session_bus_path = runtime_dir / "bus"
+        if session_bus_path.exists():
+            normalized["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={session_bus_path}"
+
+    if not normalized.get("DISPLAY"):
+        for display in (":0", ":1"):
+            if Path(f"/tmp/.X11-unix/X{display.lstrip(':')}").exists():
+                normalized["DISPLAY"] = display
+                break
+
+    return normalized
+
+
+def _read_linux_process_gui_env(proc_dir):
+    try:
+        if proc_dir.stat().st_uid != os.getuid():
+            return {}
+    except OSError:
+        return {}
+
+    environ_path = proc_dir / "environ"
+    try:
+        raw = environ_path.read_bytes()
+    except OSError:
+        return {}
+
+    values = {}
+    for entry in raw.split(b"\0"):
+        if not entry or b"=" not in entry:
+            continue
+        key, value = entry.split(b"=", 1)
+        try:
+            text_key = key.decode("utf-8", errors="ignore")
+            text_value = value.decode("utf-8", errors="ignore")
+        except Exception:
+            continue
+        if text_key in LINUX_GUI_ENV_KEYS and _normalize_gui_env_value(text_value):
+            values[text_key] = text_value.strip()
+    return values
+
+
+def resolve_linux_gui_environment():
+    if not _is_linux():
+        return {}, None
+
+    current_env = _finalize_linux_gui_env(_extract_gui_env(os.environ))
+    if current_env.get("DISPLAY") or current_env.get("WAYLAND_DISPLAY"):
+        return current_env, "current_env"
+
+    best_env = {}
+    best_score = -1
+    proc_root = Path("/proc")
+    if proc_root.exists():
+        for proc_dir in proc_root.iterdir():
+            if not proc_dir.name.isdigit():
+                continue
+            candidate = _finalize_linux_gui_env(_read_linux_process_gui_env(proc_dir))
+            if not (candidate.get("DISPLAY") or candidate.get("WAYLAND_DISPLAY")):
+                continue
+            score = len(candidate)
+            if candidate.get("DISPLAY"):
+                score += 5
+            if candidate.get("XAUTHORITY"):
+                score += 2
+            if candidate.get("DBUS_SESSION_BUS_ADDRESS"):
+                score += 1
+            if score > best_score:
+                best_score = score
+                best_env = candidate
+
+    if best_env:
+        return best_env, "process_env"
+
+    fallback_env = _finalize_linux_gui_env({})
+    if fallback_env.get("DISPLAY") or fallback_env.get("WAYLAND_DISPLAY"):
+        return fallback_env, "filesystem_fallback"
+
+    return {}, None
 
 
 def install_playwright_browser(browser_name="chromium"):
@@ -175,6 +294,11 @@ def describe_browser_runtime(*, headless=None):
     system_browser_path = _resolve_system_browser_executable_path()
     bundled_browser_dir = resolve_playwright_browser_dir()
     issues = []
+    launch_env = {}
+    launch_env_source = None
+
+    if _is_linux() and not actual_headless:
+        launch_env, launch_env_source = resolve_linux_gui_environment()
 
     if actual_headless:
         available = bool(bundled_browser_dir)
@@ -206,6 +330,12 @@ def describe_browser_runtime(*, headless=None):
                 "No usable Chrome/Chromium runtime was found. Install a system Chrome/Chromium browser "
                 "or run `playwright install chromium`."
             )
+        if _is_linux() and not (launch_env.get("DISPLAY") or launch_env.get("WAYLAND_DISPLAY")):
+            available = False
+            issues.append(
+                "Headed browser launch on Linux requires a desktop session, but no DISPLAY or WAYLAND_DISPLAY "
+                "could be detected. Start SAU from the logged-in desktop session or configure a stable GUI environment."
+            )
 
     return {
         "headless": actual_headless,
@@ -214,6 +344,8 @@ def describe_browser_runtime(*, headless=None):
         "systemBrowserPath": system_browser_path,
         "playwrightBrowserDir": bundled_browser_dir,
         "checkedCandidates": [path for path in COMMON_BROWSER_PATHS if path],
+        "launchEnvSource": launch_env_source,
+        "launchEnvKeys": sorted(launch_env.keys()),
         "issues": issues,
     }
 
@@ -250,5 +382,23 @@ def get_browser_options(headless=None, extra_args=None):
         executable_path = _ensure_playwright_browser_executable_path("chromium")
     if executable_path:
         options["executable_path"] = executable_path
+
+    if _is_linux() and not actual_headless:
+        launch_env, launch_env_source = resolve_linux_gui_environment()
+        if not (launch_env.get("DISPLAY") or launch_env.get("WAYLAND_DISPLAY")):
+            raise RuntimeError(
+                "Headed browser launch on Linux requires a desktop session, but no DISPLAY or WAYLAND_DISPLAY "
+                "could be detected. Start SAU from the logged-in desktop session or configure a stable GUI environment."
+            )
+        merged_env = os.environ.copy()
+        merged_env.update(launch_env)
+        options["env"] = merged_env
+        browser_logger.info(
+            "resolved Linux GUI launch environment source={} display={} wayland={} xauthority_present={}",
+            launch_env_source,
+            launch_env.get("DISPLAY"),
+            launch_env.get("WAYLAND_DISPLAY"),
+            bool(launch_env.get("XAUTHORITY")),
+        )
 
     return options

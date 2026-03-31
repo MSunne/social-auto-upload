@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Server,
@@ -13,9 +13,10 @@ import {
   Search,
   X,
   Server as ServerIcon,
+  PencilLine,
 } from "lucide-react";
 import Link from "next/link";
-import { listDevices, claimDevice } from "@/lib/services";
+import { listDevices, claimDevice, updateDevice } from "@/lib/services";
 import type { Device } from "@/lib/types";
 import { EmptyState } from "@/components/ui/common";
 
@@ -89,6 +90,7 @@ function Toggle({
 }
 
 export default function NodesPage() {
+  const queryClient = useQueryClient();
   const { data: devices = [], refetch } = useQuery<Device[]>({
     queryKey: ["devices"],
     queryFn: listDevices,
@@ -99,10 +101,21 @@ export default function NodesPage() {
   const [claiming, setClaiming] = useState(false);
   const [error, setError] = useState("");
   const [toggleState, setToggleState] = useState<Record<string, boolean>>({});
+  const [renameDevice, setRenameDevice] = useState<Device | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [renameError, setRenameError] = useState("");
 
   // Modal State
   const [isClaimModalOpen, setIsClaimModalOpen] = useState(false);
   const [claimActivationCode, setClaimActivationCode] = useState("");
+
+  const renameMutation = useMutation({
+    mutationFn: async ({ deviceId, name }: { deviceId: string; name: string }) =>
+      updateDevice(deviceId, { name }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["devices"] });
+    },
+  });
 
   /* filtering and pagination math */
   const normalizedSearchQuery = searchQuery.toLowerCase();
@@ -135,6 +148,40 @@ export default function NodesPage() {
       setError(err instanceof Error ? err.message : "激活失败，请检查激活码");
     } finally {
       setClaiming(false);
+    }
+  }
+
+  function openRenameModal(device: Device) {
+    setRenameDevice(device);
+    setRenameValue(device.name || "");
+    setRenameError("");
+  }
+
+  function closeRenameModal() {
+    if (renameMutation.isPending) return;
+    setRenameDevice(null);
+    setRenameValue("");
+    setRenameError("");
+  }
+
+  async function handleRenameSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!renameDevice) return;
+    const nextName = renameValue.trim();
+    if (!nextName) {
+      setRenameError("设备名称不能为空");
+      return;
+    }
+    if (nextName === (renameDevice.name || "").trim()) {
+      closeRenameModal();
+      return;
+    }
+    setRenameError("");
+    try {
+      await renameMutation.mutateAsync({ deviceId: renameDevice.id, name: nextName });
+      closeRenameModal();
+    } catch (err: unknown) {
+      setRenameError(err instanceof Error ? err.message : "修改设备名称失败，请重试");
     }
   }
 
@@ -240,7 +287,17 @@ export default function NodesPage() {
                     >
                       {/* 名称 */}
                       <td className="px-5 py-4 font-medium text-text-primary">
-                        {device.name}
+                        <div className="flex items-center gap-2">
+                          <span>{device.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => openRenameModal(device)}
+                            className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-surface-hover/60 px-2 py-1 text-[11px] font-semibold text-text-muted transition-colors hover:border-cyan/40 hover:text-cyan"
+                          >
+                            <PencilLine className="h-3 w-3" />
+                            修改名称
+                          </button>
+                        </div>
                       </td>
 
                       {/* 状态 */}
@@ -385,6 +442,94 @@ export default function NodesPage() {
 
       {/* ───── Claim Device Modal ───── */}
       <AnimatePresence>
+        {renameDevice && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className="fixed inset-0 bg-black/60 backdrop-blur-md"
+              onClick={closeRenameModal}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="relative z-10 w-full max-w-md overflow-hidden rounded-3xl border border-white/10 bg-[#0A0A14]/95 shadow-[0_0_60px_rgba(0,245,212,0.15)] backdrop-blur-xl"
+            >
+              <div className="relative border-b border-white/5 bg-gradient-to-r from-cyan/10 to-transparent px-6 py-5">
+                <div className="absolute inset-0 bg-noise opacity-[0.03] mix-blend-overlay pointer-events-none" />
+                <div className="relative z-10 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-cyan to-blue-500 shadow-lg shadow-cyan/20">
+                      <PencilLine className="h-5 w-5 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-black tracking-wide text-white">
+                        修改设备名称
+                      </h3>
+                      <p className="text-xs font-medium text-text-muted/80">
+                        {renameDevice.deviceCode}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeRenameModal}
+                    className="rounded-full bg-white/5 p-2 text-text-muted transition-all hover:rotate-90 hover:bg-red-500/20 hover:text-red-400"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+
+              <form onSubmit={handleRenameSubmit} className="p-6">
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold uppercase tracking-widest text-text-muted">
+                    设备名称
+                  </label>
+                  <input
+                    type="text"
+                    autoFocus
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    placeholder="输入新的设备名称"
+                    className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3.5 text-sm font-medium text-white placeholder-text-muted/50 transition-all focus:border-cyan/50 focus:bg-white/10 focus:outline-none focus:ring-4 focus:ring-cyan/10"
+                  />
+                  {renameError && (
+                    <p className="text-xs text-rose-400">{renameError}</p>
+                  )}
+                </div>
+
+                <div className="mt-6 flex items-center justify-end gap-3 border-t border-white/5 pt-4">
+                  <button
+                    type="button"
+                    onClick={closeRenameModal}
+                    disabled={renameMutation.isPending}
+                    className="rounded-full px-5 py-2.5 text-sm font-bold text-text-muted transition-all hover:bg-white/10 hover:text-white"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={renameMutation.isPending || !renameValue.trim()}
+                    className={`relative flex items-center justify-center overflow-hidden rounded-full px-8 py-2.5 text-sm font-black shadow-xl transition-all duration-300 ${
+                      renameMutation.isPending || !renameValue.trim()
+                        ? "bg-white/10 text-white/30 cursor-not-allowed"
+                        : "bg-gradient-to-r from-cyan to-blue-500 text-white hover:scale-[1.03] hover:shadow-[0_0_30px_rgba(0,245,212,0.4)]"
+                    }`}
+                  >
+                    <span className="relative z-10 drop-shadow-sm">
+                      {renameMutation.isPending ? "保存中..." : "保存名称"}
+                    </span>
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
         {isClaimModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div

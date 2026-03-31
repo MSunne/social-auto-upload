@@ -71,6 +71,58 @@ class BrowserHookTests(unittest.TestCase):
         self.assertIn("no Chromium executable", str(exc_info.exception))
         install_mock.assert_called_once_with(browser_name="chromium")
 
+    def test_get_browser_options_injects_linux_gui_environment_for_headed_launch(self):
+        launch_env = {
+            "DISPLAY": ":0",
+            "XAUTHORITY": "/home/sun/.Xauthority",
+        }
+        with mock.patch.object(
+            browser_hook,
+            "_is_linux",
+            return_value=True,
+        ), mock.patch.object(
+            browser_hook,
+            "_resolve_system_browser_executable_path",
+            return_value="/usr/bin/google-chrome",
+        ), mock.patch.object(
+            browser_hook,
+            "resolve_playwright_browser_executable_path",
+            return_value=None,
+        ), mock.patch.object(
+            browser_hook,
+            "resolve_linux_gui_environment",
+            return_value=(launch_env, "process_env"),
+        ):
+            options = browser_hook.get_browser_options(headless=False)
+
+        self.assertEqual(options["executable_path"], "/usr/bin/google-chrome")
+        self.assertIn("env", options)
+        self.assertEqual(options["env"]["DISPLAY"], ":0")
+        self.assertEqual(options["env"]["XAUTHORITY"], "/home/sun/.Xauthority")
+
+    def test_get_browser_options_raises_clear_error_when_linux_gui_is_missing(self):
+        with mock.patch.object(
+            browser_hook,
+            "_is_linux",
+            return_value=True,
+        ), mock.patch.object(
+            browser_hook,
+            "_resolve_system_browser_executable_path",
+            return_value="/usr/bin/google-chrome",
+        ), mock.patch.object(
+            browser_hook,
+            "resolve_playwright_browser_executable_path",
+            return_value=None,
+        ), mock.patch.object(
+            browser_hook,
+            "resolve_linux_gui_environment",
+            return_value=({}, None),
+        ):
+            with self.assertRaises(RuntimeError) as exc_info:
+                browser_hook.get_browser_options(headless=False)
+
+        self.assertIn("Headed browser launch on Linux requires a desktop session", str(exc_info.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

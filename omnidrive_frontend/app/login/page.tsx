@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, Eye, EyeOff, Sparkles, Zap, Bot, Video, Share2, Activity } from "lucide-react";
 import {
   getCurrentUser,
@@ -26,7 +26,7 @@ function isValidCountryCode(value: string) {
 }
 
 const inputClassName =
-  "w-full rounded-xl border border-white/10 bg-black/20 px-3.5 py-2.5 text-sm text-text-primary placeholder-text-muted outline-none transition-all focus:border-accent/40 focus:ring-1 focus:ring-accent/40";
+  "w-full rounded-xl border border-white/[0.08] bg-white/[0.08] px-3 py-2.5 text-sm text-white placeholder-white/40 outline-none transition-all hover:bg-white/[0.12] hover:border-white/[0.15] focus:border-accent/50 focus:bg-white/[0.15] focus:ring-1 focus:ring-accent/50 shadow-[0_2px_8px_rgba(0,0,0,0.2)] backdrop-blur-xl";
 const labelClassName = "mb-1 block text-sm font-medium text-text-secondary";
 const tabBaseClassName =
   "rounded-full px-4 py-2 text-sm font-medium transition-all w-1/2 text-center";
@@ -252,12 +252,29 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen bg-background text-text-primary">
-      {/* Left Landing Showcase Panel (Desktop Only) */}
-      <div className="hidden lg:flex relative w-1/2 flex-col items-start justify-center overflow-hidden border-r border-white/5 bg-black/40 px-16 xl:px-24">
-        {/* Background Gradients */}
-        <div className="pointer-events-none absolute left-0 top-1/2 h-[800px] w-[800px] -translate-y-1/2 -translate-x-1/4 rounded-full bg-accent/15 blur-[120px]" />
-        <div className="pointer-events-none absolute bottom-0 right-0 h-[600px] w-[600px] rounded-full bg-cyan/10 blur-[120px]" />
+    <div className="relative flex min-h-screen bg-[#030014] text-text-primary overflow-hidden">
+      {/* 统一全局动态流体背景 */}
+      <motion.div
+        animate={{ x: [0, 200, -100, 0], y: [0, -200, 100, 0], scale: [1, 1.3, 0.9, 1] }}
+        transition={{ duration: 24, repeat: Infinity, ease: "linear" }}
+        className="pointer-events-none absolute left-[-15%] top-[-20%] h-[1000px] w-[1000px] rounded-full bg-accent/20 blur-[130px] will-change-transform"
+      />
+      <motion.div
+        animate={{ x: [0, -250, 150, 0], y: [0, 150, -150, 0], scale: [1, 1.5, 0.8, 1] }}
+        transition={{ duration: 28, repeat: Infinity, ease: "linear" }}
+        className="pointer-events-none absolute right-[-10%] bottom-[-20%] h-[1200px] w-[1200px] rounded-full bg-cyan/20 blur-[130px] will-change-transform"
+      />
+      <motion.div
+        animate={{ x: [0, 100, -150, 0], y: [0, 200, -100, 0], scale: [1, 1.2, 1.4, 1] }}
+        transition={{ duration: 32, repeat: Infinity, ease: "linear" }}
+        className="pointer-events-none absolute left-[40%] top-[20%] h-[800px] w-[800px] rounded-full bg-pink/15 blur-[140px] will-change-transform"
+      />
+
+      {/* 统一科技感网格图层 (穿越全屏) */}
+      <div className="absolute inset-0 z-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:40px_40px] pointer-events-none [mask-image:radial-gradient(ellipse_100%_100%_at_50%_50%,#000_30%,transparent_100%)]" />
+
+      {/* Left Landing Showcase Panel (Transparent Content Container) */}
+      <div className="hidden lg:flex relative z-10 w-1/2 flex-col items-start justify-center px-16 xl:px-24">
         
         {/* Logo & Intro */}
         <motion.div 
@@ -289,67 +306,119 @@ export default function LoginPage() {
           transition={{ duration: 0.6, delay: 0.2 }}
           className="relative z-10 grid grid-cols-2 gap-5 w-full max-w-2xl"
         >
-          {/* Feature 1 */}
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-sm transition-all hover:bg-white/10 hover:-translate-y-1 hover:shadow-[0_10px_40px_-10px_rgba(177,73,255,0.3)]">
-            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-accent/20 text-accent">
-              <Bot className="h-5 w-5" />
+          {/* Feature 1: Accent (Purple) */}
+          <div className="relative rounded-2xl p-[1.5px] bg-gradient-to-br from-accent via-accent/30 to-transparent transition-all duration-300 hover:-translate-y-1 shadow-[0_0_15px_rgba(177,73,255,0.15)] hover:shadow-[0_0_30px_rgba(177,73,255,0.4)]">
+            <div className="h-full w-full rounded-[14px] bg-black/80 p-5 backdrop-blur-xl">
+              <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-accent/20 text-accent ring-1 ring-accent/40 shadow-[0_0_20px_rgba(177,73,255,0.6)]">
+                <Bot className="h-5 w-5" />
+              </div>
+              <h3 className="text-base font-semibold text-white mb-2 flex items-center gap-2">
+                OpenClaw Agent 引擎
+                <span className="flex h-2 w-2 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-accent"></span>
+                </span>
+              </h3>
+              <p className="text-sm text-text-muted leading-relaxed">
+                内嵌强大的底层智能代理系统，自主推理、自动规划与执行您指派的自媒体复杂运营任务。
+              </p>
             </div>
-            <h3 className="text-base font-semibold text-white mb-1.5">OpenClaw Agent 引擎</h3>
-            <p className="text-sm text-text-muted leading-relaxed">
-              内嵌强大的底层智能代理系统，自主推理、自动规划与执行您指派的自媒体复杂运营任务。
-            </p>
           </div>
 
-          {/* Feature 2 */}
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-sm transition-all hover:bg-white/10 hover:-translate-y-1 hover:shadow-[0_10px_40px_-10px_rgba(255,107,158,0.3)]">
-            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-pink/20 text-pink">
-              <Video className="h-5 w-5" />
+          {/* Feature 2: Pink */}
+          <div className="relative rounded-2xl p-[1.5px] bg-gradient-to-bl from-pink via-pink/30 to-transparent transition-all duration-300 hover:-translate-y-1 shadow-[0_0_15px_rgba(255,107,158,0.15)] hover:shadow-[0_0_30px_rgba(255,107,158,0.4)]">
+            <div className="h-full w-full rounded-[14px] bg-black/80 p-5 backdrop-blur-xl">
+              <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-pink/20 text-pink ring-1 ring-pink/40 shadow-[0_0_20px_rgba(255,107,158,0.6)]">
+                <Video className="h-5 w-5" />
+              </div>
+              <h3 className="text-base font-semibold text-white mb-2 flex items-center gap-2">
+                自动化图文/视频产出
+                <span className="flex h-2 w-2 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-pink opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-pink"></span>
+                </span>
+              </h3>
+              <p className="text-sm text-text-muted leading-relaxed">
+                彻底告别繁琐渲染，AI 脚本自动生成、图片/视频极速合成，1分钟输出高质量爆款原生物料。
+              </p>
             </div>
-            <h3 className="text-base font-semibold text-white mb-1.5">自动化图文/视频产出</h3>
-            <p className="text-sm text-text-muted leading-relaxed">
-              彻底告别繁琐渲染，AI 脚本自动生成、图片/视频极速合成，1分钟输出高质量爆款原生物料。
-            </p>
           </div>
 
-          {/* Feature 3 */}
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-sm transition-all hover:bg-white/10 hover:-translate-y-1 hover:shadow-[0_10px_40px_-10px_rgba(6,182,212,0.3)]">
-            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-cyan/20 text-cyan">
-              <Share2 className="h-5 w-5" />
+          {/* Feature 3: Cyan */}
+          <div className="relative rounded-2xl p-[1.5px] bg-gradient-to-tr from-cyan via-cyan/30 to-transparent transition-all duration-300 hover:-translate-y-1 shadow-[0_0_15px_rgba(6,182,212,0.15)] hover:shadow-[0_0_30px_rgba(6,182,212,0.4)]">
+            <div className="h-full w-full rounded-[14px] bg-black/80 p-5 backdrop-blur-xl">
+              <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-cyan/20 text-cyan ring-1 ring-cyan/40 shadow-[0_0_20px_rgba(6,182,212,0.6)]">
+                <Share2 className="h-5 w-5" />
+              </div>
+              <h3 className="text-base font-semibold text-white mb-2 flex items-center gap-2">
+                多社交平台一键分发
+                <span className="flex h-2 w-2 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan"></span>
+                </span>
+              </h3>
+              <p className="text-sm text-text-muted leading-relaxed">
+                无缝对接小红书、抖音、B站、视频号等主流社媒，内容定时发送，多账号全场景自动铺开。
+              </p>
             </div>
-            <h3 className="text-base font-semibold text-white mb-1.5">多社交平台一键分发</h3>
-            <p className="text-sm text-text-muted leading-relaxed">
-              无缝对接小红书、抖音、B站、视频号等主流社媒，内容定时发送，多账号全场景自动铺开。
-            </p>
           </div>
 
-          {/* Feature 4 */}
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-sm transition-all hover:bg-white/10 hover:-translate-y-1 hover:shadow-[0_10px_40px_-10px_rgba(74,222,128,0.2)]">
-            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-green-500/20 text-green-400">
-              <Activity className="h-5 w-5" />
+          {/* Feature 4: Green */}
+          <div className="relative rounded-2xl p-[1.5px] bg-gradient-to-tl from-green-400 via-green-400/30 to-transparent transition-all duration-300 hover:-translate-y-1 shadow-[0_0_15px_rgba(74,222,128,0.15)] hover:shadow-[0_0_30px_rgba(74,222,128,0.4)]">
+            <div className="h-full w-full rounded-[14px] bg-black/80 p-5 backdrop-blur-xl">
+              <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-green-500/20 text-green-400 ring-1 ring-green-400/40 shadow-[0_0_20px_rgba(74,222,128,0.6)]">
+                <Activity className="h-5 w-5" />
+              </div>
+              <h3 className="text-base font-semibold text-white mb-2 flex items-center gap-2">
+                24 小时全自动运行
+                <span className="flex h-2 w-2 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-400"></span>
+                </span>
+              </h3>
+              <p className="text-sm text-text-muted leading-relaxed">
+                无需人工盯盘跟进，全生命周期无人值守工作流。打造真正属于云端的自动化发布流水线。
+              </p>
             </div>
-            <h3 className="text-base font-semibold text-white mb-1.5">24 小时全自动运行</h3>
-            <p className="text-sm text-text-muted leading-relaxed">
-              无需人工盯盘跟进，全生命周期无人值守工作流。打造真正属于云端的自动化发布流水线。
-            </p>
           </div>
         </motion.div>
       </div>
 
-      {/* Right Form Panel */}
-      <div className="relative flex w-full lg:w-1/2 items-center justify-center px-6 py-4 sm:px-12">
-        <div className="pointer-events-none absolute left-1/2 top-0 h-72 w-72 -translate-x-1/2 rounded-full bg-accent/15 blur-[120px] lg:hidden" />
-        <div className="pointer-events-none absolute bottom-0 right-0 h-72 w-72 rounded-full bg-cyan/12 blur-[120px] lg:hidden" />
+      {/* Right Form Panel (Transparent Content Container) */}
+      <div className="relative z-10 flex w-full lg:w-1/2 items-center justify-center px-6 py-4 sm:px-12">
         
-        <div className="relative z-10 w-full max-w-[380px]">
-          {/* Mobile Logo */}
-          <div className="mb-4 flex flex-col items-center lg:hidden">
-            <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-[18px] bg-gradient-to-br from-accent via-pink to-cyan shadow-[0_0_24px_rgba(177,73,255,0.26)]">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{
+            opacity: { duration: 0.5 },
+            scale: { duration: 0.5 },
+            layout: { type: "spring", stiffness: 400, damping: 30 }
+          }}
+          className="relative z-10 w-full max-w-[460px]"
+          layout
+        >
+          {/* Animated Flowing Gradient Border Cover */}
+          <motion.div
+            transition={{ layout: { type: "spring", stiffness: 400, damping: 30 } }}
+            className="relative rounded-[28px] p-[1.5px] bg-[linear-gradient(60deg,#b149ff,#ff6b9e,#06b6d4,#b149ff)] bg-[length:300%_300%] shadow-[0_0_40px_rgba(6,182,212,0.2)]"
+            layout
+          >
+            {/* Glassmorphism Inner Card */}
+            <motion.div 
+              layout 
+              transition={{ layout: { type: "spring", stiffness: 400, damping: 30 } }}
+              className="rounded-[26.5px] bg-black/50 px-6 py-6 sm:px-8 sm:py-8 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.6)] overflow-hidden"
+            >
+              {/* Mobile Logo */}
+              <div className="mb-4 flex flex-col items-center lg:hidden">
+                <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-[18px] bg-gradient-to-br from-accent via-pink to-cyan shadow-[0_0_24px_rgba(177,73,255,0.26)]">
               <Zap className="h-6 w-6 text-white" />
             </div>
             <h1 className="text-xl font-bold tracking-tight text-white">OmniDrive Matrix</h1>
           </div>
 
-          <div className="mb-5 text-center lg:text-left">
+          <div className="mb-4 text-center lg:text-left">
             <h2 className="text-2xl font-bold tracking-tight text-white mb-1.5">
               {isRegister ? "创建账户" : "欢迎回来"}
             </h2>
@@ -360,7 +429,7 @@ export default function LoginPage() {
             </p>
           </div>
 
-          <div className="mb-5 flex rounded-full border border-white/10 bg-black/20 p-1">
+          <div className="mb-4 flex rounded-full border border-white/10 bg-black/20 p-1">
             <button
               type="button"
               onClick={() => handleModeChange("login")}
@@ -386,42 +455,45 @@ export default function LoginPage() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            <motion.div
-              key={`${mode}-${loginMethod}`}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.25, ease: "easeOut" }}
-              className="space-y-3"
-            >
+            <AnimatePresence mode="popLayout" initial={false}>
+              <motion.div
+                key={`${mode}-${loginMethod}`}
+                initial={{ opacity: 0, x: -8 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 8 }}
+                transition={{ type: "spring", stiffness: 500, damping: 35 }}
+                className="space-y-3 w-full"
+              >
               {isRegister ? (
                 <>
-                  <div>
-                    <label className={labelClassName}>用户名</label>
-                    <input
-                      type="text"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="请输入用户名或昵称"
-                      className={inputClassName}
-                      autoComplete="nickname"
-                      required
-                    />
-                  </div>
-
-                  <div>
-                    <label className={labelClassName}>
-                      专属客服码
-                      <span className="ml-1 text-danger">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={partnerCode}
-                      onChange={(e) => setPartnerCode(e.target.value)}
-                      placeholder="请输入专属客服码"
-                      className={`${inputClassName} uppercase`}
-                      autoComplete="off"
-                      required
-                    />
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className={labelClassName}>用户名</label>
+                      <input
+                        type="text"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        placeholder="昵称"
+                        className={inputClassName}
+                        autoComplete="nickname"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className={labelClassName}>
+                        专属码
+                        <span className="ml-1 text-danger">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={partnerCode}
+                        onChange={(e) => setPartnerCode(e.target.value)}
+                        placeholder="专属客服码"
+                        className={`${inputClassName} uppercase`}
+                        autoComplete="off"
+                        required
+                      />
+                    </div>
                   </div>
 
                   {renderPhoneFields()}
@@ -442,33 +514,35 @@ export default function LoginPage() {
                         type="button"
                         onClick={handleSendCode}
                         disabled={sendingCode || countdown > 0}
-                        className="rounded-xl border border-white/10 bg-white/5 text-sm font-medium text-text-secondary transition-all hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                        className="rounded-xl border border-white/[0.08] bg-white/[0.08] text-sm font-medium text-white transition-all hover:bg-white/[0.15] hover:border-white/[0.2] disabled:cursor-not-allowed disabled:opacity-50 shadow-[0_2px_8px_rgba(0,0,0,0.2)] backdrop-blur-xl"
                       >
-                        {sendingCode ? "发送中..." : countdown > 0 ? `${countdown}s` : "获取验证码"}
+                        {sendingCode ? "发送..." : countdown > 0 ? `${countdown}s` : "获取验证码"}
                       </button>
                     </div>
-                    {codeHint && <p className="mt-2 text-xs text-text-muted">{codeHint}</p>}
+                    {codeHint && <p className="mt-1 text-xs text-text-muted">{codeHint}</p>}
                   </div>
 
-                  {renderPasswordField({
-                    label: "密码",
-                    placeholder: "至少 6 位，建议包含字母和数字",
-                    value: password,
-                    onChange: setPassword,
-                    visible: showPwd,
-                    onToggle: () => setShowPwd((current) => !current),
-                    autoComplete: "new-password",
-                  })}
+                  <div className="grid grid-cols-2 gap-3">
+                    {renderPasswordField({
+                      label: "密码",
+                      placeholder: "数字+字母",
+                      value: password,
+                      onChange: setPassword,
+                      visible: showPwd,
+                      onToggle: () => setShowPwd((current) => !current),
+                      autoComplete: "new-password",
+                    })}
 
-                  {renderPasswordField({
-                    label: "确认密码",
-                    placeholder: "请再次输入密码",
-                    value: confirmPassword,
-                    onChange: setConfirmPassword,
-                    visible: showConfirmPwd,
-                    onToggle: () => setShowConfirmPwd((current) => !current),
-                    autoComplete: "new-password",
-                  })}
+                    {renderPasswordField({
+                      label: "确认密码",
+                      placeholder: "重复密码",
+                      value: confirmPassword,
+                      onChange: setConfirmPassword,
+                      visible: showConfirmPwd,
+                      onToggle: () => setShowConfirmPwd((current) => !current),
+                      autoComplete: "new-password",
+                    })}
+                  </div>
                 </>
               ) : loginMethod === "phone" ? (
                 <>
@@ -510,7 +584,8 @@ export default function LoginPage() {
                   })}
                 </>
               )}
-            </motion.div>
+              </motion.div>
+            </AnimatePresence>
 
             {!isRegister && (
               <div className="flex justify-end">
@@ -558,7 +633,7 @@ export default function LoginPage() {
             </div>
           </form>
 
-          <p className="mt-5 text-center text-sm text-text-muted">
+          <p className="mt-6 text-center text-sm text-text-muted">
             {isRegister ? "已经有账户了？" : "还没有账户？"}
             <button
               type="button"
@@ -568,7 +643,9 @@ export default function LoginPage() {
               {isRegister ? "返回登录" : "立即注册"}
             </button>
           </p>
-        </div>
+            </motion.div>
+          </motion.div>
+        </motion.div>
       </div>
     </div>
   );

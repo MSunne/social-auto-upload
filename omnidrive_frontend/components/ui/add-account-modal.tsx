@@ -23,6 +23,7 @@ type VerificationPayload = {
   inputHints?: string[];
   supportsTextInput?: boolean;
   screenshotData?: string | null;
+  screenshotUrl?: string | null;
 };
 
 type RetryTarget = {
@@ -445,6 +446,7 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
               const options = payload.options || [];
               const hints = payload.inputHints || [];
               const canAssistTextInput = Boolean(payload.supportsTextInput || hints.length > 0);
+              const screenshotSrc = payload.screenshotData || payload.screenshotUrl || null;
               
               return (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-5">
@@ -458,10 +460,10 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
                   </p>
                 </div>
                 
-                {payload.screenshotData && (
+                {screenshotSrc && (
                    <div className="rounded-xl border border-white/10 overflow-hidden">
                      <Image 
-                        src={payload.screenshotData}
+                        src={screenshotSrc}
                         alt="验证码截图"
                         width={400}
                         height={300}
@@ -519,7 +521,7 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
                         className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/20 p-3 text-sm font-bold text-amber-400 transition-colors hover:bg-amber-500/30 disabled:opacity-50"
                       >
                         {sessionActionLoading === "fill_text_and_submit" && <Loader2 className="h-4 w-4 animate-spin" />}
-                        开始认证
+                        填入并提交
                       </button>
                     </div>
                   </div>

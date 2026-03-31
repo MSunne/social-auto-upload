@@ -26,6 +26,11 @@ VERIFICATION_TITLE_TEXTS = [
     "手机验证",
     "短信验证",
     "验证码验证",
+    "接收短信验证码",
+    "接收短信验证",
+    "发送短信验证",
+    "发送短信验证码",
+    "请输入验证码",
 ]
 
 VERIFICATION_OPTION_TEXTS = [
@@ -92,6 +97,7 @@ QR_REFRESH_TEXTS = [
 ]
 
 QR_SNAPSHOT_MIN_INTERVAL_SECONDS = 2.0
+VERIFICATION_ROOT_MARKER_ATTR = "data-omnibull-verification-root"
 TRANSIENT_LOGIN_ERROR_HINTS = (
     "execution context was destroyed",
     "most likely because of a navigation",
@@ -107,6 +113,21 @@ VERIFICATION_INPUT_HINT_KEYWORDS = [
     "手机",
     "验证",
 ]
+EDITABLE_INPUT_SELECTOR = (
+    "input, textarea, [contenteditable]:not([contenteditable='false']), "
+    "[role='textbox'], [role='searchbox'], [role='combobox'], [aria-multiline='true']"
+)
+FOCUSED_EDITABLE_SELECTORS = [
+    "input:focus",
+    "textarea:focus",
+    "[contenteditable]:focus",
+    "[role='textbox']:focus",
+    "[role='searchbox']:focus",
+    "[role='combobox']:focus",
+    "[aria-multiline='true']:focus",
+]
+REMOTE_ACTION_RETRY_WINDOW_SECONDS = 120.0
+REMOTE_ACTION_MAX_RETRIES = 240
 
 
 class LoginCancelled(Exception):
@@ -278,6 +299,46 @@ async def get_verification_anchor(page):
 
 async def collect_visible_option_texts(page):
     visible_texts = []
+    interactive_locator = page.locator(
+        "button, [role='button'], a[href], input[type='button'], input[type='submit'], [tabindex='0']"
+    )
+    try:
+        interactive_count = await interactive_locator.count()
+    except Exception:
+        interactive_count = 0
+
+    for index in range(min(interactive_count, 80)):
+        candidate = interactive_locator.nth(index)
+        try:
+            if not await candidate.is_visible():
+                continue
+            raw_text = await candidate.evaluate(
+                """
+                (element) => {
+                    const values = [
+                        element.innerText,
+                        element.textContent,
+                        element.value,
+                        element.getAttribute("aria-label"),
+                        element.getAttribute("title"),
+                    ];
+                    return values.filter(Boolean).join("\\n");
+                }
+                """
+            )
+        except Exception:
+            continue
+
+        for line in str(raw_text or "").splitlines():
+            label = " ".join(line.split())
+            if not label or len(label) > 24:
+                continue
+            if any(keyword in label for keyword in VERIFICATION_OPTION_TEXTS):
+                visible_texts.append(label)
+
+    if visible_texts:
+        return list(dict.fromkeys(visible_texts))
+
     for text in VERIFICATION_OPTION_TEXTS:
         for locator in (page.get_by_text(text, exact=True), page.get_by_text(text)):
             count = await locator.count()
@@ -298,26 +359,41 @@ async def collect_visible_option_texts(page):
 
 async def get_visible_verification_input_hints(page):
     hints = []
-    locator = page.locator("input, textarea")
+    locator = page.locator(EDITABLE_INPUT_SELECTOR)
     count = await locator.count()
     for index in range(min(count, 8)):
         candidate = locator.nth(index)
         try:
             if not await candidate.is_visible():
                 continue
-            input_type = (await candidate.get_attribute("type") or "text").lower()
+            meta_payload = await get_editable_meta(candidate)
+            if meta_payload is None:
+                continue
+            if meta_payload.get("readonly") or meta_payload.get("disabled"):
+                continue
+            input_type = str(meta_payload.get("type") or "text").lower()
             if input_type in {"hidden", "file", "checkbox", "radio"}:
                 continue
-            placeholder = (await candidate.get_attribute("placeholder") or "").strip()
+            placeholder = str(meta_payload.get("placeholder") or "").strip()
             if placeholder and any(keyword in placeholder for keyword in VERIFICATION_INPUT_HINT_KEYWORDS):
                 hints.append(placeholder)
                 continue
-            label_text = ((await candidate.get_attribute("aria-label")) or "").strip()
+            label_text = str(meta_payload.get("ariaLabel") or "").strip()
             if label_text and any(keyword in label_text for keyword in VERIFICATION_INPUT_HINT_KEYWORDS):
                 hints.append(label_text)
                 continue
             if input_type in {"password", "tel", "number"}:
                 hints.append("请输入验证码或密码")
+                continue
+            if "one-time-code" in str(meta_payload.get("autocomplete") or ""):
+                hints.append("请输入验证码")
+                continue
+            if (
+                str(meta_payload.get("inputmode") or "") in {"numeric", "decimal", "tel"}
+                and isinstance(meta_payload.get("maxlength"), int)
+                and 4 <= int(meta_payload.get("maxlength")) <= 8
+            ):
+                hints.append("请输入验证码")
                 continue
         except Exception:
             continue
@@ -348,12 +424,86 @@ async def get_verification_container(page, anchor_locator=None):
                 return locator.first
         except Exception:
             continue
+
+    try:
+        marker_set = await anchor_locator.evaluate(
+            """
+            (element, payload) => {
+                const attr = payload.attr;
+                document.querySelectorAll(`[${attr}]`).forEach((node) => node.removeAttribute(attr));
+
+                const titleKeywords = payload.titleKeywords || [];
+                const optionKeywords = payload.optionKeywords || [];
+                const submitKeywords = payload.submitKeywords || [];
+                let current = element;
+                let best = null;
+                let bestScore = -1;
+
+                while (current && current !== document.body) {
+                    const text = ((current.innerText || current.textContent || "").replace(/\\s+/g, " ").trim());
+                    const rect = current.getBoundingClientRect();
+                    const style = window.getComputedStyle(current);
+                    const role = current.getAttribute("role") || "";
+                    const className = `${current.className || ""} ${current.id || ""} ${role}`;
+                    const interactiveCount = current.querySelectorAll(
+                        "button, [role='button'], a[href], input, textarea, [contenteditable]:not([contenteditable='false']), [role='textbox'], [role='searchbox'], [role='combobox'], [aria-multiline='true']"
+                    ).length;
+
+                    let score = 0;
+                    if (text) {
+                        if (titleKeywords.some((keyword) => text.includes(keyword))) {
+                            score += 10;
+                        }
+                        score += optionKeywords.filter((keyword) => text.includes(keyword)).length * 4;
+                        score += submitKeywords.filter((keyword) => text.includes(keyword)).length * 2;
+                    }
+                    if (rect.width >= 260) {
+                        score += 2;
+                    }
+                    if (rect.height >= 180) {
+                        score += 2;
+                    }
+                    if (style.position === "fixed" || style.position === "sticky") {
+                        score += 3;
+                    }
+                    if (/dialog|modal|popup|verify|captcha|security/i.test(className)) {
+                        score += 4;
+                    }
+                    score += Math.min(interactiveCount, 8);
+
+                    if (score > bestScore) {
+                        best = current;
+                        bestScore = score;
+                    }
+                    current = current.parentElement;
+                }
+
+                if (!best) {
+                    return false;
+                }
+                best.setAttribute(attr, "1");
+                return true;
+            }
+            """,
+            {
+                "attr": VERIFICATION_ROOT_MARKER_ATTR,
+                "titleKeywords": VERIFICATION_TITLE_TEXTS,
+                "optionKeywords": VERIFICATION_OPTION_TEXTS,
+                "submitKeywords": VERIFICATION_SUBMIT_TEXTS,
+            },
+        )
+        if marker_set:
+            locator = page.locator(f"[{VERIFICATION_ROOT_MARKER_ATTR}='1']")
+            if await locator.count() and await locator.last.is_visible():
+                return locator.last
+    except Exception:
+        pass
     return None
 
 
 async def iter_visible_editable_inputs(locator):
     try:
-        candidates = locator.locator("input, textarea, [contenteditable='true']")
+        candidates = locator.locator(EDITABLE_INPUT_SELECTOR)
         count = await candidates.count()
     except Exception:
         return []
@@ -364,7 +514,12 @@ async def iter_visible_editable_inputs(locator):
         try:
             if not await candidate.is_visible():
                 continue
-            input_type = (await candidate.get_attribute("type") or "text").lower()
+            meta_payload = await get_editable_meta(candidate)
+            if meta_payload is None:
+                continue
+            if meta_payload.get("readonly") or meta_payload.get("disabled"):
+                continue
+            input_type = str(meta_payload.get("type") or "text").lower()
             if input_type in {"hidden", "file", "checkbox", "radio"}:
                 continue
             visible_inputs.append(candidate)
@@ -375,13 +530,7 @@ async def iter_visible_editable_inputs(locator):
 
 
 async def find_focused_editable_input(page):
-    selectors = [
-        "input:focus",
-        "textarea:focus",
-        "[contenteditable='true']:focus",
-    ]
-
-    for selector in selectors:
+    for selector in FOCUSED_EDITABLE_SELECTORS:
         try:
             locator = page.locator(selector)
             if await locator.count() and await locator.first.is_visible():
@@ -392,17 +541,25 @@ async def find_focused_editable_input(page):
     return None
 
 
+async def get_verification_search_target(page, anchor_locator=None, option_texts=None):
+    container = await get_verification_container(page, anchor_locator)
+    if container is not None:
+        return container
+    return page
+
+
 async def detect_verification_challenge(page):
     title, option_texts, anchor_locator = await get_verification_anchor(page)
-    input_hints = await get_visible_verification_input_hints(page)
-    has_submit = await has_visible_verification_submit(page)
+    search_target = await get_verification_search_target(page, anchor_locator, option_texts=option_texts)
+    option_texts = await collect_visible_option_texts(search_target)
+    input_hints = await get_visible_verification_input_hints(search_target)
+    has_submit = await has_visible_verification_submit(search_target)
 
     if not title and not option_texts and not input_hints:
         return None
     if not title and not option_texts and input_hints and not has_submit:
         return None
-    container = await get_verification_container(page, anchor_locator)
-    screenshot_data = await page_to_data_url(page, container)
+    screenshot_data = await page_to_data_url(page, search_target if search_target is not page else None)
     payload = {
         "title": title or "需要额外验证",
         "message": "检测到登录验证，请在远端页面选择验证方式，必要时输入验证码或密码。",
@@ -421,12 +578,31 @@ async def detect_verification_challenge(page):
 async def click_visible_option(page, text):
     locator = page.get_by_text(text, exact=True)
     count = await locator.count()
-    for index in range(count - 1, -1, -1):
+    for index in range(count):
         candidate = locator.nth(index)
         try:
             if await candidate.is_visible():
-                await candidate.click(force=True, timeout=2000)
-                return True
+                try:
+                    await candidate.click(force=True, timeout=2000)
+                    return True
+                except Exception:
+                    clicked = await candidate.evaluate(
+                        """
+                        (element) => {
+                            const target = element.closest(
+                                "button, [role='button'], a[href], label, [tabindex='0'], [onclick]"
+                            ) || element;
+                            target.dispatchEvent(new MouseEvent("click", {
+                                bubbles: true,
+                                cancelable: true,
+                                view: window,
+                            }));
+                            return true;
+                        }
+                        """
+                    )
+                    if clicked:
+                        return True
         except Exception:
             continue
     return False
@@ -456,21 +632,222 @@ async def click_visible_partial_option(target, texts):
         return False
 
 
-async def find_first_editable_input(page):
+async def get_editable_meta(candidate):
+    try:
+        input_type = (await candidate.get_attribute("type") or "text").lower()
+        placeholder = " ".join(
+            (
+                (await candidate.get_attribute("placeholder"))
+                or (await candidate.get_attribute("aria-placeholder"))
+                or (await candidate.get_attribute("data-placeholder"))
+                or ""
+            ).split()
+        )
+        aria_label = " ".join(((await candidate.get_attribute("aria-label")) or "").split())
+        name = " ".join(((await candidate.get_attribute("name")) or "").split())
+        autocomplete = " ".join(((await candidate.get_attribute("autocomplete")) or "").split()).lower()
+        inputmode = " ".join(((await candidate.get_attribute("inputmode")) or "").split()).lower()
+        class_name = " ".join(((await candidate.get_attribute("class")) or "").split()).lower()
+        element_id = " ".join(((await candidate.get_attribute("id")) or "").split()).lower()
+        maxlength_raw = (await candidate.get_attribute("maxlength")) or ""
+        readonly = await candidate.get_attribute("readonly")
+        disabled = await candidate.get_attribute("disabled")
+        try:
+            text = " ".join(
+                (
+                    await candidate.evaluate(
+                        """
+                        (element) => [
+                            element.innerText || "",
+                            element.textContent || "",
+                        ].join(" ")
+                        """
+                    )
+                ).split()
+            )
+        except Exception:
+            text = ""
+    except Exception:
+        return None
+
+    try:
+        maxlength = int(str(maxlength_raw).strip()) if str(maxlength_raw).strip() else None
+    except Exception:
+        maxlength = None
+
+    return {
+        "type": input_type,
+        "placeholder": placeholder,
+        "ariaLabel": aria_label,
+        "name": name,
+        "autocomplete": autocomplete,
+        "inputmode": inputmode,
+        "className": class_name,
+        "id": element_id,
+        "text": text,
+        "maxlength": maxlength,
+        "readonly": readonly is not None,
+        "disabled": disabled is not None,
+    }
+
+
+async def get_editable_value(candidate):
+    try:
+        value = await candidate.evaluate(
+            """
+            (element) => {
+                if (!element) {
+                    return "";
+                }
+                if (element.isContentEditable) {
+                    return (element.innerText || element.textContent || "").trim();
+                }
+                if ("value" in element) {
+                    return element.value || "";
+                }
+                return (element.textContent || "").trim();
+            }
+            """
+        )
+    except Exception:
+        return ""
+    return str(value or "").strip()
+
+
+async def dispatch_editable_value(candidate, text):
+    try:
+        await candidate.evaluate(
+            """
+            (element, value) => {
+                const emit = (eventName) => {
+                    element.dispatchEvent(new Event(eventName, { bubbles: true }));
+                };
+                const emitKeyboard = (eventName) => {
+                    element.dispatchEvent(new KeyboardEvent(eventName, {
+                        key: "Enter",
+                        bubbles: true,
+                        cancelable: true,
+                    }));
+                };
+
+                if (element.isContentEditable) {
+                    element.focus();
+                    element.textContent = value;
+                    emit("input");
+                    emit("change");
+                    return;
+                }
+
+                if ("value" in element) {
+                    const prototype = element.tagName === "TEXTAREA"
+                        ? window.HTMLTextAreaElement.prototype
+                        : window.HTMLInputElement.prototype;
+                    const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
+                    if (descriptor && typeof descriptor.set === "function") {
+                        descriptor.set.call(element, value);
+                    } else {
+                        element.value = value;
+                    }
+                    element.focus();
+                    emit("input");
+                    emit("change");
+                    emitKeyboard("keyup");
+                }
+            }
+            """,
+            text,
+        )
+        return True
+    except Exception:
+        return False
+
+
+async def score_editable_input(candidate, desired_text=None):
+    meta_payload = await get_editable_meta(candidate)
+    if meta_payload is None:
+        return -1
+    if meta_payload.get("readonly") or meta_payload.get("disabled"):
+        return -1
+
+    input_type = str(meta_payload.get("type") or "text").lower()
+    meta = " ".join(
+        filter(
+            None,
+            [
+                meta_payload.get("placeholder"),
+                meta_payload.get("ariaLabel"),
+                meta_payload.get("name"),
+                meta_payload.get("className"),
+                meta_payload.get("id"),
+                meta_payload.get("text"),
+            ],
+        )
+    ).strip()
+    score = 0
+    if input_type == "password" or "密码" in meta:
+        score += 4
+    if "验证码" in meta or "短信" in meta:
+        score += 6
+    if "手机" in meta or "手机号" in meta:
+        score += 2
+    if "one-time-code" in str(meta_payload.get("autocomplete") or ""):
+        score += 10
+    if str(meta_payload.get("inputmode") or "") in {"numeric", "decimal", "tel"}:
+        score += 6
+
+    maxlength = meta_payload.get("maxlength")
+    if isinstance(maxlength, int) and 1 <= maxlength <= 8:
+        score += 3
+
+    text = str(desired_text or "").strip()
+    if text:
+        if text.isdigit() and 4 <= len(text) <= 8:
+            if "验证码" in meta or "短信" in meta:
+                score += 8
+            if "one-time-code" in str(meta_payload.get("autocomplete") or ""):
+                score += 12
+            if str(meta_payload.get("inputmode") or "") in {"numeric", "decimal", "tel"}:
+                score += 8
+            if isinstance(maxlength, int) and maxlength == len(text):
+                score += 8
+            if "手机" in meta or "手机号" in meta:
+                score -= 6
+        elif text.isdigit() and len(text) >= 11:
+            if "手机" in meta or "手机号" in meta:
+                score += 8
+        else:
+            if input_type == "password" or "密码" in meta:
+                score += 8
+    return score
+
+
+async def find_first_editable_input(page, desired_text=None):
     focused_input = await find_focused_editable_input(page)
     if focused_input is not None:
         return focused_input
 
     _, _, anchor_locator = await get_verification_anchor(page)
     container = await get_verification_container(page, anchor_locator)
+    best_input = None
+    best_score = -1
     if container is not None:
         container_inputs = await iter_visible_editable_inputs(container)
-        if container_inputs:
-            return container_inputs[0]
+        for candidate in container_inputs:
+            score = await score_editable_input(candidate, desired_text)
+            if score > best_score:
+                best_input = candidate
+                best_score = score
+        if best_input is not None:
+            return best_input
 
     page_inputs = await iter_visible_editable_inputs(page)
-    if page_inputs:
-        return page_inputs[0]
+    for candidate in page_inputs:
+        score = await score_editable_input(candidate, desired_text)
+        if score > best_score:
+            best_input = candidate
+            best_score = score
+    if best_input is not None:
+        return best_input
 
     return None
 
@@ -499,19 +876,53 @@ def get_select_all_shortcut():
 
 
 async def fill_input_like_user(page, input_locator, text):
-    await input_locator.click(force=True)
-    await page.keyboard.press(get_select_all_shortcut())
-    await page.keyboard.press("Delete")
-
     try:
-        await input_locator.fill(text)
-        return True
+        await input_locator.scroll_into_view_if_needed()
     except Exception:
+        pass
+
+    async def _verify():
+        current_value = await get_editable_value(input_locator)
+        return current_value == text
+
+    async def _prepare_focus():
+        await input_locator.click(force=True)
         try:
-            await page.keyboard.type(text)
-            return True
+            await input_locator.focus()
         except Exception:
-            return False
+            pass
+        try:
+            await page.keyboard.press(get_select_all_shortcut())
+            await page.keyboard.press("Delete")
+        except Exception:
+            pass
+
+    async def _fill_direct():
+        await _prepare_focus()
+        await input_locator.fill(text)
+
+    async def _type_direct():
+        await _prepare_focus()
+        try:
+            await input_locator.type(text, delay=80)
+        except Exception:
+            await page.keyboard.type(text, delay=80)
+
+    async def _dispatch_value():
+        await _prepare_focus()
+        dispatched = await dispatch_editable_value(input_locator, text)
+        if not dispatched:
+            raise RuntimeError("dispatch_editable_value_failed")
+
+    for strategy in (_fill_direct, _type_direct, _dispatch_value):
+        try:
+            await strategy()
+            await asyncio.sleep(0.2)
+            if await _verify():
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def push_structured_status(status_queue, command_queue, event_type, payload):
@@ -633,7 +1044,7 @@ async def apply_remote_action(page, action, status_queue=None, command_queue=Non
     payload = action.get("payload") or {}
 
     if action_type in {"select_option", "click_text"}:
-        target_text = str(payload.get("text") or payload.get("optionText") or "").strip()
+        target_text = str(payload.get("text") or payload.get("optionText") or payload.get("option") or "").strip()
         if not target_text:
             return False
         result = await click_verification_option(page, target_text)
@@ -650,7 +1061,7 @@ async def apply_remote_action(page, action, status_queue=None, command_queue=Non
         text = str(payload.get("text") or "").strip()
         if not text:
             return False
-        input_locator = await find_first_editable_input(page)
+        input_locator = await find_first_editable_input(page, text)
         if input_locator is None:
             return False
         filled = await fill_input_like_user(page, input_locator, text)
@@ -691,7 +1102,7 @@ async def apply_remote_action(page, action, status_queue=None, command_queue=Non
         text = str(payload.get("text") or "").strip()
         if not text:
             return False
-        input_locator = await find_first_editable_input(page)
+        input_locator = await find_first_editable_input(page, text)
         if input_locator is None:
             return False
         filled = await fill_input_like_user(page, input_locator, text)
@@ -754,6 +1165,7 @@ async def drain_remote_actions(page, command_queue, status_queue=None, qr_action
     if command_queue is None:
         return False
 
+    now = asyncio.get_running_loop().time()
     handled = False
     deferred_actions = []
     while True:
@@ -768,9 +1180,17 @@ async def drain_remote_actions(page, command_queue, status_queue=None, qr_action
             continue
 
         retry_count = int(action.get("_retryCount") or 0)
-        if retry_count < 8 and str(action.get("actionType") or "").strip() not in {"cancel_session", "cancel_login"}:
+        retry_deadline = float(action.get("_retryDeadline") or 0.0)
+        if retry_deadline <= 0:
+            retry_deadline = now + REMOTE_ACTION_RETRY_WINDOW_SECONDS
+        if (
+            retry_count < REMOTE_ACTION_MAX_RETRIES
+            and now <= retry_deadline
+            and str(action.get("actionType") or "").strip() not in {"cancel_session", "cancel_login"}
+        ):
             deferred_action = dict(action)
             deferred_action["_retryCount"] = retry_count + 1
+            deferred_action["_retryDeadline"] = retry_deadline
             deferred_actions.append(deferred_action)
 
     for action in deferred_actions:
