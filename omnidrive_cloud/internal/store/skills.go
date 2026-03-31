@@ -18,6 +18,7 @@ func scanSkill(row pgx.Row) (*domain.ProductSkill, error) {
 	var skill domain.ProductSkill
 	var deviceID *string
 	var promptTemplate *string
+	var coverPromptTemplate *string
 	var topicsPayload []byte
 	var referencePayload []byte
 	var executionTime *time.Time
@@ -34,6 +35,7 @@ func scanSkill(row pgx.Row) (*domain.ProductSkill, error) {
 		&skill.ModelName,
 		&skill.ModelAlias,
 		&promptTemplate,
+		&coverPromptTemplate,
 		&topicsPayload,
 		&referencePayload,
 		&executionTime,
@@ -49,7 +51,8 @@ func scanSkill(row pgx.Row) (*domain.ProductSkill, error) {
 	}
 
 	skill.DeviceID = normalizeOptionalString(deviceID)
-	skill.PromptTemplate = promptTemplate
+	skill.PromptTemplate = trimmedStringPointer(promptTemplate)
+	skill.CoverPromptTemplate = trimmedStringPointer(coverPromptTemplate)
 	skill.Topics = normalizeSkillTopicsFromJSON(topicsPayload)
 	skill.ReferencePayload = bytesOrNil(referencePayload)
 	skill.ExecutionTime = executionTime
@@ -62,6 +65,7 @@ func scanSkillWithLoad(row pgx.Row) (*domain.ProductSkill, error) {
 	var skill domain.ProductSkill
 	var deviceID *string
 	var promptTemplate *string
+	var coverPromptTemplate *string
 	var topicsPayload []byte
 	var referencePayload []byte
 	var executionTime *time.Time
@@ -78,6 +82,7 @@ func scanSkillWithLoad(row pgx.Row) (*domain.ProductSkill, error) {
 		&skill.ModelName,
 		&skill.ModelAlias,
 		&promptTemplate,
+		&coverPromptTemplate,
 		&topicsPayload,
 		&referencePayload,
 		&executionTime,
@@ -101,7 +106,8 @@ func scanSkillWithLoad(row pgx.Row) (*domain.ProductSkill, error) {
 	}
 
 	skill.DeviceID = normalizeOptionalString(deviceID)
-	skill.PromptTemplate = promptTemplate
+	skill.PromptTemplate = trimmedStringPointer(promptTemplate)
+	skill.CoverPromptTemplate = trimmedStringPointer(coverPromptTemplate)
 	skill.Topics = normalizeSkillTopicsFromJSON(topicsPayload)
 	skill.ReferencePayload = bytesOrNil(referencePayload)
 	skill.ExecutionTime = executionTime
@@ -113,7 +119,7 @@ func scanSkillWithLoad(row pgx.Row) (*domain.ProductSkill, error) {
 const skillSelectColumns = `
 	id, owner_user_id, device_id, name, description, output_type, model_name,
 	COALESCE((SELECT am.model_alias FROM ai_models am WHERE am.model_name = product_skills.model_name LIMIT 1), product_skills.model_name) AS model_alias,
-	prompt_template, topics, reference_payload, execution_time, repeat_daily, storyboard_enabled, next_run_at, last_run_at,
+	prompt_template, cover_prompt_template, topics, reference_payload, execution_time, repeat_daily, storyboard_enabled, next_run_at, last_run_at,
 	is_enabled, created_at, updated_at
 `
 
@@ -263,9 +269,7 @@ func (s *Store) UpdateSkillScheduleState(ctx context.Context, skillID string, ne
 		    last_run_at = COALESCE($3, last_run_at),
 		    updated_at = NOW()
 		WHERE id = $1
-		RETURNING id, owner_user_id, device_id, name, description, output_type, model_name,
-		          prompt_template, reference_payload, execution_time, repeat_daily, storyboard_enabled, next_run_at, last_run_at,
-		          is_enabled, created_at, updated_at
+		RETURNING `+skillSelectColumns+`
 	`, skillID, nextRunAt, lastRunAt)
 
 	skill, err := scanSkill(row)
@@ -437,14 +441,12 @@ func (s *Store) CreateSkill(ctx context.Context, input CreateSkillInput) (*domai
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO product_skills (
 			id, owner_user_id, device_id, name, description, output_type, model_name,
-			prompt_template, topics, reference_payload, execution_time, repeat_daily, storyboard_enabled, next_run_at, is_enabled
+			prompt_template, cover_prompt_template, topics, reference_payload, execution_time, repeat_daily, storyboard_enabled, next_run_at, is_enabled
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-		RETURNING id, owner_user_id, device_id, name, description, output_type, model_name,
-		          prompt_template, topics, reference_payload, execution_time, repeat_daily, storyboard_enabled, next_run_at, last_run_at,
-		          is_enabled, created_at, updated_at
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		RETURNING `+skillSelectColumns+`
 	`, input.ID, input.OwnerUserID, input.DeviceID, input.Name, input.Description, input.OutputType, input.ModelName,
-		input.PromptTemplate, topicsPayload, input.ReferencePayload, input.ExecutionTime, input.RepeatDaily, input.StoryboardEnabled, input.NextRunAt, input.IsEnabled)
+		input.PromptTemplate, input.CoverPromptTemplate, topicsPayload, input.ReferencePayload, input.ExecutionTime, input.RepeatDaily, input.StoryboardEnabled, input.NextRunAt, input.IsEnabled)
 
 	return scanSkill(row)
 }
@@ -486,33 +488,32 @@ func (s *Store) UpdateSkill(ctx context.Context, skillID string, ownerUserID str
 			    output_type = COALESCE($7, output_type),
 			    model_name = COALESCE($8, model_name),
 			    prompt_template = COALESCE($9, prompt_template),
+			    cover_prompt_template = COALESCE($10, cover_prompt_template),
 			    topics = CASE
-			        WHEN $10 = TRUE THEN $11
+			        WHEN $11 = TRUE THEN $12
 			        ELSE topics
 			    END,
-			    reference_payload = COALESCE($12, reference_payload),
+			    reference_payload = COALESCE($13, reference_payload),
 			    execution_time = CASE
-			        WHEN $13 = TRUE THEN $14
+			        WHEN $14 = TRUE THEN $15
 			        ELSE execution_time
 			    END,
-			    repeat_daily = COALESCE($15, repeat_daily),
-			    storyboard_enabled = COALESCE($16, storyboard_enabled),
+			    repeat_daily = COALESCE($16, repeat_daily),
+			    storyboard_enabled = COALESCE($17, storyboard_enabled),
 			    next_run_at = CASE
-			        WHEN $17 = TRUE THEN $18
+			        WHEN $18 = TRUE THEN $19
 			        ELSE next_run_at
 			    END,
 			    last_run_at = CASE
-			        WHEN $19 = TRUE THEN $20
+			        WHEN $20 = TRUE THEN $21
 			        ELSE last_run_at
 			    END,
-			    is_enabled = COALESCE($21, is_enabled),
+			    is_enabled = COALESCE($22, is_enabled),
 			    updated_at = NOW()
 			WHERE id = $1 AND owner_user_id = $2
-			RETURNING id, owner_user_id, device_id, name, description, output_type, model_name,
-			          prompt_template, topics, reference_payload, execution_time, repeat_daily, storyboard_enabled, next_run_at, last_run_at,
-			          is_enabled, created_at, updated_at
+			RETURNING `+skillSelectColumns+`
 		`, skillID, ownerUserID, input.DeviceTouched, deviceID, input.Name, input.Description, input.OutputType, input.ModelName,
-		input.PromptTemplate, input.TopicsTouched, topicsPayload, referencePayload, input.ExecutionTouched, executionTime,
+		input.PromptTemplate, input.CoverPromptTemplate, input.TopicsTouched, topicsPayload, referencePayload, input.ExecutionTouched, executionTime,
 		input.RepeatDaily, input.StoryboardEnabled, input.NextRunTouched, nextRunAt, input.LastRunTouched, lastRunAt, input.IsEnabled)
 
 	skill, err := scanSkill(row)

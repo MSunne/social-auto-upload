@@ -36,6 +36,7 @@ type UpsertAdminSystemSettingsInput struct {
 	DefaultChatModel                  string
 	DefaultImageModel                 string
 	DefaultVideoModel                 string
+	VideoCoverPrompt                  string
 	StoryboardPrompt                  string
 	StoryboardModel                   string
 	StoryboardReferences              []byte
@@ -73,6 +74,7 @@ func scanAdminSystemSettings(scan scanFn) (*domain.AdminSystemSettingsRecord, er
 		&item.DefaultChatModel,
 		&item.DefaultImageModel,
 		&item.DefaultVideoModel,
+		&item.VideoCoverPrompt,
 		&item.StoryboardPrompt,
 		&item.StoryboardModel,
 		&item.StoryboardReferences,
@@ -124,6 +126,7 @@ func (s *Store) GetAdminSystemSettings(ctx context.Context) (*domain.AdminSystem
 			default_chat_model,
 			default_image_model,
 			default_video_model,
+			video_cover_prompt_template,
 			storyboard_prompt_template,
 			storyboard_model,
 			storyboard_reference_payload,
@@ -186,6 +189,7 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 			default_chat_model,
 			default_image_model,
 			default_video_model,
+			video_cover_prompt_template,
 			storyboard_prompt_template,
 			storyboard_model,
 			storyboard_reference_payload,
@@ -193,7 +197,7 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 			image_storyboard_model,
 			image_storyboard_reference_payload
 		)
-		VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27::jsonb, $28, $29, $30::jsonb)
+		VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28::jsonb, $29, $30, $31::jsonb)
 		ON CONFLICT (id) DO UPDATE
 		SET
 			ai_worker_enabled = EXCLUDED.ai_worker_enabled,
@@ -219,6 +223,7 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 			default_chat_model = EXCLUDED.default_chat_model,
 			default_image_model = EXCLUDED.default_image_model,
 			default_video_model = EXCLUDED.default_video_model,
+			video_cover_prompt_template = EXCLUDED.video_cover_prompt_template,
 			storyboard_prompt_template = EXCLUDED.storyboard_prompt_template,
 			storyboard_model = EXCLUDED.storyboard_model,
 			storyboard_reference_payload = EXCLUDED.storyboard_reference_payload,
@@ -251,6 +256,7 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 			default_chat_model,
 			default_image_model,
 			default_video_model,
+			video_cover_prompt_template,
 			storyboard_prompt_template,
 			storyboard_model,
 			storyboard_reference_payload,
@@ -284,6 +290,7 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 		input.DefaultChatModel,
 		input.DefaultImageModel,
 		input.DefaultVideoModel,
+		input.VideoCoverPrompt,
 		input.StoryboardPrompt,
 		input.StoryboardModel,
 		storyboardReferences,

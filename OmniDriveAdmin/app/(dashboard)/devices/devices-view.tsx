@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useBulkActionDevices, useDevices, useUpdateDeviceActivation } from "@/lib/hooks/useDevices";
+import { useBulkActionDevices, useDevices, useUnbindDevice, useUpdateDeviceActivation } from "@/lib/hooks/useDevices";
 import type { AdminDeviceRow } from "@/lib/types";
 import { PageHeader } from "@/components/ui/common";
 import {
@@ -13,6 +13,7 @@ import {
   PowerOff,
   Power,
   KeyRound,
+  Link2Off,
   X,
 } from "lucide-react";
 
@@ -63,6 +64,10 @@ export function DevicesView() {
   const [activationCode, setActivationCode] = useState("");
   const [activationStatus, setActivationStatus] = useState("ready");
   const [activationNotes, setActivationNotes] = useState("");
+  const [activationInitialOrderNo, setActivationInitialOrderNo] = useState("");
+  const [activationInitialCode, setActivationInitialCode] = useState("");
+  const [activationInitialStatus, setActivationInitialStatus] = useState("ready");
+  const [activationInitialNotes, setActivationInitialNotes] = useState("");
 
   const { data, isLoading, error } = useDevices({
     page,
@@ -72,6 +77,7 @@ export function DevicesView() {
   });
   const bulkAction = useBulkActionDevices();
   const updateActivation = useUpdateDeviceActivation();
+  const unbindDevice = useUnbindDevice();
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,11 +104,20 @@ export function DevicesView() {
   };
 
   const openActivationModal = (row: AdminDeviceRow) => {
+    const currentStatus = row.activation?.status ?? "ready";
+    const normalizedStatus = currentStatus === "disabled" ? "disabled" : currentStatus === "activated" ? "activated" : "ready";
+    const currentOrderNo = row.activation?.orderNo ?? "";
+    const currentActivationCode = row.activation?.activationCode ?? "";
+    const currentNotes = row.activation?.notes ?? "";
     setActivationDevice(row);
-    setActivationOrderNo(row.activation?.orderNo ?? "");
-    setActivationCode("");
-    setActivationStatus(row.activation?.status === "disabled" ? "disabled" : "ready");
-    setActivationNotes(row.activation?.notes ?? "");
+    setActivationOrderNo(currentOrderNo);
+    setActivationCode(currentActivationCode);
+    setActivationStatus(normalizedStatus);
+    setActivationNotes(currentNotes);
+    setActivationInitialOrderNo(currentOrderNo);
+    setActivationInitialCode(currentActivationCode);
+    setActivationInitialStatus(normalizedStatus);
+    setActivationInitialNotes(currentNotes);
   };
 
   const closeActivationModal = () => {
@@ -112,22 +127,74 @@ export function DevicesView() {
     setActivationCode("");
     setActivationStatus("ready");
     setActivationNotes("");
+    setActivationInitialOrderNo("");
+    setActivationInitialCode("");
+    setActivationInitialStatus("ready");
+    setActivationInitialNotes("");
   };
 
   const handleActivationSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!activationDevice) return;
+    const nextActivationCode = activationCode.trim();
+    const currentActivationCode = activationInitialCode.trim();
+    const nextOrderNo = activationOrderNo.trim();
+    const nextNotes = activationNotes.trim();
+    const payload: {
+      deviceId: string;
+      orderNo?: string;
+      activationCode?: string;
+      status?: string;
+      notes?: string;
+    } = {
+      deviceId: activationDevice.device.id,
+    };
+
+    if (!activationDevice.activation && !nextActivationCode) {
+      alert("首次配置激活码时必须填写激活码。");
+      return;
+    }
+    if (activationDevice.device.ownerUserId && nextActivationCode && nextActivationCode !== currentActivationCode) {
+      alert("设备已绑定用户。请先解绑设备，再配置或轮换激活码。");
+      return;
+    }
+    if (nextOrderNo !== activationInitialOrderNo.trim()) {
+      payload.orderNo = nextOrderNo;
+    }
+    if (nextNotes !== activationInitialNotes.trim()) {
+      payload.notes = nextNotes;
+    }
+    if (nextActivationCode && nextActivationCode !== currentActivationCode) {
+      payload.activationCode = nextActivationCode;
+    }
+    if (activationInitialStatus !== "activated" && activationStatus !== activationInitialStatus) {
+      payload.status = activationStatus;
+    }
+    if (Object.keys(payload).length === 1) {
+      alert("未检测到需要保存的变更。");
+      return;
+    }
     try {
-      await updateActivation.mutateAsync({
-        deviceId: activationDevice.device.id,
-        orderNo: activationOrderNo.trim() || undefined,
-        activationCode: activationCode.trim() || undefined,
-        status: activationStatus,
-        notes: activationNotes.trim() || undefined,
-      });
+      await updateActivation.mutateAsync(payload);
       closeActivationModal();
     } catch (mutationError) {
       const message = mutationError instanceof Error ? mutationError.message : "保存激活配置失败，请重试";
+      alert(message);
+    }
+  };
+
+  const handleUnbind = async (row: AdminDeviceRow) => {
+    if (!row.owner) {
+      alert("该设备当前未绑定用户。");
+      return;
+    }
+    if (!confirm(`确认解绑设备 ${row.device.name}（${row.device.deviceCode}）？`)) {
+      return;
+    }
+    try {
+      await unbindDevice.mutateAsync(row.device.id);
+    } catch (mutationError) {
+      const message = mutationError instanceof Error ? mutationError.message : "解绑设备失败，请重试";
       alert(message);
     }
   };
@@ -322,7 +389,7 @@ export function DevicesView() {
                           订单号: {row.activation?.orderNo || "—"}
                         </div>
                         <div className="text-xs text-[var(--color-text-secondary)]">
-                          提示: {row.activation?.activationCodeHint || "未设置"}
+                          激活码: {row.activation?.activationCode || row.activation?.activationCodeHint || "未设置"}
                         </div>
                       </div>
                     </td>
@@ -346,14 +413,27 @@ export function DevicesView() {
                       {formatLastSeen(row.device.lastSeenAt)}
                     </td>
                     <td className="px-4 py-4">
-                      <button
-                        type="button"
-                        onClick={() => openActivationModal(row)}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[var(--color-bg-secondary)]"
-                      >
-                        <KeyRound className="h-3.5 w-3.5" />
-                        {row.activation ? "更新激活配置" : "配置激活码"}
-                      </button>
+                      <div className="flex flex-col items-start gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openActivationModal(row)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[var(--color-bg-secondary)]"
+                        >
+                          <KeyRound className="h-3.5 w-3.5" />
+                          {row.activation ? "更新激活配置" : "配置激活码"}
+                        </button>
+                        {row.owner && (
+                          <button
+                            type="button"
+                            onClick={() => handleUnbind(row)}
+                            disabled={unbindDevice.isPending}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-1.5 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <Link2Off className="h-3.5 w-3.5" />
+                            {unbindDevice.isPending ? "解绑中..." : "解绑设备"}
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -408,24 +488,30 @@ export function DevicesView() {
             <form onSubmit={handleActivationSubmit} className="space-y-4 px-5 py-5">
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="space-y-2">
-                  <span className="text-xs font-medium text-[var(--color-text-secondary)]">订单号</span>
+                  <span className="text-xs font-medium text-[var(--color-text-secondary)]">销售订单号</span>
                   <input
                     value={activationOrderNo}
                     onChange={(e) => setActivationOrderNo(e.target.value)}
-                    placeholder="例如 SO-20260327-001"
+                    placeholder="例如 SO-20260330-001"
                     className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm focus:border-[var(--color-primary)] focus:outline-none"
                   />
                 </label>
                 <label className="space-y-2">
                   <span className="text-xs font-medium text-[var(--color-text-secondary)]">状态</span>
-                  <select
-                    value={activationStatus}
-                    onChange={(e) => setActivationStatus(e.target.value)}
-                    className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm focus:border-[var(--color-primary)] focus:outline-none"
-                  >
-                    <option value="ready">待激活</option>
-                    <option value="disabled">已禁用</option>
-                  </select>
+                  {activationInitialStatus === "activated" ? (
+                    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm text-[var(--color-text-primary)]">
+                      已激活
+                    </div>
+                  ) : (
+                    <select
+                      value={activationStatus}
+                      onChange={(e) => setActivationStatus(e.target.value)}
+                      className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm focus:border-[var(--color-primary)] focus:outline-none"
+                    >
+                      <option value="ready">待激活</option>
+                      <option value="disabled">已禁用</option>
+                    </select>
+                  )}
                 </label>
               </div>
 
@@ -438,7 +524,9 @@ export function DevicesView() {
                   className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm uppercase focus:border-[var(--color-primary)] focus:outline-none"
                 />
                 <p className="text-xs text-[var(--color-text-secondary)]">
-                  系统只保存激活码校验信息和尾号提示，不会在列表里回显完整激活码。
+                  {activationDevice.device.ownerUserId
+                    ? "该设备当前已绑定用户。销售订单号和备注可以直接改；如需轮换激活码，请先解绑设备。"
+                    : "当前会保存并回显完整激活码，留空表示不轮换现有激活码。"}
                 </p>
               </label>
 

@@ -39,6 +39,7 @@ RECOVERED_SCHEDULED_MESSAGE = "OmniBull 重启后已恢复等待定时发布"
 RECOVERED_PENDING_MESSAGE = "OmniBull 重启后已恢复待执行"
 BROWSER_INTERRUPTED_PENDING_MESSAGE = "浏览器意外关闭，准备自动重试"
 BROWSER_INTERRUPTED_SCHEDULED_MESSAGE = "浏览器意外关闭，等待自动重试"
+AUTO_RETRY_EXHAUSTED_MESSAGE = "浏览器或执行环境连续中断，已停止自动重试，请人工处理后重试"
 RECOVERABLE_INTERRUPT_MARKERS = (
     "target page, context or browser has been closed",
     "target closed",
@@ -47,6 +48,7 @@ RECOVERABLE_INTERRUPT_MARKERS = (
     "page closed",
     "context closed",
 )
+MAX_AUTOMATIC_INTERRUPT_RETRIES = 1
 
 
 class PublishTaskManager:
@@ -140,6 +142,7 @@ class PublishTaskManager:
                     verification_data TEXT,
                     artifact_path TEXT,
                     worker_name TEXT,
+                    auto_retry_count INTEGER NOT NULL DEFAULT 0,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     started_at DATETIME,
@@ -147,6 +150,15 @@ class PublishTaskManager:
                 )
                 '''
             )
+            try:
+                cursor.execute(
+                    '''
+                    ALTER TABLE publish_tasks
+                    ADD COLUMN auto_retry_count INTEGER NOT NULL DEFAULT 0
+                    '''
+                )
+            except sqlite3.OperationalError:
+                pass
             recovered = self._recover_interrupted_tasks(cursor)
             repaired = self._repair_omnidrive_ai_schedule_drift(cursor)
             conn.commit()
@@ -172,20 +184,37 @@ class PublishTaskManager:
                 '''
                 UPDATE publish_tasks
                 SET status = CASE
+                    WHEN COALESCE(auto_retry_count, 0) >= ? THEN 'failed'
                     WHEN run_at IS NOT NULL AND run_at != '' AND run_at > CURRENT_TIMESTAMP THEN 'scheduled'
                     ELSE 'pending'
                 END,
                 message = CASE
+                    WHEN COALESCE(auto_retry_count, 0) >= ? THEN ?
                     WHEN run_at IS NOT NULL AND run_at != '' AND run_at > CURRENT_TIMESTAMP THEN ?
                     ELSE ?
                 END,
                 worker_name = NULL,
                 started_at = NULL,
-                finished_at = NULL,
+                finished_at = CASE
+                    WHEN COALESCE(auto_retry_count, 0) >= ? THEN CURRENT_TIMESTAMP
+                    ELSE NULL
+                END,
+                auto_retry_count = CASE
+                    WHEN COALESCE(auto_retry_count, 0) >= ? THEN auto_retry_count
+                    ELSE COALESCE(auto_retry_count, 0) + 1
+                END,
                 updated_at = CURRENT_TIMESTAMP
                 WHERE status = 'running'
             ''',
-            (RECOVERED_SCHEDULED_MESSAGE, RECOVERED_PENDING_MESSAGE),
+            (
+                MAX_AUTOMATIC_INTERRUPT_RETRIES,
+                MAX_AUTOMATIC_INTERRUPT_RETRIES,
+                AUTO_RETRY_EXHAUSTED_MESSAGE,
+                RECOVERED_SCHEDULED_MESSAGE,
+                RECOVERED_PENDING_MESSAGE,
+                MAX_AUTOMATIC_INTERRUPT_RETRIES,
+                MAX_AUTOMATIC_INTERRUPT_RETRIES,
+            ),
         )
         return cursor.rowcount
 
@@ -339,6 +368,7 @@ class PublishTaskManager:
                     worker_name = NULL,
                     started_at = NULL,
                     finished_at = NULL,
+                    auto_retry_count = 0,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE task_uuid = ?
                   AND source = 'omnidrive_ai'
@@ -884,6 +914,7 @@ class PublishTaskManager:
             "message": row["message"],
             "artifactPath": row["artifact_path"],
             "workerName": row["worker_name"],
+            "autoRetryCount": row["auto_retry_count"],
             "createdAt": row["created_at"],
             "updatedAt": row["updated_at"],
             "startedAt": row["started_at"],
@@ -1173,6 +1204,7 @@ class PublishTaskManager:
                     worker_name = NULL,
                     started_at = NULL,
                     finished_at = NULL,
+                    auto_retry_count = 0,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE task_uuid = ?
                 ''',
@@ -1206,6 +1238,14 @@ class PublishTaskManager:
         task = self.get_task(task_uuid)
         if not task:
             return False
+        if int(task.get("autoRetryCount") or 0) >= MAX_AUTOMATIC_INTERRUPT_RETRIES:
+            self._update_task(
+                task_uuid,
+                status="failed",
+                message=AUTO_RETRY_EXHAUSTED_MESSAGE,
+                finished=True,
+            )
+            return True
 
         next_status = "scheduled" if self._is_future_datetime(task.get("runAt")) else "pending"
         next_message = (
@@ -1224,6 +1264,7 @@ class PublishTaskManager:
                     worker_name = NULL,
                     started_at = NULL,
                     finished_at = NULL,
+                    auto_retry_count = COALESCE(auto_retry_count, 0) + 1,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE task_uuid = ?
                 ''',

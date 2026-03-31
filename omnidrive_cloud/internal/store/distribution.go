@@ -1067,23 +1067,43 @@ func (s *Store) backfillDistributionGrantTrackingTx(ctx context.Context, tx pgx.
 			return err
 		}
 
-		var quotaConsumedCredits int64
+		type quotaAccountCandidate struct {
+			AccountID          string
+			MeterCode          string
+			UsedTotal          int64
+			CommissionItemID   *string
+			ReleaseUnitCredits int64
+		}
+
+		quotaAccounts := make([]quotaAccountCandidate, 0)
 		for quotaRows.Next() {
-			var accountID string
-			var meterCode string
-			var usedTotal int64
-			var commissionItemID *string
-			var releaseUnitCredits int64
-			if scanErr := quotaRows.Scan(&accountID, &meterCode, &usedTotal, &commissionItemID, &releaseUnitCredits); scanErr != nil {
+			var quotaAccount quotaAccountCandidate
+			if scanErr := quotaRows.Scan(
+				&quotaAccount.AccountID,
+				&quotaAccount.MeterCode,
+				&quotaAccount.UsedTotal,
+				&quotaAccount.CommissionItemID,
+				&quotaAccount.ReleaseUnitCredits,
+			); scanErr != nil {
 				quotaRows.Close()
 				return scanErr
 			}
+			quotaAccounts = append(quotaAccounts, quotaAccount)
+		}
+		if err := quotaRows.Err(); err != nil {
+			quotaRows.Close()
+			return err
+		}
+		quotaRows.Close()
 
-			snapshotUnitCredits := snapshot.QuotaUnitCredits[strings.TrimSpace(meterCode)]
+		var quotaConsumedCredits int64
+		for _, quotaAccount := range quotaAccounts {
+			snapshotUnitCredits := snapshot.QuotaUnitCredits[strings.TrimSpace(quotaAccount.MeterCode)]
 			if snapshotUnitCredits < 0 {
 				snapshotUnitCredits = 0
 			}
-			if commissionItemID == nil || strings.TrimSpace(*commissionItemID) == "" || releaseUnitCredits <= 0 || strings.TrimSpace(candidate.RechargeOrderID) == "" {
+			releaseUnitCredits := quotaAccount.ReleaseUnitCredits
+			if quotaAccount.CommissionItemID == nil || strings.TrimSpace(*quotaAccount.CommissionItemID) == "" || releaseUnitCredits <= 0 || strings.TrimSpace(candidate.RechargeOrderID) == "" {
 				if _, err := tx.Exec(ctx, `
 					UPDATE billing_quota_accounts
 					SET recharge_order_id = COALESCE(NULLIF(recharge_order_id, ''), $2),
@@ -1094,19 +1114,14 @@ func (s *Store) backfillDistributionGrantTrackingTx(ctx context.Context, tx pgx.
 					    END,
 					    updated_at = NOW()
 					WHERE id = $1
-				`, accountID, candidate.RechargeOrderID, candidate.ID, snapshotUnitCredits); err != nil {
-					quotaRows.Close()
+				`, quotaAccount.AccountID, candidate.RechargeOrderID, candidate.ID, snapshotUnitCredits); err != nil {
 					return err
 				}
 				if releaseUnitCredits <= 0 {
 					releaseUnitCredits = snapshotUnitCredits
 				}
 			}
-			quotaConsumedCredits += usedTotal * maxInt64(releaseUnitCredits, 0)
-		}
-		quotaRows.Close()
-		if err := quotaRows.Err(); err != nil {
-			return err
+			quotaConsumedCredits += quotaAccount.UsedTotal * maxInt64(releaseUnitCredits, 0)
 		}
 
 		var existingLotCount int64
@@ -1288,28 +1303,41 @@ func (s *Store) releaseDistributionCommissionForUsageTx(ctx context.Context, tx 
 	}
 	defer rows.Close()
 
-	remainingCredits := debitedCredits
-	now := time.Now().UTC()
+	type commissionReleaseCandidate struct {
+		ItemID string
+		State  commissionReleaseState
+	}
+
+	releaseCandidates := make([]commissionReleaseCandidate, 0)
 	for rows.Next() {
-		if remainingCredits <= 0 {
-			break
-		}
-		var itemID string
-		var state commissionReleaseState
+		var candidate commissionReleaseCandidate
 		if scanErr := rows.Scan(
-			&itemID,
-			&state.Status,
-			&state.AmountCents,
-			&state.TotalGrantedCredits,
-			&state.ConsumedCredits,
-			&state.ReleasedAmountCents,
-			&state.SettledAmountCents,
-			&state.ReleasedAt,
+			&candidate.ItemID,
+			&candidate.State.Status,
+			&candidate.State.AmountCents,
+			&candidate.State.TotalGrantedCredits,
+			&candidate.State.ConsumedCredits,
+			&candidate.State.ReleasedAmountCents,
+			&candidate.State.SettledAmountCents,
+			&candidate.State.ReleasedAt,
 		); scanErr != nil {
 			return scanErr
 		}
+		releaseCandidates = append(releaseCandidates, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
 
-		nextState, consumedCredits := advanceCommissionReleaseState(state, remainingCredits, now)
+	remainingCredits := debitedCredits
+	now := time.Now().UTC()
+	trimmedSourceType := strings.TrimSpace(sourceType)
+	trimmedSourceID := strings.TrimSpace(sourceID)
+	for _, candidate := range releaseCandidates {
+		if remainingCredits <= 0 {
+			break
+		}
+		nextState, consumedCredits := advanceCommissionReleaseState(candidate.State, remainingCredits, now)
 		if consumedCredits <= 0 {
 			continue
 		}
@@ -1325,11 +1353,11 @@ func (s *Store) releaseDistributionCommissionForUsageTx(ctx context.Context, tx 
 			    last_release_source_id = $7,
 			    updated_at = NOW()
 			WHERE id = $1
-		`, itemID, nextState.Status, nextState.ConsumedCredits, nextState.ReleasedAmountCents, nextState.ReleasedAt, strings.TrimSpace(sourceType), strings.TrimSpace(sourceID)); err != nil {
+		`, candidate.ItemID, nextState.Status, nextState.ConsumedCredits, nextState.ReleasedAmountCents, nextState.ReleasedAt, trimmedSourceType, trimmedSourceID); err != nil {
 			return err
 		}
 	}
-	return rows.Err()
+	return nil
 }
 
 func (s *Store) ListAdminCommissions(ctx context.Context, filter AdminCommissionListFilter) ([]domain.AdminCommissionRow, int64, domain.AdminCommissionListSummary, error) {

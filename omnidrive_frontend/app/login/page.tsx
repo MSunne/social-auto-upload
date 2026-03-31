@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { ArrowRight, Eye, EyeOff, Sparkles, Zap } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Sparkles, Zap, Bot, Video, Share2, Activity } from "lucide-react";
 import {
   getCurrentUser,
   loginWithPassword,
@@ -253,20 +253,86 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen bg-background text-text-primary">
-      {/* Left Branding Panel (Desktop Only) */}
-      <div className="hidden lg:flex relative w-1/2 flex-col items-center justify-center overflow-hidden border-r border-white/5 bg-black/40">
-        <div className="pointer-events-none absolute left-1/2 top-1/2 h-[600px] w-[600px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent/20 blur-[120px]" />
-        <div className="pointer-events-none absolute bottom-0 right-0 h-96 w-96 rounded-full bg-cyan/15 blur-[120px]" />
+      {/* Left Landing Showcase Panel (Desktop Only) */}
+      <div className="hidden lg:flex relative w-1/2 flex-col items-start justify-center overflow-hidden border-r border-white/5 bg-black/40 px-16 xl:px-24">
+        {/* Background Gradients */}
+        <div className="pointer-events-none absolute left-0 top-1/2 h-[800px] w-[800px] -translate-y-1/2 -translate-x-1/4 rounded-full bg-accent/15 blur-[120px]" />
+        <div className="pointer-events-none absolute bottom-0 right-0 h-[600px] w-[600px] rounded-full bg-cyan/10 blur-[120px]" />
         
-        <div className="relative z-10 flex flex-col items-center text-center">
-          <div className="mb-8 flex h-24 w-24 items-center justify-center rounded-[32px] bg-gradient-to-br from-accent via-pink to-cyan shadow-[0_0_50px_rgba(177,73,255,0.3)]">
-            <Zap className="h-12 w-12 text-white" />
+        {/* Logo & Intro */}
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+          className="relative z-10 w-full"
+        >
+          <div className="inline-flex items-center gap-3 mb-8">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-accent via-pink to-cyan shadow-[0_0_30px_rgba(177,73,255,0.4)]">
+              <Zap className="h-6 w-6 text-white" />
+            </div>
+            <span className="text-2xl font-bold tracking-tight text-white">OmniDrive Matrix</span>
           </div>
-          <h1 className="mb-4 text-4xl font-bold tracking-tight text-white">OmniDrive</h1>
-          <p className="max-w-md text-lg text-text-secondary leading-relaxed">
-            下一代智能云存储平台，为您的数据提供安全、高效的管理体验。
+
+          <h1 className="text-[2.75rem] font-extrabold tracking-tight text-white mb-6 leading-[1.15]">
+            全自动自媒体制作发布 <br />
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-accent via-pink to-cyan">全平台 AI 生态引擎</span>
+          </h1>
+          <p className="text-lg text-text-secondary leading-relaxed max-w-lg mb-12">
+            深度集成世界领先的 <strong>OpenClaw Agent 框架</strong>，实现从灵感到分发的一站式全自动流程。代理执行自媒体运营任务，24小时不间断为您创造内容生产力。
           </p>
-        </div>
+        </motion.div>
+
+        {/* Feature Cards Grid */}
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.2 }}
+          className="relative z-10 grid grid-cols-2 gap-5 w-full max-w-2xl"
+        >
+          {/* Feature 1 */}
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-sm transition-all hover:bg-white/10 hover:-translate-y-1 hover:shadow-[0_10px_40px_-10px_rgba(177,73,255,0.3)]">
+            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-accent/20 text-accent">
+              <Bot className="h-5 w-5" />
+            </div>
+            <h3 className="text-base font-semibold text-white mb-1.5">OpenClaw Agent 引擎</h3>
+            <p className="text-sm text-text-muted leading-relaxed">
+              内嵌强大的底层智能代理系统，自主推理、自动规划与执行您指派的自媒体复杂运营任务。
+            </p>
+          </div>
+
+          {/* Feature 2 */}
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-sm transition-all hover:bg-white/10 hover:-translate-y-1 hover:shadow-[0_10px_40px_-10px_rgba(255,107,158,0.3)]">
+            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-pink/20 text-pink">
+              <Video className="h-5 w-5" />
+            </div>
+            <h3 className="text-base font-semibold text-white mb-1.5">自动化图文/视频产出</h3>
+            <p className="text-sm text-text-muted leading-relaxed">
+              彻底告别繁琐渲染，AI 脚本自动生成、图片/视频极速合成，1分钟输出高质量爆款原生物料。
+            </p>
+          </div>
+
+          {/* Feature 3 */}
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-sm transition-all hover:bg-white/10 hover:-translate-y-1 hover:shadow-[0_10px_40px_-10px_rgba(6,182,212,0.3)]">
+            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-cyan/20 text-cyan">
+              <Share2 className="h-5 w-5" />
+            </div>
+            <h3 className="text-base font-semibold text-white mb-1.5">多社交平台一键分发</h3>
+            <p className="text-sm text-text-muted leading-relaxed">
+              无缝对接小红书、抖音、B站、视频号等主流社媒，内容定时发送，多账号全场景自动铺开。
+            </p>
+          </div>
+
+          {/* Feature 4 */}
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-sm transition-all hover:bg-white/10 hover:-translate-y-1 hover:shadow-[0_10px_40px_-10px_rgba(74,222,128,0.2)]">
+            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-green-500/20 text-green-400">
+              <Activity className="h-5 w-5" />
+            </div>
+            <h3 className="text-base font-semibold text-white mb-1.5">24 小时全自动运行</h3>
+            <p className="text-sm text-text-muted leading-relaxed">
+              无需人工盯盘跟进，全生命周期无人值守工作流。打造真正属于云端的自动化发布流水线。
+            </p>
+          </div>
+        </motion.div>
       </div>
 
       {/* Right Form Panel */}
@@ -280,7 +346,7 @@ export default function LoginPage() {
             <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-[18px] bg-gradient-to-br from-accent via-pink to-cyan shadow-[0_0_24px_rgba(177,73,255,0.26)]">
               <Zap className="h-6 w-6 text-white" />
             </div>
-            <h1 className="text-xl font-bold tracking-tight text-white">OmniDrive</h1>
+            <h1 className="text-xl font-bold tracking-tight text-white">OmniDrive Matrix</h1>
           </div>
 
           <div className="mb-5 text-center lg:text-left">
@@ -289,7 +355,7 @@ export default function LoginPage() {
             </h2>
             <p className="text-xs text-text-secondary">
               {isRegister
-                ? "注册 OmniDrive 开始你的云端之旅"
+                ? "注册 OmniDrive 开始你的自动化矩阵"
                 : "请登录你的账户以继续"}
             </p>
           </div>

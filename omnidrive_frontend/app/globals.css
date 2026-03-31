@@ -268,3 +268,294 @@ body::before {
   pointer-events: none;
   border-radius: inherit;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   ─── Landing Page Sci-Fi Effects ───
+   ═══════════════════════════════════════════════════════════ */
+
+/* ─── Animated Rainbow Border Card ─── */
+@property --border-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes borderRotate {
+  to { --border-angle: 360deg; }
+}
+
+.landing-card {
+  position: relative;
+  border-radius: 1rem;
+  background: rgba(10, 10, 28, 0.6);
+  backdrop-filter: blur(20px) saturate(1.5);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* Animated conic-gradient border */
+.landing-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--border-angle),
+    #b149ff,
+    #00f5d4,
+    #ff2d78,
+    #4da6ff,
+    #00ff88,
+    #b149ff
+  );
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+  animation: borderRotate 4s linear infinite;
+  z-index: 1;
+}
+
+/* Outer glow layer */
+.landing-card::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from var(--border-angle),
+    rgba(177, 73, 255, 0.3),
+    rgba(0, 245, 212, 0.25),
+    rgba(255, 45, 120, 0.2),
+    rgba(77, 166, 255, 0.25),
+    rgba(0, 255, 136, 0.2),
+    rgba(177, 73, 255, 0.3)
+  );
+  filter: blur(12px);
+  animation: borderRotate 4s linear infinite;
+  z-index: -1;
+  opacity: 0.5;
+}
+
+/* ─── Floating / levitation animation ─── */
+@keyframes float-0 {
+  0%, 100% { transform: translateY(0px); }
+  50%      { transform: translateY(-8px); }
+}
+@keyframes float-1 {
+  0%, 100% { transform: translateY(0px); }
+  50%      { transform: translateY(-10px); }
+}
+@keyframes float-2 {
+  0%, 100% { transform: translateY(0px); }
+  50%      { transform: translateY(-6px); }
+}
+@keyframes float-3 {
+  0%, 100% { transform: translateY(0px); }
+  50%      { transform: translateY(-12px); }
+}
+
+.landing-card-0 { animation: float-0 5s ease-in-out infinite; }
+.landing-card-1 { animation: float-1 6s ease-in-out 0.5s infinite; }
+.landing-card-2 { animation: float-2 5.5s ease-in-out 1s infinite; }
+.landing-card-3 { animation: float-3 7s ease-in-out 1.5s infinite; }
+
+/* ─── Pulsing Glow Orbs (ambient background) ─── */
+@keyframes orbPulse {
+  0%, 100% { transform: scale(1); opacity: 0.4; }
+  50%      { transform: scale(1.3); opacity: 0.8; }
+}
+
+@keyframes orbDrift {
+  0%   { transform: translate(0, 0) scale(1); }
+  25%  { transform: translate(30px, -20px) scale(1.1); }
+  50%  { transform: translate(-15px, -40px) scale(0.95); }
+  75%  { transform: translate(-30px, 10px) scale(1.05); }
+  100% { transform: translate(0, 0) scale(1); }
+}
+
+.orb {
+  position: absolute;
+  border-radius: 9999px;
+  pointer-events: none;
+  filter: blur(60px);
+}
+
+.orb-accent {
+  background: radial-gradient(circle, var(--color-accent-glow), transparent 70%);
+  animation: orbDrift 12s ease-in-out infinite;
+}
+.orb-cyan {
+  background: radial-gradient(circle, var(--color-cyan-glow), transparent 70%);
+  animation: orbDrift 15s ease-in-out 2s infinite reverse;
+}
+.orb-pink {
+  background: radial-gradient(circle, var(--color-pink-glow), transparent 70%);
+  animation: orbDrift 18s ease-in-out 4s infinite;
+}
+
+/* ─── Horizontal scan-line sweep ─── */
+@keyframes scanLine {
+  0%   { top: -5%; opacity: 0; }
+  10%  { opacity: 0.6; }
+  90%  { opacity: 0.6; }
+  100% { top: 105%; opacity: 0; }
+}
+
+.scan-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, var(--color-cyan) 30%, var(--color-accent) 70%, transparent 100%);
+  box-shadow: 0 0 20px 4px var(--color-cyan-glow), 0 0 60px 8px rgba(0, 245, 212, 0.15);
+  animation: scanLine 8s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* ─── Orbiting particle dots ─── */
+@keyframes orbitParticle {
+  0%   { transform: rotate(0deg) translateX(var(--orbit-radius)) rotate(0deg); opacity: 0.6; }
+  50%  { opacity: 1; }
+  100% { transform: rotate(360deg) translateX(var(--orbit-radius)) rotate(-360deg); opacity: 0.6; }
+}
+
+.particle {
+  position: absolute;
+  width: var(--particle-size, 4px);
+  height: var(--particle-size, 4px);
+  border-radius: 9999px;
+  pointer-events: none;
+  animation: orbitParticle var(--orbit-duration, 10s) linear infinite;
+}
+
+/* ─── Icon inner glow pulse ─── */
+@keyframes iconGlow {
+  0%, 100% { box-shadow: 0 0 12px 2px var(--icon-glow-color, rgba(177,73,255,0.3)); }
+  50%      { box-shadow: 0 0 24px 6px var(--icon-glow-color, rgba(177,73,255,0.5)); }
+}
+
+.icon-glow {
+  animation: iconGlow 3s ease-in-out infinite;
+}
+
+/* ─── Title shimmer / typewriter glow ─── */
+@keyframes titleShimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+.title-shimmer {
+  background-size: 200% auto;
+  background-clip: text;
+  -webkit-background-clip: text;
+  animation: titleShimmer 4s linear infinite;
+}
+
+/* ─── Cyber grid overlay for landing panel ─── */
+.landing-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(177, 73, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 245, 212, 0.03) 1px, transparent 1px);
+  background-size: 60px 60px;
+  pointer-events: none;
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 50%, black 30%, transparent 80%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 50%, black 30%, transparent 80%);
+}
+
+/* ─── Login Form Animated Glow Border ─── */
+.login-form-glow {
+  position: relative;
+  border-radius: 1.5rem;
+  background: rgba(8, 8, 24, 0.88);
+  backdrop-filter: blur(28px) saturate(1.6);
+  -webkit-backdrop-filter: blur(28px) saturate(1.6);
+  overflow: hidden;
+  isolation: isolate;
+}
+.login-form-glow::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--border-angle),
+    rgba(177, 73, 255, 0.9),
+    rgba(0, 245, 212, 0.8),
+    rgba(255, 45, 120, 0.7),
+    rgba(77, 166, 255, 0.8),
+    rgba(0, 255, 136, 0.7),
+    rgba(177, 73, 255, 0.9)
+  );
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+  animation: borderRotate 5s linear infinite;
+  z-index: 1;
+}
+.login-form-glow::after {
+  content: "";
+  position: absolute;
+  inset: -8px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from var(--border-angle),
+    rgba(177, 73, 255, 0.25),
+    rgba(0, 245, 212, 0.2),
+    rgba(255, 45, 120, 0.15),
+    rgba(77, 166, 255, 0.2),
+    rgba(0, 255, 136, 0.15),
+    rgba(177, 73, 255, 0.25)
+  );
+  filter: blur(18px);
+  animation: borderRotate 5s linear infinite;
+  z-index: -1;
+  opacity: 0.7;
+}
+
+/* ─── Aurora Background Sweep ─── */
+@keyframes auroraShift {
+  0%   { background-position: 0% 50%; opacity: 0.6; }
+  50%  { background-position: 100% 50%; opacity: 1; }
+  100% { background-position: 0% 50%; opacity: 0.6; }
+}
+
+.aurora-bg {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    135deg,
+    rgba(177, 73, 255, 0.10),
+    rgba(0, 245, 212, 0.06),
+    rgba(255, 45, 120, 0.08),
+    rgba(77, 166, 255, 0.06),
+    rgba(0, 255, 136, 0.05),
+    transparent,
+    rgba(177, 73, 255, 0.08)
+  );
+  background-size: 400% 400%;
+  animation: auroraShift 10s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* ─── Data Stream Particles ─── */
+@keyframes dataRise {
+  0%   { transform: translateY(0) scale(1); opacity: 0; }
+  10%  { opacity: 0.8; }
+  80%  { opacity: 0.6; }
+  100% { transform: translateY(-100vh) scale(0.5); opacity: 0; }
+}
+
+.data-particle {
+  position: absolute;
+  width: 2px;
+  border-radius: 9999px;
+  pointer-events: none;
+  animation: dataRise var(--rise-duration, 6s) linear infinite;
+  animation-delay: var(--rise-delay, 0s);
+}

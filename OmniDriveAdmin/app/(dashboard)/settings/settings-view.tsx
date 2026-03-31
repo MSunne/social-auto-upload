@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/ui/common";
+import { useAIModels } from "@/lib/hooks/useAIModels";
 import { useSystemConfig, useUpdateSystemConfig } from "@/lib/hooks/useSettings";
-import { AdminSystemConfig } from "@/lib/types";
+import { getModelDisplayName, getModelDisplayNameByName } from "@/lib/model-display";
+import { AIModel, AdminSystemConfig } from "@/lib/types";
 import {
   ArrowUpRight,
   Cpu,
@@ -17,8 +19,23 @@ import {
 
 export function SettingsView() {
   const { data: config, isLoading, error } = useSystemConfig();
+  const { data: aiModelsData } = useAIModels({ page: 1, pageSize: 500 });
   const updateM = useUpdateSystemConfig();
   const [formData, setFormData] = useState<Partial<AdminSystemConfig>>({});
+
+  const aiModels = useMemo(() => aiModelsData?.items || [], [aiModelsData?.items]);
+  const chatModelOptions = useMemo(
+    () => buildModelOptions(aiModels, "chat", formData.defaultChatModel),
+    [aiModels, formData.defaultChatModel],
+  );
+  const imageModelOptions = useMemo(
+    () => buildModelOptions(aiModels, "image", formData.defaultImageModel),
+    [aiModels, formData.defaultImageModel],
+  );
+  const videoModelOptions = useMemo(
+    () => buildModelOptions(aiModels, "video", formData.defaultVideoModel),
+    [aiModels, formData.defaultVideoModel],
+  );
 
   useEffect(() => {
     if (!config) {
@@ -169,29 +186,32 @@ export function SettingsView() {
             </h3>
 
             <div className="space-y-4">
-              <InputField
+              <ModelSelectField
                 label="默认语言大模型 (Chat)"
                 value={formData.defaultChatModel || ""}
                 onChange={(value) =>
                   setFormData((current) => ({ ...current, defaultChatModel: value }))
                 }
-                placeholder="e.g. gpt-4.1-mini"
+                options={chatModelOptions}
+                displayValue={getModelDisplayNameByName(aiModels, formData.defaultChatModel)}
               />
-              <InputField
+              <ModelSelectField
                 label="默认生图模型 (Image)"
                 value={formData.defaultImageModel || ""}
                 onChange={(value) =>
                   setFormData((current) => ({ ...current, defaultImageModel: value }))
                 }
-                placeholder="e.g. imagen-4"
+                options={imageModelOptions}
+                displayValue={getModelDisplayNameByName(aiModels, formData.defaultImageModel)}
               />
-              <InputField
+              <ModelSelectField
                 label="默认短视频模型 (Video)"
                 value={formData.defaultVideoModel || ""}
                 onChange={(value) =>
                   setFormData((current) => ({ ...current, defaultVideoModel: value }))
                 }
-                placeholder="e.g. veo-3-fast"
+                options={videoModelOptions}
+                displayValue={getModelDisplayNameByName(aiModels, formData.defaultVideoModel)}
               />
             </div>
           </div>
@@ -458,6 +478,59 @@ function InputField({
         placeholder={placeholder}
         className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm focus:border-[var(--color-primary)] focus:outline-none"
       />
+    </div>
+  );
+}
+
+function buildModelOptions(models: AIModel[], category: string, currentValue?: string) {
+  const matched = models
+    .filter((item) => item.category === category)
+    .sort((left, right) => getModelDisplayName(left).localeCompare(getModelDisplayName(right)))
+    .map((item) => ({
+      value: item.modelName,
+      label: getModelDisplayName(item),
+    }));
+
+  const normalized = currentValue?.trim();
+  if (normalized && !matched.some((item) => item.value === normalized)) {
+    return [{ value: normalized, label: `${normalized}（未注册模型）` }, ...matched];
+  }
+  return matched;
+}
+
+function ModelSelectField({
+  label,
+  value,
+  onChange,
+  options,
+  displayValue,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ value: string; label: string }>;
+  displayValue: string;
+}) {
+  return (
+    <div>
+      <label className="mb-1 block text-sm font-medium">{label}</label>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm focus:border-[var(--color-primary)] focus:outline-none"
+      >
+        <option value="">请选择模型</option>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      {value ? (
+        <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+          当前显示别名：{displayValue}，实际保存值：{value}
+        </p>
+      ) : null}
     </div>
   );
 }

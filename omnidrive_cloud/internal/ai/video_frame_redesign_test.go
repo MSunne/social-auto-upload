@@ -31,6 +31,7 @@ func TestShouldPrepareSkillVideoReferenceFrames(t *testing.T) {
 
 func TestBuildSkillVideoFramePromptContainsProductGuardrails(t *testing.T) {
 	prompt := buildSkillVideoFramePrompt(
+		DefaultSkillVideoCoverPromptTemplate,
 		&domain.AIJob{JobType: "video"},
 		map[string]any{
 			"skillName":        "玩具车推广",
@@ -46,9 +47,9 @@ func TestBuildSkillVideoFramePromptContainsProductGuardrails(t *testing.T) {
 	)
 
 	requiredSnippets := []string{
-		"主体必须是客户的主要产品",
-		"不要直接复用客户当前固定首帧或固定构图",
-		"不能偏离产品特性、卖点",
+		"封面提示词",
+		"必须保持客户真实产品不变",
+		"不要直接沿用客户当前固定首图或固定构图",
 		"来源: 技能中心视文模式",
 		"玩具车推广",
 	}

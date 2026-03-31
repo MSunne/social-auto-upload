@@ -2,8 +2,9 @@
   "agentKey": "FhnzdDw0_Yoz5TNvRYnwL4e6JudGwUL8x4lnYxUSxoM",
   "deviceCode": "5e:f9:01:22:73:09",
   "deviceName": "A001",
-  "identityVersion": 1,
+  "deviceFingerprint": "macos-platform-uuid:33adf22f-5eb8-5bb8-9e83-ac71d1f90071",
+  "identityVersion": 2,
   "localApiKey": "",
   "provisionMethod": "auto_bootstrap",
-  "provisionedAt": "2026-03-27T04:02:23+00:00"
+  "provisionedAt": "2026-03-29T11:14:13+00:00"
 }

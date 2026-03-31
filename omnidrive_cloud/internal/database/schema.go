@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS admin_system_configs (
     default_chat_model TEXT NOT NULL DEFAULT 'gemini-3.1-pro-preview',
     default_image_model TEXT NOT NULL DEFAULT 'gemini-3-pro-image-preview',
     default_video_model TEXT NOT NULL DEFAULT 'veo-3.1-fast-fl',
+    video_cover_prompt_template TEXT NOT NULL DEFAULT '',
     storyboard_prompt_template TEXT NOT NULL DEFAULT '',
     storyboard_model TEXT NOT NULL DEFAULT '',
     storyboard_reference_payload JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -174,6 +175,7 @@ CREATE TABLE IF NOT EXISTS device_activation_configs (
     id TEXT PRIMARY KEY,
     device_id TEXT NOT NULL UNIQUE REFERENCES devices(id) ON DELETE CASCADE,
     order_no TEXT,
+    activation_code_value TEXT,
     activation_code_hash TEXT NOT NULL,
     activation_code_hint TEXT,
     status TEXT NOT NULL DEFAULT 'ready',
@@ -244,6 +246,7 @@ CREATE TABLE IF NOT EXISTS product_skills (
     output_type TEXT NOT NULL,
     model_name TEXT NOT NULL,
     prompt_template TEXT,
+    cover_prompt_template TEXT,
     topics JSONB NOT NULL DEFAULT '[]'::jsonb,
     reference_payload JSONB,
     execution_time TIMESTAMPTZ,
@@ -435,6 +438,7 @@ ALTER TABLE platform_accounts ADD COLUMN IF NOT EXISTS notes TEXT;
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS default_chat_model TEXT NOT NULL DEFAULT 'gemini-3.1-pro-preview';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS default_image_model TEXT NOT NULL DEFAULT 'gemini-3-pro-image-preview';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS default_video_model TEXT NOT NULL DEFAULT 'veo-3.1-fast-fl';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS video_cover_prompt_template TEXT NOT NULL DEFAULT '';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS storyboard_prompt_template TEXT NOT NULL DEFAULT '';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS storyboard_model TEXT NOT NULL DEFAULT '';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS storyboard_reference_payload JSONB NOT NULL DEFAULT '[]'::jsonb;
@@ -459,7 +463,9 @@ ALTER TABLE phone_verification_codes ADD COLUMN IF NOT EXISTS verification_code_
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_chat_model TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_image_model TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_video_model TEXT;
+ALTER TABLE device_activation_configs ADD COLUMN IF NOT EXISTS activation_code_value TEXT;
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS device_id TEXT REFERENCES devices(id) ON DELETE SET NULL;
+ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS cover_prompt_template TEXT;
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS execution_time TIMESTAMPTZ;
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS repeat_daily BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS storyboard_enabled BOOLEAN NOT NULL DEFAULT TRUE;

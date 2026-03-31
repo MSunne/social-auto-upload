@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	appstate "omnidrive_cloud/internal/app"
 	"omnidrive_cloud/internal/domain"
 )
@@ -216,6 +218,19 @@ func PrepareAccountSkillRun(
 		GenerateAt:   generateAt,
 		PublishAt:    publishAt,
 	}, nil
+}
+
+func BuildDefaultAccountSkillScheduleKey(skillID string, accountID string, config AccountSkillScheduleConfig) string {
+	seed := strings.Join([]string{
+		"account-skill-schedule",
+		strings.TrimSpace(skillID),
+		strings.TrimSpace(accountID),
+		strings.TrimSpace(config.TimeOfDay),
+		strings.TrimSpace(config.Timezone),
+		fmt.Sprintf("%t", config.RepeatDaily),
+		fmt.Sprintf("%d", NormalizeAccountSkillGenerationLeadMinutes(config.GenerationLeadMinutes)),
+	}, "|")
+	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(seed)).String()
 }
 
 func applyAccountSkillScheduleConfig(raw []byte, config AccountSkillScheduleConfig) ([]byte, error) {

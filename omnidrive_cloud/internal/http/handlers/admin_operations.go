@@ -1518,6 +1518,82 @@ func (h *AdminConsoleHandler) UpdateDeviceActivation(w http.ResponseWriter, r *h
 	render.JSON(w, http.StatusOK, record)
 }
 
+func (h *AdminConsoleHandler) UnbindDevice(w http.ResponseWriter, r *http.Request) {
+	deviceID := strings.TrimSpace(chi.URLParam(r, "deviceId"))
+	if deviceID == "" {
+		render.Error(w, http.StatusBadRequest, "deviceId is required")
+		return
+	}
+
+	before, err := h.app.Store.GetAdminDeviceByID(r.Context(), deviceID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load admin device")
+		return
+	}
+	if before == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+	if before.Owner == nil || strings.TrimSpace(before.Owner.ID) == "" {
+		render.Error(w, http.StatusConflict, "Device is not bound to any user")
+		return
+	}
+
+	_, err = h.app.Store.AdminUnbindDevice(r.Context(), deviceID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to unbind device")
+		return
+	}
+
+	record, err := h.app.Store.GetAdminDeviceByID(r.Context(), deviceID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to reload admin device")
+		return
+	}
+	if record == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+	h.decorateAdminDeviceRow(record)
+
+	admin := httpcontext.CurrentAdmin(r.Context())
+	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+		OwnerUserID:  before.Owner.ID,
+		ResourceType: "device",
+		ResourceID:   &before.Device.ID,
+		Action:       "admin_unbind",
+		Title:        "运营后台解绑设备",
+		Source:       "admin_console",
+		Status:       "success",
+		Message:      auditStringPtr("设备已由运营后台解绑"),
+		Payload: mustJSONBytes(map[string]any{
+			"deviceCode": before.Device.DeviceCode,
+			"deviceName": before.Device.Name,
+		}),
+	})
+	if admin != nil {
+		recordAdminAuditLog(h.app, r.Context(), store.CreateAdminAuditLogInput{
+			AdminUserID:  stringPtr(admin.ID),
+			AdminEmail:   stringPtr(admin.Email),
+			AdminName:    stringPtr(admin.Name),
+			ResourceType: "device",
+			ResourceID:   &before.Device.ID,
+			Action:       "unbind",
+			Title:        "解绑设备",
+			Source:       "admin_console",
+			Status:       "success",
+			Message:      auditStringPtr("设备已解绑"),
+			Payload: mustJSONBytes(map[string]any{
+				"deviceCode":  before.Device.DeviceCode,
+				"deviceName":  before.Device.Name,
+				"ownerUserId": before.Owner.ID,
+			}),
+		})
+	}
+
+	render.JSON(w, http.StatusOK, record)
+}
+
 func (h *AdminConsoleHandler) DeviceWorkspace(w http.ResponseWriter, r *http.Request) {
 	deviceID := strings.TrimSpace(chi.URLParam(r, "deviceId"))
 	if deviceID == "" {
@@ -3113,6 +3189,7 @@ func (h *AdminConsoleHandler) RetryAIJob(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	_, _ = h.app.Store.DeleteAIJobArtifactsByOwner(r.Context(), jobID, record.Job.OwnerUserID)
+	_, _ = h.app.Store.DeleteAIJobPublishLinksByOwner(r.Context(), jobID, record.Job.OwnerUserID)
 	cleanupAIArtifactFiles(h.app, r.Context(), existingArtifacts)
 
 	updated, err := h.loadAdminAIJobRow(r.Context(), jobID)
@@ -3254,6 +3331,7 @@ func (h *AdminConsoleHandler) BulkActionAIJobs(w http.ResponseWriter, r *http.Re
 				continue
 			}
 			_, _ = h.app.Store.DeleteAIJobArtifactsByOwner(r.Context(), jobID, record.Job.OwnerUserID)
+			_, _ = h.app.Store.DeleteAIJobPublishLinksByOwner(r.Context(), jobID, record.Job.OwnerUserID)
 			cleanupAIArtifactFiles(h.app, r.Context(), existingArtifacts)
 			item.Status = "success"
 			item.Message = auditStringPtr(message)

@@ -301,6 +301,60 @@ func (s *Store) UpsertHeartbeatDevice(ctx context.Context, input HeartbeatInput)
 		runtimePayload = nil
 	}
 
+	if input.DeviceFingerprint != "" {
+		row := s.pool.QueryRow(ctx, `
+			WITH current_match AS (
+				SELECT id
+				FROM devices
+				WHERE device_code = $2
+				LIMIT 1
+			),
+			fingerprint_match AS (
+				SELECT id
+				FROM devices
+				WHERE COALESCE(runtime_payload->>'deviceFingerprint', '') = $1
+				ORDER BY updated_at DESC
+				LIMIT 1
+			)
+			UPDATE devices
+			SET device_code = $2,
+			    agent_key = CASE
+					WHEN devices.agent_key IS NULL OR devices.agent_key = $3
+					THEN $3
+					ELSE devices.agent_key
+				END,
+			    name = $4,
+			    local_ip = COALESCE($5, devices.local_ip),
+			    public_ip = COALESCE($6, devices.public_ip),
+			    runtime_payload = $7,
+			    last_seen_at = $8,
+			    updated_at = NOW()
+			WHERE id = (SELECT id FROM fingerprint_match)
+			  AND NOT EXISTS (SELECT 1 FROM current_match)
+			RETURNING id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
+			          default_reasoning_model, default_chat_model, default_image_model, default_video_model,
+			          is_enabled, runtime_payload, last_seen_at, notes,
+			          created_at, updated_at
+		`,
+			input.DeviceFingerprint,
+			input.DeviceCode,
+			input.AgentKey,
+			input.DeviceName,
+			input.LocalIP,
+			input.PublicIP,
+			runtimePayload,
+			now,
+		)
+
+		device, err := scanDevice(row)
+		if err == nil {
+			return device, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+	}
+
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO devices (
 			id, device_code, agent_key, name, local_ip, public_ip, runtime_payload,
@@ -362,6 +416,52 @@ func (s *Store) UnbindDevice(ctx context.Context, deviceID string, ownerUserID s
 		          default_reasoning_model, default_chat_model, default_image_model, default_video_model,
 		          is_enabled, runtime_payload, last_seen_at, notes, created_at, updated_at
 	`, deviceID, ownerUserID)
+
+	device, err := scanDevice(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE device_activation_configs
+		SET status = 'ready',
+		    activated_by_user_id = NULL,
+		    activated_at = NULL,
+		    updated_at = NOW()
+		WHERE device_id = $1
+	`, device.ID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return device, nil
+}
+
+func (s *Store) AdminUnbindDevice(ctx context.Context, deviceID string) (*domain.Device, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
+		UPDATE devices
+		SET owner_user_id = NULL,
+		    is_enabled = FALSE,
+		    default_reasoning_model = NULL,
+		    default_chat_model = NULL,
+		    default_image_model = NULL,
+		    default_video_model = NULL,
+		    updated_at = NOW()
+		WHERE id = $1
+		  AND owner_user_id IS NOT NULL
+		RETURNING id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
+		          default_reasoning_model, default_chat_model, default_image_model, default_video_model,
+		          is_enabled, runtime_payload, last_seen_at, notes, created_at, updated_at
+	`, deviceID)
 
 	device, err := scanDevice(row)
 	if err != nil {

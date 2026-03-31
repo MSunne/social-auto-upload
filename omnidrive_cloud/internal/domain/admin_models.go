@@ -772,6 +772,7 @@ type AdminSystemSettingsRecord struct {
 	DefaultChatModel          string                     `json:"defaultChatModel"`
 	DefaultImageModel         string                     `json:"defaultImageModel"`
 	DefaultVideoModel         string                     `json:"defaultVideoModel"`
+	VideoCoverPrompt          string                     `json:"videoCoverPrompt"`
 	StoryboardPrompt          string                     `json:"storyboardPrompt"`
 	StoryboardModel           string                     `json:"storyboardModel"`
 	StoryboardReferences      json.RawMessage            `json:"storyboardReferences,omitempty"`
@@ -795,6 +796,7 @@ type AdminSystemConfig struct {
 	DefaultChatModel          string                     `json:"defaultChatModel"`
 	DefaultImageModel         string                     `json:"defaultImageModel"`
 	DefaultVideoModel         string                     `json:"defaultVideoModel"`
+	VideoCoverPrompt          string                     `json:"videoCoverPrompt"`
 	StoryboardPrompt          string                     `json:"storyboardPrompt"`
 	StoryboardModel           string                     `json:"storyboardModel"`
 	StoryboardReferences      json.RawMessage            `json:"storyboardReferences,omitempty"`

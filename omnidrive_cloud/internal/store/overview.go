@@ -89,9 +89,18 @@ func (s *Store) ListHistoryByOwner(ctx context.Context, ownerUserID string, filt
 			SELECT
 				aj.id AS id,
 				aj.job_type AS kind,
-				COALESCE(aj.prompt, aj.model_name) AS title,
+				COALESCE(
+					aj.prompt,
+					COALESCE(
+						(SELECT am.model_alias FROM ai_models am WHERE am.model_name = aj.model_name LIMIT 1),
+						aj.model_name
+					)
+				) AS title,
 				aj.status AS status,
-				aj.model_name AS source,
+				COALESCE(
+					(SELECT am.model_alias FROM ai_models am WHERE am.model_name = aj.model_name LIMIT 1),
+					aj.model_name
+				) AS source,
 				aj.message AS message,
 				aj.created_at AS created_at,
 				aj.updated_at AS updated_at,

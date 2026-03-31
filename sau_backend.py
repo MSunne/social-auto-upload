@@ -2159,6 +2159,7 @@ def ensure_omnidrive_agent_started():
                 material_roots=OMNIBULL_MATERIAL_ROOTS,
                 device_name=RESOLVED_DEVICE_NAME,
                 device_code=DEVICE_CODE,
+                device_fingerprint=DEVICE_IDENTITY.get("deviceFingerprint"),
                 generated_root_name=OMNIBULL_GENERATED_ROOT_NAME,
                 generated_root_path=OMNIBULL_GENERATED_ROOT_PATH,
                 poll_interval=OMNIDRIVE_AGENT_POLL_INTERVAL,

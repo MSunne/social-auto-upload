@@ -736,6 +736,10 @@ func (s *Store) RetryAIJob(ctx context.Context, jobID string, ownerUserID string
 		    lease_owner_device_id = NULL,
 		    lease_token = NULL,
 		    lease_expires_at = NULL,
+		    delivery_status = 'pending',
+		    delivery_message = NULL,
+		    local_publish_task_id = NULL,
+		    delivered_at = NULL,
 		    finished_at = NULL,
 		    updated_at = NOW()
 		WHERE id = $1 AND owner_user_id = $2 AND status IN ('failed', 'cancelled', 'success', 'completed')
@@ -906,16 +910,45 @@ func (s *Store) ListRecurringAccountSkillTemplateJobs(ctx context.Context, limit
 	return items, rows.Err()
 }
 
-func (s *Store) FindActiveAccountSkillJobByScheduleKey(ctx context.Context, scheduleKey string) (*domain.AIJob, error) {
+func (s *Store) FindActiveAccountSkillJobByScheduleKey(ctx context.Context, ownerUserID string, scheduleKey string) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT `+aiJobSelectColumns+`
 		FROM ai_jobs
-		WHERE source = 'account_skill_binding'
-		  AND COALESCE(input_payload->'scheduleConfig'->>'scheduleKey', '') = $1
+		WHERE owner_user_id = $1
+		  AND source = 'account_skill_binding'
+		  AND COALESCE(input_payload->'scheduleConfig'->>'scheduleKey', '') = $2
 		  AND status IN ('scheduled', 'queued', 'running', 'waiting_recharge')
 		ORDER BY run_at ASC NULLS FIRST, created_at DESC
 		LIMIT 1
-	`, strings.TrimSpace(scheduleKey))
+	`, ownerUserID, strings.TrimSpace(scheduleKey))
+
+	job, err := scanAIJob(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return job, nil
+}
+
+func (s *Store) FindActiveAccountSkillJobByRun(ctx context.Context, ownerUserID string, skillID string, deviceID string, accountID string, runAt time.Time) (*domain.AIJob, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT `+aiJobSelectColumns+`
+		FROM ai_jobs
+		WHERE owner_user_id = $1
+		  AND source = 'account_skill_binding'
+		  AND skill_id = $2
+		  AND device_id = $3
+		  AND run_at = $4
+		  AND status IN ('scheduled', 'queued', 'running', 'waiting_recharge')
+		  AND COALESCE(
+		      NULLIF(TRIM(input_payload->>'accountId'), ''),
+		      NULLIF(TRIM(input_payload->'publishPayload'->'targets'->0->>'accountId'), '')
+		  ) = $5
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, ownerUserID, skillID, deviceID, runAt.UTC(), strings.TrimSpace(accountID))
 
 	job, err := scanAIJob(row)
 	if err != nil {
@@ -1227,6 +1260,7 @@ func (s *Store) RecoverInterruptedExecutableAIJobs(ctx context.Context) ([]domai
 		  AND status = 'running'
 		  AND lease_owner_device_id IS NULL
 		  AND lease_token IS NOT NULL
+		  AND lease_expires_at IS NULL
 		RETURNING `+aiJobSelectColumns+`
 	`)
 	if err != nil {
@@ -1762,6 +1796,18 @@ func (s *Store) ListAIJobArtifactsByJobID(ctx context.Context, jobID string) ([]
 	return items, rows.Err()
 }
 
+func (s *Store) DeleteAIJobPublishLinksByOwner(ctx context.Context, jobID string, ownerUserID string) (int64, error) {
+	commandTag, err := s.pool.Exec(ctx, `
+		DELETE FROM ai_job_publish_links
+		WHERE job_id = $1
+		  AND owner_user_id = $2
+	`, jobID, ownerUserID)
+	if err != nil {
+		return 0, err
+	}
+	return commandTag.RowsAffected(), nil
+}
+
 func (s *Store) DeleteAIJobArtifactsByOwner(ctx context.Context, jobID string, ownerUserID string) (int64, error) {
 	commandTag, err := s.pool.Exec(ctx, `
 		DELETE FROM ai_job_artifacts a
@@ -1783,6 +1829,45 @@ func (s *Store) LinkAIJobToPublishTask(ctx context.Context, input LinkAIJobPubli
 		ON CONFLICT (job_id, task_id) DO NOTHING
 	`, input.JobID, input.TaskID, input.OwnerUserID)
 	return err
+}
+
+func (s *Store) FindReusablePublishTaskByAIJobTarget(ctx context.Context, jobID string, ownerUserID string, deviceID string, platform string, accountName string) (*domain.PublishTask, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
+		       pt.title, pt.content_text, pt.media_payload, pt.status, pt.message, pt.verification_payload,
+		       pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at, pt.attempt_count, pt.cancel_requested_at,
+		       pt.run_at, pt.finished_at, pt.created_at, pt.updated_at
+		FROM publish_tasks pt
+		LEFT JOIN ai_job_publish_links l
+		  ON l.task_id = pt.id
+		 AND l.owner_user_id = $2
+		WHERE pt.device_id = $3
+		  AND pt.platform = $4
+		  AND pt.account_name = $5
+		  AND pt.status IN ('pending', 'scheduled', 'running', 'cancel_requested', 'needs_verify', 'success', 'completed')
+		  AND (
+		      l.job_id = $1
+		      OR (
+		          COALESCE(pt.media_payload->>'aiJobId', '') = $1
+		          AND EXISTS (
+		              SELECT 1
+		              FROM publish_task_material_refs refs
+		              WHERE refs.task_id = pt.id
+		          )
+		      )
+		  )
+		ORDER BY pt.created_at DESC, pt.id DESC
+		LIMIT 1
+	`, jobID, ownerUserID, deviceID, platform, accountName)
+
+	task, err := scanPublishTask(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return task, nil
 }
 
 func (s *Store) ListPublishTasksByAIJobOwner(ctx context.Context, jobID string, ownerUserID string, limit int) ([]domain.PublishTask, error) {

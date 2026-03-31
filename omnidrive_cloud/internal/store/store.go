@@ -227,12 +227,13 @@ type CreateWalletAdjustmentInput struct {
 }
 
 type HeartbeatInput struct {
-	DeviceCode     string
-	AgentKey       string
-	DeviceName     string
-	LocalIP        *string
-	PublicIP       *string
-	RuntimePayload []byte
+	DeviceCode        string
+	AgentKey          string
+	DeviceName        string
+	DeviceFingerprint string
+	LocalIP           *string
+	PublicIP          *string
+	RuntimePayload    []byte
 }
 
 type CreateLoginSessionInput struct {
@@ -260,21 +261,22 @@ type CreateLoginActionInput struct {
 }
 
 type CreateSkillInput struct {
-	ID                string
-	OwnerUserID       string
-	DeviceID          *string
-	Name              string
-	Description       string
-	OutputType        string
-	ModelName         string
-	PromptTemplate    *string
-	Topics            []string
-	ReferencePayload  []byte
-	ExecutionTime     *time.Time
-	RepeatDaily       bool
-	StoryboardEnabled bool
-	NextRunAt         *time.Time
-	IsEnabled         bool
+	ID                  string
+	OwnerUserID         string
+	DeviceID            *string
+	Name                string
+	Description         string
+	OutputType          string
+	ModelName           string
+	PromptTemplate      *string
+	CoverPromptTemplate *string
+	Topics              []string
+	ReferencePayload    []byte
+	ExecutionTime       *time.Time
+	RepeatDaily         bool
+	StoryboardEnabled   bool
+	NextRunAt           *time.Time
+	IsEnabled           bool
 }
 
 type CreateSkillAssetInput struct {
@@ -334,26 +336,27 @@ type SyncMaterialEntryInput struct {
 }
 
 type UpdateSkillInput struct {
-	Name              *string
-	Description       *string
-	OutputType        *string
-	ModelName         *string
-	PromptTemplate    *string
-	Topics            []string
-	TopicsTouched     bool
-	ReferencePayload  []byte
-	ReferenceTouched  bool
-	DeviceID          *string
-	DeviceTouched     bool
-	ExecutionTime     *time.Time
-	ExecutionTouched  bool
-	RepeatDaily       *bool
-	StoryboardEnabled *bool
-	NextRunAt         *time.Time
-	NextRunTouched    bool
-	LastRunAt         *time.Time
-	LastRunTouched    bool
-	IsEnabled         *bool
+	Name                *string
+	Description         *string
+	OutputType          *string
+	ModelName           *string
+	PromptTemplate      *string
+	CoverPromptTemplate *string
+	Topics              []string
+	TopicsTouched       bool
+	ReferencePayload    []byte
+	ReferenceTouched    bool
+	DeviceID            *string
+	DeviceTouched       bool
+	ExecutionTime       *time.Time
+	ExecutionTouched    bool
+	RepeatDaily         *bool
+	StoryboardEnabled   *bool
+	NextRunAt           *time.Time
+	NextRunTouched      bool
+	LastRunAt           *time.Time
+	LastRunTouched      bool
+	IsEnabled           *bool
 }
 
 type CreatePublishTaskInput struct {

@@ -276,6 +276,7 @@ class OmniDriveAITaskManager:
         current_status = str((current_task or {}).get("status") or "queued_cloud").strip() or "queued_cloud"
         local_status = self._map_cloud_to_local_status(cloud_status, current_status=current_status)
         finished_at = self._finished_at_for_status(local_status)
+        reset_delivery_state = local_status in {"scheduled", "queued_cloud", "generating", "waiting_recharge"}
         payload_json = None
         if payload is not None:
             payload_json = json.dumps(payload, ensure_ascii=False)
@@ -293,6 +294,14 @@ class OmniDriveAITaskManager:
                     cloud_job_id = ?,
                     cloud_status = ?,
                     status = ?,
+                    linked_publish_task_uuid = CASE
+                        WHEN ? THEN NULL
+                        ELSE linked_publish_task_uuid
+                    END,
+                    artifact_refs_json = CASE
+                        WHEN ? THEN '[]'
+                        ELSE artifact_refs_json
+                    END,
                     message = COALESCE(?, message),
                     finished_at = ?,
                     updated_at = CURRENT_TIMESTAMP
@@ -308,6 +317,8 @@ class OmniDriveAITaskManager:
                     cloud_job_id,
                     cloud_status,
                     local_status,
+                    1 if reset_delivery_state else 0,
+                    1 if reset_delivery_state else 0,
                     message,
                     finished_at,
                     task_uuid,

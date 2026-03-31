@@ -32,7 +32,6 @@ export function StoryboardsView() {
     if (!config) {
       return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
     setFormData(JSON.parse(JSON.stringify(config)));
   }, [config]);
 
@@ -84,6 +83,7 @@ export function StoryboardsView() {
   const handleSave = async () => {
     try {
       await updateM.mutateAsync({
+        videoCoverPrompt: formData.videoCoverPrompt || "",
         storyboardPrompt: formData.storyboardPrompt || "",
         storyboardModel: formData.storyboardModel || "",
         storyboardReferences: formData.storyboardReferences || [],
@@ -135,6 +135,28 @@ export function StoryboardsView() {
             <p>1. 技能页里的“最终生成模型”来自后端已启用模型列表，并按输出格式筛选。</p>
             <p>2. 如果技能资产里同时有参考图片和文本文件，系统会先在这里做分镜脚本优化。</p>
             <p>3. 优化后的脚本会继续传给技能所选的图片或视频模型执行生成。</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-6">
+        <div className="flex items-start gap-3">
+          <FileImage className="mt-0.5 h-5 w-5 text-[var(--color-primary)]" />
+          <div className="w-full space-y-3">
+            <div>
+              <h3 className="text-base font-medium text-[var(--color-text-primary)]">视频封面默认提示词</h3>
+              <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
+                技能中心“封面提示词”默认从这里下发。视文模式做视频首帧时固定使用
+                {" "}`gemini-3-pro-image-preview`，如果技能未单独覆盖，就会回退到这里；客户上传多张图时同样用于尾帧。
+              </p>
+            </div>
+            <textarea
+              value={formData.videoCoverPrompt || ""}
+              onChange={(event) => setFormData((current) => ({ ...current, videoCoverPrompt: event.target.value }))}
+              rows={8}
+              placeholder="描述希望系统如何基于真实产品图片重新设计封面。"
+              className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm leading-6 focus:border-[var(--color-primary)] focus:outline-none"
+            />
           </div>
         </div>
       </div>

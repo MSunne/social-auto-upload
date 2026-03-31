@@ -122,6 +122,29 @@ func TestParseAccountSkillScheduleConfigInfersLegacyGenerationLead(t *testing.T)
 	}
 }
 
+func TestBuildDefaultAccountSkillScheduleKeyIsDeterministic(t *testing.T) {
+	config := AccountSkillScheduleConfig{
+		TimeOfDay:             "09:15:00",
+		RepeatDaily:           true,
+		Timezone:              "Asia/Shanghai",
+		GenerationLeadMinutes: 20,
+	}
+
+	first := BuildDefaultAccountSkillScheduleKey("skill-1", "account-1", config)
+	second := BuildDefaultAccountSkillScheduleKey("skill-1", "account-1", config)
+	other := BuildDefaultAccountSkillScheduleKey("skill-1", "account-2", config)
+
+	if first == "" {
+		t.Fatalf("expected non-empty schedule key")
+	}
+	if first != second {
+		t.Fatalf("expected deterministic key, got %q and %q", first, second)
+	}
+	if first == other {
+		t.Fatalf("expected account-specific key, got identical values %q", first)
+	}
+}
+
 func TestResolveSkillVideoGenerationOptionsUsesModelDefaults(t *testing.T) {
 	model := &domain.AIModel{
 		ModelName:                 "veo-3.1-fast-fl",

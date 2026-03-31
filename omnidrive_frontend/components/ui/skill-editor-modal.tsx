@@ -19,12 +19,13 @@ import {
   createSkill,
   deleteSkill,
   deleteSkillAsset,
+  getSkillEditorDefaults,
   listAIModels,
   listSkillAssets,
   updateSkill,
   uploadSkillAsset,
 } from "@/lib/services";
-import type { AIModel, Skill, SkillAsset } from "@/lib/types";
+import type { AIModel, Skill, SkillAsset, SkillEditorDefaults } from "@/lib/types";
 import { getModelDisplayName } from "@/lib/model-display";
 import { cn } from "@/lib/utils";
 import {
@@ -46,6 +47,8 @@ type SkillFormState = {
   description: string;
   promptTemplate: string;
   topicsText: string;
+  coverPromptTemplate: string;
+  coverPromptUsesSystemDefault: boolean;
   outputType: string;
   modelName: string;
   storyboardEnabled: boolean;
@@ -97,21 +100,30 @@ const EMPTY_FORM: SkillFormState = {
   description: "",
   promptTemplate: "",
   topicsText: "",
+  coverPromptTemplate: "",
+  coverPromptUsesSystemDefault: true,
   outputType: "图文模式",
   modelName: "",
   storyboardEnabled: true,
   isEnabled: true,
 };
 
-function buildSkillFormState(skill?: Skill | null): SkillFormState {
+function buildSkillFormState(skill?: Skill | null, coverPromptDefault = ""): SkillFormState {
   if (!skill) {
-    return EMPTY_FORM;
+    return {
+      ...EMPTY_FORM,
+      coverPromptTemplate: coverPromptDefault,
+      coverPromptUsesSystemDefault: true,
+    };
   }
+  const customCoverPrompt = (skill.coverPromptTemplate || "").trim();
   return {
     name: skill.name || "",
     description: skill.description || "",
     promptTemplate: skill.promptTemplate || "",
     topicsText: (skill.topics || []).join("，"),
+    coverPromptTemplate: customCoverPrompt || coverPromptDefault,
+    coverPromptUsesSystemDefault: customCoverPrompt.length === 0,
     outputType: normalizeSkillOutputLabel(skill.outputType),
     modelName: skill.modelName || "",
     storyboardEnabled: skill.storyboardEnabled !== false,
@@ -140,6 +152,9 @@ export function SkillEditorModal({
   const [draftSkillId, setDraftSkillId] = useState<string | null>(null);
   const [draftNeedsCleanup, setDraftNeedsCleanup] = useState(false);
   const [uploadingAssets, setUploadingAssets] = useState<UploadingAsset[]>([]);
+  const [coverPromptWarningOpen, setCoverPromptWarningOpen] = useState(false);
+  const [coverPromptUnlockCountdown, setCoverPromptUnlockCountdown] = useState(0);
+  const [coverPromptUnlocked, setCoverPromptUnlocked] = useState(false);
   const draftCreationRef = useRef<Promise<Skill> | null>(null);
   const currentSkillId = skill?.id ?? draftSkillId;
 
@@ -155,6 +170,12 @@ export function SkillEditorModal({
     queryFn: () => listSkillAssets(currentSkillId!),
     enabled: isOpen && Boolean(currentSkillId),
   });
+  const { data: skillEditorDefaults } = useQuery<SkillEditorDefaults>({
+    queryKey: ["skillEditorDefaults"],
+    queryFn: () => getSkillEditorDefaults(),
+    enabled: isOpen,
+  });
+  const coverPromptDefault = (skillEditorDefaults?.coverPromptTemplateDefault || "").trim();
 
   const availableModels = useMemo(
     () => models.filter((item) => item.isEnabled && item.category === modelCategory),
@@ -187,12 +208,53 @@ export function SkillEditorModal({
     if (!isOpen) {
       return;
     }
-    setForm(buildSkillFormState(skill));
+    setForm(buildSkillFormState(skill, coverPromptDefault));
     setDraftSkillId(null);
     setDraftNeedsCleanup(false);
     setUploadingAssets([]);
+    setCoverPromptWarningOpen(false);
+    setCoverPromptUnlockCountdown(0);
+    setCoverPromptUnlocked(false);
     draftCreationRef.current = null;
+    // `coverPromptDefault` is hydrated separately below so late-loaded defaults do not clobber in-progress edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, skill]);
+
+  useEffect(() => {
+    if (!isOpen || !coverPromptDefault) {
+      return;
+    }
+    setForm((current) => {
+      if (!current.coverPromptUsesSystemDefault) {
+        return current;
+      }
+      if (current.coverPromptTemplate === coverPromptDefault) {
+        return current;
+      }
+      return {
+        ...current,
+        coverPromptTemplate: coverPromptDefault,
+      };
+    });
+  }, [isOpen, coverPromptDefault]);
+
+  useEffect(() => {
+    if (!coverPromptWarningOpen) {
+      setCoverPromptUnlockCountdown(0);
+      return;
+    }
+    setCoverPromptUnlockCountdown(4);
+    const timer = window.setInterval(() => {
+      setCoverPromptUnlockCountdown((current) => {
+        if (current <= 1) {
+          window.clearInterval(timer);
+          return 0;
+        }
+        return current - 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [coverPromptWarningOpen]);
 
   const buildSkillPayload = () => ({
     name: form.name.trim(),
@@ -201,6 +263,7 @@ export function SkillEditorModal({
     modelName: form.modelName.trim(),
     deviceId,
     promptTemplate: form.promptTemplate.trim() || null,
+    coverPromptTemplate: form.coverPromptUsesSystemDefault ? null : form.coverPromptTemplate.trim() || null,
     topics: form.topicsText
       .split(/[\n,，#\s]+/)
       .map((item) => item.trim())
@@ -370,6 +433,22 @@ export function SkillEditorModal({
     void uploadFiles(nextFiles, "reference_text");
   };
 
+  const requestCoverPromptEditing = () => {
+    if (coverPromptUnlocked) {
+      return;
+    }
+    setCoverPromptWarningOpen(true);
+  };
+
+  const resetCoverPromptToDefault = () => {
+    setForm((current) => ({
+      ...current,
+      coverPromptTemplate: coverPromptDefault,
+      coverPromptUsesSystemDefault: true,
+    }));
+    setCoverPromptUnlocked(false);
+  };
+
   const flowSteps = form.storyboardEnabled
     ? [
         "客户输入图文和提示词",
@@ -521,6 +600,64 @@ export function SkillEditorModal({
                         这些话题会跟随技能进入账号发布任务，并继续传给 SAU 上传器。
                       </p>
                     </label>
+
+                    <div className="space-y-3 rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="space-y-1">
+                          <span className="text-sm font-medium text-white">封面提示词</span>
+                          <p className="text-xs leading-5 text-text-secondary">
+                            仅视文模式生效。系统会把这段话和客户原始图片、参考资料一起交给
+                            {" "}`gemini-3-pro-image-preview` 重新设计视频封面首帧；客户上传多张图时会补做尾帧。
+                          </p>
+                        </div>
+                        {form.coverPromptUsesSystemDefault ? (
+                          <MiniPill>当前使用系统默认</MiniPill>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={resetCoverPromptToDefault}
+                            className="rounded-full border border-white/10 px-3 py-1 text-xs font-medium text-text-secondary transition-all hover:border-white/20 hover:text-white"
+                          >
+                            恢复系统默认
+                          </button>
+                        )}
+                      </div>
+                      <textarea
+                        value={form.coverPromptTemplate}
+                        readOnly={!coverPromptUnlocked}
+                        onClick={requestCoverPromptEditing}
+                        onFocus={requestCoverPromptEditing}
+                        onChange={(event) =>
+                          setForm((current) => ({
+                            ...current,
+                            coverPromptTemplate: event.target.value,
+                            coverPromptUsesSystemDefault: false,
+                          }))
+                        }
+                        rows={7}
+                        placeholder="描述希望系统如何围绕真实产品重新设计封面。"
+                        className={cn(
+                          "w-full rounded-2xl border px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted",
+                          coverPromptUnlocked
+                            ? "border-white/10 bg-white/6 focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
+                            : "cursor-pointer border-white/8 bg-white/[0.03]",
+                        )}
+                      />
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs leading-5 text-text-secondary">
+                        <p>
+                          不修改时不会把默认值固化到当前技能；后续 Admin 更新系统默认值后，这里会自动跟随。
+                        </p>
+                        {!coverPromptUnlocked ? (
+                          <button
+                            type="button"
+                            onClick={requestCoverPromptEditing}
+                            className="rounded-full border border-accent/30 px-3 py-1 font-medium text-accent transition-all hover:border-accent/50"
+                          >
+                            修改封面提示词
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
 	                  </SectionCard>
 
                   <SectionCard
@@ -789,6 +926,43 @@ export function SkillEditorModal({
           </div>
         </div>
       </div>
+      {coverPromptWarningOpen ? (
+        <div className="absolute inset-0 z-[120] flex items-center justify-center bg-[#050814]/82 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-xl rounded-[28px] border border-white/10 bg-[#091321] p-6 shadow-[0_28px_100px_rgba(0,0,0,0.58)]">
+            <div className="space-y-3">
+              <h4 className="text-lg font-semibold text-white">修改封面提示词</h4>
+              <p className="text-sm leading-6 text-text-secondary">
+                修改封面提示词会直接影响视频首帧效果，也可能导致尾帧风格失衡。建议在技术人员协助下修改，避免偏离真实产品、卖点和使用场景。
+              </p>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-sm leading-6 text-text-secondary">
+                当前解锁后，你修改的是技能级覆盖值。若只是想继续跟随系统默认，不要修改，直接关闭即可。
+              </div>
+            </div>
+            <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setCoverPromptWarningOpen(false)}
+                className="rounded-2xl border border-white/10 px-4 py-2 text-sm font-medium text-text-secondary transition-all hover:border-white/20 hover:text-white"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={coverPromptUnlockCountdown > 0}
+                onClick={() => {
+                  setCoverPromptUnlocked(true);
+                  setCoverPromptWarningOpen(false);
+                }}
+                className="rounded-2xl bg-accent px-4 py-2 text-sm font-medium text-white transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-55"
+              >
+                {coverPromptUnlockCountdown > 0
+                  ? `${coverPromptUnlockCountdown}s 后可继续修改`
+                  : "我已知晓，继续修改"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -23,13 +23,31 @@ import {
   normalizeSkillOutputLabel,
 } from "@/lib/workflow";
 
+function asLowerString(value: unknown) {
+  return typeof value === "string" ? value.toLowerCase() : "";
+}
+
+function asDisplayText(value: unknown, fallback = "未配置") {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || fallback;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return fallback;
+}
+
 function isImageAsset(asset: SkillAsset) {
-  return (asset.mimeType || "").startsWith("image/") || asset.assetType.includes("image");
+  const mimeType = asLowerString(asset.mimeType);
+  const assetType = asLowerString(asset.assetType);
+  return mimeType.startsWith("image/") || assetType.includes("image");
 }
 
 function isTextAsset(asset: SkillAsset) {
-  const mimeType = (asset.mimeType || "").toLowerCase();
-  return mimeType.startsWith("text/") || asset.assetType.includes("text");
+  const mimeType = asLowerString(asset.mimeType);
+  const assetType = asLowerString(asset.assetType);
+  return mimeType.startsWith("text/") || assetType.includes("text");
 }
 
 export default function NodeDetailPage({
@@ -182,7 +200,12 @@ export default function NodeDetailPage({
                       <td className="px-5 py-4">
                         <div>
                           <div className="font-semibold text-text-primary">{skill.name}</div>
-                          <div className="mt-1 text-xs text-text-secondary">{skill.description}</div>
+                          <div className="font-semibold text-text-primary">
+                            {asDisplayText(skill.name, "未命名技能")}
+                          </div>
+                          <div className="mt-1 text-xs text-text-secondary">
+                            {asDisplayText(skill.description, "暂无技能说明")}
+                          </div>
                           <div className="mt-2 text-[11px] font-mono text-text-muted">{skill.id}</div>
                         </div>
                       </td>
@@ -192,9 +215,10 @@ export default function NodeDetailPage({
                             {normalizeSkillOutputLabel(skill.outputType)}
                           </div>
                           <div className="text-sm text-text-primary">{getModelDisplayName(skill)}</div>
-                          {skill.promptTemplate ? (
+                          {typeof skill.promptTemplate === "string" &&
+                          skill.promptTemplate.trim() ? (
                             <p className="max-w-xs text-xs leading-5 text-text-secondary">
-                              {skill.promptTemplate.slice(0, 96)}
+                              {skill.promptTemplate.trim().slice(0, 96)}
                               {skill.promptTemplate.length > 96 ? "..." : ""}
                             </p>
                           ) : (
@@ -215,7 +239,7 @@ export default function NodeDetailPage({
                                     // eslint-disable-next-line @next/next/no-img-element
                                     <img
                                       src={asset.publicUrl}
-                                      alt={asset.fileName}
+                                      alt={asDisplayText(asset.fileName, "技能素材")}
                                       className="h-full w-full object-cover"
                                     />
                                   ) : (

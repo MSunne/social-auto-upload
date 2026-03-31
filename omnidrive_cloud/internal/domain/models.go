@@ -45,6 +45,7 @@ type DeviceActivationConfig struct {
 	ID                 string     `json:"id"`
 	DeviceID           string     `json:"deviceId"`
 	OrderNo            *string    `json:"orderNo,omitempty"`
+	ActivationCode     *string    `json:"activationCode,omitempty"`
 	ActivationCodeHint *string    `json:"activationCodeHint,omitempty"`
 	Status             string     `json:"status"`
 	ActivatedByUserID  *string    `json:"activatedByUserId,omitempty"`
@@ -134,26 +135,27 @@ type LoginSessionAction struct {
 }
 
 type ProductSkill struct {
-	ID                string           `json:"id"`
-	OwnerUserID       string           `json:"ownerUserId"`
-	DeviceID          *string          `json:"deviceId,omitempty"`
-	Name              string           `json:"name"`
-	Description       string           `json:"description"`
-	OutputType        string           `json:"outputType"`
-	ModelName         string           `json:"modelName"`
-	ModelAlias        string           `json:"modelAlias,omitempty"`
-	PromptTemplate    *string          `json:"promptTemplate"`
-	Topics            []string         `json:"topics"`
-	ReferencePayload  json.RawMessage  `json:"referencePayload,omitempty"`
-	ExecutionTime     *time.Time       `json:"executionTime,omitempty"`
-	RepeatDaily       bool             `json:"repeatDaily"`
-	StoryboardEnabled bool             `json:"storyboardEnabled"`
-	NextRunAt         *time.Time       `json:"nextRunAt,omitempty"`
-	LastRunAt         *time.Time       `json:"lastRunAt,omitempty"`
-	IsEnabled         bool             `json:"isEnabled"`
-	CreatedAt         time.Time        `json:"createdAt"`
-	UpdatedAt         time.Time        `json:"updatedAt"`
-	Load              ProductSkillLoad `json:"load"`
+	ID                  string           `json:"id"`
+	OwnerUserID         string           `json:"ownerUserId"`
+	DeviceID            *string          `json:"deviceId,omitempty"`
+	Name                string           `json:"name"`
+	Description         string           `json:"description"`
+	OutputType          string           `json:"outputType"`
+	ModelName           string           `json:"modelName"`
+	ModelAlias          string           `json:"modelAlias,omitempty"`
+	PromptTemplate      *string          `json:"promptTemplate"`
+	CoverPromptTemplate *string          `json:"coverPromptTemplate"`
+	Topics              []string         `json:"topics"`
+	ReferencePayload    json.RawMessage  `json:"referencePayload,omitempty"`
+	ExecutionTime       *time.Time       `json:"executionTime,omitempty"`
+	RepeatDaily         bool             `json:"repeatDaily"`
+	StoryboardEnabled   bool             `json:"storyboardEnabled"`
+	NextRunAt           *time.Time       `json:"nextRunAt,omitempty"`
+	LastRunAt           *time.Time       `json:"lastRunAt,omitempty"`
+	IsEnabled           bool             `json:"isEnabled"`
+	CreatedAt           time.Time        `json:"createdAt"`
+	UpdatedAt           time.Time        `json:"updatedAt"`
+	Load                ProductSkillLoad `json:"load"`
 }
 
 type ProductSkillLoad struct {

@@ -105,11 +105,12 @@ export default function NodesPage() {
   const [claimActivationCode, setClaimActivationCode] = useState("");
 
   /* filtering and pagination math */
+  const normalizedSearchQuery = searchQuery.toLowerCase();
   const filteredDevices = devices.filter(
     (d) =>
-      d.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (d.localIp && d.localIp.includes(searchQuery)) ||
-      (d.deviceCode && d.deviceCode.includes(searchQuery))
+      String(d.name || "").toLowerCase().includes(normalizedSearchQuery) ||
+      String(d.localIp || "").includes(searchQuery) ||
+      String(d.deviceCode || "").includes(searchQuery)
   );
 
   const totalPages = Math.max(1, Math.ceil(filteredDevices.length / PAGE_SIZE));

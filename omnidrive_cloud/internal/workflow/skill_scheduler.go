@@ -107,14 +107,6 @@ func (s *SkillScheduler) ensureRecurringAccountSkillRun(ctx context.Context, see
 		return nil
 	}
 
-	activeJob, err := s.app.Store.FindActiveAccountSkillJobByScheduleKey(ctx, config.ScheduleKey)
-	if err != nil {
-		return err
-	}
-	if activeJob != nil {
-		return nil
-	}
-
 	if seed.SkillID == nil || strings.TrimSpace(*seed.SkillID) == "" {
 		return nil
 	}
@@ -146,34 +138,57 @@ func (s *SkillScheduler) ensureRecurringAccountSkillRun(ctx context.Context, see
 	if err != nil {
 		return err
 	}
-	job, err := s.app.Store.CreateAIJob(ctx, store.CreateAIJobInput{
-		ID:           uuid.NewString(),
-		OwnerUserID:  seed.OwnerUserID,
-		DeviceID:     &account.DeviceID,
-		SkillID:      &skill.ID,
-		Source:       "account_skill_binding",
-		LocalTaskID:  nil,
-		JobType:      prepared.JobType,
-		ModelName:    prepared.ModelName,
-		Prompt:       stringPtr(prepared.Prompt),
-		InputPayload: prepared.InputPayload,
-		Status:       prepared.Status,
-		Message:      stringPtr(prepared.Message),
-		RunAt:        &prepared.GenerateAt,
-	})
-	if err != nil {
+	var createdJob *domain.AIJob
+	lockKey := storeKeyForRecurringAccountSkillRun(seed.OwnerUserID, config.ScheduleKey)
+	if err := s.app.Store.WithAdvisoryLock(ctx, lockKey, func() error {
+		activeJob, err := s.app.Store.FindActiveAccountSkillJobByScheduleKey(ctx, seed.OwnerUserID, config.ScheduleKey)
+		if err != nil {
+			return err
+		}
+		if activeJob != nil {
+			return nil
+		}
+
+		job, err := s.app.Store.CreateAIJob(ctx, store.CreateAIJobInput{
+			ID:           uuid.NewString(),
+			OwnerUserID:  seed.OwnerUserID,
+			DeviceID:     &account.DeviceID,
+			SkillID:      &skill.ID,
+			Source:       "account_skill_binding",
+			LocalTaskID:  nil,
+			JobType:      prepared.JobType,
+			ModelName:    prepared.ModelName,
+			Prompt:       stringPtr(prepared.Prompt),
+			InputPayload: prepared.InputPayload,
+			Status:       prepared.Status,
+			Message:      stringPtr(prepared.Message),
+			RunAt:        &prepared.GenerateAt,
+		})
+		if err != nil {
+			return err
+		}
+		createdJob = job
+		return nil
+	}); err != nil {
 		return err
+	}
+	if createdJob == nil {
+		return nil
 	}
 	s.app.Logger.Info(
 		"skill scheduler created recurring account skill run",
 		"seed_job_id", seed.ID,
-		"job_id", job.ID,
+		"job_id", createdJob.ID,
 		"skill_id", skill.ID,
 		"account_id", account.ID,
 		"time_of_day", config.TimeOfDay,
 		"publish_at", prepared.PublishAt.Format(time.RFC3339),
 	)
 	return nil
+}
+
+func storeKeyForRecurringAccountSkillRun(ownerUserID string, scheduleKey string) string {
+	return "account-skill-schedule:" + strings.TrimSpace(ownerUserID) + ":" + strings.TrimSpace(scheduleKey)
 }
 
 func (s *SkillScheduler) ensureScheduledJob(ctx context.Context, skill domain.ProductSkill) error {

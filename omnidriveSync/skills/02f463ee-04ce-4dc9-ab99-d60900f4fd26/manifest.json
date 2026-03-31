@@ -8,8 +8,9 @@
     "description": "测试玩具的种草视频",
     "outputType": "视文模式",
     "modelName": "veo-3.1-fast-fl",
-    "modelAlias": "veo-3.1-fast-fl",
+    "modelAlias": "veo3.1-fast",
     "promptTemplate": "做一个抖音风格视频，不要字幕",
+    "coverPromptTemplate": null,
     "topics": [],
     "repeatDaily": false,
     "storyboardEnabled": true,
@@ -24,7 +25,7 @@
       "needsVerifyTaskCount": 0,
       "failedTaskCount": 0,
       "aiJobCount": 15,
-      "activeAiJobCount": 1
+      "activeAiJobCount": 0
     }
   },
   "assets": [
@@ -43,27 +44,27 @@
       "localFileName": "ScreenShot_2026-03-20_200139_372.png",
       "localPath": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/02f463ee-04ce-4dc9-ab99-d60900f4fd26/assets/ScreenShot_2026-03-20_200139_372.png",
       "metadataPath": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/02f463ee-04ce-4dc9-ab99-d60900f4fd26/assets/ScreenShot_2026-03-20_200139_372.png.json",
-      "downloadStatus": "success",
-      "downloadError": null
+      "downloadStatus": "failed",
+      "downloadError": "HTTPSConnectionPool(host='qny.sunne.xyz', port=443): Max retries exceeded with url: /plus_ai/img/skills/854c1e12-896f-4c43-a332-4fb6fb023402/02f463ee-04ce-4dc9-ab99-d60900f4fd26/fe568d32-f03a-4080-b620-0f64e810b402-ScreenShot_2026-03-20_200139_372.png (Caused by SSLError(SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: certificate has expired (_ssl.c:1017)')))"
     }
   ],
   "sync": {
     "id": "2868e935-519b-4472-89fb-c059cf17be4d",
     "deviceId": "52371fe9-b1d5-4593-80ed-786be702c3a7",
     "skillId": "02f463ee-04ce-4dc9-ab99-d60900f4fd26",
-    "syncStatus": "success",
-    "syncedRevision": "2026-03-21T08:40:26.865964Z|1|2026-03-21T08:31:24.747907Z",
+    "syncStatus": "failed",
+    "syncedRevision": null,
     "isCurrent": false,
     "needsSync": false,
     "assetCount": 1,
-    "message": null,
-    "lastSyncedAt": "2026-03-29T18:22:21.434045+08:00",
+    "message": "ScreenShot_2026-03-20_200139_372.png: HTTPSConnectionPool(host='qny.sunne.xyz', port=443): Max retries exceeded with url: /plus_ai/img/skills/854c1e12-896f-4c43-a332-4fb6fb023402/02f463ee-04ce-4dc9-ab99-d60900f4fd26/fe568d32-f03a-4080-b620-0f64e810b402-ScreenShot_2026-03-20_200139_372.png (Caused by SSLError(SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: certificate has expired (_ssl.c:1017)')))",
+    "lastSyncedAt": "2026-03-31T09:05:56.32678+08:00",
     "createdAt": "2026-03-21T16:32:04.522283+08:00",
-    "updatedAt": "2026-03-29T18:22:21.607797+08:00"
+    "updatedAt": "2026-03-31T09:05:56.619217+08:00"
   },
   "cache": {
     "manifestPath": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/02f463ee-04ce-4dc9-ab99-d60900f4fd26/manifest.json",
     "assetsDir": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/02f463ee-04ce-4dc9-ab99-d60900f4fd26/assets",
-    "syncedAt": "2026-03-29T10:22:38.618619Z"
+    "syncedAt": "2026-03-31T01:09:01.948075Z"
   }
 }

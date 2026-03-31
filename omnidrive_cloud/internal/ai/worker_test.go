@@ -39,7 +39,7 @@ func TestBuildAIExecutionFailureMessageTruncatesLongErrors(t *testing.T) {
 func TestShouldAutoRetryMediaFailureForFirstImageFailure(t *testing.T) {
 	job := &domain.AIJob{JobType: "image"}
 
-	if !shouldAutoRetryMediaFailure(job) {
+	if !shouldAutoRetryMediaFailure(job, errors.New("provider request failed with status 503")) {
 		t.Fatalf("expected first image failure to auto retry")
 	}
 }
@@ -53,8 +53,16 @@ func TestShouldAutoRetryMediaFailureStopsAfterOneRetry(t *testing.T) {
 		}, "first failure", 1),
 	}
 
-	if shouldAutoRetryMediaFailure(job) {
+	if shouldAutoRetryMediaFailure(job, errors.New("provider request failed with status 503")) {
 		t.Fatalf("expected auto retry to stop after one retry")
+	}
+}
+
+func TestShouldAutoRetryMediaFailureRejectsPolicyViolation(t *testing.T) {
+	job := &domain.AIJob{JobType: "video"}
+
+	if shouldAutoRetryMediaFailure(job, errors.New("提交中含有违反平台政策的内容，请你立即停止或调整你的提交内容")) {
+		t.Fatalf("expected policy violation to stop auto retry")
 	}
 }
 
@@ -85,5 +93,36 @@ func TestBuildMediaAutoRetryPayloadResetsVideoExecutionState(t *testing.T) {
 	}
 	if got := payload["kind"]; got != "video" {
 		t.Fatalf("expected kind=video, got %#v", got)
+	}
+}
+
+func TestBuildVideoOutputPayloadPreservesExecutionState(t *testing.T) {
+	job := &domain.AIJob{
+		JobType:   "video",
+		ModelName: "veo-3.1-fast-fl",
+		OutputPayload: mustJSON(map[string]any{
+			"execution": map[string]any{
+				"autoRetryCount": 1,
+			},
+		}),
+	}
+
+	raw := buildVideoOutputPayload(job, videoExecutionState{
+		BaseURL:       "https://example.com",
+		RemoteVideoID: "video_123",
+		RemoteStatus:  "processing",
+	}, nil)
+
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("unexpected payload json error: %v", err)
+	}
+	execution, _ := payload["execution"].(map[string]any)
+	if got := int(execution["autoRetryCount"].(float64)); got != 1 {
+		t.Fatalf("expected autoRetryCount=1 to be preserved, got %d", got)
+	}
+	videoPayload, _ := payload["video"].(map[string]any)
+	if got := videoPayload["id"]; got != "video_123" {
+		t.Fatalf("expected remote video id to be preserved, got %#v", got)
 	}
 }

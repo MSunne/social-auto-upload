@@ -13,6 +13,6 @@
   "localFileName": "ScreenShot_2026-03-20_200139_372.png",
   "localPath": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/02f463ee-04ce-4dc9-ab99-d60900f4fd26/assets/ScreenShot_2026-03-20_200139_372.png",
   "metadataPath": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/02f463ee-04ce-4dc9-ab99-d60900f4fd26/assets/ScreenShot_2026-03-20_200139_372.png.json",
-  "downloadStatus": "success",
-  "downloadError": null
+  "downloadStatus": "failed",
+  "downloadError": "HTTPSConnectionPool(host='qny.sunne.xyz', port=443): Max retries exceeded with url: /plus_ai/img/skills/854c1e12-896f-4c43-a332-4fb6fb023402/02f463ee-04ce-4dc9-ab99-d60900f4fd26/fe568d32-f03a-4080-b620-0f64e810b402-ScreenShot_2026-03-20_200139_372.png (Caused by SSLError(SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: certificate has expired (_ssl.c:1017)')))"
 }

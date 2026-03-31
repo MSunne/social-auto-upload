@@ -78,6 +78,7 @@ func buildDeviceActivationHint(normalizedCode string) *string {
 func scanDeviceActivationConfig(scan scanFn) (*domain.DeviceActivationConfig, error) {
 	var item domain.DeviceActivationConfig
 	var orderNo *string
+	var activationCodeValue *string
 	var activationCodeHint *string
 	var activatedByUserID *string
 	var activatedAt *time.Time
@@ -86,6 +87,7 @@ func scanDeviceActivationConfig(scan scanFn) (*domain.DeviceActivationConfig, er
 		&item.ID,
 		&item.DeviceID,
 		&orderNo,
+		&activationCodeValue,
 		&activationCodeHint,
 		&item.Status,
 		&activatedByUserID,
@@ -97,11 +99,77 @@ func scanDeviceActivationConfig(scan scanFn) (*domain.DeviceActivationConfig, er
 		return nil, err
 	}
 	item.OrderNo = orderNo
+	item.ActivationCode = activationCodeValue
 	item.ActivationCodeHint = activationCodeHint
 	item.ActivatedByUserID = activatedByUserID
 	item.ActivatedAt = activatedAt
 	item.Notes = notes
 	return &item, nil
+}
+
+type claimableDeviceActivationRecord struct {
+	DeviceID         string
+	StoredDeviceCode string
+	ExistingOwner    *string
+	ActivationHash   *string
+	ActivationStatus *string
+}
+
+func (s *Store) findClaimableDeviceActivationRecord(ctx context.Context, tx pgx.Tx, normalizedActivationCode string) (*claimableDeviceActivationRecord, error) {
+	standaloneHash := hashStandaloneActivationCode(normalizedActivationCode)
+
+	var direct claimableDeviceActivationRecord
+	if err := tx.QueryRow(ctx, `
+		SELECT d.id, d.device_code, d.owner_user_id, dac.activation_code_hash, dac.status
+		FROM device_activation_configs dac
+		INNER JOIN devices d ON d.id = dac.device_id
+		WHERE dac.activation_code_hash = $1
+	`, standaloneHash).Scan(
+		&direct.DeviceID,
+		&direct.StoredDeviceCode,
+		&direct.ExistingOwner,
+		&direct.ActivationHash,
+		&direct.ActivationStatus,
+	); err == nil {
+		return &direct, nil
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+
+	rows, err := tx.Query(ctx, `
+		SELECT d.id, d.device_code, d.owner_user_id, dac.activation_code_hash, dac.status
+		FROM device_activation_configs dac
+		INNER JOIN devices d ON d.id = dac.device_id
+		WHERE dac.activation_code_hash IS NOT NULL
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var item claimableDeviceActivationRecord
+		if err := rows.Scan(
+			&item.DeviceID,
+			&item.StoredDeviceCode,
+			&item.ExistingOwner,
+			&item.ActivationHash,
+			&item.ActivationStatus,
+		); err != nil {
+			return nil, err
+		}
+		if item.ActivationHash == nil {
+			continue
+		}
+		legacyHash := hashLegacyDeviceActivationCode(item.StoredDeviceCode, normalizedActivationCode)
+		if strings.EqualFold(strings.TrimSpace(*item.ActivationHash), legacyHash) {
+			return &item, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return nil, pgx.ErrNoRows
 }
 
 func (s *Store) ClaimDeviceWithActivation(ctx context.Context, activationCode string, ownerUserID string) (*domain.Device, error) {
@@ -116,49 +184,26 @@ func (s *Store) ClaimDeviceWithActivation(ctx context.Context, activationCode st
 	}
 	defer tx.Rollback(ctx)
 
-	var deviceID string
-	var storedDeviceCode string
-	var existingOwner *string
-	var activationHash *string
-	var activationStatus *string
-
-	if err := tx.QueryRow(ctx, `
-		SELECT d.id, d.device_code, d.owner_user_id, dac.activation_code_hash, dac.status
-		FROM device_activation_configs dac
-		INNER JOIN devices d ON d.id = dac.device_id
-		WHERE dac.activation_code_hash = $1
-		   OR dac.activation_code_hash = ENCODE(
-				DIGEST(
-					REGEXP_REPLACE(UPPER(d.device_code), '[^A-Z0-9]', '', 'g') || ':' || $2,
-					'sha256'
-				),
-				'hex'
-			)
-	`, hashStandaloneActivationCode(normalizedActivationCode), normalizedActivationCode).Scan(
-		&deviceID,
-		&storedDeviceCode,
-		&existingOwner,
-		&activationHash,
-		&activationStatus,
-	); err != nil {
+	record, err := s.findClaimableDeviceActivationRecord(ctx, tx, normalizedActivationCode)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrDeviceActivationCodeInvalid
 		}
 		return nil, err
 	}
 
-	if existingOwner != nil && strings.TrimSpace(*existingOwner) != "" && strings.TrimSpace(*existingOwner) != strings.TrimSpace(ownerUserID) {
+	if record.ExistingOwner != nil && strings.TrimSpace(*record.ExistingOwner) != "" && strings.TrimSpace(*record.ExistingOwner) != strings.TrimSpace(ownerUserID) {
 		return nil, ErrDeviceAlreadyClaimed
 	}
-	if activationHash == nil || strings.TrimSpace(*activationHash) == "" {
+	if record.ActivationHash == nil || strings.TrimSpace(*record.ActivationHash) == "" {
 		return nil, ErrDeviceActivationNotConfigured
 	}
-	if activationStatus != nil && strings.EqualFold(strings.TrimSpace(*activationStatus), "disabled") {
+	if record.ActivationStatus != nil && strings.EqualFold(strings.TrimSpace(*record.ActivationStatus), "disabled") {
 		return nil, ErrDeviceActivationDisabled
 	}
 	standaloneHash := hashStandaloneActivationCode(normalizedActivationCode)
-	legacyHash := hashLegacyDeviceActivationCode(storedDeviceCode, normalizedActivationCode)
-	if !strings.EqualFold(strings.TrimSpace(*activationHash), standaloneHash) && !strings.EqualFold(strings.TrimSpace(*activationHash), legacyHash) {
+	legacyHash := hashLegacyDeviceActivationCode(record.StoredDeviceCode, normalizedActivationCode)
+	if !strings.EqualFold(strings.TrimSpace(*record.ActivationHash), standaloneHash) && !strings.EqualFold(strings.TrimSpace(*record.ActivationHash), legacyHash) {
 		return nil, ErrDeviceActivationCodeInvalid
 	}
 
@@ -173,7 +218,7 @@ func (s *Store) ClaimDeviceWithActivation(ctx context.Context, activationCode st
 		          default_reasoning_model, default_chat_model, default_image_model, default_video_model,
 		          is_enabled, runtime_payload, last_seen_at, notes,
 		          created_at, updated_at
-	`, deviceID, ownerUserID)
+	`, record.DeviceID, ownerUserID)
 
 	device, err := scanDevice(row)
 	if err != nil {
@@ -214,14 +259,15 @@ func (s *Store) UpdateAdminDeviceActivationConfig(ctx context.Context, deviceID 
 
 	var existingOwner *string
 	var existingConfigID *string
+	var existingActivationValue *string
 	var existingActivationHash *string
 	var existingActivationHint *string
 	if err := tx.QueryRow(ctx, `
-		SELECT d.owner_user_id, dac.id, dac.activation_code_hash, dac.activation_code_hint
+		SELECT d.owner_user_id, dac.id, dac.activation_code_value, dac.activation_code_hash, dac.activation_code_hint
 		FROM devices d
 		LEFT JOIN device_activation_configs dac ON dac.device_id = d.id
 		WHERE d.id = $1
-	`, deviceID).Scan(&existingOwner, &existingConfigID, &existingActivationHash, &existingActivationHint); err != nil {
+	`, deviceID).Scan(&existingOwner, &existingConfigID, &existingActivationValue, &existingActivationHash, &existingActivationHint); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -242,6 +288,7 @@ func (s *Store) UpdateAdminDeviceActivationConfig(ctx context.Context, deviceID 
 	}
 
 	var activationHash any
+	var activationValue any
 	var activationHint any
 	if input.ActivationTouched {
 		if input.ActivationCode == nil || normalizeDeviceActivationCode(*input.ActivationCode) == "" {
@@ -264,6 +311,7 @@ func (s *Store) UpdateAdminDeviceActivationConfig(ctx context.Context, deviceID 
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return nil, err
 		}
+		activationValue = normalizedCode
 		activationHash = standaloneHash
 		if hint := buildDeviceActivationHint(normalizedCode); hint != nil {
 			activationHint = *hint
@@ -278,6 +326,9 @@ func (s *Store) UpdateAdminDeviceActivationConfig(ctx context.Context, deviceID 
 		return nil, ErrDeviceActivationCodeRequired
 	}
 	if !input.ActivationTouched {
+		if existingActivationValue != nil {
+			activationValue = *existingActivationValue
+		}
 		if existingActivationHash != nil {
 			activationHash = *existingActivationHash
 		}
@@ -288,42 +339,46 @@ func (s *Store) UpdateAdminDeviceActivationConfig(ctx context.Context, deviceID 
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO device_activation_configs (
-			id, device_id, order_no, activation_code_hash, activation_code_hint, status, notes
+			id, device_id, order_no, activation_code_value, activation_code_hash, activation_code_hint, status, notes
 		)
 		VALUES (
-			$1, $2, NULLIF($3, ''), $4, $5, COALESCE(NULLIF($6, ''), 'ready'), NULLIF($7, '')
+			$1, $2, NULLIF($3, ''), NULLIF($4, ''), $5, $6, COALESCE(NULLIF($7, ''), 'ready'), NULLIF($8, '')
 		)
 		ON CONFLICT (device_id) DO UPDATE
 		SET
 			order_no = CASE
-				WHEN $8 THEN NULLIF($3, '')
+				WHEN $9 THEN NULLIF($3, '')
 				ELSE device_activation_configs.order_no
 			END,
+			activation_code_value = CASE
+				WHEN $10 THEN NULLIF($4, '')
+				ELSE device_activation_configs.activation_code_value
+			END,
 			activation_code_hash = CASE
-				WHEN $9 THEN $4
+				WHEN $10 THEN $5
 				ELSE device_activation_configs.activation_code_hash
 			END,
 			activation_code_hint = CASE
-				WHEN $9 THEN $5
+				WHEN $10 THEN $6
 				ELSE device_activation_configs.activation_code_hint
 			END,
-			status = COALESCE(NULLIF($6, ''), device_activation_configs.status),
+			status = COALESCE(NULLIF($7, ''), device_activation_configs.status),
 			activated_by_user_id = CASE
-				WHEN COALESCE(NULLIF($6, ''), '') = 'ready' THEN NULL
-				WHEN $9 THEN NULL
+				WHEN COALESCE(NULLIF($7, ''), '') = 'ready' THEN NULL
+				WHEN $10 THEN NULL
 				ELSE device_activation_configs.activated_by_user_id
 			END,
 			activated_at = CASE
-				WHEN COALESCE(NULLIF($6, ''), '') = 'ready' THEN NULL
-				WHEN $9 THEN NULL
+				WHEN COALESCE(NULLIF($7, ''), '') = 'ready' THEN NULL
+				WHEN $10 THEN NULL
 				ELSE device_activation_configs.activated_at
 			END,
 			notes = CASE
-				WHEN $10 THEN NULLIF($7, '')
+				WHEN $11 THEN NULLIF($8, '')
 				ELSE device_activation_configs.notes
 			END,
 			updated_at = NOW()
-	`, uuid.NewString(), deviceID, orderNoValue, activationHash, activationHint, statusValue, notesValue, input.OrderNoTouched, input.ActivationTouched, input.NotesTouched); err != nil {
+	`, uuid.NewString(), deviceID, orderNoValue, activationValue, activationHash, activationHint, statusValue, notesValue, input.OrderNoTouched, input.ActivationTouched, input.NotesTouched); err != nil {
 		return nil, err
 	}
 

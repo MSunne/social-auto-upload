@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useSyncExternalStore, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -75,9 +75,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       dismissedAlertKey !== billingAlertKey,
   );
 
+  const [mounted, setMounted] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
+
   useEffect(() => {
-    hydrate();
-  }, [hydrate]);
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined" || billingSummary?.needsRecharge) {
@@ -88,16 +91,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [billingSummary?.needsRecharge]);
 
   useEffect(() => {
-    if (
-      !token &&
-      typeof window !== "undefined" &&
-      !localStorage.getItem("omnidrive_token") &&
-      pathname !== "/login" &&
-      pathname !== "/register"
-    ) {
+    if (!mounted) return;
+    hydrate();
+    
+    const localToken = localStorage.getItem("omnidrive_token");
+    const hasAuth = Boolean(token || localToken);
+
+    if (!hasAuth && pathname !== "/login" && pathname !== "/register") {
       router.replace("/login");
+    } else {
+      setAuthChecked(true);
     }
-  }, [token, pathname, router]);
+  }, [mounted, hydrate, token, pathname, router]);
 
   const dismissBillingAlert = () => {
     if (!billingAlertKey || typeof window === "undefined") {
@@ -106,6 +111,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     localStorage.setItem(BILLING_ALERT_DISMISSED_STORAGE_KEY, billingAlertKey);
     notifyBillingAlertStorageChange();
   };
+
+  if (!authChecked) {
+    return <div className="min-h-screen bg-background" />;
+  }
 
   return (
     <div className="flex min-h-screen">

@@ -5,7 +5,7 @@ import socket
 from datetime import datetime, timezone
 from pathlib import Path
 
-from utils.device_meta import get_device_code
+from utils.device_meta import get_device_code, get_device_fingerprint
 
 AUTO_PROVISION_METHOD = "auto_bootstrap"
 
@@ -70,18 +70,20 @@ def _build_runtime_defaults(app_conf):
         "agentKey": _clean_string(getattr(app_conf, "OMNIDRIVE_AGENT_KEY", "")),
         "deviceName": device_name,
         "localApiKey": _clean_string(getattr(app_conf, "OMNIBULL_API_KEY", "")),
+        "deviceFingerprint": get_device_fingerprint(),
     }
 
 
 def _build_auto_payload(defaults):
     return {
-        "identityVersion": 1,
+        "identityVersion": 2,
         "provisionMethod": AUTO_PROVISION_METHOD,
         "provisionedAt": _now_iso(),
         "deviceCode": defaults["deviceCode"],
         "agentKey": defaults["agentKey"] or secrets.token_hex(32),
         "deviceName": defaults["deviceName"],
         "localApiKey": defaults["localApiKey"],
+        "deviceFingerprint": defaults["deviceFingerprint"],
     }
 
 
@@ -94,6 +96,7 @@ def _normalize_payload(payload, defaults):
         "agentKey": _clean_string(payload.get("agentKey")) or defaults["agentKey"] or secrets.token_hex(32),
         "deviceName": _clean_string(payload.get("deviceName")) or defaults["deviceName"],
         "localApiKey": _clean_string(payload.get("localApiKey")) or defaults["localApiKey"],
+        "deviceFingerprint": _clean_string(payload.get("deviceFingerprint")) or defaults["deviceFingerprint"],
     }
 
 
@@ -105,6 +108,7 @@ def _public_identity(path, payload, source):
         "agentKey": payload["agentKey"],
         "deviceName": payload["deviceName"],
         "localApiKey": payload["localApiKey"],
+        "deviceFingerprint": payload.get("deviceFingerprint"),
     }
 
 
@@ -121,7 +125,7 @@ def _candidate_identity_paths(configured_path, base_dir):
 def load_device_identity(app_conf, base_dir):
     configured_path = _clean_string(getattr(app_conf, "OMNIBULL_DEVICE_IDENTITY_FILE", ""))
     defaults = _build_runtime_defaults(app_conf)
-    current_device_code = defaults["deviceCode"]
+    current_device_fingerprint = _clean_string(defaults.get("deviceFingerprint"))
     candidate_paths = _candidate_identity_paths(configured_path, base_dir)
 
     for path in candidate_paths:
@@ -133,9 +137,15 @@ def load_device_identity(app_conf, base_dir):
         source = "device_identity_file"
 
         is_auto_provisioned = normalized["provisionMethod"] == AUTO_PROVISION_METHOD
-        if is_auto_provisioned and normalized["deviceCode"] != current_device_code:
+        stored_fingerprint = _clean_string(normalized.get("deviceFingerprint"))
+        if is_auto_provisioned and stored_fingerprint and current_device_fingerprint and stored_fingerprint != current_device_fingerprint:
             normalized = _build_auto_payload(defaults)
+            normalized["deviceName"] = _clean_string(payload.get("deviceName")) or normalized["deviceName"]
+            normalized["localApiKey"] = _clean_string(payload.get("localApiKey")) or normalized["localApiKey"]
             source = "device_identity_file_rotated"
+        elif is_auto_provisioned and current_device_fingerprint and not stored_fingerprint:
+            normalized["deviceFingerprint"] = current_device_fingerprint
+            source = "device_identity_file_updated"
         elif _serialize_payload(payload) != _serialize_payload(normalized):
             source = "device_identity_file_updated"
 

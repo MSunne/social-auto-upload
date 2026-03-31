@@ -46,12 +46,13 @@ func requestBaseURL(r *http.Request) string {
 }
 
 type heartbeatRequest struct {
-	DeviceCode     string      `json:"deviceCode"`
-	DeviceName     string      `json:"deviceName"`
-	AgentKey       string      `json:"agentKey"`
-	LocalIP        *string     `json:"localIp"`
-	PublicIP       *string     `json:"publicIp"`
-	RuntimePayload interface{} `json:"runtimePayload"`
+	DeviceCode        string      `json:"deviceCode"`
+	DeviceName        string      `json:"deviceName"`
+	AgentKey          string      `json:"agentKey"`
+	DeviceFingerprint string      `json:"deviceFingerprint"`
+	LocalIP           *string     `json:"localIp"`
+	PublicIP          *string     `json:"publicIp"`
+	RuntimePayload    interface{} `json:"runtimePayload"`
 }
 
 type loginEventRequest struct {
@@ -189,6 +190,7 @@ func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	payload.DeviceCode = strings.TrimSpace(payload.DeviceCode)
 	payload.DeviceName = strings.TrimSpace(payload.DeviceName)
 	payload.AgentKey = strings.TrimSpace(payload.AgentKey)
+	payload.DeviceFingerprint = strings.TrimSpace(payload.DeviceFingerprint)
 	if payload.DeviceCode == "" || payload.DeviceName == "" || payload.AgentKey == "" {
 		render.Error(w, http.StatusBadRequest, "deviceCode, deviceName, and agentKey are required")
 		return
@@ -214,12 +216,13 @@ func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	device, err := h.app.Store.UpsertHeartbeatDevice(r.Context(), store.HeartbeatInput{
-		DeviceCode:     payload.DeviceCode,
-		AgentKey:       payload.AgentKey,
-		DeviceName:     payload.DeviceName,
-		LocalIP:        payload.LocalIP,
-		PublicIP:       resolveHeartbeatPublicIP(r, payload.PublicIP),
-		RuntimePayload: runtimePayload,
+		DeviceCode:        payload.DeviceCode,
+		AgentKey:          payload.AgentKey,
+		DeviceName:        payload.DeviceName,
+		DeviceFingerprint: payload.DeviceFingerprint,
+		LocalIP:           payload.LocalIP,
+		PublicIP:          resolveHeartbeatPublicIP(r, payload.PublicIP),
+		RuntimePayload:    runtimePayload,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to update heartbeat")
@@ -1144,35 +1147,74 @@ func (h *AgentHandler) SyncAIJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := h.app.Store.GetAIJobByLocalTask(r.Context(), *device.OwnerUserID, device.ID, payload.ID)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to query local AI task binding")
-		return
-	}
+	lockKey := "agent-ai-local-task:" + strings.TrimSpace(*device.OwnerUserID) + ":" + strings.TrimSpace(device.ID) + ":" + strings.TrimSpace(payload.ID)
+	var (
+		job     *domain.AIJob
+		created bool
+	)
+	if err := h.app.Store.WithAdvisoryLock(r.Context(), lockKey, func() error {
+		existing, err := h.app.Store.GetAIJobByLocalTask(r.Context(), *device.OwnerUserID, device.ID, payload.ID)
+		if err != nil {
+			return err
+		}
 
-	if existing == nil {
+		if existing == nil {
+			message := payload.Message
+			if message == nil {
+				message = auditStringPtr("OmniBull 本地任务已同步到 OmniDrive，等待云端生成")
+			}
+			createdJob, createErr := h.app.Store.CreateAIJob(r.Context(), store.CreateAIJobInput{
+				ID:           uuid.NewString(),
+				OwnerUserID:  *device.OwnerUserID,
+				DeviceID:     &device.ID,
+				SkillID:      payload.SkillID,
+				Source:       "omnibull_local",
+				LocalTaskID:  &payload.ID,
+				JobType:      payload.JobType,
+				ModelName:    payload.ModelName,
+				Prompt:       payload.Prompt,
+				InputPayload: inputPayload,
+				Status:       "queued",
+				Message:      message,
+			})
+			if createErr != nil {
+				return createErr
+			}
+			job = createdJob
+			created = true
+			return nil
+		}
+
 		message := payload.Message
 		if message == nil {
-			message = auditStringPtr("OmniBull 本地任务已同步到 OmniDrive，等待云端生成")
+			message = existing.Message
 		}
-		job, createErr := h.app.Store.CreateAIJob(r.Context(), store.CreateAIJobInput{
-			ID:           uuid.NewString(),
-			OwnerUserID:  *device.OwnerUserID,
-			DeviceID:     &device.ID,
-			SkillID:      payload.SkillID,
-			Source:       "omnibull_local",
-			LocalTaskID:  &payload.ID,
-			JobType:      payload.JobType,
-			ModelName:    payload.ModelName,
-			Prompt:       payload.Prompt,
-			InputPayload: inputPayload,
-			Status:       "queued",
-			Message:      message,
+		updatedJob, updateErr := h.app.Store.UpdateAIJob(r.Context(), existing.ID, *device.OwnerUserID, store.UpdateAIJobInput{
+			DeviceID:         &device.ID,
+			DeviceTouched:    true,
+			SkillID:          payload.SkillID,
+			SkillTouched:     true,
+			LocalTaskID:      &payload.ID,
+			LocalTaskTouched: true,
+			Prompt:           payload.Prompt,
+			InputPayload:     inputPayload,
+			InputTouched:     true,
+			Message:          message,
 		})
-		if createErr != nil {
-			render.Error(w, http.StatusInternalServerError, "Failed to create AI job")
-			return
+		if updateErr != nil {
+			return updateErr
 		}
+		job = updatedJob
+		return nil
+	}); err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to sync AI job")
+		return
+	}
+	if job == nil {
+		render.Error(w, http.StatusNotFound, "AI job not found")
+		return
+	}
+	if created {
 		recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
 			OwnerUserID:  *device.OwnerUserID,
 			ResourceType: "ai_job",
@@ -1193,31 +1235,6 @@ func (h *AgentHandler) SyncAIJob(w http.ResponseWriter, r *http.Request) {
 			"job":    job,
 			"bridge": buildAIJobBridgeState(job, nil, nil),
 		})
-		return
-	}
-
-	message := payload.Message
-	if message == nil {
-		message = existing.Message
-	}
-	job, err := h.app.Store.UpdateAIJob(r.Context(), existing.ID, *device.OwnerUserID, store.UpdateAIJobInput{
-		DeviceID:         &device.ID,
-		DeviceTouched:    true,
-		SkillID:          payload.SkillID,
-		SkillTouched:     true,
-		LocalTaskID:      &payload.ID,
-		LocalTaskTouched: true,
-		Prompt:           payload.Prompt,
-		InputPayload:     inputPayload,
-		InputTouched:     true,
-		Message:          message,
-	})
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to update AI job")
-		return
-	}
-	if job == nil {
-		render.Error(w, http.StatusNotFound, "AI job not found")
 		return
 	}
 	render.JSON(w, http.StatusOK, map[string]any{

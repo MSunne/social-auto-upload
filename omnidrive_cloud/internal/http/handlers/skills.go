@@ -26,33 +26,35 @@ type SkillHandler struct {
 }
 
 type createSkillRequest struct {
-	Name              string      `json:"name"`
-	Description       string      `json:"description"`
-	OutputType        string      `json:"outputType"`
-	ModelName         string      `json:"modelName"`
-	PromptTemplate    *string     `json:"promptTemplate"`
-	Topics            []string    `json:"topics"`
-	ReferencePayload  interface{} `json:"referencePayload"`
-	DeviceID          *string     `json:"deviceId"`
-	ExecutionTime     *string     `json:"executionTime"`
-	RepeatDaily       *bool       `json:"repeatDaily"`
-	StoryboardEnabled *bool       `json:"storyboardEnabled"`
-	IsEnabled         *bool       `json:"isEnabled"`
+	Name                string      `json:"name"`
+	Description         string      `json:"description"`
+	OutputType          string      `json:"outputType"`
+	ModelName           string      `json:"modelName"`
+	PromptTemplate      *string     `json:"promptTemplate"`
+	CoverPromptTemplate *string     `json:"coverPromptTemplate"`
+	Topics              []string    `json:"topics"`
+	ReferencePayload    interface{} `json:"referencePayload"`
+	DeviceID            *string     `json:"deviceId"`
+	ExecutionTime       *string     `json:"executionTime"`
+	RepeatDaily         *bool       `json:"repeatDaily"`
+	StoryboardEnabled   *bool       `json:"storyboardEnabled"`
+	IsEnabled           *bool       `json:"isEnabled"`
 }
 
 type updateSkillRequest struct {
-	Name              *string     `json:"name"`
-	Description       *string     `json:"description"`
-	OutputType        *string     `json:"outputType"`
-	ModelName         *string     `json:"modelName"`
-	PromptTemplate    *string     `json:"promptTemplate"`
-	Topics            []string    `json:"topics"`
-	ReferencePayload  interface{} `json:"referencePayload"`
-	DeviceID          *string     `json:"deviceId"`
-	ExecutionTime     *string     `json:"executionTime"`
-	RepeatDaily       *bool       `json:"repeatDaily"`
-	StoryboardEnabled *bool       `json:"storyboardEnabled"`
-	IsEnabled         *bool       `json:"isEnabled"`
+	Name                *string     `json:"name"`
+	Description         *string     `json:"description"`
+	OutputType          *string     `json:"outputType"`
+	ModelName           *string     `json:"modelName"`
+	PromptTemplate      *string     `json:"promptTemplate"`
+	CoverPromptTemplate *string     `json:"coverPromptTemplate"`
+	Topics              []string    `json:"topics"`
+	ReferencePayload    interface{} `json:"referencePayload"`
+	DeviceID            *string     `json:"deviceId"`
+	ExecutionTime       *string     `json:"executionTime"`
+	RepeatDaily         *bool       `json:"repeatDaily"`
+	StoryboardEnabled   *bool       `json:"storyboardEnabled"`
+	IsEnabled           *bool       `json:"isEnabled"`
 }
 
 type createSkillAssetRequest struct {
@@ -62,6 +64,10 @@ type createSkillAssetRequest struct {
 	StorageKey *string `json:"storageKey"`
 	PublicURL  *string `json:"publicUrl"`
 	SizeBytes  *int64  `json:"sizeBytes"`
+}
+
+type skillEditorDefaultsResponse struct {
+	CoverPromptTemplateDefault string `json:"coverPromptTemplateDefault"`
 }
 
 func NewSkillHandler(app *appstate.App) *SkillHandler {
@@ -159,6 +165,17 @@ func (h *SkillHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	render.JSON(w, http.StatusOK, items)
+}
+
+func (h *SkillHandler) EditorDefaults(w http.ResponseWriter, r *http.Request) {
+	settings, err := loadEffectiveAdminSystemSettings(r.Context(), h.app)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load skill defaults")
+		return
+	}
+	render.JSON(w, http.StatusOK, skillEditorDefaultsResponse{
+		CoverPromptTemplateDefault: strings.TrimSpace(settings.VideoCoverPrompt),
+	})
 }
 
 func (h *SkillHandler) Detail(w http.ResponseWriter, r *http.Request) {
@@ -376,21 +393,22 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	skill, err := h.app.Store.CreateSkill(r.Context(), store.CreateSkillInput{
-		ID:                uuid.NewString(),
-		OwnerUserID:       user.ID,
-		DeviceID:          deviceID,
-		Name:              payload.Name,
-		Description:       payload.Description,
-		OutputType:        payload.OutputType,
-		ModelName:         payload.ModelName,
-		PromptTemplate:    payload.PromptTemplate,
-		Topics:            payload.Topics,
-		ReferencePayload:  referenceBytes,
-		ExecutionTime:     nil,
-		RepeatDaily:       false,
-		StoryboardEnabled: storyboardEnabled,
-		NextRunAt:         nil,
-		IsEnabled:         isEnabled,
+		ID:                  uuid.NewString(),
+		OwnerUserID:         user.ID,
+		DeviceID:            deviceID,
+		Name:                payload.Name,
+		Description:         payload.Description,
+		OutputType:          payload.OutputType,
+		ModelName:           payload.ModelName,
+		PromptTemplate:      payload.PromptTemplate,
+		CoverPromptTemplate: stringPtr(normalizePatchedString(payload.CoverPromptTemplate)),
+		Topics:              payload.Topics,
+		ReferencePayload:    referenceBytes,
+		ExecutionTime:       nil,
+		RepeatDaily:         false,
+		StoryboardEnabled:   storyboardEnabled,
+		NextRunAt:           nil,
+		IsEnabled:           isEnabled,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to create skill")
@@ -411,10 +429,11 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Status:       "success",
 		Message:      auditStringPtr("产品技能已创建"),
 		Payload: mustJSONBytes(map[string]any{
-			"name":      skill.Name,
-			"modelName": skill.ModelName,
-			"deviceId":  skill.DeviceID,
-			"topics":    skill.Topics,
+			"name":                          skill.Name,
+			"modelName":                     skill.ModelName,
+			"deviceId":                      skill.DeviceID,
+			"topics":                        skill.Topics,
+			"coverPromptTemplateConfigured": skill.CoverPromptTemplate != nil,
 		}),
 	})
 
@@ -466,24 +485,25 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 	repeatDaily := false
 
 	skill, err := h.app.Store.UpdateSkill(r.Context(), skillID, user.ID, store.UpdateSkillInput{
-		Name:              payload.Name,
-		Description:       payload.Description,
-		OutputType:        payload.OutputType,
-		ModelName:         payload.ModelName,
-		PromptTemplate:    payload.PromptTemplate,
-		Topics:            payload.Topics,
-		TopicsTouched:     payload.Topics != nil,
-		ReferencePayload:  referenceBytes,
-		ReferenceTouched:  referenceTouched,
-		DeviceID:          deviceID,
-		DeviceTouched:     deviceTouched,
-		ExecutionTime:     nil,
-		ExecutionTouched:  true,
-		RepeatDaily:       &repeatDaily,
-		StoryboardEnabled: payload.StoryboardEnabled,
-		NextRunAt:         nil,
-		NextRunTouched:    true,
-		IsEnabled:         payload.IsEnabled,
+		Name:                payload.Name,
+		Description:         payload.Description,
+		OutputType:          payload.OutputType,
+		ModelName:           payload.ModelName,
+		PromptTemplate:      payload.PromptTemplate,
+		CoverPromptTemplate: stringPtr(normalizePatchedString(payload.CoverPromptTemplate)),
+		Topics:              payload.Topics,
+		TopicsTouched:       payload.Topics != nil,
+		ReferencePayload:    referenceBytes,
+		ReferenceTouched:    referenceTouched,
+		DeviceID:            deviceID,
+		DeviceTouched:       deviceTouched,
+		ExecutionTime:       nil,
+		ExecutionTouched:    true,
+		RepeatDaily:         &repeatDaily,
+		StoryboardEnabled:   payload.StoryboardEnabled,
+		NextRunAt:           nil,
+		NextRunTouched:      true,
+		IsEnabled:           payload.IsEnabled,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to update skill")
@@ -508,11 +528,12 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Status:       "success",
 		Message:      auditStringPtr("产品技能已更新"),
 		Payload: mustJSONBytes(map[string]any{
-			"name":              payload.Name,
-			"modelName":         payload.ModelName,
-			"topics":            payload.Topics,
-			"storyboardEnabled": payload.StoryboardEnabled,
-			"isEnabled":         payload.IsEnabled,
+			"name":                payload.Name,
+			"modelName":           payload.ModelName,
+			"topics":              payload.Topics,
+			"coverPromptTemplate": stringPtr(normalizePatchedString(payload.CoverPromptTemplate)),
+			"storyboardEnabled":   payload.StoryboardEnabled,
+			"isEnabled":           payload.IsEnabled,
 		}),
 	})
 

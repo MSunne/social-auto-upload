@@ -212,6 +212,8 @@ func (w *Worker) processJob(ctx context.Context, job domain.AIJob) {
 		return
 	}
 	w.app.Logger.Debug("ai worker claimed ai job", "job_id", claimed.ID, "job_type", claimed.JobType, "model_name", claimed.ModelName)
+	stopLeaseHeartbeat := w.startLeaseHeartbeat(ctx, claimed.ID, leaseToken)
+	defer stopLeaseHeartbeat()
 
 	if err := w.ensureExecutionBilling(ctx, claimed); err != nil {
 		var blockedErr *executionBillingBlockedError
@@ -290,7 +292,7 @@ func (w *Worker) processJob(ctx context.Context, job domain.AIJob) {
 	}
 
 	message := buildAIExecutionFailureMessage(claimed.JobType, execErr)
-	if shouldAutoRetryMediaFailure(claimed) {
+	if shouldAutoRetryMediaFailure(claimed, execErr) {
 		retryCount := mediaAutoRetryCountFromPayload(claimed.OutputPayload) + 1
 		retryMessage := buildMediaAutoRetryMessage(claimed.JobType, retryCount)
 		retryPayload := buildMediaAutoRetryPayload(claimed, message, retryCount)
@@ -753,6 +755,37 @@ func (w *Worker) renewLease(ctx context.Context, jobID string, leaseToken string
 	return *renewed.LeaseExpiresAt, nil
 }
 
+func (w *Worker) startLeaseHeartbeat(parent context.Context, jobID string, leaseToken string) func() {
+	heartbeatCtx, cancel := context.WithCancel(parent)
+	interval := store.AIJobLeaseTTL() / 3
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+				nextExpiry := time.Now().UTC().Add(store.AIJobLeaseTTL())
+				renewed, err := w.app.Store.RenewCloudAIJobLease(heartbeatCtx, jobID, leaseToken, nextExpiry)
+				if err != nil {
+					w.app.Logger.Warn("ai worker heartbeat failed to renew ai job lease", "job_id", jobID, "error", err)
+					continue
+				}
+				if renewed == nil {
+					return
+				}
+			}
+		}
+	}()
+
+	return cancel
+}
+
 func (w *Worker) syncRunningState(ctx context.Context, job *domain.AIJob, leaseToken string, message string, outputPayload []byte) (*domain.AIJob, error) {
 	return w.app.Store.SyncCloudAIJobExecution(ctx, job.ID, leaseToken, store.UpdateAIJobInput{
 		Message:       stringPtr(message),
@@ -838,7 +871,7 @@ func buildTemporaryVideoRequeueError(job *domain.AIJob, state videoExecutionStat
 	}
 }
 
-func shouldAutoRetryMediaFailure(job *domain.AIJob) bool {
+func shouldAutoRetryMediaFailure(job *domain.AIJob, err error) bool {
 	if job == nil {
 		return false
 	}
@@ -846,7 +879,17 @@ func shouldAutoRetryMediaFailure(job *domain.AIJob) bool {
 	if jobType != "image" && jobType != "video" {
 		return false
 	}
-	return mediaAutoRetryCountFromPayload(job.OutputPayload) < mediaFailureAutoRetryLimit
+	if mediaAutoRetryCountFromPayload(job.OutputPayload) >= mediaFailureAutoRetryLimit {
+		return false
+	}
+	switch jobType {
+	case "video":
+		return isTransientVideoProviderExecutionError(err)
+	case "image":
+		return isTransientImageProviderExecutionError(err)
+	default:
+		return false
+	}
 }
 
 func mediaAutoRetryCountFromPayload(raw []byte) int {
@@ -867,16 +910,20 @@ func buildMediaAutoRetryMessage(jobType string, retryCount int) string {
 }
 
 func buildMediaAutoRetryPayload(job *domain.AIJob, failureMessage string, retryCount int) []byte {
-	payload := map[string]any{
-		"provider": "apiyi",
-		"kind":     strings.TrimSpace(strings.ToLower(job.JobType)),
-		"model":    job.ModelName,
-		"execution": map[string]any{
-			"autoRetryCount":     retryCount,
-			"maxAutoRetry":       mediaFailureAutoRetryLimit,
-			"lastFailureAt":      time.Now().UTC().Format(time.RFC3339),
-			"lastFailureMessage": strings.TrimSpace(failureMessage),
-		},
+	payload := decodePayloadMap(job.OutputPayload)
+	delete(payload, "video")
+	delete(payload, "contentUrl")
+	delete(payload, "progressPercent")
+	delete(payload, "failureCode")
+	delete(payload, "artifacts")
+	payload["provider"] = "apiyi"
+	payload["kind"] = strings.TrimSpace(strings.ToLower(job.JobType))
+	payload["model"] = job.ModelName
+	payload["execution"] = map[string]any{
+		"autoRetryCount":     retryCount,
+		"maxAutoRetry":       mediaFailureAutoRetryLimit,
+		"lastFailureAt":      time.Now().UTC().Format(time.RFC3339),
+		"lastFailureMessage": strings.TrimSpace(failureMessage),
 	}
 	return mustJSON(payload)
 }
@@ -917,6 +964,66 @@ func isTransientVideoProviderExecutionError(err error) bool {
 	}
 	for _, marker := range transientMarkers {
 		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func isTransientImageProviderExecutionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isRetryableProviderError(err) {
+		return true
+	}
+	message := strings.ToLower(errorString(err))
+	if message == "" {
+		return false
+	}
+	if containsPermanentMediaFailureMarker(message) {
+		return false
+	}
+	transientMarkers := []string{
+		"provider request failed with status 429",
+		"provider request failed with status 500",
+		"provider request failed with status 502",
+		"provider request failed with status 503",
+		"provider request failed with status 504",
+		"timeout",
+		"temporary",
+	}
+	for _, marker := range transientMarkers {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsPermanentMediaFailureMarker(message string) bool {
+	lower := strings.ToLower(strings.TrimSpace(message))
+	if lower == "" {
+		return false
+	}
+	permanentMarkers := []string{
+		"provider request failed with status 400",
+		"provider request failed with status 401",
+		"provider request failed with status 403",
+		"provider request failed with status 404",
+		"provider request failed with status 422",
+		"违反平台政策",
+		"内容政策",
+		"policy violation",
+		"content policy",
+		"moderation",
+		"unsafe",
+		"forbidden",
+		"not allowed",
+		"rejected",
+	}
+	for _, marker := range permanentMarkers {
+		if strings.Contains(lower, strings.ToLower(marker)) {
 			return true
 		}
 	}
@@ -1151,6 +1258,7 @@ type videoExecutionState struct {
 }
 
 func buildVideoOutputPayload(job *domain.AIJob, state videoExecutionState, artifacts []domain.AIJobArtifact) []byte {
+	payload := decodePayloadMap(job.OutputPayload)
 	videoPayload := map[string]any{
 		"baseUrl":     state.BaseURL,
 		"id":          state.RemoteVideoID,
@@ -1161,14 +1269,12 @@ func buildVideoOutputPayload(job *domain.AIJob, state videoExecutionState, artif
 		"submittedAt": state.SubmittedAt.Format(time.RFC3339),
 		"updatedAt":   state.UpdatedAt.Format(time.RFC3339),
 	}
-	payload := map[string]any{
-		"provider":  "apiyi",
-		"kind":      "video",
-		"model":     job.ModelName,
-		"baseUrl":   state.BaseURL,
-		"video":     videoPayload,
-		"artifacts": summarizeArtifacts(artifacts),
-	}
+	payload["provider"] = "apiyi"
+	payload["kind"] = "video"
+	payload["model"] = job.ModelName
+	payload["baseUrl"] = state.BaseURL
+	payload["video"] = videoPayload
+	payload["artifacts"] = summarizeArtifacts(artifacts)
 	if len(state.ReferenceFrames) > 0 {
 		videoPayload["referenceFrames"] = state.ReferenceFrames
 		payload["videoReferenceFrames"] = state.ReferenceFrames
@@ -1308,10 +1414,11 @@ func (w *Worker) prepareSkillVideoReferenceFrames(ctx context.Context, job *doma
 
 	sourceReferenceImages := collectSkillVideoSourceImages(payload)
 	referenceTexts := normalizeStoryboardTexts(payload["referenceTexts"])
-	frameModelName := strings.TrimSpace(w.app.Config.DefaultImageModel)
-	if frameModelName == "" {
-		frameModelName = "gemini-3-pro-image-preview"
+	coverPromptTemplate, err := w.resolveSkillVideoCoverPromptTemplate(ctx, job)
+	if err != nil {
+		return err
 	}
+	frameModelName := "gemini-3-pro-image-preview"
 	imageBaseURL, imageAPIKey, err := w.resolveModelRuntimeConfig(ctx, frameModelName)
 	if err != nil {
 		return err
@@ -1325,7 +1432,7 @@ func (w *Worker) prepareSkillVideoReferenceFrames(ctx context.Context, job *doma
 	inputs := make([]store.UpsertAIJobArtifactInput, 0, len(roles))
 	frameMetadata := make([]map[string]any, 0, len(roles))
 	for _, role := range roles {
-		prompt := buildSkillVideoFramePrompt(job, payload, req.Prompt, referenceTexts, role, len(sourceReferenceImages))
+		prompt := buildSkillVideoFramePrompt(coverPromptTemplate, job, payload, req.Prompt, referenceTexts, role, len(sourceReferenceImages))
 		result, err := w.provider.GenerateImage(ctx, ImageRequest{
 			Model:           frameModelName,
 			BaseURL:         imageBaseURL,
@@ -1443,7 +1550,40 @@ func buildStoryboardPrompt(job *domain.AIJob, originalPrompt string, payload map
 	return builder.String()
 }
 
-func buildSkillVideoFramePrompt(job *domain.AIJob, payload map[string]any, optimizedVideoPrompt string, referenceTexts []map[string]string, role string, sourceImageCount int) string {
+func (w *Worker) resolveSkillVideoCoverPromptTemplate(ctx context.Context, job *domain.AIJob) (string, error) {
+	defaultPrompt := strings.TrimSpace(DefaultSkillVideoCoverPromptTemplate)
+	if job == nil {
+		return defaultPrompt, nil
+	}
+
+	if job.SkillID != nil {
+		skillID := strings.TrimSpace(*job.SkillID)
+		if skillID != "" {
+			skill, err := w.app.Store.GetOwnedSkillByID(ctx, skillID, job.OwnerUserID)
+			if err != nil {
+				return "", err
+			}
+			if skill != nil && skill.CoverPromptTemplate != nil {
+				if value := strings.TrimSpace(*skill.CoverPromptTemplate); value != "" {
+					return value, nil
+				}
+			}
+		}
+	}
+
+	settings, err := w.app.Store.GetAdminSystemSettings(ctx)
+	if err != nil {
+		return "", err
+	}
+	if settings != nil {
+		if value := strings.TrimSpace(settings.VideoCoverPrompt); value != "" {
+			return value, nil
+		}
+	}
+	return defaultPrompt, nil
+}
+
+func buildSkillVideoFramePrompt(coverPromptTemplate string, job *domain.AIJob, payload map[string]any, optimizedVideoPrompt string, referenceTexts []map[string]string, role string, sourceImageCount int) string {
 	var builder strings.Builder
 	role = strings.TrimSpace(strings.ToLower(role))
 	frameName := "首帧"
@@ -1453,20 +1593,11 @@ func buildSkillVideoFramePrompt(job *domain.AIJob, payload map[string]any, optim
 
 	builder.WriteString("请为一个即将生成的营销短视频设计")
 	builder.WriteString(frameName)
-	builder.WriteString("关键帧图片，后续会把这张图继续交给视频模型作为参考。\n")
-	builder.WriteString("硬性要求:\n")
-	builder.WriteString("1. 主体必须是客户的主要产品，不能替换产品、不能偏离产品特性、卖点、材质、包装、颜色和使用场景。\n")
-	builder.WriteString("2. 不要直接复用客户当前固定首帧或固定构图；要在保留产品识别度的前提下，重新设计镜头、景别、布光、背景、陈列关系和视觉焦点。\n")
-	builder.WriteString("3. 画面必须适合短视频")
-	builder.WriteString(frameName)
-	builder.WriteString("，有明确主体、强点击感和可延展的运动空间。\n")
-	builder.WriteString("4. 不要生成拼贴、多宫格、边框、水印、二维码，也不要把产品做成无关的抽象物。\n")
-	if role == "last" {
-		builder.WriteString("5. 尾帧要和首帧保持同一产品与风格体系，但更偏收束和成交氛围，不要做纯字幕尾卡。\n")
-	} else {
-		builder.WriteString("5. 首帧需要更强的吸引力和开场张力，但不能靠夸张到脱离产品真实信息。\n")
-	}
-	builder.WriteString("\n任务信息:\n")
+	builder.WriteString("封面参考图，后续会把这张图继续交给视频模型作为参考。\n")
+	builder.WriteString("请严格执行下面这段封面提示词，并结合客户的原始图片和参考资料完成设计。\n\n")
+	builder.WriteString("封面提示词:\n")
+	builder.WriteString(strings.TrimSpace(coverPromptTemplate))
+	builder.WriteString("\n\n补充上下文:\n")
 	builder.WriteString("任务类型: video\n")
 	builder.WriteString("来源: 技能中心视文模式\n")
 	if name := strings.TrimSpace(stringValueFromMap(payload, "skillName")); name != "" {
@@ -1497,7 +1628,12 @@ func buildSkillVideoFramePrompt(job *domain.AIJob, payload map[string]any, optim
 			builder.WriteString("\n")
 		}
 	}
-	builder.WriteString("\n输出要求: 直接输出一张可用于视频参考的高质量画面，不要返回解释文字。")
+	if role == "last" {
+		builder.WriteString("\n当前目标: 生成尾帧。要求和首帧保持同一产品与风格体系，但更偏收束、成交或记忆点，不做纯字幕尾卡。\n")
+	} else {
+		builder.WriteString("\n当前目标: 生成首帧。要求具备开场吸引力、清晰主体和可延展的运动空间。\n")
+	}
+	builder.WriteString("输出要求: 直接输出一张可用于视频参考的高质量画面，不要返回解释文字。")
 	return builder.String()
 }
 

@@ -221,21 +221,22 @@ func (h *AccountHandler) CreateSkillRun(w http.ResponseWriter, r *http.Request) 
 				render.Error(w, http.StatusBadRequest, normalizeErr.Error())
 				return
 			}
-			scheduleKey := strings.TrimSpace(stringValue(slot.ScheduleKey))
-			if scheduleKey == "" {
-				scheduleKey = uuid.NewString()
-			}
-			slots = append(slots, workflow.AccountSkillScheduleConfig{
-				ScheduleKey:           scheduleKey,
+			scheduleConfig := workflow.AccountSkillScheduleConfig{
+				ScheduleKey:           strings.TrimSpace(stringValue(slot.ScheduleKey)),
 				TimeOfDay:             normalizedTimeOfDay,
 				RepeatDaily:           slot.RepeatDaily,
 				Timezone:              time.Now().Location().String(),
 				GenerationLeadMinutes: workflow.NormalizeAccountSkillGenerationLeadMinutes(slot.GenerationLeadMinutes),
-			})
+			}
+			if scheduleConfig.ScheduleKey == "" {
+				scheduleConfig.ScheduleKey = workflow.BuildDefaultAccountSkillScheduleKey(skill.ID, account.ID, scheduleConfig)
+			}
+			slots = append(slots, scheduleConfig)
 		}
 	}
 
 	createdJobs := make([]domain.AIJob, 0, len(slots)+1)
+	createdCount := 0
 	if len(slots) == 0 {
 		if payload.PublishAt == nil || strings.TrimSpace(*payload.PublishAt) == "" {
 			render.Error(w, http.StatusBadRequest, "scheduleSlots is required")
@@ -273,53 +274,79 @@ func (h *AccountHandler) CreateSkillRun(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 		}
-		job, createErr := h.app.Store.CreateAIJob(r.Context(), store.CreateAIJobInput{
-			ID:           jobID,
-			OwnerUserID:  user.ID,
-			DeviceID:     &account.DeviceID,
-			SkillID:      &skill.ID,
-			Source:       "account_skill_binding",
-			LocalTaskID:  nil,
-			JobType:      prepared.JobType,
-			ModelName:    prepared.ModelName,
-			Prompt:       stringPtr(prepared.Prompt),
-			InputPayload: prepared.InputPayload,
-			Status:       prepared.Status,
-			Message:      stringPtr(prepared.Message),
-			RunAt:        &prepared.GenerateAt,
-		})
-		if createErr != nil {
+		var job *domain.AIJob
+		lockKey := buildAccountSkillRunLockKey(user.ID, account.ID, skill.ID, prepared.GenerateAt, "")
+		if err := h.app.Store.WithAdvisoryLock(r.Context(), lockKey, func() error {
+			existing, err := h.app.Store.FindActiveAccountSkillJobByRun(r.Context(), user.ID, skill.ID, account.DeviceID, account.ID, prepared.GenerateAt)
+			if err != nil {
+				return err
+			}
+			if existing != nil {
+				job = existing
+				return nil
+			}
+
+			created, createErr := h.app.Store.CreateAIJob(r.Context(), store.CreateAIJobInput{
+				ID:           jobID,
+				OwnerUserID:  user.ID,
+				DeviceID:     &account.DeviceID,
+				SkillID:      &skill.ID,
+				Source:       "account_skill_binding",
+				LocalTaskID:  nil,
+				JobType:      prepared.JobType,
+				ModelName:    prepared.ModelName,
+				Prompt:       stringPtr(prepared.Prompt),
+				InputPayload: prepared.InputPayload,
+				Status:       prepared.Status,
+				Message:      stringPtr(prepared.Message),
+				RunAt:        &prepared.GenerateAt,
+			})
+			if createErr != nil {
+				return createErr
+			}
+			job = created
+			createdCount++
+			return nil
+		}); err != nil {
 			render.Error(w, http.StatusInternalServerError, "Failed to create account skill run")
 			return
 		}
-		recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
-			OwnerUserID:  user.ID,
-			ResourceType: "ai_job",
-			ResourceID:   &job.ID,
-			Action:       "create",
-			Title:        "账号绑定技能任务",
-			Source:       account.Platform,
-			Status:       job.Status,
-			Message:      auditStringPtr("已为账号创建专属技能生成任务"),
-			Payload: mustJSONBytes(map[string]any{
-				"accountId":   account.ID,
-				"accountName": account.AccountName,
-				"deviceId":    account.DeviceID,
-				"skillId":     skill.ID,
-				"publishAt":   prepared.PublishAt,
-				"generateAt":  prepared.GenerateAt,
-				"jobType":     prepared.JobType,
-				"source":      job.Source,
-			}),
-		})
+		if createdCount == 1 {
+			recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+				OwnerUserID:  user.ID,
+				ResourceType: "ai_job",
+				ResourceID:   &job.ID,
+				Action:       "create",
+				Title:        "账号绑定技能任务",
+				Source:       account.Platform,
+				Status:       job.Status,
+				Message:      auditStringPtr("已为账号创建专属技能生成任务"),
+				Payload: mustJSONBytes(map[string]any{
+					"accountId":   account.ID,
+					"accountName": account.AccountName,
+					"deviceId":    account.DeviceID,
+					"skillId":     skill.ID,
+					"publishAt":   prepared.PublishAt,
+					"generateAt":  prepared.GenerateAt,
+					"jobType":     prepared.JobType,
+					"source":      job.Source,
+				}),
+			})
+		}
 		createdJobs = append(createdJobs, *job)
-		render.JSON(w, http.StatusCreated, createdJobs)
+		statusCode := http.StatusOK
+		if createdCount == 1 {
+			statusCode = http.StatusCreated
+		}
+		render.JSON(w, statusCode, createdJobs)
 		return
 	}
 
 	type pendingAccountSkillJob struct {
 		input        store.CreateAIJobInput
 		auditPayload []byte
+		scheduleKey  string
+		generateAt   time.Time
 	}
 	pendingJobs := make([]pendingAccountSkillJob, 0, len(slots))
 
@@ -372,6 +399,8 @@ func (h *AccountHandler) CreateSkillRun(w http.ResponseWriter, r *http.Request) 
 				Message:      stringPtr(prepared.Message),
 				RunAt:        &prepared.GenerateAt,
 			},
+			scheduleKey: slot.ScheduleKey,
+			generateAt:  prepared.GenerateAt,
 			auditPayload: mustJSONBytes(map[string]any{
 				"accountId":             account.ID,
 				"accountName":           account.AccountName,
@@ -391,26 +420,67 @@ func (h *AccountHandler) CreateSkillRun(w http.ResponseWriter, r *http.Request) 
 	}
 
 	for _, pending := range pendingJobs {
-		job, createErr := h.app.Store.CreateAIJob(r.Context(), pending.input)
-		if createErr != nil {
+		var job *domain.AIJob
+		lockKey := buildAccountSkillRunLockKey(user.ID, account.ID, skill.ID, pending.generateAt, pending.scheduleKey)
+		jobCreated := false
+		if err := h.app.Store.WithAdvisoryLock(r.Context(), lockKey, func() error {
+			var (
+				existing *domain.AIJob
+				err      error
+			)
+			if strings.TrimSpace(pending.scheduleKey) != "" {
+				existing, err = h.app.Store.FindActiveAccountSkillJobByScheduleKey(r.Context(), user.ID, pending.scheduleKey)
+			} else {
+				existing, err = h.app.Store.FindActiveAccountSkillJobByRun(r.Context(), user.ID, skill.ID, account.DeviceID, account.ID, pending.generateAt)
+			}
+			if err != nil {
+				return err
+			}
+			if existing != nil {
+				job = existing
+				return nil
+			}
+
+			created, createErr := h.app.Store.CreateAIJob(r.Context(), pending.input)
+			if createErr != nil {
+				return createErr
+			}
+			job = created
+			jobCreated = true
+			return nil
+		}); err != nil {
 			render.Error(w, http.StatusInternalServerError, "Failed to create account skill run")
 			return
 		}
-		recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
-			OwnerUserID:  user.ID,
-			ResourceType: "ai_job",
-			ResourceID:   &job.ID,
-			Action:       "create",
-			Title:        "账号绑定技能任务",
-			Source:       account.Platform,
-			Status:       job.Status,
-			Message:      auditStringPtr("已为账号创建专属技能生成任务"),
-			Payload:      pending.auditPayload,
-		})
+		if jobCreated {
+			createdCount++
+			recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+				OwnerUserID:  user.ID,
+				ResourceType: "ai_job",
+				ResourceID:   &job.ID,
+				Action:       "create",
+				Title:        "账号绑定技能任务",
+				Source:       account.Platform,
+				Status:       job.Status,
+				Message:      auditStringPtr("已为账号创建专属技能生成任务"),
+				Payload:      pending.auditPayload,
+			})
+		}
 		createdJobs = append(createdJobs, *job)
 	}
 
-	render.JSON(w, http.StatusCreated, createdJobs)
+	statusCode := http.StatusOK
+	if createdCount == len(createdJobs) {
+		statusCode = http.StatusCreated
+	}
+	render.JSON(w, statusCode, createdJobs)
+}
+
+func buildAccountSkillRunLockKey(ownerUserID string, accountID string, skillID string, generateAt time.Time, scheduleKey string) string {
+	if strings.TrimSpace(scheduleKey) != "" {
+		return "account-skill-schedule:" + strings.TrimSpace(ownerUserID) + ":" + strings.TrimSpace(scheduleKey)
+	}
+	return "account-skill-run:" + strings.TrimSpace(ownerUserID) + ":" + strings.TrimSpace(accountID) + ":" + strings.TrimSpace(skillID) + ":" + generateAt.UTC().Format(time.RFC3339)
 }
 
 func (h *AccountHandler) DeleteSkillRun(w http.ResponseWriter, r *http.Request) {

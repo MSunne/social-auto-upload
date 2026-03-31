@@ -39,6 +39,14 @@ type walletLedgerRefundRecord struct {
 	Description      *string
 }
 
+type walletLotConsumptionRefundRecord struct {
+	ID             string
+	WalletLotID    *string
+	DebitedCredits int64
+	MeterCode      *string
+	Metadata       []byte
+}
+
 type quotaLedgerRefundRecord struct {
 	ID             string
 	QuotaAccountID *string
@@ -123,6 +131,7 @@ func (s *Store) returnUsageCreditsForFailedSourceTx(ctx context.Context, tx pgx.
 		returnMessage = "任务失败，已自动返还积分"
 	}
 
+	events := make([]billedUsageEventRecord, 0)
 	for rows.Next() {
 		var event billedUsageEventRecord
 		if scanErr := rows.Scan(
@@ -139,7 +148,13 @@ func (s *Store) returnUsageCreditsForFailedSourceTx(ctx context.Context, tx pgx.
 		); scanErr != nil {
 			return scanErr
 		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
 
+	for _, event := range events {
 		payload := decodeUsageEventPayload(event.Payload)
 		if !usagePayloadBool(payload, "supportsFailureRefund") {
 			continue
@@ -171,12 +186,12 @@ func (s *Store) returnUsageCreditsForFailedSourceTx(ctx context.Context, tx pgx.
 			    payload = $3,
 			    updated_at = NOW()
 			WHERE id = $1
-			`, event.ID, returnMessage, mustJSONMap(payload)); err != nil {
+				`, event.ID, returnMessage, mustJSONMap(payload)); err != nil {
 			return err
 		}
 	}
 
-	return rows.Err()
+	return nil
 }
 
 func (s *Store) refundUsageEventTx(
@@ -464,16 +479,20 @@ func (s *Store) reverseWalletLotConsumptionsTx(
 	}
 	defer rows.Close()
 
+	consumptions := make([]walletLotConsumptionRefundRecord, 0)
 	for rows.Next() {
-		var consumptionID string
-		var walletLotID *string
-		var debitedCredits int64
-		var meterCode *string
-		var metadata []byte
-		if scanErr := rows.Scan(&consumptionID, &walletLotID, &debitedCredits, &meterCode, &metadata); scanErr != nil {
+		var item walletLotConsumptionRefundRecord
+		if scanErr := rows.Scan(&item.ID, &item.WalletLotID, &item.DebitedCredits, &item.MeterCode, &item.Metadata); scanErr != nil {
 			return scanErr
 		}
-		if walletLotID == nil || strings.TrimSpace(*walletLotID) == "" || debitedCredits <= 0 {
+		consumptions = append(consumptions, item)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, item := range consumptions {
+		if item.WalletLotID == nil || strings.TrimSpace(*item.WalletLotID) == "" || item.DebitedCredits <= 0 {
 			continue
 		}
 
@@ -484,13 +503,13 @@ func (s *Store) reverseWalletLotConsumptionsTx(
 			    status = 'active',
 			    updated_at = NOW()
 			WHERE id = $1
-		`, strings.TrimSpace(*walletLotID), debitedCredits); err != nil {
+		`, strings.TrimSpace(*item.WalletLotID), item.DebitedCredits); err != nil {
 			return err
 		}
 
-		reversalMetadata := decodeUsageEventPayload(metadata)
+		reversalMetadata := decodeUsageEventPayload(item.Metadata)
 		reversalMetadata["eventKind"] = "usage_return"
-		reversalMetadata["returnOfConsumptionId"] = consumptionID
+		reversalMetadata["returnOfConsumptionId"] = item.ID
 		reversalMetadata["returnOfUsageEventId"] = event.ID
 		reversalMetadata["failureReason"] = failureMessage
 		if _, err := tx.Exec(ctx, `
@@ -498,12 +517,12 @@ func (s *Store) reverseWalletLotConsumptionsTx(
 					id, wallet_lot_id, user_id, source_type, source_id, meter_code, debited_credits, wallet_ledger_id, metadata
 				)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-			`, uuid.NewString(), strings.TrimSpace(*walletLotID), event.UserID, event.SourceType, event.SourceID, meterCode, -debitedCredits, nullableString(strings.TrimSpace(returnWalletLedgerID)), mustJSONMap(reversalMetadata)); err != nil {
+			`, uuid.NewString(), strings.TrimSpace(*item.WalletLotID), event.UserID, event.SourceType, event.SourceID, item.MeterCode, -item.DebitedCredits, nullableString(strings.TrimSpace(returnWalletLedgerID)), mustJSONMap(reversalMetadata)); err != nil {
 			return err
 		}
 	}
 
-	return rows.Err()
+	return nil
 }
 
 func (s *Store) reverseDistributionReleaseEventsByWalletLedgerTx(
@@ -543,18 +562,26 @@ func (s *Store) reverseDistributionReleaseEventsByWalletLedgerTx(
 	}
 	defer rows.Close()
 
-	ids := make([]string, 0)
+	releaseEvents := make([]distributionReleaseEventRecord, 0)
 	for rows.Next() {
 		releaseEvent, scanErr := scanDistributionReleaseEventRecord(rows.Scan)
 		if scanErr != nil {
 			return nil, scanErr
 		}
-		if err := s.reverseDistributionReleaseEventTx(ctx, tx, *releaseEvent, stringPtr(strings.TrimSpace(returnWalletLedgerID)), nil, sourceSnapshot, failureMessage, event.ID); err != nil {
+		releaseEvents = append(releaseEvents, *releaseEvent)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, 0, len(releaseEvents))
+	for _, releaseEvent := range releaseEvents {
+		if err := s.reverseDistributionReleaseEventTx(ctx, tx, releaseEvent, stringPtr(strings.TrimSpace(returnWalletLedgerID)), nil, sourceSnapshot, failureMessage, event.ID); err != nil {
 			return nil, err
 		}
 		ids = append(ids, releaseEvent.ID)
 	}
-	return ids, rows.Err()
+	return ids, nil
 }
 
 func (s *Store) reverseDistributionReleaseEventsByQuotaLedgerTx(
@@ -594,18 +621,26 @@ func (s *Store) reverseDistributionReleaseEventsByQuotaLedgerTx(
 	}
 	defer rows.Close()
 
-	ids := make([]string, 0)
+	releaseEvents := make([]distributionReleaseEventRecord, 0)
 	for rows.Next() {
 		releaseEvent, scanErr := scanDistributionReleaseEventRecord(rows.Scan)
 		if scanErr != nil {
 			return nil, scanErr
 		}
-		if err := s.reverseDistributionReleaseEventTx(ctx, tx, *releaseEvent, stringPtr(strings.TrimSpace(returnWalletLedgerID)), nil, sourceSnapshot, failureMessage, event.ID); err != nil {
+		releaseEvents = append(releaseEvents, *releaseEvent)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, 0, len(releaseEvents))
+	for _, releaseEvent := range releaseEvents {
+		if err := s.reverseDistributionReleaseEventTx(ctx, tx, releaseEvent, stringPtr(strings.TrimSpace(returnWalletLedgerID)), nil, sourceSnapshot, failureMessage, event.ID); err != nil {
 			return nil, err
 		}
 		ids = append(ids, releaseEvent.ID)
 	}
-	return ids, rows.Err()
+	return ids, nil
 }
 
 func (s *Store) reverseDistributionReleaseEventTx(

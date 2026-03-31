@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"omnidrive_cloud/internal/ai"
 	appstate "omnidrive_cloud/internal/app"
 	"omnidrive_cloud/internal/config"
 	"omnidrive_cloud/internal/domain"
@@ -29,6 +30,7 @@ type adminSystemConfigPatchRequest struct {
 	DefaultChatModel          *string                           `json:"defaultChatModel"`
 	DefaultImageModel         *string                           `json:"defaultImageModel"`
 	DefaultVideoModel         *string                           `json:"defaultVideoModel"`
+	VideoCoverPrompt          *string                           `json:"videoCoverPrompt"`
 	StoryboardPrompt          *string                           `json:"storyboardPrompt"`
 	StoryboardModel           *string                           `json:"storyboardModel"`
 	StoryboardReferences      []map[string]any                  `json:"storyboardReferences"`
@@ -69,6 +71,7 @@ type effectiveAdminSystemSettings struct {
 	DefaultChatModel          string
 	DefaultImageModel         string
 	DefaultVideoModel         string
+	VideoCoverPrompt          string
 	StoryboardPrompt          string
 	StoryboardModel           string
 	StoryboardReferences      json.RawMessage
@@ -102,6 +105,7 @@ func defaultAdminSystemSettings(cfg config.Config) effectiveAdminSystemSettings 
 		DefaultChatModel:          strings.TrimSpace(cfg.DefaultChatModel),
 		DefaultImageModel:         strings.TrimSpace(cfg.DefaultImageModel),
 		DefaultVideoModel:         strings.TrimSpace(cfg.DefaultVideoModel),
+		VideoCoverPrompt:          strings.TrimSpace(ai.DefaultSkillVideoCoverPromptTemplate),
 		StoryboardPrompt:          "",
 		StoryboardModel:           strings.TrimSpace(cfg.DefaultChatModel),
 		StoryboardReferences:      []byte("[]"),
@@ -193,6 +197,9 @@ func loadEffectiveAdminSystemSettings(ctx context.Context, app *appstate.App) (e
 	settings.DefaultChatModel = strings.TrimSpace(record.DefaultChatModel)
 	settings.DefaultImageModel = strings.TrimSpace(record.DefaultImageModel)
 	settings.DefaultVideoModel = strings.TrimSpace(record.DefaultVideoModel)
+	if value := strings.TrimSpace(record.VideoCoverPrompt); value != "" {
+		settings.VideoCoverPrompt = value
+	}
 	settings.StoryboardPrompt = strings.TrimSpace(record.StoryboardPrompt)
 	settings.StoryboardModel = strings.TrimSpace(record.StoryboardModel)
 	settings.StoryboardReferences = append([]byte(nil), record.StoryboardReferences...)
@@ -234,6 +241,7 @@ func buildAdminSystemConfigPayload(app *appstate.App, settings effectiveAdminSys
 		DefaultChatModel:          settings.DefaultChatModel,
 		DefaultImageModel:         settings.DefaultImageModel,
 		DefaultVideoModel:         settings.DefaultVideoModel,
+		VideoCoverPrompt:          settings.VideoCoverPrompt,
 		StoryboardPrompt:          settings.StoryboardPrompt,
 		StoryboardModel:           settings.StoryboardModel,
 		StoryboardReferences:      settings.StoryboardReferences,
@@ -559,6 +567,12 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 	if nestedFieldTouched(raw, "defaultVideoModel") {
 		settings.DefaultVideoModel = normalizePatchedString(payload.DefaultVideoModel)
 	}
+	if nestedFieldTouched(raw, "videoCoverPrompt") {
+		settings.VideoCoverPrompt = normalizePatchedString(payload.VideoCoverPrompt)
+		if settings.VideoCoverPrompt == "" {
+			settings.VideoCoverPrompt = strings.TrimSpace(ai.DefaultSkillVideoCoverPromptTemplate)
+		}
+	}
 	if nestedFieldTouched(raw, "storyboardPrompt") {
 		settings.StoryboardPrompt = normalizePatchedString(payload.StoryboardPrompt)
 	}
@@ -699,6 +713,7 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 		DefaultChatModel:                  settings.DefaultChatModel,
 		DefaultImageModel:                 settings.DefaultImageModel,
 		DefaultVideoModel:                 settings.DefaultVideoModel,
+		VideoCoverPrompt:                  settings.VideoCoverPrompt,
 		StoryboardPrompt:                  settings.StoryboardPrompt,
 		StoryboardModel:                   settings.StoryboardModel,
 		StoryboardReferences:              settings.StoryboardReferences,
@@ -747,6 +762,7 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 			"defaultChatModel":          settings.DefaultChatModel,
 			"defaultImageModel":         settings.DefaultImageModel,
 			"defaultVideoModel":         settings.DefaultVideoModel,
+			"videoCoverPrompt":          settings.VideoCoverPrompt,
 			"storyboardPrompt":          settings.StoryboardPrompt,
 			"storyboardModel":           settings.StoryboardModel,
 			"storyboardReferences":      json.RawMessage(settings.StoryboardReferences),

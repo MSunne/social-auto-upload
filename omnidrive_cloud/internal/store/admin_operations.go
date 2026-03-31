@@ -73,7 +73,7 @@ func decodeAdminStringList(raw []byte) []string {
 }
 
 const adminDeviceActivationSelectColumns = `
-	dac.id, dac.device_id, dac.order_no, dac.activation_code_hint, dac.status,
+	dac.id, dac.device_id, dac.order_no, dac.activation_code_value, dac.activation_code_hint, dac.status,
 	dac.activated_by_user_id, dac.activated_at, dac.notes, dac.created_at, dac.updated_at
 `
 
@@ -136,6 +136,7 @@ func scanAdminDeviceRow(scan scanFn) (*domain.AdminDeviceRow, error) {
 	var activationID *string
 	var activationDeviceID *string
 	var activationOrderNo *string
+	var activationCodeValue *string
 	var activationCodeHint *string
 	var activationStatus *string
 	var activationActivatedByUserID *string
@@ -181,6 +182,7 @@ func scanAdminDeviceRow(scan scanFn) (*domain.AdminDeviceRow, error) {
 		&activationID,
 		&activationDeviceID,
 		&activationOrderNo,
+		&activationCodeValue,
 		&activationCodeHint,
 		&activationStatus,
 		&activationActivatedByUserID,
@@ -219,6 +221,7 @@ func scanAdminDeviceRow(scan scanFn) (*domain.AdminDeviceRow, error) {
 			ID:                 strings.TrimSpace(*activationID),
 			DeviceID:           strings.TrimSpace(*activationDeviceID),
 			OrderNo:            activationOrderNo,
+			ActivationCode:     activationCodeValue,
 			ActivationCodeHint: activationCodeHint,
 			Status:             strings.TrimSpace(*activationStatus),
 			ActivatedByUserID:  activationActivatedByUserID,
@@ -320,6 +323,7 @@ func scanAdminPublishTaskRow(scan scanFn) (*domain.AdminPublishTaskRow, error) {
 	var skillName *string
 	var skillOutputType *string
 	var skillModelName *string
+	var skillModelAlias *string
 	var skillIsEnabled *bool
 
 	if err := scan(
@@ -364,6 +368,7 @@ func scanAdminPublishTaskRow(scan scanFn) (*domain.AdminPublishTaskRow, error) {
 		&skillName,
 		&skillOutputType,
 		&skillModelName,
+		&skillModelAlias,
 		&skillIsEnabled,
 		&item.EventCount,
 		&item.ArtifactCount,
@@ -428,6 +433,7 @@ func scanAdminPublishTaskRow(scan scanFn) (*domain.AdminPublishTaskRow, error) {
 			Name:       stringOrEmpty(skillName),
 			OutputType: stringOrEmpty(skillOutputType),
 			ModelName:  stringOrEmpty(skillModelName),
+			ModelAlias: stringOrEmpty(skillModelAlias),
 			IsEnabled:  skillIsEnabled != nil && *skillIsEnabled,
 		}
 	}
@@ -467,6 +473,7 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 	var skillName *string
 	var skillOutputType *string
 	var skillModelName *string
+	var skillModelAlias *string
 	var skillIsEnabled *bool
 	var modelID *string
 	var modelVendor *string
@@ -516,6 +523,7 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 		&skillName,
 		&skillOutputType,
 		&skillModelName,
+		&skillModelAlias,
 		&skillIsEnabled,
 		&modelID,
 		&modelVendor,
@@ -579,6 +587,7 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 			Name:       stringOrEmpty(skillName),
 			OutputType: stringOrEmpty(skillOutputType),
 			ModelName:  stringOrEmpty(skillModelName),
+			ModelAlias: stringOrEmpty(skillModelAlias),
 			IsEnabled:  skillIsEnabled != nil && *skillIsEnabled,
 		}
 	}
@@ -884,7 +893,9 @@ func (s *Store) ListAdminTasks(ctx context.Context, filter AdminTaskListFilter) 
 			u.id, u.email, u.name,
 			d.id, d.device_code, d.name, d.is_enabled, d.last_seen_at,
 			pa.id, pa.status, pa.last_message, pa.last_authenticated_at,
-			ps.id, ps.name, ps.output_type, ps.model_name, ps.is_enabled,
+			ps.id, ps.name, ps.output_type, ps.model_name,
+			COALESCE((SELECT am.model_alias FROM ai_models am WHERE am.model_name = ps.model_name LIMIT 1), ps.model_name),
+			ps.is_enabled,
 			COALESCE((SELECT COUNT(*) FROM publish_task_events e WHERE e.task_id = pt.id), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM publish_task_artifacts a WHERE a.task_id = pt.id), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM publish_task_material_refs m WHERE m.task_id = pt.id), 0)::BIGINT
@@ -919,7 +930,9 @@ func (s *Store) GetAdminTaskByID(ctx context.Context, taskID string) (*domain.Ad
 			u.id, u.email, u.name,
 			d.id, d.device_code, d.name, d.is_enabled, d.last_seen_at,
 			pa.id, pa.status, pa.last_message, pa.last_authenticated_at,
-			ps.id, ps.name, ps.output_type, ps.model_name, ps.is_enabled,
+			ps.id, ps.name, ps.output_type, ps.model_name,
+			COALESCE((SELECT am.model_alias FROM ai_models am WHERE am.model_name = ps.model_name LIMIT 1), ps.model_name),
+			ps.is_enabled,
 			COALESCE((SELECT COUNT(*) FROM publish_task_events e WHERE e.task_id = pt.id), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM publish_task_artifacts a WHERE a.task_id = pt.id), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM publish_task_material_refs m WHERE m.task_id = pt.id), 0)::BIGINT
@@ -1028,7 +1041,9 @@ func (s *Store) ListAdminAIJobs(ctx context.Context, filter AdminAIJobListFilter
 			%s,
 			u.id, u.email, u.name,
 			d.id, d.device_code, d.name, d.is_enabled, d.last_seen_at,
-			ps.id, ps.name, ps.output_type, ps.model_name, ps.is_enabled,
+			ps.id, ps.name, ps.output_type, ps.model_name,
+			COALESCE((SELECT am.model_alias FROM ai_models am WHERE am.model_name = ps.model_name LIMIT 1), ps.model_name),
+			ps.is_enabled,
 			am.id, am.vendor, am.model_alias, am.category, am.is_enabled,
 			COALESCE((SELECT COUNT(*) FROM ai_job_artifacts a WHERE a.job_id = aj.id), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM ai_job_artifacts a WHERE a.job_id = aj.id AND a.device_id IS NOT NULL AND a.root_name IS NOT NULL AND a.relative_path IS NOT NULL), 0)::BIGINT,
@@ -1060,7 +1075,9 @@ func (s *Store) GetAdminAIJobByID(ctx context.Context, jobID string) (*domain.Ad
 			`+adminAIJobSelectColumns+`,
 			u.id, u.email, u.name,
 			d.id, d.device_code, d.name, d.is_enabled, d.last_seen_at,
-			ps.id, ps.name, ps.output_type, ps.model_name, ps.is_enabled,
+			ps.id, ps.name, ps.output_type, ps.model_name,
+			COALESCE((SELECT am.model_alias FROM ai_models am WHERE am.model_name = ps.model_name LIMIT 1), ps.model_name),
+			ps.is_enabled,
 			am.id, am.vendor, am.model_alias, am.category, am.is_enabled,
 			COALESCE((SELECT COUNT(*) FROM ai_job_artifacts a WHERE a.job_id = aj.id), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM ai_job_artifacts a WHERE a.job_id = aj.id AND a.device_id IS NOT NULL AND a.root_name IS NOT NULL AND a.relative_path IS NOT NULL), 0)::BIGINT,

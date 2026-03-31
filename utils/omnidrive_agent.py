@@ -98,6 +98,7 @@ class OmniDriveBridge:
         device_code,
         generated_root_name,
         generated_root_path,
+        device_fingerprint=None,
         poll_interval=5,
         heartbeat_interval=30,
         account_sync_interval=60,
@@ -117,6 +118,7 @@ class OmniDriveBridge:
         self.material_roots = material_roots or {}
         self.device_name = str(device_name or socket.gethostname()).strip() or socket.gethostname()
         self.device_code = str(device_code or "").strip()
+        self.device_fingerprint = str(device_fingerprint or "").strip()
         self.generated_root_name = str(generated_root_name or "omnidriveGenerated").strip() or "omnidriveGenerated"
         self.generated_root_path = Path(generated_root_path).resolve()
         self.generated_root_path.mkdir(parents=True, exist_ok=True)
@@ -334,6 +336,7 @@ class OmniDriveBridge:
                 "deviceCode": self.device_code,
                 "deviceName": self.device_name,
                 "agentKey": self.agent_key,
+                "deviceFingerprint": self.device_fingerprint or None,
                 "localIp": get_local_ip(),
                 "runtimePayload": self._build_runtime_payload(),
             },
@@ -2868,6 +2871,7 @@ class OmniDriveBridge:
         ]
         login_worker = self._get_active_login_worker()
         return {
+            "deviceFingerprint": self.device_fingerprint or None,
             "publishTasks": by_status,
             "publishTasksBySource": by_source,
             "aiTasks": self.ai_task_manager.summary() if self.ai_task_manager else {},

@@ -2168,70 +2168,96 @@ func (h *AIHandler) CreatePublishTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	taskMessage := "来自 AI 任务的发布任务，等待执行"
-	task, err := h.app.Store.CreatePublishTask(r.Context(), store.CreatePublishTaskInput{
-		ID:           taskID,
-		DeviceID:     device.ID,
-		AccountID:    accountID,
-		Platform:     payload.Platform,
-		AccountName:  payload.AccountName,
-		Title:        title,
-		ContentText:  payload.ContentText,
-		MediaPayload: mediaPayload,
-		Status:       "pending",
-		Message:      &taskMessage,
-		RunAt:        runAt,
-	})
-	if err != nil {
+	var (
+		task    *domain.PublishTask
+		created bool
+	)
+	lockKey := "ai-job-publish-target:" + job.ID + ":" + device.ID + ":" + payload.Platform + ":" + payload.AccountName
+	if err := h.app.Store.WithAdvisoryLock(r.Context(), lockKey, func() error {
+		existingTask, err := h.app.Store.FindReusablePublishTaskByAIJobTarget(r.Context(), job.ID, user.ID, device.ID, payload.Platform, payload.AccountName)
+		if err != nil {
+			return err
+		}
+		if existingTask != nil {
+			task = existingTask
+			return nil
+		}
+
+		createdTask, createErr := h.app.Store.CreatePublishTask(r.Context(), store.CreatePublishTaskInput{
+			ID:           taskID,
+			DeviceID:     device.ID,
+			AccountID:    accountID,
+			Platform:     payload.Platform,
+			AccountName:  payload.AccountName,
+			Title:        title,
+			ContentText:  payload.ContentText,
+			MediaPayload: mediaPayload,
+			Status:       "pending",
+			Message:      &taskMessage,
+			RunAt:        runAt,
+		})
+		if createErr != nil {
+			return createErr
+		}
+		for i := range materialRefs {
+			materialRefs[i].TaskID = createdTask.ID
+		}
+		if _, replaceErr := h.app.Store.ReplacePublishTaskMaterialRefs(r.Context(), createdTask.ID, user.ID, materialRefs); replaceErr != nil {
+			return replaceErr
+		}
+		if linkErr := h.app.Store.LinkAIJobToPublishTask(r.Context(), store.LinkAIJobPublishTaskInput{
+			JobID:       job.ID,
+			TaskID:      createdTask.ID,
+			OwnerUserID: user.ID,
+		}); linkErr != nil {
+			return linkErr
+		}
+		task = createdTask
+		created = true
+		return nil
+	}); err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to create publish task from AI job")
 		return
 	}
-
-	for i := range materialRefs {
-		materialRefs[i].TaskID = task.ID
-	}
-	if _, err := h.app.Store.ReplacePublishTaskMaterialRefs(r.Context(), task.ID, user.ID, materialRefs); err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to attach AI materials to publish task")
+	if task == nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to resolve publish task from AI job")
 		return
 	}
-	if err := h.app.Store.LinkAIJobToPublishTask(r.Context(), store.LinkAIJobPublishTaskInput{
-		JobID:       job.ID,
-		TaskID:      task.ID,
-		OwnerUserID: user.ID,
-	}); err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to link AI job to publish task")
+	if created {
+		_, _ = h.app.Store.CreatePublishTaskEvent(r.Context(), store.CreatePublishTaskEventInput{
+			ID:        uuid.NewString(),
+			TaskID:    task.ID,
+			EventType: "created_from_ai_job",
+			Source:    "omnidrive",
+			Status:    task.Status,
+			Message:   auditStringPtr("发布任务由 AI 任务生成"),
+			Payload: mustJSONBytes(map[string]any{
+				"aiJobId":      job.ID,
+				"artifactKeys": collectAIArtifactKeys(selectedArtifacts),
+			}),
+		})
+
+		recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+			OwnerUserID:  user.ID,
+			ResourceType: "publish_task",
+			ResourceID:   &task.ID,
+			Action:       "create_from_ai_job",
+			Title:        "由 AI 任务创建发布任务",
+			Source:       task.Platform,
+			Status:       task.Status,
+			Message:      task.Message,
+			Payload: mustJSONBytes(map[string]any{
+				"aiJobId":     job.ID,
+				"deviceId":    device.ID,
+				"accountId":   accountID,
+				"accountName": task.AccountName,
+			}),
+		})
+		render.JSON(w, http.StatusCreated, task)
 		return
 	}
-	_, _ = h.app.Store.CreatePublishTaskEvent(r.Context(), store.CreatePublishTaskEventInput{
-		ID:        uuid.NewString(),
-		TaskID:    task.ID,
-		EventType: "created_from_ai_job",
-		Source:    "omnidrive",
-		Status:    task.Status,
-		Message:   auditStringPtr("发布任务由 AI 任务生成"),
-		Payload: mustJSONBytes(map[string]any{
-			"aiJobId":      job.ID,
-			"artifactKeys": collectAIArtifactKeys(selectedArtifacts),
-		}),
-	})
 
-	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
-		OwnerUserID:  user.ID,
-		ResourceType: "publish_task",
-		ResourceID:   &task.ID,
-		Action:       "create_from_ai_job",
-		Title:        "由 AI 任务创建发布任务",
-		Source:       task.Platform,
-		Status:       task.Status,
-		Message:      task.Message,
-		Payload: mustJSONBytes(map[string]any{
-			"aiJobId":     job.ID,
-			"deviceId":    device.ID,
-			"accountId":   accountID,
-			"accountName": task.AccountName,
-		}),
-	})
-
-	render.JSON(w, http.StatusCreated, task)
+	render.JSON(w, http.StatusOK, task)
 }
 
 func (h *AIHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
@@ -2458,6 +2484,7 @@ func (h *AIHandler) RetryJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = h.app.Store.DeleteAIJobArtifactsByOwner(r.Context(), jobID, user.ID)
+	_, _ = h.app.Store.DeleteAIJobPublishLinksByOwner(r.Context(), jobID, user.ID)
 	cleanupAIArtifactFiles(h.app, r.Context(), existingArtifacts)
 
 	recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{

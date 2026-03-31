@@ -88,7 +88,7 @@ function buildDefaultTimeOfDay() {
 }
 
 function normalizeTimeOfDay(value: string) {
-  const trimmed = value.trim();
+  const trimmed = String(value || "").trim();
   if (!trimmed) {
     return "";
   }
@@ -206,8 +206,8 @@ export function AccountSkillRunModal({
     if (!q) return modalSkills;
     return modalSkills.filter(
       (s) =>
-        s.name.toLowerCase().includes(q) ||
-        (s.description || "").toLowerCase().includes(q),
+        String(s.name || "").toLowerCase().includes(q) ||
+        String(s.description || "").toLowerCase().includes(q),
     );
   }, [modalSkills, skillSearch]);
 
@@ -563,13 +563,13 @@ export function AccountSkillRunModal({
             type="button"
             disabled={
               !effectiveSelectedSkillId ||
-              scheduleSlots.some((item) => !item.timeOfDay.trim()) ||
+              scheduleSlots.some((item) => !String(item.timeOfDay || "").trim()) ||
               submitting
             }
             onClick={async () => {
               if (
                 !effectiveSelectedSkillId ||
-                scheduleSlots.some((item) => !item.timeOfDay.trim())
+                scheduleSlots.some((item) => !String(item.timeOfDay || "").trim())
               ) {
                 return;
               }

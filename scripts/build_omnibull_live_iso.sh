@@ -29,7 +29,10 @@ apt-get install -y xorriso squashfs-tools grub-pc-bin grub-efi-amd64-bin live-bo
 
 update-initramfs -u -k "${KERNEL_VERSION}"
 
-if ! lsinitramfs "/boot/initrd.img-${KERNEL_VERSION}" | grep -qE 'live-boot|scripts/live'; then
+INITRD_CONTENTS_LIST="${BUILD_ROOT}/initrd.contents"
+lsinitramfs "/boot/initrd.img-${KERNEL_VERSION}" > "${INITRD_CONTENTS_LIST}"
+
+if ! grep -qE 'live-boot|scripts/live' "${INITRD_CONTENTS_LIST}"; then
   echo "live-boot scripts were not found inside /boot/initrd.img-${KERNEL_VERSION}" >&2
   exit 1
 fi

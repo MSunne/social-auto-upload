@@ -59,6 +59,17 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function asDisplayText(value: unknown, fallback = "-") {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || fallback;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return fallback;
+}
+
 function getAccountDeleteUsage(account: Account | null) {
   const load = account?.load;
   const activeTaskCount =
@@ -184,16 +195,21 @@ export default function DeviceAccountsPage({
   };
 
   /* Computed stats */
-  const uniquePlatforms = new Set(accounts.map((a) => a.platform));
+  const uniquePlatforms = new Set(
+    accounts.map((a) => asDisplayText(a.platform, "未知平台")),
+  );
   const deviceTasks = tasks.filter((t) => t.deviceId === deviceId);
   const platformCounts: Record<string, number> = {};
   accounts.forEach((a) => {
-    platformCounts[a.platform] = (platformCounts[a.platform] || 0) + 1;
+    const platformKey = asDisplayText(a.platform, "未知平台");
+    platformCounts[platformKey] = (platformCounts[platformKey] || 0) + 1;
   });
 
   /* Filtered accounts */
   const filteredAccounts = platformFilter
-    ? accounts.filter((a) => a.platform === platformFilter)
+    ? accounts.filter(
+        (a) => asDisplayText(a.platform, "未知平台") === platformFilter,
+      )
     : accounts;
 
   if (!device) {
@@ -410,7 +426,7 @@ export default function DeviceAccountsPage({
                       {/* Account Name */}
                       <td className="px-6 py-4">
                         <span className="font-semibold text-text-primary">
-                          {acc.accountName}
+                          {asDisplayText(acc.accountName, "未命名账号")}
                         </span>
                       </td>
 
@@ -423,7 +439,7 @@ export default function DeviceAccountsPage({
                               : "bg-surface text-text-muted"
                           }`}
                         >
-                          {acc.platform}
+                          {asDisplayText(acc.platform, "未知平台")}
                         </span>
                       </td>
 
@@ -450,7 +466,7 @@ export default function DeviceAccountsPage({
                               }`}
                               title={acc.lastMessage}
                             >
-                              {acc.lastMessage}
+                              {asDisplayText(acc.lastMessage)}
                             </div>
                           )}
                         </div>

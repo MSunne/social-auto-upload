@@ -181,6 +181,7 @@ class OmniDriveBridgeTests(unittest.TestCase):
                 material_roots={},
                 device_name="test-device",
                 device_code="device-1",
+                device_fingerprint="fingerprint-1",
                 generated_root_name="generated",
                 generated_root_path=self.temp_dir / "generated",
                 poll_interval=5,
@@ -191,6 +192,25 @@ class OmniDriveBridgeTests(unittest.TestCase):
                 publish_sync_interval=5,
             )
         return bridge
+
+    def test_heartbeat_includes_device_fingerprint(self):
+        bridge = self.make_bridge()
+        request_calls = []
+
+        def fake_request(method, path, *, params=None, payload=None):
+            request_calls.append((method, path, payload))
+            return {"device": {"deviceCode": bridge.device_code}}
+
+        with mock.patch.object(agent_module, "get_local_ip", return_value="192.168.1.10"), mock.patch.object(
+            bridge, "_request", side_effect=fake_request
+        ):
+            bridge._heartbeat()
+
+        self.assertEqual(len(request_calls), 1)
+        _, path, payload = request_calls[0]
+        self.assertEqual(path, "/api/v1/agent/heartbeat")
+        self.assertEqual(payload["deviceFingerprint"], "fingerprint-1")
+        self.assertEqual(payload["runtimePayload"]["deviceFingerprint"], "fingerprint-1")
 
     def test_sync_skills_cleans_stale_assets_and_records_local_paths(self):
         bridge = self.make_bridge()
@@ -1312,6 +1332,61 @@ class PublishTaskManagerDatetimeTests(unittest.TestCase):
         self.assertIsNone(retried_task["workerName"])
         self.assertIsNone(retried_task["startedAt"])
         self.assertIsNone(retried_task["finishedAt"])
+        self.assertEqual(retried_task["autoRetryCount"], 1)
+
+    def test_publish_task_manager_stops_after_automatic_interrupt_retry_is_exhausted(self):
+        temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-browser-closed-cap-"))
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "database.db"
+
+        manager = PublishTaskManager(db_path=db_path, material_roots={})
+        manager.init_db()
+
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO publish_tasks (
+                    task_uuid, source, platform_type, platform_name, account_name, account_file_path,
+                    file_name, file_path, title, run_at, platform_publish_at, status, message, payload_json,
+                    worker_name, started_at, auto_retry_count
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+                """,
+                (
+                    "publish-browser-closed-cap",
+                    "omnidrive_ai",
+                    4,
+                    "快手",
+                    "测试快手_乔总",
+                    "cookies/demo.json",
+                    "video.mp4",
+                    "generated:job-1/video.mp4",
+                    "browser close retry cap",
+                    None,
+                    None,
+                    "running",
+                    "任务执行中",
+                    json.dumps({}, ensure_ascii=False),
+                    "worker-1",
+                    1,
+                ),
+            )
+            conn.commit()
+
+        task = manager.get_task("publish-browser-closed-cap")
+        with mock.patch.object(
+            manager,
+            "_execute_payload",
+            side_effect=RuntimeError("Locator.count: Target page, context or browser has been closed"),
+        ):
+            manager._run_task(task)
+
+        failed_task = manager.get_task("publish-browser-closed-cap")
+        self.assertEqual(failed_task["status"], "failed")
+        self.assertEqual(failed_task["message"], "浏览器或执行环境连续中断，已停止自动重试，请人工处理后重试")
+        self.assertEqual(failed_task["autoRetryCount"], 1)
+        self.assertIsNotNone(failed_task["finishedAt"])
 
     def test_publish_task_manager_keeps_historical_failed_tasks_stopped_after_restart(self):
         temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-no-replay-"))
@@ -1813,6 +1888,46 @@ class OmniDriveAITaskManagerRecoveryTests(unittest.TestCase):
                 },
                 source="omnidrive_ai",
             )
+
+
+class OmniDriveAITaskManagerStateTests(unittest.TestCase):
+    def test_update_cloud_binding_clears_publish_link_after_requeue(self):
+        temp_dir = Path(tempfile.mkdtemp(prefix="omnidrive-ai-task-requeue-reset-"))
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "database.db"
+
+        manager = OmniDriveAITaskManager(db_path)
+        manager.init_db()
+        manager.import_remote_task(
+            {
+                "taskUuid": "local-ai-reset",
+                "source": "omnibull_local",
+                "jobType": "video",
+                "modelName": "veo-3.1-fast-fl",
+                "prompt": "reset publish bridge",
+                "status": "publish_pending",
+                "cloudStatus": "completed",
+                "message": "AI 产物已回流",
+                "payload": {"publishPayload": {"runAt": "2026-03-30T10:00:00Z"}},
+                "cloudJobId": "cloud-job-1",
+                "linkedPublishTaskUuid": "publish-task-1",
+                "artifactRefs": [{"root": "generated", "path": "job/video.mp4"}],
+            }
+        )
+
+        updated = manager.update_cloud_binding(
+            "local-ai-reset",
+            "cloud-job-1",
+            "queued",
+            "AI 任务已重新排队",
+            payload={"publishPayload": {"runAt": "2026-03-30T10:00:00Z"}},
+        )
+
+        self.assertEqual(updated["status"], "queued_cloud")
+        self.assertEqual(updated["cloudStatus"], "queued")
+        self.assertIsNone(updated["linkedPublishTaskUuid"])
+        self.assertEqual(updated["artifactRefs"], [])
+        self.assertIsNone(updated["finishedAt"])
 
 def make_http_error(status_code, payload):
     error = requests.HTTPError(f"http {status_code}")
