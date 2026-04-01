@@ -46,6 +46,11 @@ type createAccountSkillRunScheduleSlot struct {
 	GenerationLeadMinutes int     `json:"generationLeadMinutes"`
 }
 
+const (
+	reusablePendingLoginSessionWindow      = 2 * time.Minute
+	reusableVerificationLoginSessionWindow = 20 * time.Minute
+)
+
 func isLoginCancelAction(actionType string) bool {
 	switch strings.TrimSpace(actionType) {
 	case "cancel_session", "cancel_login":
@@ -68,23 +73,34 @@ func findReusableLoginSession(ctx context.Context, store *store.Store, ownerUser
 		return nil, nil
 	}
 
-	sessions, err := store.ListLoginSessionsByAccountTarget(ctx, ownerUserID, deviceID, platform, accountName, 1)
+	sessions, err := store.ListLoginSessionsByAccountTarget(ctx, ownerUserID, deviceID, platform, accountName, 6)
 	if err != nil {
 		return nil, err
 	}
-	if len(sessions) == 0 {
-		return nil, nil
-	}
-	session := &sessions[0]
-	status := strings.TrimSpace(session.Status)
-	age := time.Since(session.UpdatedAt)
-	switch status {
-	case "pending", "running":
-		if age <= 2*time.Minute {
+	now := time.Now()
+	for i := range sessions {
+		session := &sessions[i]
+		if isReusableLoginSession(session, now) {
 			return session, nil
 		}
 	}
 	return nil, nil
+}
+
+func isReusableLoginSession(session *domain.LoginSession, now time.Time) bool {
+	if session == nil {
+		return false
+	}
+	status := strings.TrimSpace(session.Status)
+	age := now.Sub(session.UpdatedAt)
+	switch status {
+	case "pending", "running":
+		return age <= reusablePendingLoginSessionWindow
+	case "verification_required":
+		return age <= reusableVerificationLoginSessionWindow
+	default:
+		return false
+	}
 }
 
 func (h *AccountHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -654,6 +670,16 @@ func (h *AccountHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	existingSession, err := findReusableLoginSession(r.Context(), h.app.Store, user.ID, account.DeviceID, account.Platform, account.AccountName)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load active validation session")
+		return
+	}
+	if existingSession != nil {
+		render.JSON(w, http.StatusOK, existingSession)
+		return
+	}
+
 	message := "等待本地 OmniBull 重新验证账号"
 	session, err := h.app.Store.CreateLoginSession(r.Context(), store.CreateLoginSessionInput{
 		ID:          uuid.NewString(),
@@ -714,6 +740,16 @@ func (h *AccountHandler) CreateRemoteLogin(w http.ResponseWriter, r *http.Reques
 	}
 	if !device.IsEnabled {
 		render.Error(w, http.StatusConflict, "Device is disabled")
+		return
+	}
+
+	existingSession, err := findReusableLoginSession(r.Context(), h.app.Store, user.ID, payload.DeviceID, payload.Platform, payload.AccountName)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load active login session")
+		return
+	}
+	if existingSession != nil {
+		render.JSON(w, http.StatusOK, existingSession)
 		return
 	}
 

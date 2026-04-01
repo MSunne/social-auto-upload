@@ -32,6 +32,13 @@ type RetryTarget = {
   accountName: string;
 };
 
+type PendingSessionAction = {
+  key: string;
+  sessionId: string;
+  signature: string;
+  startedAt: number;
+};
+
 const PLATFORMS = [
   { id: "douyin", name: "抖音", icon: "🎵", color: "from-gray-800 to-black", border: "border-gray-700" },
   { id: "xiaohongshu", name: "小红书", icon: "📕", color: "from-red-500 to-red-700", border: "border-red-500/50" },
@@ -65,40 +72,156 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function buildSessionViewSignature(session: LoginSession | null): string {
+  if (!session) {
+    return "";
+  }
+
+  const payload = ((session.verificationPayload || null) as VerificationPayload | null) || null;
+
+  return JSON.stringify({
+    status: session.status || "",
+    message: session.message || "",
+    hasQr: Boolean(session.qrData),
+    verification: payload
+      ? {
+        title: payload.title || "",
+        message: payload.message || "",
+        options: payload.options || [],
+        inputHints: payload.inputHints || [],
+        supportsTextInput: Boolean(payload.supportsTextInput),
+        screenshotUrl: payload.screenshotUrl || "",
+      }
+      : null,
+  });
+}
+
+function shouldReleasePendingAction(session: LoginSession, pendingAction: PendingSessionAction | null): boolean {
+  if (!pendingAction) {
+    return true;
+  }
+
+  if (session.id !== pendingAction.sessionId) {
+    return true;
+  }
+
+  if (["success", "failed", "cancelled"].includes(session.status)) {
+    return true;
+  }
+
+  return buildSessionViewSignature(session) !== pendingAction.signature;
+}
+
+function getSessionActionHint(actionKey: string | null): string {
+  if (!actionKey) {
+    return "";
+  }
+
+  if (actionKey.startsWith("select_option:")) {
+    return "已发送到 OmniBull，等待切换到下一步验证页面。";
+  }
+
+  if (actionKey === "fill_text_and_submit") {
+    return "验证码已提交到 OmniBull，等待完成验证。";
+  }
+
+  if (actionKey === "fill_text") {
+    return "输入内容已发送到 OmniBull，等待响应。";
+  }
+
+  return "操作已发送到 OmniBull，等待响应。";
+}
+
+function getLoginPollInterval(session: LoginSession | null, pendingAction: PendingSessionAction | null): number {
+  if (!session) {
+    return 1000;
+  }
+
+  if (pendingAction) {
+    return 350;
+  }
+
+  if (session.status === "verification_required") {
+    return 500;
+  }
+
+  if (session.status === "pending") {
+    return 500;
+  }
+
+  if (session.status === "running") {
+    return session.qrData ? 700 : 500;
+  }
+
+  return 1000;
+}
+
+function isActiveLoginSession(session: LoginSession | null): boolean {
+  if (!session?.id) {
+    return false;
+  }
+  return ["pending", "running", "verification_required"].includes(session.status);
+}
+
 export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = null }: AddAccountModalProps) {
   const [step, setStep] = useState<ModalStep>("form");
   const [selectedPlatform, setSelectedPlatform] = useState<string>("douyin");
   const [accountName, setAccountName] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [verificationInput, setVerificationInput] = useState("");
-  const [sessionActionLoading, setSessionActionLoading] = useState<string | null>(null);
+  const [pendingSessionAction, setPendingSessionAction] = useState<PendingSessionAction | null>(null);
   const [liveSession, setLiveSession] = useState<LoginSession | null>(null);
   const [retryTarget, setRetryTarget] = useState<RetryTarget | null>(
     initialSession
       ? {
-          deviceId: initialSession.deviceId,
-          platform: initialSession.platform,
-          accountName: initialSession.accountName,
-        }
+        deviceId: initialSession.deviceId,
+        platform: initialSession.platform,
+        accountName: initialSession.accountName,
+      }
       : null
   );
   const [retryLoading, setRetryLoading] = useState(false);
+  const [closingSession, setClosingSession] = useState(false);
 
   const session = liveSession ?? initialSession ?? null;
   const currentStep = liveSession ? step : initialSession ? resolveStepFromSession(initialSession) : step;
+  const sessionActionLoading = pendingSessionAction?.key || null;
+  const sessionActionHint = getSessionActionHint(sessionActionLoading);
+  const interactionLocked = Boolean(sessionActionLoading) || closingSession;
 
   const resetModalState = useCallback(() => {
     setStep("form");
     setAccountName("");
     setErrorMsg("");
     setVerificationInput("");
-    setSessionActionLoading(null);
+    setPendingSessionAction(null);
     setLiveSession(null);
     setRetryLoading(false);
+    setClosingSession(false);
     setRetryTarget(null);
   }, []);
 
-  const handleClose = useCallback(() => {
+  const handleClose = useCallback(async () => {
+    if (closingSession) {
+      return;
+    }
+
+    const activeSessionId = isActiveLoginSession(session) ? (session?.id || null) : null;
+
+    if (activeSessionId) {
+      try {
+        setClosingSession(true);
+        setErrorMsg("");
+        await createLoginAction(activeSessionId, {
+          actionType: "cancel_session",
+        });
+      } catch (err: unknown) {
+        setErrorMsg(getErrorMessage(err, "中断登录流程失败，请稍后重试"));
+        setClosingSession(false);
+        return;
+      }
+    }
+
     const shouldReload = currentStep === "success";
     resetModalState();
     onClose();
@@ -107,7 +230,7 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
         window.location.reload();
       }, 300);
     }
-  }, [currentStep, onClose, resetModalState]);
+  }, [closingSession, currentStep, onClose, resetModalState, session]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -136,10 +259,9 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
         if (!mounted) return;
 
         setLiveSession(updatedSession);
-        
-        // Clear loading state when session updates
-        if (updatedSession.updatedAt !== session.updatedAt) {
-          setSessionActionLoading(null);
+
+        if (shouldReleasePendingAction(updatedSession, pendingSessionAction)) {
+          setPendingSessionAction(null);
         }
 
         const nextStep = resolveStepFromSession(updatedSession);
@@ -150,12 +272,12 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
 
         // Continue polling if not in a final state
         if (!["success", "failed", "cancelled"].includes(updatedSession.status)) {
-          pollTimeout = setTimeout(poll, 2000);
+          pollTimeout = setTimeout(poll, getLoginPollInterval(updatedSession, pendingSessionAction));
         }
       } catch (err: unknown) {
         console.error("Polling error:", err);
         // Don't kill the flow on single network errors, try again
-        pollTimeout = setTimeout(poll, 3000);
+        pollTimeout = setTimeout(poll, 1000);
       }
     };
 
@@ -165,7 +287,24 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
       mounted = false;
       clearTimeout(pollTimeout);
     };
-  }, [currentStep, session?.id, session?.updatedAt]);
+  }, [currentStep, pendingSessionAction, session?.id]);
+
+  useEffect(() => {
+    if (!pendingSessionAction) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setPendingSessionAction((current) => {
+        if (!current || current.key !== pendingSessionAction.key || current.startedAt !== pendingSessionAction.startedAt) {
+          return current;
+        }
+        return null;
+      });
+    }, 15000);
+
+    return () => clearTimeout(timer);
+  }, [pendingSessionAction]);
 
   const handleStartLogin = async () => {
     if (!accountName.trim()) {
@@ -177,6 +316,8 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
       setStep("waiting");
       setErrorMsg("");
       setVerificationInput("");
+      setClosingSession(false);
+      setPendingSessionAction(null);
       const platformName = PLATFORMS.find(p => p.id === selectedPlatform)?.name || selectedPlatform;
       const target = {
         deviceId,
@@ -193,7 +334,7 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
         status: "pending",
         qrData: null,
         verificationPayload: null,
-        message: "等待目标设备重新拉起登录流程",
+        message: "等待重新拉起登录流程",
         createdAt: prev?.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }));
@@ -213,10 +354,10 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
   const handleRetryLogin = async () => {
     const target = liveSession
       ? {
-          deviceId: liveSession.deviceId || deviceId,
-          platform: liveSession.platform,
-          accountName: liveSession.accountName,
-        }
+        deviceId: liveSession.deviceId || deviceId,
+        platform: liveSession.platform,
+        accountName: liveSession.accountName,
+      }
       : retryTarget;
 
     if (!target?.platform || !target.accountName) {
@@ -229,6 +370,8 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
       setErrorMsg("");
       setVerificationInput("");
       setStep("waiting");
+      setClosingSession(false);
+      setPendingSessionAction(null);
       setRetryTarget(target);
       setLiveSession((prev) => ({
         id: prev?.id || "",
@@ -239,7 +382,7 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
         status: "pending",
         qrData: null,
         verificationPayload: null,
-        message: "等待目标设备重新拉起登录流程",
+        message: "等待重新拉起登录流程",
         createdAt: prev?.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }));
@@ -257,28 +400,38 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
   const handleSelectVerificationOption = async (optionText: string) => {
     if (!session?.id) return;
     try {
-      setSessionActionLoading(`select_option:${optionText}`);
+      setPendingSessionAction({
+        key: `select_option:${optionText}`,
+        sessionId: session.id,
+        signature: buildSessionViewSignature(session),
+        startedAt: Date.now(),
+      });
       await createLoginAction(session.id, {
         actionType: "select_option",
         payload: { optionText },
       });
     } catch (err: unknown) {
       setErrorMsg(getErrorMessage(err, "选择认证方式失败"));
-      setSessionActionLoading(null);
+      setPendingSessionAction(null);
     }
   };
 
   const handleSendVerificationInput = async (actionType: "fill_text" | "fill_text_and_submit") => {
     if (!session?.id || !verificationInput.trim()) return;
     try {
-      setSessionActionLoading(actionType);
+      setPendingSessionAction({
+        key: actionType,
+        sessionId: session.id,
+        signature: buildSessionViewSignature(session),
+        startedAt: Date.now(),
+      });
       await createLoginAction(session.id, {
         actionType,
         payload: { text: verificationInput.trim() },
       });
     } catch (err: unknown) {
       setErrorMsg(getErrorMessage(err, "发送输入内容失败"));
-      setSessionActionLoading(null);
+      setPendingSessionAction(null);
     }
   };
 
@@ -305,7 +458,9 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
           exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
           className="fixed inset-0 bg-black/60 backdrop-blur-md"
-          onClick={handleClose}
+          onClick={() => {
+            void handleClose();
+          }}
         />
 
         {/* Modal */}
@@ -323,11 +478,14 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
                 添加远程账号
               </h3>
               <button
-                onClick={handleClose}
-                className="rounded-full bg-white/5 p-2 text-text-muted hover:bg-white/10 hover:text-white transition-colors"
+                onClick={() => {
+                  void handleClose();
+                }}
+                disabled={closingSession}
+                className="rounded-full bg-white/5 p-2 text-text-muted hover:bg-white/10 hover:text-white transition-colors disabled:opacity-50"
                 title="关闭 / 取消"
               >
-                <X className="h-4 w-4" />
+                {closingSession ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
               </button>
             </div>
           </div>
@@ -344,11 +502,10 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
                       <button
                         key={platform.id}
                         onClick={() => setSelectedPlatform(platform.id)}
-                        className={`flex items-center gap-3 rounded-xl border p-3 transition-all ${
-                          selectedPlatform === platform.id
-                            ? `bg-gradient-to-br ${platform.color} ${platform.border} shadow-lg ring-2 ring-white/20`
-                            : "border-white/5 bg-white/5 hover:bg-white/10"
-                        }`}
+                        className={`flex items-center gap-3 rounded-xl border p-3 transition-all ${selectedPlatform === platform.id
+                          ? `bg-gradient-to-br ${platform.color} ${platform.border} shadow-lg ring-2 ring-white/20`
+                          : "border-white/5 bg-white/5 hover:bg-white/10"
+                          }`}
                       >
                         <span className="text-xl">{platform.icon}</span>
                         <span className="font-bold text-white text-sm">{platform.name}</span>
@@ -397,14 +554,17 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
                 <div className="text-center">
                   <h4 className="text-lg font-bold text-white mb-2">正在连接目标设备</h4>
                   <p className="text-sm text-text-muted">
-                    {session?.message || "等待设备端 SAU 程序响应并拉起浏览器..."}
+                    {session?.message || "等待SAU程序响应..."}
                   </p>
                 </div>
                 <button
-                  onClick={handleClose}
+                  onClick={() => {
+                    void handleClose();
+                  }}
+                  disabled={closingSession}
                   className="mt-2 text-sm text-text-muted/60 hover:text-white transition-colors underline underline-offset-4"
                 >
-                  取消等待
+                  {closingSession ? "正在中断..." : "取消等待"}
                 </button>
               </motion.div>
             )}
@@ -412,12 +572,12 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
             {currentStep === "qr" && session?.qrData && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center text-center space-y-5">
                 <div className="rounded-2xl border border-white/10 bg-white p-4 shadow-xl">
-                  <Image 
-                    src={session.qrData} 
-                    alt="登录二维码" 
-                    width={220} 
-                    height={220} 
-                    unoptimized 
+                  <Image
+                    src={session.qrData}
+                    alt="登录二维码"
+                    width={220}
+                    height={220}
+                    unoptimized
                     className="rounded-lg"
                   />
                 </div>
@@ -432,10 +592,13 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
                 </div>
                 <div className="flex items-center gap-4 w-full pt-2">
                   <button
-                    onClick={handleClose}
-                    className="flex-1 rounded-xl border border-white/10 bg-white/5 p-3 text-sm font-bold text-text-muted transition-colors hover:bg-white/10 hover:text-white"
+                    onClick={() => {
+                      void handleClose();
+                    }}
+                    disabled={closingSession}
+                    className="flex-1 rounded-xl border border-white/10 bg-white/5 p-3 text-sm font-bold text-text-muted transition-colors hover:bg-white/10 hover:text-white disabled:opacity-50"
                   >
-                    取消登录
+                    {closingSession ? "正在中断..." : "取消登录"}
                   </button>
                 </div>
               </motion.div>
@@ -446,90 +609,116 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
               const options = payload.options || [];
               const hints = payload.inputHints || [];
               const canAssistTextInput = Boolean(payload.supportsTextInput || hints.length > 0);
-              
-              return (
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-5">
-                <div className="text-center">
-                  <h4 className="text-lg font-bold text-white flex items-center justify-center gap-2 mb-2">
-                    <ShieldCheck className="h-5 w-5 text-amber-400" />
-                    {payload.title || "需要安全验证"}
-                  </h4>
-                  <p className="text-sm text-text-muted">
-                    {payload.message || "本地 SAU 检测到额外验证，请选择认证方式或输入验证内容。"}
-                  </p>
-                </div>
-                
-                {options.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="text-xs font-bold uppercase text-text-muted">选择认证方式</p>
-                    <div className="flex flex-wrap gap-2">
-                      {options.map((opt: string) => {
-                        const loadingKey = `select_option:${opt}`;
-                        const isLoading = sessionActionLoading === loadingKey;
-                        return (
-                          <button
-                            key={opt}
-                            onClick={() => handleSelectVerificationOption(opt)}
-                            disabled={Boolean(sessionActionLoading)}
-                            className="inline-flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300 hover:bg-amber-500/20 disabled:opacity-50 transition-colors"
-                          >
-                            {isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                            {opt}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
 
-                {canAssistTextInput && (
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center pr-1">
-                      <p className="text-xs font-bold uppercase text-text-muted">验证内容输入</p>
-                      {hints.length > 0 && (
-                        <p className="text-xs text-text-muted/60">{hints.join(" / ")}</p>
+              return (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-5">
+                  <div className="text-center">
+                    <h4 className="text-lg font-bold text-white flex items-center justify-center gap-2 mb-2">
+                      <ShieldCheck className="h-5 w-5 text-amber-400" />
+                      {payload.title || "需要安全验证"}
+                    </h4>
+                    <p className="text-sm text-text-muted">
+                      {payload.message || "SAU 检测到额外验证，请选择认证方式或输入验证内容。"}
+                    </p>
+                    {session?.message && !sessionActionHint && (
+                      <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">
+                        {session.message}
+                      </div>
+                    )}
+                  </div>
+
+                  {options.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-bold uppercase text-text-muted">选择认证方式</p>
+                      <div className="flex flex-wrap gap-2">
+                        {options.map((opt: string) => {
+                          const loadingKey = `select_option:${opt}`;
+                          const isLoading = sessionActionLoading === loadingKey;
+                          const isTimer = /\\d+\\s*(?:s|秒)后/.test(opt);
+                          const isDisabled = interactionLocked || isTimer;
+                          return (
+                            <button
+                              key={opt}
+                              onClick={() => handleSelectVerificationOption(opt)}
+                              disabled={isDisabled}
+                              className={`inline-flex items-center gap-2 rounded-xl border border-amber-500/30 px-3 py-2 text-sm transition-colors ${
+                                isDisabled && !isLoading
+                                  ? "bg-white/5 text-text-muted border-white/5 cursor-not-allowed"
+                                  : "bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
+                              }`}
+                            >
+                              {isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                              {opt}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {sessionActionHint && (
+                        <p className="text-xs text-amber-200/80 mt-2 text-center">{sessionActionHint}</p>
                       )}
                     </div>
-                    <input
-                      type="text"
-                      value={verificationInput}
-                      onChange={(e) => setVerificationInput(e.target.value)}
-                      placeholder="输入验证码、短信验证码或密码..."
-                      disabled={Boolean(sessionActionLoading)}
-                      className="w-full rounded-xl border border-white/10 bg-black/50 px-4 py-3 text-sm text-white focus:border-accent focus:outline-none disabled:opacity-50"
-                      autoComplete="off"
-                    />
-                    <div className="mt-2">
-                      <button
-                        type="button"
-                        onClick={() => handleSendVerificationInput("fill_text_and_submit")}
-                        disabled={!verificationInput.trim() || Boolean(sessionActionLoading)}
-                        className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/20 p-3 text-sm font-bold text-amber-400 transition-colors hover:bg-amber-500/30 disabled:opacity-50"
-                      >
-                        {sessionActionLoading === "fill_text_and_submit" && <Loader2 className="h-4 w-4 animate-spin" />}
-                        填入并提交
-                      </button>
+                  )}
+
+                  {canAssistTextInput && (
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center pr-1">
+                        <p className="text-xs font-bold uppercase text-text-muted">验证内容输入</p>
+                        {hints.length > 0 && (
+                          <p className="text-xs text-text-muted/60">{hints.join(" / ")}</p>
+                        )}
+                      </div>
+                      <input
+                        type="text"
+                        value={verificationInput}
+                        onChange={(e) => setVerificationInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && verificationInput.trim() && !interactionLocked) {
+                            void handleSendVerificationInput("fill_text_and_submit");
+                          }
+                        }}
+                        placeholder="输入验证码、短信验证码或密码..."
+                        disabled={interactionLocked}
+                        className="w-full rounded-xl border border-white/10 bg-black/50 px-4 py-3 text-sm text-white focus:border-accent focus:outline-none disabled:opacity-50"
+                        autoComplete="off"
+                      />
+                      <div className="mt-2">
+                        <button
+                          type="button"
+                          onClick={() => handleSendVerificationInput("fill_text_and_submit")}
+                          disabled={!verificationInput.trim() || interactionLocked}
+                          className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/20 p-3 text-sm font-bold text-amber-400 transition-colors hover:bg-amber-500/30 disabled:opacity-50"
+                        >
+                          {sessionActionLoading === "fill_text_and_submit" && <Loader2 className="h-4 w-4 animate-spin" />}
+                          填入并提交
+                        </button>
+                      </div>
+                      {sessionActionHint && (
+                        <p className="text-xs text-amber-200/80">{sessionActionHint}</p>
+                      )}
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {!canAssistTextInput && options.length === 0 && (
-                  <div className="rounded-xl border border-white/10 bg-black/50 p-4 text-center">
-                    <p className="text-sm text-text-muted">当前验证步骤需在本地设备通过 SAU 手动处理</p>
-                  </div>
-                )}
+                  {!canAssistTextInput && options.length === 0 && (
+                    <div className="rounded-xl border border-white/10 bg-black/50 p-4 text-center">
+                      <p className="text-sm text-text-muted">当前验证步骤需在本地设备通过 SAU 手动处理</p>
+                    </div>
+                  )}
 
-                <div className="pt-2">
-                  <button
-                    type="button"
-                    onClick={handleClose}
-                    className="w-full rounded-xl border border-white/10 bg-transparent p-3.5 text-sm font-bold text-text-muted transition-colors hover:bg-white/10 hover:text-white"
-                  >
-                    中断验证流程
-                  </button>
-                </div>
-              </motion.div>
-            )})()}
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleClose();
+                      }}
+                      disabled={closingSession}
+                      className="w-full rounded-xl border border-white/10 bg-transparent p-3.5 text-sm font-bold text-text-muted transition-colors hover:bg-white/10 hover:text-white disabled:opacity-50"
+                    >
+                      {closingSession ? "正在中断..." : "中断验证流程"}
+                    </button>
+                  </div>
+                </motion.div>
+              )
+            })()}
 
             {currentStep === "success" && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center py-8 space-y-4">
@@ -541,7 +730,9 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
                   <p className="text-sm text-text-muted">账号数据已成功同步至云端和目标设备。</p>
                 </div>
                 <button
-                  onClick={handleClose}
+                  onClick={() => {
+                    void handleClose();
+                  }}
                   className="mt-4 w-full rounded-xl bg-white/10 p-3.5 text-sm font-bold text-white transition-colors hover:bg-white/20"
                 >
                   关闭弹窗

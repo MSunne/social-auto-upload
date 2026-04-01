@@ -71,6 +71,9 @@ $FrontendHost = if ($env:SAU_FRONTEND_HOST) { $env:SAU_FRONTEND_HOST } else { "0
 $FrontendMode = if ($env:SAU_FRONTEND_MODE) { $env:SAU_FRONTEND_MODE } else { "preview" }
 $FrontendBuildOnStart = if ($env:SAU_FRONTEND_BUILD_ON_START) { $env:SAU_FRONTEND_BUILD_ON_START } else { "auto" }
 $FrontendInstallOnStart = if ($env:SAU_FRONTEND_INSTALL_ON_START) { $env:SAU_FRONTEND_INSTALL_ON_START } else { "1" }
+$OpenDesktopBrowser = if ($env:SAU_OPEN_DESKTOP_BROWSER) { $env:SAU_OPEN_DESKTOP_BROWSER } else { "1" }
+$DesktopBrowserURL = if ($env:SAU_DESKTOP_BROWSER_URL) { $env:SAU_DESKTOP_BROWSER_URL } else { "" }
+$DesktopBrowserBin = if ($env:SAU_DESKTOP_BROWSER_BIN) { $env:SAU_DESKTOP_BROWSER_BIN } else { "" }
 
 $FrontendDir = Join-Path $RootDir "sau_frontend"
 $FrontendDistFile = Join-Path $FrontendDir "dist\index.html"
@@ -86,6 +89,29 @@ function Write-Log {
 
     $line = "[{0}] [{1}] {2}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Level, $Message
     $line | Tee-Object -FilePath $LauncherLogFile -Append
+}
+
+function Test-FlagEnabled {
+    param(
+        [string]$Value,
+        [bool]$Default = $false
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $Default
+    }
+
+    switch ($Value.Trim().ToLowerInvariant()) {
+        "1" { return $true }
+        "true" { return $true }
+        "yes" { return $true }
+        "on" { return $true }
+        "0" { return $false }
+        "false" { return $false }
+        "no" { return $false }
+        "off" { return $false }
+        default { return $Default }
+    }
 }
 
 function Get-ListeningPid {
@@ -405,6 +431,50 @@ function Build-FrontendIfNeeded {
     Invoke-LoggedCommand -FilePath $NpmPath -Arguments @("run", "build") -WorkingDirectory $FrontendDir -LogFile $FrontendLogFile
 }
 
+function Open-DesktopBrowser {
+    if (-not (Test-FlagEnabled -Value $OpenDesktopBrowser -Default $true)) {
+        Write-Log -Level "INFO" -Message "Desktop browser auto-open disabled by SAU_OPEN_DESKTOP_BROWSER"
+        return
+    }
+
+    $targetUrl = $DesktopBrowserURL
+    if ([string]::IsNullOrWhiteSpace($targetUrl)) {
+        $targetUrl = "http://127.0.0.1:{0}" -f $FrontendPort
+    }
+
+    try {
+        $browserCandidates = @()
+        if (-not [string]::IsNullOrWhiteSpace($DesktopBrowserBin)) {
+            $browserCandidates += $DesktopBrowserBin
+        }
+        $browserCandidates += @(
+            "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+            "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+            "$env:LocalAppData\Google\Chrome\Application\chrome.exe",
+            "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+            "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+        )
+
+        foreach ($candidate in $browserCandidates) {
+            if ([string]::IsNullOrWhiteSpace($candidate)) {
+                continue
+            }
+            if (-not (Test-Path -LiteralPath $candidate)) {
+                continue
+            }
+            Start-Process -FilePath $candidate -ArgumentList @($targetUrl) -WindowStyle Normal | Out-Null
+            Write-Log -Level "INFO" -Message ("Opened desktop browser binary={0} url={1}" -f $candidate, $targetUrl)
+            return
+        }
+
+        Start-Process -FilePath $targetUrl | Out-Null
+        Write-Log -Level "INFO" -Message ("Opened desktop browser url={0}" -f $targetUrl)
+    }
+    catch {
+        Write-Log -Level "WARNING" -Message ("Failed to open desktop browser url={0} error={1}" -f $targetUrl, $_.Exception.Message)
+    }
+}
+
 function Start-Backend {
     param($PythonSpec)
 
@@ -519,6 +589,7 @@ function Start-RunLoop {
 
     Start-Backend -PythonSpec $pythonSpec
     Start-Frontend -NpmPath $npmPath
+    Open-DesktopBrowser
 
     Write-Log -Level "INFO" -Message ("SAU stack started launcher_pid={0} backend_pid={1} frontend_pid={2}" -f $PID, (Get-StoredPid -PidFile $BackendPidFile), (Get-StoredPid -PidFile $FrontendPidFile))
 
@@ -559,6 +630,7 @@ function Start-Daemon {
     Remove-Item -LiteralPath $LauncherPidFile -Force -ErrorAction SilentlyContinue
     Start-Backend -PythonSpec $pythonSpec
     Start-Frontend -NpmPath $npmPath
+    Open-DesktopBrowser
     Write-Log -Level "INFO" -Message ("Detached SAU stack started backend_pid={0} frontend_pid={1}" -f (Get-StoredPid -PidFile $BackendPidFile), (Get-StoredPid -PidFile $FrontendPidFile))
 }
 

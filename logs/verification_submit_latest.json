@@ -1,0 +1,393 @@
+{
+  "label": "submit",
+  "url": "https://creator.douyin.com/",
+  "interactiveCandidates": [
+    {
+      "labels": [
+        "网址"
+      ],
+      "tag": "div",
+      "type": "",
+      "role": "",
+      "className": "nav-mpqqjy ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "如何扫码"
+      ],
+      "tag": "div",
+      "type": "",
+      "role": "",
+      "className": "animate_btn-gasmjp ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "二维码"
+      ],
+      "tag": "img",
+      "type": "",
+      "role": "",
+      "className": "qrcode_img-npvtjs ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "+86",
+        "国家/地区"
+      ],
+      "tag": "input",
+      "type": "text",
+      "role": "combobox",
+      "className": "input-w6cq3u ",
+      "disabled": false
+    },
+    {
+      "labels": [],
+      "tag": "input",
+      "type": "tel",
+      "role": "",
+      "className": "input-xjvqlq ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "获取验证码"
+      ],
+      "tag": "div",
+      "type": "",
+      "role": "",
+      "className": "douyin_login_comp_button_input-es1g47 ",
+      "disabled": false
+    },
+    {
+      "labels": [],
+      "tag": "input",
+      "type": "tel",
+      "role": "",
+      "className": "input-i_tqmx button-input",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "获取验证码"
+      ],
+      "tag": "span",
+      "type": "",
+      "role": "",
+      "className": "button_text-hbbhfp disabled-ptzqqv ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "登录/注册"
+      ],
+      "tag": "div",
+      "type": "",
+      "role": "",
+      "className": "submit_btn-tx8iis ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "登录/注册"
+      ],
+      "tag": "div",
+      "type": "",
+      "role": "",
+      "className": "douyin_login_comp_btn-s_beyl content-jgelq7 primary-rpxi7f disabled-xlns7g  ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "登录或注册即代表同意用户协议和隐私政策"
+      ],
+      "tag": "div",
+      "type": "",
+      "role": "",
+      "className": "douyin_login_comp_confirm_info-bbvbz8 ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "用户协议"
+      ],
+      "tag": "a",
+      "type": "",
+      "role": "",
+      "className": "confirm_item-tk_tgh ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "隐私政策"
+      ],
+      "tag": "a",
+      "type": "",
+      "role": "",
+      "className": "confirm_item-tk_tgh ",
+      "disabled": false
+    },
+    {
+      "labels": [],
+      "tag": "div",
+      "type": "",
+      "role": "tabpanel",
+      "className": "douyin-creator-master-tabs-pane-active douyin-creator-master-tabs-pane semitabpanelpublish",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "创作者登录",
+        "MCN机构登录",
+        "创作者登录 MCN机构登录"
+      ],
+      "tag": "div",
+      "type": "",
+      "role": "",
+      "className": "btns-qykbrj ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "创作者登录"
+      ],
+      "tag": "div",
+      "type": "",
+      "role": "",
+      "className": "btn-idx0e8 personal-wz47fl ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "MCN机构登录"
+      ],
+      "tag": "div",
+      "type": "",
+      "role": "",
+      "className": "btn-idx0e8 org-l6kc2p ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "抖音社区自律公约"
+      ],
+      "tag": "a",
+      "type": "",
+      "role": "",
+      "className": " ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "账号授权协议"
+      ],
+      "tag": "a",
+      "type": "",
+      "role": "",
+      "className": " ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "用户服务协议"
+      ],
+      "tag": "a",
+      "type": "",
+      "role": "",
+      "className": " ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "隐私政策"
+      ],
+      "tag": "a",
+      "type": "",
+      "role": "",
+      "className": " ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "账号找回"
+      ],
+      "tag": "a",
+      "type": "",
+      "role": "",
+      "className": " ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "联系我们"
+      ],
+      "tag": "a",
+      "type": "",
+      "role": "",
+      "className": " ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "京ICP备16016397号-3"
+      ],
+      "tag": "a",
+      "type": "",
+      "role": "",
+      "className": " ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "北京抖音科技有限公司"
+      ],
+      "tag": "a",
+      "type": "",
+      "role": "",
+      "className": " ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "京B2-20170846"
+      ],
+      "tag": "a",
+      "type": "",
+      "role": "",
+      "className": " ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "中国互联网举报中心"
+      ],
+      "tag": "a",
+      "type": "",
+      "role": "",
+      "className": " ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "网络文化经营许可证-京网文〔2025〕0181-061号"
+      ],
+      "tag": "a",
+      "type": "",
+      "role": "",
+      "className": " ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "京公网安备11000002002046号"
+      ],
+      "tag": "a",
+      "type": "",
+      "role": "",
+      "className": " ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "接收短信验证码",
+        "短信已发送至",
+        "188******49",
+        "35s后重新发送",
+        "取消",
+        "验证",
+        "无法验证通过？选择其他验证方式",
+        "接收短信验证码短信已发送至188******4935s后重新发送取消验证无法验证通过？选择其他验证方式"
+      ],
+      "tag": "div",
+      "type": "",
+      "role": "",
+      "className": "second_verify_mask-oxqqge ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "接收短信验证码",
+        "短信已发送至",
+        "188******49",
+        "35s后重新发送",
+        "取消",
+        "验证",
+        "无法验证通过？选择其他验证方式",
+        "接收短信验证码短信已发送至188******4935s后重新发送取消验证无法验证通过？选择其他验证方式"
+      ],
+      "tag": "div",
+      "type": "",
+      "role": "",
+      "className": "second_verify_panel_new-afowwi ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "35s后重新发送"
+      ],
+      "tag": "div",
+      "type": "",
+      "role": "",
+      "className": "uc_verification_component_button_input-mnqapa input-hngn0x ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "456876"
+      ],
+      "tag": "input",
+      "type": "tel",
+      "role": "",
+      "className": "input-lrnhmm button-input",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "35s后重新发送"
+      ],
+      "tag": "span",
+      "type": "",
+      "role": "",
+      "className": "button_text-kpmxee disabled-fyamjx ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "取消",
+        "验证",
+        "取消验证"
+      ],
+      "tag": "div",
+      "type": "",
+      "role": "",
+      "className": "button-mvfik9 ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "取消"
+      ],
+      "tag": "div",
+      "type": "",
+      "role": "",
+      "className": "uc_verification_component_btn-eqndat content-fpuout secondary-ognlhf   large-wt6qx5 ",
+      "disabled": false
+    },
+    {
+      "labels": [
+        "验证"
+      ],
+      "tag": "div",
+      "type": "",
+      "role": "",
+      "className": "uc_verification_component_btn-eqndat content-fpuout primary-npo6wt   large-wt6qx5 ",
+      "disabled": false
+    }
+  ],
+  "extra": {
+    "beforeSignature": "接收短信验证码|短信已发送至；188******49；36s后重新发送；取消；验证；无法验证通过？选择其他验证方式；选择其他验证方式|重新发送验证码|请输入验证码|https://creator.douyin.com/",
+    "beforeUrl": "https://creator.douyin.com/"
+  }
+}

@@ -6,6 +6,7 @@ Windows test host deployment paths for OmniBull / SAU:
 - Python runtime: `C:\OmniBull\social-auto-upload\.venv\Scripts\python.exe`
 - Frontend npm: `C:\Program Files\nodejs\npm.cmd`
 - Environment file: `C:\OmniBull\social-auto-upload\deploy\env\omnibull.windows.env`
+- Playwright browsers: `C:\OmniBull\ms-playwright`
 - Runtime directory: `C:\OmniBull\social-auto-upload\runtime`
 - Log directory: `C:\OmniBull\social-auto-upload\logs`
 - Installer staging: `C:\sau-setup`
@@ -14,6 +15,7 @@ Windows startup entries:
 
 - Startup scheduled task: `OmniBull SAU Startup`
 - Logon scheduled task: `OmniBull SAU`
+- Inbound firewall ports: `5409` backend, `5173` frontend
 
 Sync guidance:
 

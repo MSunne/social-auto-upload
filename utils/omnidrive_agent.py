@@ -1280,10 +1280,18 @@ class OmniDriveBridge:
             action_type = str(action.get("actionType") or "").strip()
             if not action_type:
                 continue
+            action_payload = action.get("payload") or {}
+            agent_logger.info(
+                "omnidrive bridge received login action session_id={} action_type={} payload_keys={} device_code={}",
+                session_id,
+                action_type,
+                list(action_payload.keys()) if isinstance(action_payload, dict) else type(action_payload).__name__,
+                self.device_code,
+            )
             command_queue.put(
                 {
                     "actionType": action_type,
-                    "payload": action.get("payload") or {},
+                    "payload": action_payload,
                 }
             )
 
@@ -1380,6 +1388,17 @@ class OmniDriveBridge:
                     session_id,
                     status=worker.get("lastStatus") if worker.get("lastStatus") in {"running", "verification_required"} else "running",
                     message=message,
+                )
+                return
+            if event_type == "running":
+                message = self._trim_message(payload.get("message"))
+                if not message or message == worker.get("lastMessage"):
+                    return
+                self._post_login_event(
+                    session_id,
+                    status="running",
+                    message=message,
+                    qr_data="",
                 )
                 return
             return

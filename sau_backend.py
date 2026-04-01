@@ -3562,12 +3562,12 @@ def run_async_function(type,id,status_queue,command_queue=None):
                         None if is_valid else failure_message,
                     )
                     if is_valid:
-                        print(f"✅ {id} 本地 Cookie 验证成功！直接进入等效登录完成状态。")
+                        print(f"{id} 本地 Cookie 验证成功，直接进入等效登录完成状态。")
                         if status_queue is not None:
                             status_queue.put("200")
                         return
                     else:
-                        print(f"⚠️ {id} 本地 Cookie 验证失效或需二次认证，进入扫码登录流程...")
+                        print(f"{id} 本地 Cookie 验证失效或需二次认证，进入扫码登录流程...")
                         if status_queue is not None and failure_message:
                             status_queue.put(failure_message)
         except Exception as precheck_exc:

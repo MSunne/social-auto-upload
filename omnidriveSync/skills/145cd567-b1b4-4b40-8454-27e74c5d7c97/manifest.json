@@ -8,7 +8,7 @@
     "description": "美肤产品测试",
     "outputType": "视文模式",
     "modelName": "veo-3.1-fast-fl",
-    "modelAlias": "veo3.1-fast",
+    "modelAlias": "veo-3.1-fast-fl",
     "promptTemplate": "做一个抖音风格的视频、介绍这个镜子的测试皮肤效果。",
     "coverPromptTemplate": null,
     "topics": [],
@@ -58,13 +58,13 @@
     "needsSync": false,
     "assetCount": 1,
     "message": "DSC00011_拷贝(1).jpg: HTTPSConnectionPool(host='qny.sunne.xyz', port=443): Max retries exceeded with url: /plus_ai/img/skills/854c1e12-896f-4c43-a332-4fb6fb023402/145cd567-b1b4-4b40-8454-27e74c5d7c97/41812337-384a-4d98-9f91-d980108547a3-DSC00011_%E6%8B%B7%E8%B4%9D(1).jpg (Caused by SSLError(SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: certificate has expired (_ssl.c:1017)')))",
-    "lastSyncedAt": "2026-04-01T17:56:58.527019+08:00",
+    "lastSyncedAt": "2026-04-02T00:25:17.870474+08:00",
     "createdAt": "2026-03-22T10:18:15.072097+08:00",
-    "updatedAt": "2026-04-01T17:56:59.575612+08:00"
+    "updatedAt": "2026-04-02T00:25:17.918192+08:00"
   },
   "cache": {
     "manifestPath": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/145cd567-b1b4-4b40-8454-27e74c5d7c97/manifest.json",
     "assetsDir": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/145cd567-b1b4-4b40-8454-27e74c5d7c97/assets",
-    "syncedAt": "2026-04-01T09:58:59.290463Z"
+    "syncedAt": "2026-04-01T16:27:18.144503Z"
   }
 }

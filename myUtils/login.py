@@ -1,7 +1,11 @@
 import asyncio
 import base64
+import json
+import os
+import re
 import sys
 import uuid
+from pathlib import Path
 from queue import Empty
 
 from playwright.async_api import async_playwright
@@ -30,6 +34,9 @@ VERIFICATION_TITLE_TEXTS = [
     "接收短信验证",
     "发送短信验证",
     "发送短信验证码",
+    "重新发送验证码",
+    "重新获取验证码",
+    "再次发送验证码",
     "请输入验证码",
 ]
 
@@ -38,6 +45,11 @@ VERIFICATION_OPTION_TEXTS = [
     "接收短信验证",
     "发送短信验证",
     "发送短信验证码",
+    "重新发送",
+    "重新发送验证码",
+    "重新获取验证码",
+    "再次发送验证码",
+    "重发验证码",
     "短信验证码",
     "验证登录密码",
     "登录密码",
@@ -53,6 +65,47 @@ VERIFICATION_OPTION_TEXTS = [
     "确认",
     "提交",
 ]
+
+VERIFICATION_CODE_ACTION_TEXTS = [
+    "接收短信验证码",
+    "接收短信验证",
+    "发送短信验证",
+    "发送短信验证码",
+    "获取验证码",
+    "发送验证码",
+    "重新发送",
+    "重新发送验证码",
+    "重新获取验证码",
+    "再次发送验证码",
+    "重发验证码",
+]
+
+VERIFICATION_PASSWORD_ACTION_TEXTS = [
+    "验证登录密码",
+    "登录密码",
+    "密码验证",
+]
+
+VERIFICATION_SPECIFIC_CODE_ACTION_TEXTS = [
+    "接收短信验证码",
+    "接收短信验证",
+    "重新发送",
+    "重新发送验证码",
+    "重新获取验证码",
+    "再次发送验证码",
+    "重发验证码",
+]
+
+WEAK_VERIFICATION_TITLES = {
+    "需要额外验证",
+}
+
+WEAK_GENERIC_CODE_OPTIONS = {
+    "获取验证码",
+    "发送验证码",
+    "短信验证",
+    "手机验证",
+}
 
 VERIFICATION_SUBMIT_TEXTS = [
     "确认",
@@ -96,6 +149,21 @@ QR_REFRESH_TEXTS = [
     "刷新",
 ]
 
+INTERACTIVE_ACTION_SELECTOR = (
+    "button, [role='button'], a[href], label, [tabindex], [onclick], "
+    "input[type='button'], input[type='submit'], "
+    "div[class*='btn'], span[class*='btn'], "
+    "div[class*='button'], span[class*='button'], "
+    "div[class*='submit'], span[class*='submit'], "
+    "div[class*='confirm'], span[class*='confirm'], "
+    "div[class*='verify'], span[class*='verify']"
+)
+INTERACTIVE_ACTION_CLOSEST_SELECTOR = (
+    "button, [role='button'], a[href], label, [tabindex], [onclick], "
+    "input[type='button'], input[type='submit'], "
+    "[class*='btn'], [class*='button'], [class*='submit'], [class*='confirm'], [class*='verify']"
+)
+
 QR_SNAPSHOT_MIN_INTERVAL_SECONDS = 2.0
 VERIFICATION_ROOT_MARKER_ATTR = "data-omnibull-verification-root"
 TRANSIENT_LOGIN_ERROR_HINTS = (
@@ -128,6 +196,7 @@ FOCUSED_EDITABLE_SELECTORS = [
 ]
 REMOTE_ACTION_RETRY_WINDOW_SECONDS = 120.0
 REMOTE_ACTION_MAX_RETRIES = 240
+LOGIN_DEBUG_LOG_DIR = Path("logs")
 
 
 class LoginCancelled(Exception):
@@ -279,6 +348,55 @@ async def find_first_visible_containing_text(target, texts):
     return None, None
 
 
+def normalize_action_text(text):
+    return " ".join(str(text or "").split())
+
+
+def canonicalize_verification_option_label(label):
+    normalized = normalize_action_text(label)
+    if not normalized:
+        return ""
+
+    resend_patterns = (
+        r"^\d+\s*(?:s|秒)后重新发送(?:验证码)?$",
+        r"^\d+\s*(?:s|秒)后重发验证码$",
+        r"^\d+\s*(?:s|秒)后再次发送验证码$",
+        r"^\d+\s*(?:s|秒)后重新获取验证码$",
+    )
+    if any(re.match(pattern, normalized, flags=re.IGNORECASE) for pattern in resend_patterns):
+        return "重新发送验证码"
+
+    if any(keyword in normalized for keyword in ("重新发送", "重发验证码", "再次发送验证码", "重新获取验证码")):
+        if re.search(r"\d", normalized):
+            return "重新发送验证码"
+
+    return normalized
+
+
+def score_action_label_match(label, search_text):
+    normalized_label = normalize_action_text(label)
+    normalized_search = normalize_action_text(search_text)
+    if not normalized_label or not normalized_search:
+        return -1
+    if normalized_label == normalized_search:
+        return 100 + min(len(normalized_search), 12)
+
+    canonical_label = canonicalize_verification_option_label(normalized_label)
+    if canonical_label == normalized_search:
+        return 90 + min(len(normalized_search), 12)
+
+    match_target = canonical_label if normalized_search in canonical_label else normalized_label
+    if normalized_search not in match_target:
+        return -1
+
+    if len(normalized_search) <= 3:
+        if len(match_target) > max(len(normalized_search) + 2, 4):
+            return -1
+        return 70 - max(0, len(match_target) - len(normalized_search))
+
+    return 75 - max(0, len(match_target) - len(normalized_search))
+
+
 async def get_verification_anchor(page):
     title, title_locator = await find_first_visible_text(page, VERIFICATION_TITLE_TEXTS)
     if title_locator is None:
@@ -299,9 +417,7 @@ async def get_verification_anchor(page):
 
 async def collect_visible_option_texts(page):
     visible_texts = []
-    interactive_locator = page.locator(
-        "button, [role='button'], a[href], input[type='button'], input[type='submit'], [tabindex='0']"
-    )
+    interactive_locator = page.locator(INTERACTIVE_ACTION_SELECTOR)
     try:
         interactive_count = await interactive_locator.count()
     except Exception:
@@ -337,7 +453,7 @@ async def collect_visible_option_texts(page):
                 visible_texts.append(label)
 
     if visible_texts:
-        return list(dict.fromkeys(visible_texts))
+        return dedupe_verification_option_labels(visible_texts)
 
     for text in VERIFICATION_OPTION_TEXTS:
         for locator in (page.get_by_text(text, exact=True), page.get_by_text(text)):
@@ -354,7 +470,125 @@ async def collect_visible_option_texts(page):
             if found_visible:
                 visible_texts.append(text)
                 break
-    return list(dict.fromkeys(visible_texts))
+    return dedupe_verification_option_labels(visible_texts)
+
+
+def dedupe_verification_option_labels(labels):
+    unique_labels = []
+    seen_canonical = set()
+    for label in labels:
+        normalized = normalize_action_text(label)
+        canonical = canonicalize_verification_option_label(normalized)
+        if not canonical or canonical in seen_canonical:
+            continue
+        seen_canonical.add(canonical)
+        unique_labels.append(normalized)
+
+    if len(unique_labels) <= 1:
+        return unique_labels
+
+    non_submit_labels = [
+        label for label in unique_labels if label not in VERIFICATION_SUBMIT_TEXTS
+    ]
+    candidate_labels = non_submit_labels or unique_labels
+
+    filtered_labels = []
+    for label in candidate_labels:
+        if any(label != other and label in other for other in candidate_labels):
+            continue
+        filtered_labels.append(label)
+
+    return filtered_labels or candidate_labels
+
+
+def refine_verification_option_labels(labels, title=None, input_hints=None):
+    refined_labels = dedupe_verification_option_labels(labels)
+    if len(refined_labels) <= 1:
+        return refined_labels
+
+    normalized_title = " ".join(str(title or "").split())
+    normalized_hints = [" ".join(str(item or "").split()) for item in (input_hints or []) if str(item or "").strip()]
+
+    has_code_context = (
+        any("验证码" in hint for hint in normalized_hints)
+        or any(keyword in normalized_title for keyword in VERIFICATION_CODE_ACTION_TEXTS)
+    )
+
+    if has_code_context:
+        code_related = [
+            label
+            for label in refined_labels
+            if any(keyword in label for keyword in VERIFICATION_CODE_ACTION_TEXTS)
+        ]
+        if code_related:
+            refined_labels = code_related
+
+        refined_labels = [
+            label
+            for label in refined_labels
+            if not any(keyword in label for keyword in VERIFICATION_PASSWORD_ACTION_TEXTS)
+        ] or refined_labels
+
+        specific_code_labels = [
+            label
+            for label in refined_labels
+            if any(keyword in label for keyword in VERIFICATION_SPECIFIC_CODE_ACTION_TEXTS)
+        ]
+        if specific_code_labels:
+            refined_labels = [
+                label
+                for label in refined_labels
+                if label not in {"获取验证码", "发送验证码", "短信验证", "手机验证"}
+            ] or specific_code_labels
+
+    return dedupe_verification_option_labels(refined_labels)
+
+
+def is_strong_verification_challenge(challenge):
+    payload = (challenge or {}).get("payload") or {}
+    title = " ".join(str(payload.get("title") or "").split())
+    options = [
+        " ".join(str(item or "").split())
+        for item in (payload.get("options") or [])
+        if str(item or "").strip()
+    ]
+    input_hints = [
+        " ".join(str(item or "").split())
+        for item in (payload.get("inputHints") or [])
+        if str(item or "").strip()
+    ]
+    supports_text_input = bool(payload.get("supportsTextInput"))
+
+    if not title and not options and not input_hints:
+        return False
+
+    if title and title not in WEAK_VERIFICATION_TITLES:
+        return True
+
+    if any(
+        keyword in option
+        for option in options
+        for keyword in (
+            "接收短信",
+            "重新发送",
+            "重发验证码",
+            "登录密码",
+            "验证登录密码",
+            "密码验证",
+        )
+    ):
+        return True
+
+    specific_options = [
+        option for option in options if option and option not in WEAK_GENERIC_CODE_OPTIONS
+    ]
+    if specific_options:
+        return True
+
+    if supports_text_input and len(options) >= 2:
+        return True
+
+    return False
 
 
 async def get_visible_verification_input_hints(page):
@@ -400,8 +634,94 @@ async def get_visible_verification_input_hints(page):
     return list(dict.fromkeys(hints))
 
 
+async def get_visible_verification_status_texts(page, exclude_texts=None):
+    normalized_excludes = {
+        normalize_action_text(text)
+        for text in (exclude_texts or [])
+        if normalize_action_text(text)
+    }
+
+    try:
+        editable_inputs = await iter_visible_editable_inputs(page)
+    except Exception:
+        editable_inputs = []
+
+    for candidate in editable_inputs:
+        try:
+            current_value = normalize_action_text(await get_editable_value(candidate))
+        except Exception:
+            current_value = ""
+        if current_value:
+            normalized_excludes.add(current_value)
+
+    try:
+        lines = await page.evaluate(
+            """
+            (element, payload) => {
+                const excluded = new Set(payload.excluded || []);
+                const nodes = [element, ...Array.from(element.querySelectorAll('*'))];
+                const results = [];
+                const seen = new Set();
+
+                for (const node of nodes) {
+                    const style = window.getComputedStyle(node);
+                    const rect = node.getBoundingClientRect();
+                    if (
+                        style.visibility === 'hidden'
+                        || style.display === 'none'
+                        || style.opacity === '0'
+                        || rect.width < 2
+                        || rect.height < 2
+                    ) {
+                        continue;
+                    }
+
+                    const rawText = (node.innerText || node.textContent || '');
+                    const splitLines = rawText
+                        .split(/\\n+/)
+                        .map((line) => line.replace(/\\s+/g, ' ').trim())
+                        .filter(Boolean);
+
+                    for (const line of splitLines) {
+                        if (!line || line.length < 2 || line.length > 32) {
+                            continue;
+                        }
+                        if (/^\\d{4,8}$/.test(line)) {
+                            continue;
+                        }
+                        if (excluded.has(line) || seen.has(line)) {
+                            continue;
+                        }
+                        seen.add(line);
+                        results.push(line);
+                    }
+                }
+
+                return results.slice(0, 8);
+            }
+            """,
+            {"excluded": list(normalized_excludes)},
+        )
+    except Exception:
+        return []
+
+    filtered = []
+    for line in lines or []:
+        normalized = normalize_action_text(line)
+        if not normalized or normalized in normalized_excludes:
+            continue
+        filtered.append(normalized)
+
+    return list(dict.fromkeys(filtered))
+
+
 async def has_visible_verification_submit(page):
+    if await find_best_matching_interactive_action(page, VERIFICATION_SUBMIT_TEXTS) is not None:
+        return True
+
     for text in VERIFICATION_SUBMIT_TEXTS:
+        if len(normalize_action_text(text)) <= 3:
+            continue
         _, candidate = await find_first_visible_containing_text(page, [text])
         if candidate is not None:
             return True
@@ -512,11 +832,17 @@ async def iter_visible_editable_inputs(locator):
     for index in range(count):
         candidate = candidates.nth(index)
         try:
-            if not await candidate.is_visible():
-                continue
+            is_vis = await candidate.is_visible()
             meta_payload = await get_editable_meta(candidate)
             if meta_payload is None:
                 continue
+            if not is_vis:
+                input_mode = str(meta_payload.get("inputmode") or "").lower()
+                auto_comp = str(meta_payload.get("autocomplete") or "").lower()
+                max_len = meta_payload.get("maxlength")
+                is_hidden_verify = ("one-time-code" in auto_comp) or (max_len in (4, 6, 8)) or (input_mode in {"numeric", "tel", "decimal"})
+                if not is_hidden_verify:
+                    continue
             if meta_payload.get("readonly") or meta_payload.get("disabled"):
                 continue
             input_type = str(meta_payload.get("type") or "text").lower()
@@ -553,6 +879,11 @@ async def detect_verification_challenge(page):
     search_target = await get_verification_search_target(page, anchor_locator, option_texts=option_texts)
     option_texts = await collect_visible_option_texts(search_target)
     input_hints = await get_visible_verification_input_hints(search_target)
+    status_lines = await get_visible_verification_status_texts(
+        search_target,
+        exclude_texts=[title, *option_texts, *input_hints],
+    )
+    option_texts = refine_verification_option_labels(option_texts, title=title, input_hints=input_hints)
     has_submit = await has_visible_verification_submit(search_target)
 
     if not title and not option_texts and not input_hints:
@@ -561,12 +892,12 @@ async def detect_verification_challenge(page):
         return None
     payload = {
         "title": title or "需要额外验证",
-        "message": "检测到登录验证，请在远端页面选择验证方式，必要时输入验证码或密码。",
+        "message": "；".join(status_lines) if status_lines else "检测到登录验证，请在远端页面选择验证方式，必要时输入验证码或密码。",
         "options": option_texts,
         "supportsTextInput": bool(input_hints),
         "inputHints": input_hints,
     }
-    signature = f"{payload['title']}|{'/'.join(option_texts)}|{'/'.join(input_hints)}|{page.url}"
+    signature = f"{payload['title']}|{payload['message']}|{'/'.join(option_texts)}|{'/'.join(input_hints)}|{page.url}"
     return {
         "signature": signature,
         "payload": payload,
@@ -590,24 +921,201 @@ async def click_visible_option(page, text):
                 except Exception:
                     clicked = await candidate.evaluate(
                         """
-                        (element) => {
+                        (element, selector) => {
                             const target = element.closest(
-                                "button, [role='button'], a[href], label, [tabindex='0'], [onclick]"
+                                selector
                             ) || element;
-                            target.dispatchEvent(new MouseEvent("click", {
-                                bubbles: true,
-                                cancelable: true,
-                                view: window,
-                            }));
+                            const PointerCtor = window.PointerEvent || window.MouseEvent;
+                            const fire = (Ctor, type) => {
+                                target.dispatchEvent(new Ctor(type, {
+                                    bubbles: true,
+                                    cancelable: true,
+                                    view: window,
+                                }));
+                            };
+                            if (typeof target.focus === "function") {
+                                target.focus();
+                            }
+                            if (typeof target.click === "function") {
+                                target.click();
+                            }
+                            fire(PointerCtor, "pointerdown");
+                            fire(window.MouseEvent, "mousedown");
+                            fire(PointerCtor, "pointerup");
+                            fire(window.MouseEvent, "mouseup");
+                            fire(window.MouseEvent, "click");
                             return true;
                         }
                         """
+                        ,
+                        INTERACTIVE_ACTION_CLOSEST_SELECTOR,
                     )
                     if clicked:
                         return True
         except Exception:
             continue
     return False
+
+
+async def get_interactive_action_meta(candidate):
+    try:
+        meta = await candidate.evaluate(
+            """
+            (element) => {
+                const values = [
+                    element.innerText,
+                    element.textContent,
+                    element.value,
+                    element.getAttribute("aria-label"),
+                    element.getAttribute("title"),
+                ];
+                const labels = Array.from(
+                    new Set(
+                        values
+                            .filter(Boolean)
+                            .flatMap((value) => String(value).split("\\n"))
+                            .map((value) => value.replace(/\\s+/g, " ").trim())
+                            .filter(Boolean)
+                    )
+                );
+                return {
+                    labels,
+                    tag: (element.tagName || "").toLowerCase(),
+                    type: (element.getAttribute("type") || "").toLowerCase(),
+                    role: (element.getAttribute("role") || "").toLowerCase(),
+                    className: `${element.className || ""} ${element.id || ""}`.toLowerCase(),
+                    disabled: Boolean(
+                        element.disabled
+                        || element.getAttribute("disabled") !== null
+                        || element.getAttribute("aria-disabled") === "true"
+                    ),
+                };
+            }
+            """
+        )
+    except Exception:
+        return None
+
+    if not isinstance(meta, dict):
+        return None
+    meta["labels"] = [normalize_action_text(label) for label in meta.get("labels") or [] if normalize_action_text(label)]
+    return meta
+
+
+def score_interactive_action_meta(meta, texts):
+    if not meta or meta.get("disabled"):
+        return -1
+
+    labels = meta.get("labels") or []
+    best_score = -1
+    for label in labels:
+        for text in texts:
+            best_score = max(best_score, score_action_label_match(label, text))
+
+    if best_score < 0:
+        return -1
+
+    tag = str(meta.get("tag") or "").lower()
+    action_type = str(meta.get("type") or "").lower()
+    role = str(meta.get("role") or "").lower()
+    class_name = str(meta.get("className") or "").lower()
+
+    if tag == "button":
+        best_score += 12
+    elif action_type == "submit":
+        best_score += 10
+    elif role == "button":
+        best_score += 8
+
+    if any(keyword in class_name for keyword in ("submit", "confirm", "verify", "login", "next")):
+        best_score += 4
+
+    # Penalize container elements that have contradicting labels (e.g., both "取消" and "验证").
+    # These are usually wrapper divs, not the actual clickable button.
+    cancel_keywords = ("取消", "关闭", "返回")
+    normalized_labels = [normalize_action_text(label) for label in labels if normalize_action_text(label)]
+    has_cancel = any(any(keyword in label for keyword in cancel_keywords) for label in normalized_labels)
+    has_match = any(any(normalize_action_text(text) in label for text in texts) for label in normalized_labels)
+    if has_cancel and has_match and len(normalized_labels) > 1:
+        best_score -= 30
+
+    return best_score
+
+
+async def find_best_matching_interactive_action(target, texts):
+    try:
+        locator = target.locator(INTERACTIVE_ACTION_SELECTOR)
+        count = await locator.count()
+    except Exception:
+        return None
+
+    best_candidate = None
+    best_score = -1
+    for index in range(min(count, 80)):
+        candidate = locator.nth(index)
+        try:
+            if not await candidate.is_visible():
+                continue
+        except Exception:
+            continue
+
+        meta = await get_interactive_action_meta(candidate)
+        score = score_interactive_action_meta(meta, texts)
+        if score > best_score:
+            best_candidate = candidate
+            best_score = score
+
+    return best_candidate
+
+
+async def click_best_matching_interactive_action(target, texts):
+    candidate = await find_best_matching_interactive_action(target, texts)
+    if candidate is None:
+        return False
+
+    try:
+        try:
+            await candidate.scroll_into_view_if_needed()
+        except Exception:
+            pass
+        await candidate.click(force=True, timeout=2000)
+        return True
+    except Exception:
+        try:
+            clicked = await candidate.evaluate(
+                """
+                (element, selector) => {
+                    const target = element.closest(
+                        selector
+                    ) || element;
+                    const PointerCtor = window.PointerEvent || window.MouseEvent;
+                    const fire = (Ctor, type) => {
+                        target.dispatchEvent(new Ctor(type, {
+                            bubbles: true,
+                            cancelable: true,
+                            view: window,
+                        }));
+                    };
+                    if (typeof target.focus === "function") {
+                        target.focus();
+                    }
+                    if (typeof target.click === "function") {
+                        target.click();
+                    }
+                    fire(PointerCtor, "pointerdown");
+                    fire(window.MouseEvent, "mousedown");
+                    fire(PointerCtor, "pointerup");
+                    fire(window.MouseEvent, "mouseup");
+                    fire(window.MouseEvent, "click");
+                    return true;
+                }
+                """
+                ,
+                INTERACTIVE_ACTION_CLOSEST_SELECTOR,
+            )
+            return bool(clicked)
+        except Exception:
+            return False
 
 
 async def get_verification_targets(page):
@@ -638,18 +1146,34 @@ async def click_visible_partial_option(target, texts):
         try:
             clicked = await candidate.evaluate(
                 """
-                (element) => {
+                (element, selector) => {
                     const target = element.closest(
-                        "button, [role='button'], a[href], label, [tabindex='0'], [onclick]"
+                        selector
                     ) || element;
-                    target.dispatchEvent(new MouseEvent("click", {
-                        bubbles: true,
-                        cancelable: true,
-                        view: window,
-                    }));
+                    const PointerCtor = window.PointerEvent || window.MouseEvent;
+                    const fire = (Ctor, type) => {
+                        target.dispatchEvent(new Ctor(type, {
+                            bubbles: true,
+                            cancelable: true,
+                            view: window,
+                        }));
+                    };
+                    if (typeof target.focus === "function") {
+                        target.focus();
+                    }
+                    if (typeof target.click === "function") {
+                        target.click();
+                    }
+                    fire(PointerCtor, "pointerdown");
+                    fire(window.MouseEvent, "mousedown");
+                    fire(PointerCtor, "pointerup");
+                    fire(window.MouseEvent, "mouseup");
+                    fire(window.MouseEvent, "click");
                     return true;
                 }
                 """
+                ,
+                INTERACTIVE_ACTION_CLOSEST_SELECTOR,
             )
             return bool(clicked)
         except Exception:
@@ -878,7 +1402,13 @@ async def find_first_editable_input(page, desired_text=None):
 
 async def click_submit_action(page):
     for target in await get_verification_targets(page):
+        if await click_best_matching_interactive_action(target, VERIFICATION_SUBMIT_TEXTS):
+            return True
         for text in VERIFICATION_SUBMIT_TEXTS:
+            if len(normalize_action_text(text)) <= 3:
+                if await click_visible_option(target, text):
+                    return True
+                continue
             if await click_visible_option(target, text):
                 return True
             if await click_visible_partial_option(target, [text]):
@@ -886,8 +1416,196 @@ async def click_submit_action(page):
     return False
 
 
+async def get_verification_signature_snapshot(page):
+    if page is None or page.is_closed():
+        return None
+    try:
+        challenge = await detect_verification_challenge(page)
+    except Exception:
+        return None
+    if not challenge:
+        return None
+    return challenge.get("signature")
+
+
+async def did_verification_view_change(page, before_signature=None, before_url=""):
+    if page is None or page.is_closed():
+        return True
+    current_url = str(getattr(page, "url", "") or "")
+    if before_url and current_url and current_url != before_url:
+        return True
+    current_signature = await get_verification_signature_snapshot(page)
+    if before_signature is None:
+        return current_signature is None
+        
+    if current_signature != before_signature:
+        def strip_timer(sig):
+            return re.sub(r'\d+\s*(?:s|秒)后(?:重新)?(?:发送|获取)(?:验证码)?', 'TIMER_PLACEHOLDER', str(sig or ""))
+            
+        if strip_timer(current_signature) != strip_timer(before_signature):
+            return True
+            
+    return False
+
+
+async def dump_verification_debug_snapshot(page, label="verification", target=None, extra_payload=None):
+    if page is None or page.is_closed():
+        return None
+
+    if target is None:
+        try:
+            target = await get_verification_search_target(page)
+        except Exception:
+            target = page
+
+    try:
+        html = await target.evaluate(
+            """
+            (element) => element ? (element.outerHTML || element.innerHTML || "") : ""
+            """
+        )
+    except Exception as exc:
+        html = f"<!-- failed to capture verification html: {exc} -->"
+
+    candidates = []
+    try:
+        locator = target.locator(INTERACTIVE_ACTION_SELECTOR)
+        count = await locator.count()
+    except Exception:
+        count = 0
+        locator = None
+
+    for index in range(min(count, 40)):
+        candidate = locator.nth(index)
+        try:
+            if not await candidate.is_visible():
+                continue
+        except Exception:
+            continue
+        meta = await get_interactive_action_meta(candidate)
+        if not meta:
+            continue
+        candidates.append(meta)
+
+    try:
+        screenshot_bytes = await target.screenshot(type="png")
+    except Exception:
+        screenshot_bytes = None
+
+    LOGIN_DEBUG_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    base_name = f"verification_{label}_latest"
+    html_path = LOGIN_DEBUG_LOG_DIR / f"{base_name}.html"
+    json_path = LOGIN_DEBUG_LOG_DIR / f"{base_name}.json"
+    screenshot_path = LOGIN_DEBUG_LOG_DIR / f"{base_name}.png"
+
+    try:
+        html_path.write_text(str(html or ""), encoding="utf-8")
+    except Exception:
+        pass
+
+    payload = {
+        "label": label,
+        "url": str(getattr(page, "url", "") or ""),
+        "interactiveCandidates": candidates,
+        "extra": extra_payload or {},
+    }
+    try:
+        json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+    if screenshot_bytes:
+        try:
+            screenshot_path.write_bytes(screenshot_bytes)
+        except Exception:
+            pass
+
+    return {
+        "htmlPath": str(html_path),
+        "jsonPath": str(json_path),
+        "screenshotPath": str(screenshot_path),
+    }
+
+
+async def submit_verification_action(page, input_locator=None):
+    before_url = str(getattr(page, "url", "") or "")
+    before_signature = await get_verification_signature_snapshot(page)
+    dispatched = False
+
+    await dump_verification_debug_snapshot(
+        page,
+        label="submit",
+        extra_payload={
+            "beforeSignature": before_signature,
+            "beforeUrl": before_url,
+        },
+    )
+
+    async def _after_dispatch_pause():
+        for _ in range(5):
+            await asyncio.sleep(0.5)
+            if await did_verification_view_change(page, before_signature=before_signature, before_url=before_url):
+                return True
+        return False
+
+    async def _try_click():
+        return await click_submit_action(page)
+
+    async def _try_input_enter():
+        if input_locator is None:
+            return False
+        try:
+            await input_locator.click(force=True)
+        except Exception:
+            pass
+        try:
+            await input_locator.press("Enter")
+            return True
+        except Exception:
+            return False
+
+    # Only try safe strategies: click the submit button, or press Enter on the input field.
+    # Do NOT try page_enter or tab_then_enter — those blindly press Enter/Tab and can hit
+    # the "取消" (Cancel) button on platforms like Douyin where it sits next to "验证" (Verify).
+    for name, strategy in (
+        ("click_submit", _try_click),
+        ("input_enter", _try_input_enter),
+    ):
+        applied = await strategy()
+        if not applied:
+            continue
+        dispatched = True
+
+        if await _after_dispatch_pause():
+            log_throttled(
+                login_logger,
+                "INFO",
+                f"login.submit.success:{id(page)}",
+                1,
+                "verification submit completed via strategy={} current_url={}",
+                name,
+                page.url if not page.is_closed() else "closed",
+            )
+            return True
+
+        log_throttled(
+            login_logger,
+            "INFO",
+            f"login.submit.no_effect:{id(page)}:{name}",
+            1,
+            "verification submit had no visible effect via strategy={} current_url={} signature={}",
+            name,
+            page.url if not page.is_closed() else "closed",
+            before_signature,
+        )
+
+    return dispatched
+
+
 async def click_verification_option(page, text):
     for target in await get_verification_targets(page):
+        if await click_best_matching_interactive_action(target, [text]):
+            return True
         if await click_visible_option(target, text):
             return True
         if await click_visible_partial_option(target, [text]):
@@ -901,9 +1619,16 @@ def get_select_all_shortcut():
 
 def get_login_browser_options(command_queue=None, extra_args=None):
     force_headless = bool(command_queue) and sys.platform.startswith("linux")
+    force_headed = bool(command_queue) and os.name == "nt"
     if force_headless:
         login_logger.info("using headless browser for remote login on linux")
-    return get_browser_options(headless=True if force_headless else None, extra_args=extra_args)
+    if force_headed:
+        login_logger.info("using headed browser for remote login on windows")
+    if force_headless:
+        return get_browser_options(headless=True, extra_args=extra_args)
+    if force_headed:
+        return get_browser_options(headless=False, extra_args=extra_args)
+    return get_browser_options(headless=None, extra_args=extra_args)
 
 
 async def fill_input_like_user(page, input_locator, text):
@@ -914,10 +1639,21 @@ async def fill_input_like_user(page, input_locator, text):
 
     async def _verify():
         current_value = await get_editable_value(input_locator)
-        return current_value == text
+        if str(current_value) == str(text):
+            return True
+        try:
+            meta = await get_editable_meta(input_locator)
+            if meta and meta.get("maxlength") == 1 and current_value == str(text)[0]:
+                return True
+        except Exception:
+            pass
+        return False
 
     async def _prepare_focus():
-        await input_locator.click(force=True)
+        try:
+            await input_locator.click(force=True)
+        except Exception:
+            pass
         try:
             await input_locator.focus()
         except Exception:
@@ -945,7 +1681,13 @@ async def fill_input_like_user(page, input_locator, text):
         if not dispatched:
             raise RuntimeError("dispatch_editable_value_failed")
 
-    for strategy in (_fill_direct, _type_direct, _dispatch_value):
+    async def _keyboard_type():
+        await _prepare_focus()
+        for char in str(text):
+            await page.keyboard.press(char)
+            await asyncio.sleep(0.05)
+
+    for strategy in (_fill_direct, _type_direct, _dispatch_value, _keyboard_type):
         try:
             await strategy()
             await asyncio.sleep(0.2)
@@ -1074,11 +1816,34 @@ async def apply_remote_action(page, action, status_queue=None, command_queue=Non
     action_type = action.get("actionType") or ""
     payload = action.get("payload") or {}
 
+    login_logger.info(
+        "apply_remote_action action_type={} payload={} current_url={}",
+        action_type,
+        {k: v for k, v in payload.items()} if isinstance(payload, dict) else payload,
+        page.url if not page.is_closed() else "closed",
+    )
+
     if action_type in {"select_option", "click_text"}:
         target_text = str(payload.get("text") or payload.get("optionText") or payload.get("option") or "").strip()
         if not target_text:
+            login_logger.info("apply_remote_action select_option skipped - no target_text")
             return False
         result = await click_verification_option(page, target_text)
+        login_logger.info(
+            "apply_remote_action select_option target_text={} direct_click_result={} current_url={}",
+            target_text, result, page.url if not page.is_closed() else "closed",
+        )
+        if not result and any(keyword in target_text for keyword in VERIFICATION_CODE_ACTION_TEXTS):
+            for fallback_text in VERIFICATION_CODE_ACTION_TEXTS:
+                if fallback_text == target_text:
+                    continue
+                result = await click_verification_option(page, fallback_text)
+                if result:
+                    login_logger.info(
+                        "apply_remote_action select_option fallback_text={} click_result=True current_url={}",
+                        fallback_text, page.url if not page.is_closed() else "closed",
+                    )
+                    break
         if result:
             push_structured_status(
                 status_queue,
@@ -1140,17 +1905,7 @@ async def apply_remote_action(page, action, status_queue=None, command_queue=Non
         if not filled:
             return False
         await asyncio.sleep(0.2)
-        submitted = await click_submit_action(page)
-        if not submitted:
-            try:
-                await input_locator.press("Enter")
-                submitted = True
-            except Exception:
-                try:
-                    await page.keyboard.press("Enter")
-                    submitted = True
-                except Exception:
-                    submitted = False
+        submitted = await submit_verification_action(page, input_locator=input_locator)
         if submitted:
             await asyncio.sleep(0.3)
             push_structured_status(
@@ -1274,8 +2029,22 @@ async def wait_for_login_result(
             qr_phase_waiting_scan = bool(
                 qr_locator is not None and qr_visible and not qr_state.get("isScanned") and not qr_state.get("isExpired")
             )
-
-            challenge = None if qr_phase_waiting_scan else await detect_verification_challenge(page)
+            challenge = await detect_verification_challenge(page)
+            if challenge and qr_phase_waiting_scan and not is_strong_verification_challenge(challenge):
+                log_throttled(
+                    login_logger,
+                    "INFO",
+                    f"login.wait.weak_verification:{original_url}",
+                    5,
+                    "ignoring weak verification signal while qr is still waiting scan original_url={} current_url={} title={} options={}",
+                    original_url,
+                    page.url,
+                    (challenge.get("payload") or {}).get("title"),
+                    (challenge.get("payload") or {}).get("options"),
+                )
+                challenge = None
+            if challenge:
+                qr_phase_waiting_scan = False
         except Exception as exc:
             if is_transient_login_page_error(exc):
                 deadline = max(deadline, loop.time() + 10)
@@ -1306,6 +2075,14 @@ async def wait_for_login_result(
                 )
             verification_cleared_since = None
             if challenge["signature"] != last_signature:
+                await dump_verification_debug_snapshot(
+                    page,
+                    label="challenge",
+                    extra_payload={
+                        "signature": challenge["signature"],
+                        "payload": challenge["payload"],
+                    },
+                )
                 push_structured_status(status_queue, command_queue, "verification_required", challenge["payload"])
                 last_signature = challenge["signature"]
             try:
@@ -1608,6 +2385,12 @@ async def douyin_cookie_gen(id,status_queue, command_queue=None):
             if not login_result:
                 raise asyncio.TimeoutError
             login_logger.info("douyin login navigation detected account_name={}", id)
+            push_structured_status(
+                status_queue,
+                command_queue,
+                "running",
+                {"message": "安全验证通过，正在测试并保存登录配置，此过程通常约 10-15 秒，偶遇网络或平台校验可能长达一分钟，请耐心等待..."},
+            )
         except asyncio.TimeoutError:
             login_logger.warning("douyin login timed out account_name={}", id)
             await page.close()
@@ -1701,6 +2484,12 @@ async def get_tencent_cookie(id,status_queue, command_queue=None):
             if not login_result:
                 raise asyncio.TimeoutError
             login_logger.info("tencent login navigation detected account_name={}", id)
+            push_structured_status(
+                status_queue,
+                command_queue,
+                "running",
+                {"message": "安全验证通过，正在测试并保存登录配置，此过程通常约 10-15 秒，偶遇网络或平台校验可能长达一分钟，请耐心等待..."},
+            )
         except asyncio.TimeoutError:
             status_queue.put("500")
             login_logger.warning("tencent login timed out account_name={}", id)
@@ -1790,6 +2579,12 @@ async def get_ks_cookie(id,status_queue, command_queue=None):
             if not login_result:
                 raise asyncio.TimeoutError
             login_logger.info("kuaishou login navigation detected account_name={}", id)
+            push_structured_status(
+                status_queue,
+                command_queue,
+                "running",
+                {"message": "安全验证通过，正在测试并保存登录配置，此过程通常约 10-15 秒，偶遇网络或平台校验可能长达一分钟，请耐心等待..."},
+            )
         except asyncio.TimeoutError:
             status_queue.put("500")
             login_logger.warning("kuaishou login timed out account_name={}", id)
@@ -1878,6 +2673,12 @@ async def xiaohongshu_cookie_gen(id,status_queue, command_queue=None):
             if not login_result:
                 raise asyncio.TimeoutError
             login_logger.info("xiaohongshu login navigation detected account_name={}", id)
+            push_structured_status(
+                status_queue,
+                command_queue,
+                "running",
+                {"message": "安全验证通过，正在测试并保存登录配置，此过程通常约 10-15 秒，偶遇网络或平台校验可能长达一分钟，请耐心等待..."},
+            )
         except asyncio.TimeoutError:
             status_queue.put("500")
             login_logger.warning("xiaohongshu login timed out account_name={}", id)
