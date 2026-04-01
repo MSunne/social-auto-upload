@@ -559,11 +559,9 @@ async def detect_verification_challenge(page):
         return None
     if not title and not option_texts and input_hints and not has_submit:
         return None
-    screenshot_data = await page_to_data_url(page, search_target if search_target is not page else None)
     payload = {
         "title": title or "需要额外验证",
         "message": "检测到登录验证，请在远端页面选择验证方式，必要时输入验证码或密码。",
-        "screenshotData": screenshot_data,
         "options": option_texts,
         "supportsTextInput": bool(input_hints),
         "inputHints": input_hints,
@@ -582,6 +580,10 @@ async def click_visible_option(page, text):
         candidate = locator.nth(index)
         try:
             if await candidate.is_visible():
+                try:
+                    await candidate.scroll_into_view_if_needed()
+                except Exception:
+                    pass
                 try:
                     await candidate.click(force=True, timeout=2000)
                     return True
@@ -626,10 +628,32 @@ async def click_visible_partial_option(target, texts):
     if candidate is None:
         return False
     try:
+        try:
+            await candidate.scroll_into_view_if_needed()
+        except Exception:
+            pass
         await candidate.click(force=True, timeout=2000)
         return True
     except Exception:
-        return False
+        try:
+            clicked = await candidate.evaluate(
+                """
+                (element) => {
+                    const target = element.closest(
+                        "button, [role='button'], a[href], label, [tabindex='0'], [onclick]"
+                    ) || element;
+                    target.dispatchEvent(new MouseEvent("click", {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window,
+                    }));
+                    return true;
+                }
+                """
+            )
+            return bool(clicked)
+        except Exception:
+            return False
 
 
 async def get_editable_meta(candidate):
@@ -873,6 +897,13 @@ async def click_verification_option(page, text):
 
 def get_select_all_shortcut():
     return "Meta+A" if sys.platform == "darwin" else "Control+A"
+
+
+def get_login_browser_options(command_queue=None, extra_args=None):
+    force_headless = bool(command_queue) and sys.platform.startswith("linux")
+    if force_headless:
+        login_logger.info("using headless browser for remote login on linux")
+    return get_browser_options(headless=True if force_headless else None, extra_args=extra_args)
 
 
 async def fill_input_like_user(page, input_locator, text):
@@ -1537,7 +1568,7 @@ async def douyin_cookie_gen(id,status_queue, command_queue=None):
         if page.url != original_url:
             url_changed_event.set()
     async with async_playwright() as playwright:
-        options = get_browser_options()
+        options = get_login_browser_options(command_queue=command_queue)
         # Make sure to run headed.
         browser = await playwright.chromium.launch(**options)
         # Setup context however you like.
@@ -1623,7 +1654,7 @@ async def get_tencent_cookie(id,status_queue, command_queue=None):
             url_changed_event.set()
 
     async with async_playwright() as playwright:
-        options = get_browser_options(extra_args=['--lang=en-GB'])
+        options = get_login_browser_options(command_queue=command_queue, extra_args=['--lang=en-GB'])
         browser = await playwright.chromium.launch(**options)
         # Setup context however you like.
         context = await browser.new_context()  # Pass any options
@@ -1715,7 +1746,7 @@ async def get_ks_cookie(id,status_queue, command_queue=None):
         if page.url != original_url:
             url_changed_event.set()
     async with async_playwright() as playwright:
-        options = get_browser_options(extra_args=['--lang=en-GB'])
+        options = get_login_browser_options(command_queue=command_queue, extra_args=['--lang=en-GB'])
         browser = await playwright.chromium.launch(**options)
         # Setup context however you like.
         context = await browser.new_context()  # Pass any options
@@ -1805,7 +1836,7 @@ async def xiaohongshu_cookie_gen(id,status_queue, command_queue=None):
             url_changed_event.set()
 
     async with async_playwright() as playwright:
-        options = get_browser_options(extra_args=['--lang=en-GB'])
+        options = get_login_browser_options(command_queue=command_queue, extra_args=['--lang=en-GB'])
         browser = await playwright.chromium.launch(**options)
         # Setup context however you like.
         context = await browser.new_context()  # Pass any options

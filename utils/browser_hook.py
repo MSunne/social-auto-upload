@@ -8,8 +8,7 @@ from conf import LOCAL_CHROME_HEADLESS, LOCAL_CHROME_PATH
 from utils.log import get_logger
 
 
-COMMON_BROWSER_PATHS = [
-    LOCAL_CHROME_PATH,
+POSIX_BROWSER_PATHS = [
     "/usr/bin/google-chrome",
     "/usr/bin/google-chrome-stable",
     "/usr/bin/chromium",
@@ -18,7 +17,18 @@ COMMON_BROWSER_PATHS = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
 ]
 
-COMMON_PLAYWRIGHT_BROWSER_DIRS = [
+WINDOWS_BROWSER_ENV_CANDIDATES = (
+    ("LOCALAPPDATA", "Google/Chrome/Application/chrome.exe"),
+    ("PROGRAMFILES", "Google/Chrome/Application/chrome.exe"),
+    ("PROGRAMFILES(X86)", "Google/Chrome/Application/chrome.exe"),
+    ("LOCALAPPDATA", "Chromium/Application/chrome.exe"),
+    ("PROGRAMFILES", "Chromium/Application/chrome.exe"),
+    ("PROGRAMFILES(X86)", "Chromium/Application/chrome.exe"),
+    ("PROGRAMFILES", "Microsoft/Edge/Application/msedge.exe"),
+    ("PROGRAMFILES(X86)", "Microsoft/Edge/Application/msedge.exe"),
+)
+
+BASE_PLAYWRIGHT_BROWSER_DIRS = [
     Path("/opt/playwright"),
     Path.home() / ".cache" / "ms-playwright",
 ]
@@ -45,7 +55,7 @@ LINUX_GUI_ENV_KEYS = (
 
 
 def _resolve_system_browser_executable_path():
-    for candidate in COMMON_BROWSER_PATHS:
+    for candidate in _common_browser_path_candidates():
         if not candidate:
             continue
         path = Path(candidate).expanduser()
@@ -63,7 +73,7 @@ def _playwright_browser_roots():
     elif env_path:
         candidate_roots.append(Path(env_path).expanduser())
 
-    candidate_roots.extend(COMMON_PLAYWRIGHT_BROWSER_DIRS)
+    candidate_roots.extend(_default_playwright_browser_dirs())
 
     seen = set()
     roots = []
@@ -106,6 +116,44 @@ def resolve_playwright_browser_executable_path():
 
 def _is_linux():
     return sys.platform.startswith("linux")
+
+
+def _is_windows():
+    return sys.platform.startswith("win")
+
+
+def _common_browser_path_candidates():
+    candidates = []
+    if LOCAL_CHROME_PATH:
+        candidates.append(LOCAL_CHROME_PATH)
+
+    if _is_windows():
+        for env_name, relative_path in WINDOWS_BROWSER_ENV_CANDIDATES:
+            base_dir = str(os.getenv(env_name, "")).strip()
+            if not base_dir:
+                continue
+            candidates.append(str(Path(base_dir) / relative_path))
+
+    candidates.extend(POSIX_BROWSER_PATHS)
+
+    seen = set()
+    normalized = []
+    for candidate in candidates:
+        value = str(candidate or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return normalized
+
+
+def _default_playwright_browser_dirs():
+    roots = list(BASE_PLAYWRIGHT_BROWSER_DIRS)
+    if _is_windows():
+        local_appdata = str(os.getenv("LOCALAPPDATA", "")).strip()
+        if local_appdata:
+            roots.append(Path(local_appdata) / "ms-playwright")
+    return roots
 
 
 def _normalize_gui_env_value(value):
@@ -343,7 +391,7 @@ def describe_browser_runtime(*, headless=None):
         "source": source,
         "systemBrowserPath": system_browser_path,
         "playwrightBrowserDir": bundled_browser_dir,
-        "checkedCandidates": [path for path in COMMON_BROWSER_PATHS if path],
+        "checkedCandidates": _common_browser_path_candidates(),
         "launchEnvSource": launch_env_source,
         "launchEnvKeys": sorted(launch_env.keys()),
         "issues": issues,

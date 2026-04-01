@@ -71,6 +71,16 @@ openclaw plugins enable omnidrive
 
 也可以只配置 `accessToken`，不配 `email/password`。
 
+### Windows + WSL2
+
+如果 `OpenClaw` 跑在 `WSL2`、`SAU / OmniBull` 跑在 Windows 原生环境，推荐：
+
+- Windows 侧先启动 SAU，本地接口保持 `http://127.0.0.1:5409`
+- WSL2 开启 mirrored networking
+- 插件继续使用默认 `localOmniBullBaseUrl=http://127.0.0.1:5409`
+
+如果现场没有开启 mirrored networking，或者 `127.0.0.1` 在 WSL2 内无法访问到 Windows 本机，再显式把 `localOmniBullBaseUrl` 改成 Windows 主机可达地址。
+
 ## 环境变量
 
 若不想写进插件配置，也支持：

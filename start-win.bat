@@ -1,27 +1,18 @@
 @echo off
-TITLE One-Click Starter for social-auto-upload
+TITLE OmniBull Windows Starter
 
-ECHO ==================================================
-ECHO  Starting social-auto-upload Servers...
-ECHO ==================================================
-ECHO.
+SET SCRIPT_DIR=%~dp0
+SET POWERSHELL_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe
+SET ENV_FILE=%SCRIPT_DIR%deploy\env\omnibull.windows.env
 
-ECHO [1/2] Starting Python Backend Server in a new window...
-REM The START command launches a new process.
-REM The first quoted string "SAU Backend" is the title of the new window.
-REM cmd /k runs the command and keeps the window open to show logs.
-START "SAU Backend" cmd /k "python sau_backend.py"
+IF NOT EXIST "%POWERSHELL_EXE%" (
+  ECHO powershell.exe not found.
+  EXIT /B 1
+)
 
-ECHO [2/2] Starting Vue.js Frontend Server in another new window...
-START "SAU Frontend" cmd /k "cd sau_frontend && npm run dev -- --host 0.0.0.0"
+IF NOT EXIST "%ENV_FILE%" IF EXIST "%SCRIPT_DIR%deploy\env\omnibull.windows.env.example" (
+  COPY /Y "%SCRIPT_DIR%deploy\env\omnibull.windows.env.example" "%ENV_FILE%" > nul
+)
 
-ECHO.
-ECHO ==================================================
-ECHO  Done.
-ECHO  Two new windows have been opened for the backend
-ECHO  and frontend servers. You can monitor logs there.
-ECHO ==================================================
-ECHO.
-
-ECHO This window will close in 10 seconds...
-timeout /t 10 /nobreak > nul
+"%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\sau_windows.ps1" start -EnvFile "%ENV_FILE%"
+EXIT /B %ERRORLEVEL%

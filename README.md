@@ -162,6 +162,24 @@
     ```
     前端项目将在 `http://localhost:5173` 启动，在浏览器中打开此链接即可访问。
 
+### Windows / WSL2 出厂方案
+
+如果目标是：
+
+- `SAU / OmniBull` 运行在 Windows 原生环境
+- `Chrome` 运行在 Windows 原生环境
+- `OpenClaw` 运行在 WSL2
+
+直接参考：
+
+- [docs/omnibull_windows_quickstart.md](/Volumes/mud/project/github/social-auto-upload/docs/omnibull_windows_quickstart.md)
+
+对应脚本：
+
+- [scripts/sau_windows_bootstrap.ps1](/Volumes/mud/project/github/social-auto-upload/scripts/sau_windows_bootstrap.ps1)
+- [scripts/openclaw_wsl2_bootstrap.ps1](/Volumes/mud/project/github/social-auto-upload/scripts/openclaw_wsl2_bootstrap.ps1)
+- [scripts/sau_windows.ps1](/Volumes/mud/project/github/social-auto-upload/scripts/sau_windows.ps1)
+
 
 > 非程序员用户可以参考：[新手级教程](https://juejin.cn/post/7372114027840208911)
 

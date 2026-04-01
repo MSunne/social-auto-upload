@@ -446,7 +446,6 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
               const options = payload.options || [];
               const hints = payload.inputHints || [];
               const canAssistTextInput = Boolean(payload.supportsTextInput || hints.length > 0);
-              const screenshotSrc = payload.screenshotData || payload.screenshotUrl || null;
               
               return (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-5">
@@ -459,19 +458,6 @@ export function AddAccountModal({ isOpen, onClose, deviceId, initialSession = nu
                     {payload.message || "本地 SAU 检测到额外验证，请选择认证方式或输入验证内容。"}
                   </p>
                 </div>
-                
-                {screenshotSrc && (
-                   <div className="rounded-xl border border-white/10 overflow-hidden">
-                     <Image 
-                        src={screenshotSrc}
-                        alt="验证码截图"
-                        width={400}
-                        height={300}
-                        unoptimized
-                        className="w-full object-contain max-h-[160px] bg-black/50"
-                     />
-                   </div>
-                )}
                 
                 {options.length > 0 && (
                   <div className="space-y-2">
