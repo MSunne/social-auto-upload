@@ -200,7 +200,7 @@ func normalizeCreateAIModelPayload(payload adminCreateAIModelRequest) (store.Cre
 		return store.CreateAIModelInput{}, renderableError("vendor, modelName, and baseUrl are required")
 	}
 	if modelAlias == "" {
-		modelAlias = modelName
+		return store.CreateAIModelInput{}, renderableError("modelAlias is required")
 	}
 
 	input := store.CreateAIModelInput{
@@ -248,6 +248,9 @@ func normalizeCreateAIModelPayload(payload adminCreateAIModelRequest) (store.Cre
 }
 
 func normalizeUpdateAIModelPayload(payload adminUpdateAIModelRequest) (store.UpdateAIModelInput, error) {
+	if payload.ModelAlias != nil && strings.TrimSpace(valueOrEmpty(payload.ModelAlias)) == "" {
+		return store.UpdateAIModelInput{}, renderableError("modelAlias cannot be empty")
+	}
 	input := store.UpdateAIModelInput{
 		Vendor:         trimmedStringPtr(strings.TrimSpace(valueOrEmpty(payload.Vendor))),
 		ModelName:      trimmedStringPtr(strings.TrimSpace(valueOrEmpty(payload.ModelName))),

@@ -121,12 +121,20 @@ type AdminAccountSummary struct {
 }
 
 type AdminSkillSummary struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	OutputType string `json:"outputType"`
-	ModelName  string `json:"modelName"`
-	ModelAlias string `json:"modelAlias,omitempty"`
-	IsEnabled  bool   `json:"isEnabled"`
+	ID                       string   `json:"id"`
+	Name                     string   `json:"name"`
+	Description              string   `json:"description"`
+	OutputType               string   `json:"outputType"`
+	ModelName                string   `json:"modelName"`
+	ModelAlias               string   `json:"modelAlias,omitempty"`
+	PromptTemplate           *string  `json:"promptTemplate"`
+	StoryboardPromptTemplate *string  `json:"storyboardPromptTemplate"`
+	PublishPromptTemplate    *string  `json:"publishPromptTemplate"`
+	PublishIntroEnabled      bool     `json:"publishIntroEnabled"`
+	CoverPromptTemplate      *string  `json:"coverPromptTemplate"`
+	Topics                   []string `json:"topics"`
+	StoryboardEnabled        bool     `json:"storyboardEnabled"`
+	IsEnabled                bool     `json:"isEnabled"`
 }
 
 type AdminAIModelSummary struct {

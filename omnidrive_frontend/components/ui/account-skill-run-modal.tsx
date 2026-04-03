@@ -381,7 +381,7 @@ export function AccountSkillRunModal({
                         {selectedSkill.name}
                       </p>
                       <p className="text-sm leading-6 text-text-secondary">
-                        {selectedSkill.description || "暂无技能说明。"}
+                        {selectedSkill.description || "暂无简介。"}
                       </p>
                       <div className="flex flex-wrap gap-2 pt-1">
                         <span className="inline-flex items-center gap-1 rounded-lg bg-white/8 px-2 py-1 text-[11px] font-medium text-text-secondary">

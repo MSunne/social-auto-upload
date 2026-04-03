@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -29,6 +29,7 @@ import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { API_BASE_URL } from "@/lib/api";
+import { safeLocalStorageGet } from "@/lib/browser-storage";
 import {
   buildFileAccept,
   formatSupportedFileTypes,
@@ -309,6 +310,108 @@ async function readStream(
   }
 
   return state;
+}
+
+function emitBufferedSSEBlocks(
+  rawText: string,
+  onEvent: (event: string, payload: StreamEventPayload) => void,
+): StreamReadState {
+  const state: StreamReadState = {
+    sawDone: false,
+    sawError: false,
+  };
+
+  for (const part of rawText.split(/\r?\n\r?\n/)) {
+    const parsed = parseSSEBlock(part);
+    if (!parsed) {
+      continue;
+    }
+    if (parsed.event === "done") {
+      state.sawDone = true;
+    }
+    if (parsed.event === "error") {
+      state.sawError = true;
+    }
+    onEvent(parsed.event, parsed.payload);
+  }
+
+  return state;
+}
+
+async function readChatResponse(
+  response: Response,
+  onEvent: (event: string, payload: StreamEventPayload) => void,
+): Promise<StreamReadState> {
+  const bufferedResponse = typeof response.clone === "function" ? response.clone() : null;
+
+  if (
+    !response.body ||
+    typeof response.body.getReader !== "function" ||
+    typeof TextDecoder !== "function"
+  ) {
+    return emitBufferedSSEBlocks(await response.text(), onEvent);
+  }
+
+  try {
+    return await readStream(response.body, onEvent);
+  } catch (error) {
+    if (bufferedResponse) {
+      return emitBufferedSSEBlocks(await bufferedResponse.text(), onEvent);
+    }
+    throw error;
+  }
+}
+
+function scrollChatViewportToBottom(container: HTMLDivElement | null, behavior: ScrollBehavior) {
+  if (!container) {
+    return;
+  }
+  const targetTop = container.scrollHeight;
+  if (behavior === "auto") {
+    container.scrollTop = targetTop;
+    return;
+  }
+  try {
+    container.scrollTo({ top: targetTop, behavior });
+  } catch {
+    container.scrollTop = targetTop;
+  }
+}
+
+function writeTextToClipboard(text: string) {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text);
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    if (typeof document === "undefined") {
+      reject(new Error("当前环境不支持复制"));
+      return;
+    }
+
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    textarea.style.pointerEvents = "none";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+
+    try {
+      const copied = document.execCommand("copy");
+      document.body.removeChild(textarea);
+      if (!copied) {
+        reject(new Error("复制失败"));
+        return;
+      }
+      resolve();
+    } catch (error) {
+      document.body.removeChild(textarea);
+      reject(error instanceof Error ? error : new Error("复制失败"));
+    }
+  });
 }
 
 function detectAttachmentKind(mimeType: string, fileName: string): ChatAttachmentKind {
@@ -723,10 +826,14 @@ function AttachmentThumbnail({ href, fileName }: { href: string; fileName: strin
 function CodeCopyButton({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
   const handleCopy = useCallback(() => {
-    void navigator.clipboard.writeText(code).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+    void writeTextToClipboard(code)
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 2000);
+      })
+      .catch(() => {
+        setCopied(false);
+      });
   }, [code]);
   return (
     <button
@@ -868,7 +975,8 @@ function ChatMarkdown({ content }: { content: string }) {
 export default function ChatPage() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesViewportRef = useRef<HTMLDivElement>(null);
+  const nextScrollBehaviorRef = useRef<ScrollBehavior>("smooth");
   const streamAbortRef = useRef<AbortController | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -962,6 +1070,7 @@ export default function ChatPage() {
     if (!selectedJob || sending || pendingHydrationJobId !== selectedJob.id) {
       return;
     }
+    nextScrollBehaviorRef.current = "auto";
     setMessages(buildMessagesFromHistory(selectedJob, selectedJobArtifacts));
     setDraft("");
     setDraftAttachments([]);
@@ -979,8 +1088,9 @@ export default function ChatPage() {
     setConversationId((previous) => previous || getConversationKey(selectedJob));
   }, [selectedJob]);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  useLayoutEffect(() => {
+    scrollChatViewportToBottom(messagesViewportRef.current, nextScrollBehaviorRef.current);
+    nextScrollBehaviorRef.current = "smooth";
   }, [messages]);
 
   useEffect(() => {
@@ -1072,7 +1182,7 @@ export default function ChatPage() {
       return;
     }
 
-    const token = typeof window !== "undefined" ? localStorage.getItem("omnidrive_token") : null;
+    const token = safeLocalStorageGet("omnidrive_token");
     if (!token) {
       setSubmitError("登录已失效，请重新登录后再聊天");
       return;
@@ -1148,12 +1258,8 @@ export default function ChatPage() {
         throw new Error(nextMessage);
       }
 
-      if (!response.body) {
-        throw new Error("聊天流未返回内容");
-      }
-
       let receivedText = "";
-      const streamState = await readStream(response.body, (event, payload) => {
+      const streamState = await readChatResponse(response, (event, payload) => {
         if (event === "meta") {
           if (payload.jobId) {
             createdJobId = payload.jobId;
@@ -1304,6 +1410,7 @@ export default function ChatPage() {
   }
 
   function startNewConversation() {
+    nextScrollBehaviorRef.current = "auto";
     setSelectedJobId("");
     setPendingHydrationJobId("");
     setAutoSelectLatestHistory(false);
@@ -1385,7 +1492,7 @@ export default function ChatPage() {
               {groupedHistoryJobs.map((job) => {
                 const active = selectedConversationKey === getConversationKey(job);
                 return (
-                  <button key={getConversationKey(job)} type="button" onClick={() => { setAutoSelectLatestHistory(false); setConversationId(getConversationKey(job)); setSelectedJobId(job.id); setPendingHydrationJobId(job.id); }} className={cn("group w-full rounded-xl px-3 py-2.5 text-left transition-all", active ? "bg-accent/10 border border-accent/30 shadow-sm shadow-accent/10" : "border border-transparent hover:bg-surface-hover/80")}>
+                  <button key={getConversationKey(job)} type="button" onClick={() => { nextScrollBehaviorRef.current = "auto"; setAutoSelectLatestHistory(false); setConversationId(getConversationKey(job)); setSelectedJobId(job.id); setPendingHydrationJobId(job.id); }} className={cn("group w-full rounded-xl px-3 py-2.5 text-left transition-all", active ? "bg-accent/10 border border-accent/30 shadow-sm shadow-accent/10" : "border border-transparent hover:bg-surface-hover/80")}>
                     <div className="line-clamp-2 text-sm font-medium leading-5 text-text-primary">{summarizeHistory(job)}</div>
                     <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-text-muted">
                       <Clock3 className="h-3 w-3" />
@@ -1425,7 +1532,7 @@ export default function ChatPage() {
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+        <div ref={messagesViewportRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
           <div className="flex h-full w-full flex-col">
             <div className="space-y-4">
               {messages.map((message) => (
@@ -1469,7 +1576,7 @@ export default function ChatPage() {
                 </div>
               )}
             </div>
-            <div ref={messagesEndRef} className="h-2" />
+            <div className="h-2" />
           </div>
         </div>
 

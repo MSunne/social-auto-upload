@@ -1,22 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useSyncExternalStore, useState } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { Sidebar } from "./sidebar";
 import { getBillingSummary } from "@/lib/services";
+import {
+  safeLocalStorageGet,
+  safeLocalStorageRemove,
+  safeLocalStorageSet,
+} from "@/lib/browser-storage";
 import { useAuthStore } from "@/lib/store";
 
 const BILLING_ALERT_DISMISSED_STORAGE_KEY = "omnidrive_billing_alert_dismissed";
 const BILLING_ALERT_STORAGE_EVENT = "omnidrive-billing-alert-storage-change";
 
 function readDismissedBillingAlertKey() {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  return localStorage.getItem(BILLING_ALERT_DISMISSED_STORAGE_KEY);
+  return safeLocalStorageGet(BILLING_ALERT_DISMISSED_STORAGE_KEY);
 }
 
 function notifyBillingAlertStorageChange() {
@@ -30,6 +32,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { token, hydrate } = useAuthStore();
   const router = useRouter();
   const pathname = usePathname();
+  const mounted = useSyncExternalStore(
+    () => () => undefined,
+    () => true,
+    () => false,
+  );
   const dismissedAlertKey = useSyncExternalStore(
     (onStoreChange) => {
       if (typeof window === "undefined") {
@@ -74,45 +81,37 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       billingAlertKey &&
       dismissedAlertKey !== billingAlertKey,
   );
-
-  const [mounted, setMounted] = useState(false);
-  const [authChecked, setAuthChecked] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const localToken = safeLocalStorageGet("omnidrive_token");
+  const hasAuth = Boolean(token || localToken);
 
   useEffect(() => {
     if (typeof window === "undefined" || billingSummary?.needsRecharge) {
       return;
     }
-    localStorage.removeItem(BILLING_ALERT_DISMISSED_STORAGE_KEY);
+    safeLocalStorageRemove(BILLING_ALERT_DISMISSED_STORAGE_KEY);
     notifyBillingAlertStorageChange();
   }, [billingSummary?.needsRecharge]);
 
   useEffect(() => {
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
     hydrate();
-    
-    const localToken = localStorage.getItem("omnidrive_token");
-    const hasAuth = Boolean(token || localToken);
 
     if (!hasAuth && pathname !== "/login" && pathname !== "/register") {
       router.replace("/login");
-    } else {
-      setAuthChecked(true);
     }
-  }, [mounted, hydrate, token, pathname, router]);
+  }, [mounted, hasAuth, hydrate, pathname, router]);
 
   const dismissBillingAlert = () => {
     if (!billingAlertKey || typeof window === "undefined") {
       return;
     }
-    localStorage.setItem(BILLING_ALERT_DISMISSED_STORAGE_KEY, billingAlertKey);
+    safeLocalStorageSet(BILLING_ALERT_DISMISSED_STORAGE_KEY, billingAlertKey);
     notifyBillingAlertStorageChange();
   };
 
-  if (!authChecked) {
+  if (!mounted || (!hasAuth && pathname !== "/login" && pathname !== "/register")) {
     return <div className="min-h-screen bg-background" />;
   }
 

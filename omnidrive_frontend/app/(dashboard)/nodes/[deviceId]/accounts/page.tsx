@@ -11,8 +11,6 @@ import {
   Layout,
   ListChecks,
   Sparkles,
-  KeyRound,
-  BadgeCheck,
   Trash2,
   ChevronLeft,
   ChevronRight,
@@ -29,9 +27,8 @@ import {
   listSkills,
   listTasks,
   deleteAccount,
-  validateAccount,
 } from "@/lib/services";
-import type { Device, Account, Skill, Task, LoginSession } from "@/lib/types";
+import type { Device, Account, Skill, Task } from "@/lib/types";
 import { StatusBadge } from "@/components/ui/common";
 import { AddAccountModal } from "@/components/ui/add-account-modal";
 
@@ -80,14 +77,12 @@ function getAccountDeleteUsage(account: Account | null) {
     (load?.cancelRequestedTaskCount || 0);
   const totalTaskCount = load?.taskCount || 0;
   const historicalTaskCount = Math.max(totalTaskCount - activeTaskCount, 0);
-  const activeLoginSessionCount = load?.activeLoginSessionCount || 0;
 
   return {
     activeTaskCount,
     totalTaskCount,
     historicalTaskCount,
-    activeLoginSessionCount,
-    hasBlockingUsage: activeTaskCount > 0 || activeLoginSessionCount > 0,
+    hasBlockingUsage: activeTaskCount > 0,
   };
 }
 
@@ -124,8 +119,6 @@ export default function DeviceAccountsPage({
 
   /* Modal state */
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
-  const [validationSession, setValidationSession] =
-    useState<LoginSession | null>(null);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [deleteCountdown, setDeleteCountdown] = useState(5);
   const [deleteDialogError, setDeleteDialogError] = useState<string | null>(
@@ -133,7 +126,6 @@ export default function DeviceAccountsPage({
   );
 
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
-  const [isValidating, setIsValidating] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
 
   const handleSync = async () => {
@@ -185,20 +177,6 @@ export default function DeviceAccountsPage({
       await queryClient.invalidateQueries({ queryKey: ["accounts", deviceId] });
     } finally {
       setIsDeleting(null);
-    }
-  };
-
-  const handleValidate = async (accountId: string) => {
-    try {
-      setIsValidating(accountId);
-      const session = await validateAccount(accountId);
-      queryClient.invalidateQueries({ queryKey: ["accounts", deviceId] });
-      setValidationSession(session);
-      setIsAccountModalOpen(true);
-    } catch (err: unknown) {
-      alert(getErrorMessage(err, "发起重新认证失败"));
-    } finally {
-      setIsValidating(null);
     }
   };
 
@@ -429,10 +407,7 @@ export default function DeviceAccountsPage({
                   const platformCfg = PLATFORMS.find(
                     (p) => p.key === acc.platform,
                   );
-                  const hasActiveLoginSession =
-                    (acc.load?.activeLoginSessionCount || 0) > 0;
-                  const needsAttention =
-                    acc.status !== "active" || hasActiveLoginSession;
+                  const needsAttention = acc.status !== "active";
                   return (
                     <motion.tr
                       key={acc.id}
@@ -470,11 +445,6 @@ export default function DeviceAccountsPage({
                       <td className="px-6 py-4">
                         <div className="space-y-1">
                           <StatusBadge status={acc.status} />
-                          {hasActiveLoginSession && (
-                            <div className="text-xs text-amber-400">
-                              正在重新认证，等待二维码或二次认证
-                            </div>
-                          )}
                           {acc.lastMessage && (
                             <div
                               className={`max-w-xs truncate text-xs ${
@@ -487,6 +457,11 @@ export default function DeviceAccountsPage({
                               {asDisplayText(acc.lastMessage)}
                             </div>
                           )}
+                          {needsAttention ? (
+                            <div className="text-xs text-amber-400">
+                              请在本地 OmniBull 前端重新认证后，再同步账号状态。
+                            </div>
+                          ) : null}
                         </div>
                       </td>
 
@@ -517,40 +492,10 @@ export default function DeviceAccountsPage({
                       <td className="px-6 py-4">
                         <div className="flex items-center justify-center gap-2">
                           {needsAttention ? (
-                            <button
-                              onClick={() => handleValidate(acc.id)}
-                              disabled={isValidating === acc.id}
-                              className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-400 cursor-pointer transition-all hover:border-amber-400/60 hover:bg-amber-500/20 hover:shadow-[0_0_10px_rgba(245,158,11,0.25)] hover:-translate-y-px disabled:opacity-50"
-                              title={
-                                hasActiveLoginSession
-                                  ? "重新打开认证流程"
-                                  : "重新认证 (账号已失效或待确认)"
-                              }
-                            >
-                              {isValidating === acc.id ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <KeyRound className="h-3 w-3" />
-                              )}
-                              {hasActiveLoginSession
-                                ? "重新打开认证"
-                                : "重新认证"}
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => handleValidate(acc.id)}
-                              disabled={isValidating === acc.id}
-                              className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-400 cursor-pointer transition-all hover:border-emerald-400/60 hover:bg-emerald-500/20 hover:shadow-[0_0_10px_rgba(16,185,129,0.25)] hover:-translate-y-px disabled:opacity-50"
-                              title="登录状态有效"
-                            >
-                              {isValidating === acc.id ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <BadgeCheck className="h-3 w-3" />
-                              )}
-                              重新认证
-                            </button>
-                          )}
+                            <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-300">
+                              请在 SAU 前端处理认证
+                            </span>
+                          ) : null}
                           <button
                             onClick={() => setDeleteTargetId(acc.id)}
                             disabled={isDeleting === acc.id}
@@ -650,7 +595,7 @@ export default function DeviceAccountsPage({
               </div>
 
               <div className="space-y-4 px-6 py-6">
-                <div className="grid gap-3 sm:grid-cols-3">
+                <div className="grid gap-3 sm:grid-cols-2">
                   <div className="rounded-2xl border border-white/8 bg-white/5 px-4 py-3">
                     <p className="text-xs font-semibold uppercase tracking-widest text-text-muted">
                       计划中任务
@@ -667,19 +612,11 @@ export default function DeviceAccountsPage({
                       {deleteUsage.historicalTaskCount}
                     </p>
                   </div>
-                  <div className="rounded-2xl border border-white/8 bg-white/5 px-4 py-3">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-text-muted">
-                      活跃认证
-                    </p>
-                    <p className="mt-2 text-2xl font-black text-white">
-                      {deleteUsage.activeLoginSessionCount}
-                    </p>
-                  </div>
                 </div>
 
                 {deleteUsage.hasBlockingUsage ? (
                   <div className="rounded-2xl border border-amber-500/30 bg-amber-500/12 px-4 py-4 text-sm leading-6 text-amber-100">
-                    当前账号还有计划中任务或正在进行的认证流程，暂时不能解绑。
+                    当前账号还有计划中任务，暂时不能解绑。
                     {deleteUsage.historicalTaskCount > 0
                       ? ` 等这些阻塞项处理完后，再解绑时会一并清空 ${deleteUsage.historicalTaskCount} 条历史任务记录。`
                       : ""}
@@ -688,8 +625,8 @@ export default function DeviceAccountsPage({
                   <>
                     <div className="rounded-2xl border border-red-500/30 bg-red-500/12 px-4 py-4 text-sm leading-6 text-red-100">
                       {deleteUsage.historicalTaskCount > 0
-                        ? `检测到账户下仍保留 ${deleteUsage.historicalTaskCount} 条历史任务记录。解除绑定后，这些任务记录和相关登录记录会一并清空，且不会再被 OmniBull 自动补回。`
-                        : "当前没有计划中任务，可以正常解绑。解除绑定后，会清空相关历史登录记录，并阻止 OmniBull 自动把这个账号重新同步回来。"}
+                        ? `检测到账户下仍保留 ${deleteUsage.historicalTaskCount} 条历史任务记录。解除绑定后，这些任务记录会一并清空，且不会再被 OmniBull 自动补回。`
+                        : "当前没有计划中任务，可以正常解绑。解除绑定后，会阻止 OmniBull 自动把这个账号重新同步回来。"}
                     </div>
                     <div className="flex items-center gap-3 rounded-2xl border border-cyan/25 bg-cyan/10 px-4 py-3 text-sm text-cyan-100">
                       <Clock3 className="h-4 w-4 shrink-0" />
@@ -758,12 +695,10 @@ export default function DeviceAccountsPage({
         isOpen={isAccountModalOpen}
         onClose={() => {
           setIsAccountModalOpen(false);
-          setValidationSession(null);
           queryClient.invalidateQueries({ queryKey: ["accounts", deviceId] });
           queryClient.invalidateQueries({ queryKey: ["device", deviceId] });
         }}
         deviceId={deviceId}
-        initialSession={validationSession}
       />
     </>
   );

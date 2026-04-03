@@ -2,7 +2,6 @@
 
 import { motion, AnimatePresence } from "framer-motion";
 import { X, ExternalLink, ShieldCheck } from "lucide-react";
-import type { LoginSession } from "@/lib/types";
 import { useEffect } from "react";
 import { toast } from "react-hot-toast";
 
@@ -10,7 +9,6 @@ interface AddAccountModalProps {
   isOpen: boolean;
   onClose: () => void;
   deviceId: string;
-  initialSession?: LoginSession | null;
 }
 
 export function AddAccountModal({ isOpen, onClose, deviceId }: AddAccountModalProps) {
@@ -47,9 +45,9 @@ export function AddAccountModal({ isOpen, onClose, deviceId }: AddAccountModalPr
             <div>
               <h2 className="text-xl font-bold text-white tracking-wide flex items-center gap-2">
                 <ShieldCheck className="w-5 h-5 text-indigo-400" />
-                添加与验证账号
+                添加与认证账号
               </h2>
-              <p className="mt-1 text-sm text-gray-400">目前平台账号仅支持在本地端管理，以确保安全与稳定。</p>
+              <p className="mt-1 text-sm text-gray-400">目前平台账号的添加与重新认证仅支持在本地端管理，以确保安全与稳定。</p>
             </div>
             <button
               onClick={onClose}
@@ -69,7 +67,7 @@ export function AddAccountModal({ isOpen, onClose, deviceId }: AddAccountModalPr
                 请前往本地 OmniBull (SAU) 进行操作
               </h3>
               <p className="text-sm text-gray-400 leading-relaxed max-w-[280px] mx-auto">
-                为了提升验证成功率并保证 Cookie 时效，所有主流社交平台账号必须通过本地工程添加。
+                为了提升验证成功率并保证 Cookie 时效，所有主流社交平台账号都必须通过本地工程添加或重新认证。
               </p>
             </div>
 
@@ -78,7 +76,7 @@ export function AddAccountModal({ isOpen, onClose, deviceId }: AddAccountModalPr
                  <li>确保您的本地 <strong>OmniBull (SAU)</strong> 工程正在运行</li>
                  <li>在浏览器中打开 <span className="text-indigo-400 font-mono bg-indigo-500/10 px-1 py-0.5 rounded">http://localhost:5409</span></li>
                  <li>进入左侧菜单的 <strong>「账号管理」</strong> 页面</li>
-                 <li>点击 <strong>添加账号</strong> 并完成各平台的扫码验证</li>
+                 <li>点击 <strong>添加账号</strong> 或在账号管理里重新认证，并完成各平台扫码验证</li>
                  <li>添加成功后点击 <strong>同步至云端</strong>，即可在此处查看账号状态</li>
                </ol>
             </div>

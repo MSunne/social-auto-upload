@@ -54,9 +54,9 @@ func (s *Store) ListAdminSkills(ctx context.Context, filter AdminSkillListFilter
 	}
 
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
-		SELECT id, name, output_type, model_name,
+		SELECT id, name, description, output_type, model_name,
 		       COALESCE((SELECT am.model_alias FROM ai_models am WHERE am.model_name = product_skills.model_name LIMIT 1), product_skills.model_name) AS model_alias,
-		       is_enabled
+		       prompt_template, storyboard_prompt_template, publish_prompt_template, publish_intro_enabled, cover_prompt_template, topics, storyboard_enabled, is_enabled
 		FROM product_skills
 		%s
 		ORDER BY created_at DESC
@@ -70,16 +70,26 @@ func (s *Store) ListAdminSkills(ctx context.Context, filter AdminSkillListFilter
 	var items []domain.AdminSkillSummary
 	for rows.Next() {
 		var item domain.AdminSkillSummary
+		var topicsPayload []byte
 		if err := rows.Scan(
 			&item.ID,
 			&item.Name,
+			&item.Description,
 			&item.OutputType,
 			&item.ModelName,
 			&item.ModelAlias,
+			&item.PromptTemplate,
+			&item.StoryboardPromptTemplate,
+			&item.PublishPromptTemplate,
+			&item.PublishIntroEnabled,
+			&item.CoverPromptTemplate,
+			&topicsPayload,
+			&item.StoryboardEnabled,
 			&item.IsEnabled,
 		); err != nil {
 			return nil, 0, err
 		}
+		item.Topics = normalizeSkillTopicsFromJSON(topicsPayload)
 		items = append(items, item)
 	}
 
@@ -87,7 +97,15 @@ func (s *Store) ListAdminSkills(ctx context.Context, filter AdminSkillListFilter
 }
 
 type UpdateProductSkillAdminInput struct {
-	IsEnabled *bool
+	Description              *string
+	PromptTemplate           *string
+	StoryboardPromptTemplate *string
+	PublishPromptTemplate    *string
+	PublishIntroEnabled      *bool
+	Topics                   []string
+	TopicsTouched            bool
+	StoryboardEnabled        *bool
+	IsEnabled                *bool
 }
 
 func (s *Store) UpdateProductSkillAdmin(ctx context.Context, id string, input UpdateProductSkillAdminInput) (*domain.ProductSkill, error) {
@@ -95,6 +113,41 @@ func (s *Store) UpdateProductSkillAdmin(ctx context.Context, id string, input Up
 	args := []any{id}
 	argIndex := 2
 
+	if input.Description != nil {
+		setParts = append(setParts, fmt.Sprintf("description = $%d", argIndex))
+		args = append(args, strings.TrimSpace(*input.Description))
+		argIndex++
+	}
+	if input.PromptTemplate != nil {
+		setParts = append(setParts, fmt.Sprintf("prompt_template = $%d", argIndex))
+		args = append(args, trimmedStringOrNil(input.PromptTemplate))
+		argIndex++
+	}
+	if input.StoryboardPromptTemplate != nil {
+		setParts = append(setParts, fmt.Sprintf("storyboard_prompt_template = $%d", argIndex))
+		args = append(args, trimmedStringOrNil(input.StoryboardPromptTemplate))
+		argIndex++
+	}
+	if input.PublishPromptTemplate != nil {
+		setParts = append(setParts, fmt.Sprintf("publish_prompt_template = $%d", argIndex))
+		args = append(args, trimmedStringOrNil(input.PublishPromptTemplate))
+		argIndex++
+	}
+	if input.PublishIntroEnabled != nil {
+		setParts = append(setParts, fmt.Sprintf("publish_intro_enabled = $%d", argIndex))
+		args = append(args, *input.PublishIntroEnabled)
+		argIndex++
+	}
+	if input.TopicsTouched {
+		setParts = append(setParts, fmt.Sprintf("topics = $%d", argIndex))
+		args = append(args, marshalSkillTopics(input.Topics))
+		argIndex++
+	}
+	if input.StoryboardEnabled != nil {
+		setParts = append(setParts, fmt.Sprintf("storyboard_enabled = $%d", argIndex))
+		args = append(args, *input.StoryboardEnabled)
+		argIndex++
+	}
 	if input.IsEnabled != nil {
 		setParts = append(setParts, fmt.Sprintf("is_enabled = $%d", argIndex))
 		args = append(args, *input.IsEnabled)
@@ -116,6 +169,17 @@ func (s *Store) UpdateProductSkillAdmin(ctx context.Context, id string, input Up
 	`, setClause, skillSelectColumns), args...)
 
 	return scanSkill(row)
+}
+
+func trimmedStringOrNil(value *string) any {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return trimmed
 }
 
 func (s *Store) GetProductSkillByID(ctx context.Context, id string) (*domain.ProductSkill, error) {

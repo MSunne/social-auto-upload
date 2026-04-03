@@ -22,6 +22,8 @@ const (
 	defaultSkillVideoAspectRatio     = "16:9"
 	defaultSkillVideoResolution      = "1280x720"
 	defaultSkillVideoDurationSeconds = 8
+	defaultSkillVideoSubtitleRule    = "默认不要字幕"
+	defaultSkillStoryboardPrompt     = "你是内容创作分镜与脚本优化助手。请结合用户目标、参考图片和参考文本，输出适合继续交给图片、视频或文本模型执行的精炼脚本。输出中需要保留主体、场景、镜头、风格、文案和节奏等关键信息。"
 )
 
 type skillVideoGenerationOptions struct {
@@ -34,7 +36,7 @@ func ScheduledSkillGenerationTime(publishAt time.Time) time.Time {
 	return publishAt.UTC().Add(-30 * time.Minute)
 }
 
-func BuildSkillJobPrompt(skill domain.ProductSkill) string {
+func BuildSkillJobPrompt(skill domain.ProductSkill, jobType string) string {
 	prompt := strings.TrimSpace(optionalStringValue(skill.PromptTemplate))
 	if prompt == "" {
 		prompt = strings.TrimSpace(skill.Description)
@@ -42,7 +44,31 @@ func BuildSkillJobPrompt(skill domain.ProductSkill) string {
 	if prompt == "" {
 		prompt = strings.TrimSpace(skill.Name)
 	}
+	if strings.EqualFold(strings.TrimSpace(jobType), "video") {
+		prompt = appendUniqueVideoSubtitleRule(prompt)
+	}
 	return prompt
+}
+
+func BuildSkillPublishPromptTemplate(skill domain.ProductSkill) string {
+	if !skill.PublishIntroEnabled {
+		return ""
+	}
+	return strings.TrimSpace(optionalStringValue(skill.PublishPromptTemplate))
+}
+
+func DefaultSkillStoryboardPromptTemplate(outputType string) string {
+	return strings.TrimSpace(defaultSkillStoryboardPrompt)
+}
+
+func ResolveSkillStoryboardPromptTemplate(skill domain.ProductSkill, jobType string) string {
+	if prompt := strings.TrimSpace(optionalStringValue(skill.StoryboardPromptTemplate)); prompt != "" {
+		return prompt
+	}
+	if prompt := strings.TrimSpace(DefaultSkillStoryboardPromptTemplate(skill.OutputType)); prompt != "" {
+		return prompt
+	}
+	return strings.TrimSpace(defaultSkillStoryboardPrompt)
 }
 
 func MapSkillOutputTypeToJobType(outputType string) (string, bool) {
@@ -110,21 +136,25 @@ func BuildSkillAIJobPayload(
 		})
 	}
 
-	storyboardPrompt, storyboardModel, storyboardReferences, err := loadSkillStoryboardConfig(ctx, app, jobType)
+	storyboardPrompt, storyboardModel, storyboardReferences, err := loadSkillStoryboardConfig(ctx, app, skill, jobType)
 	if err != nil {
 		return nil, err
 	}
 
-	prompt := BuildSkillJobPrompt(skill)
+	prompt := BuildSkillJobPrompt(skill, jobType)
 	topics := normalizeSkillTopics(skill.Topics)
+	publishPromptTemplate := BuildSkillPublishPromptTemplate(skill)
 	payload := map[string]any{
-		"prompt":           prompt,
-		"skillName":        skill.Name,
-		"skillDescription": skill.Description,
-		"runAt":            generateAt.UTC().Format(time.RFC3339),
-		"publishAt":        publishAt.UTC().Format(time.RFC3339),
-		"referenceImages":  referenceImages,
-		"referenceTexts":   referenceTexts,
+		"prompt":                prompt,
+		"skillName":             skill.Name,
+		"skillDescription":      skill.Description,
+		"publishPromptTemplate": publishPromptTemplate,
+		"publishIntroEnabled":   skill.PublishIntroEnabled,
+		"skillTags":             topics,
+		"runAt":                 generateAt.UTC().Format(time.RFC3339),
+		"publishAt":             publishAt.UTC().Format(time.RFC3339),
+		"referenceImages":       referenceImages,
+		"referenceTexts":        referenceTexts,
 		"storyboardConfig": map[string]any{
 			"enabled":    skill.StoryboardEnabled,
 			"modelName":  storyboardModel,
@@ -168,12 +198,14 @@ func BuildSkillAIJobPayload(
 			publishTargets = append(publishTargets, item)
 		}
 		payload["publishPayload"] = map[string]any{
-			"title":        skill.Name,
-			"contentText":  skill.Description,
-			"tags":         topics,
-			"targets":      publishTargets,
-			"runAt":        publishAt.UTC().Format(time.RFC3339),
-			"requestedRun": publishAt.UTC().Format(time.RFC3339),
+			"title":                 skill.Name,
+			"contentText":           skill.Description,
+			"contentTemplate":       skill.Description,
+			"contentPromptTemplate": publishPromptTemplate,
+			"tags":                  topics,
+			"targets":               publishTargets,
+			"runAt":                 publishAt.UTC().Format(time.RFC3339),
+			"requestedRun":          publishAt.UTC().Format(time.RFC3339),
 		}
 		if len(accountIDs) == 1 {
 			payload["accountId"] = accountIDs[0]
@@ -206,8 +238,8 @@ func normalizeSkillTopics(topics []string) []string {
 	return normalized
 }
 
-func loadSkillStoryboardConfig(ctx context.Context, app *appstate.App, jobType string) (string, string, []map[string]any, error) {
-	prompt := ""
+func loadSkillStoryboardConfig(ctx context.Context, app *appstate.App, skill domain.ProductSkill, jobType string) (string, string, []map[string]any, error) {
+	prompt := ResolveSkillStoryboardPromptTemplate(skill, jobType)
 	model := strings.TrimSpace(app.Config.DefaultChatModel)
 	references := make([]map[string]any, 0)
 
@@ -222,11 +254,6 @@ func loadSkillStoryboardConfig(ctx context.Context, app *appstate.App, jobType s
 	rawReferences := record.StoryboardReferences
 	switch strings.TrimSpace(jobType) {
 	case "image":
-		if strings.TrimSpace(record.ImageStoryboardPrompt) != "" {
-			prompt = strings.TrimSpace(record.ImageStoryboardPrompt)
-		} else {
-			prompt = strings.TrimSpace(record.StoryboardPrompt)
-		}
 		if strings.TrimSpace(record.ImageStoryboardModel) != "" {
 			model = strings.TrimSpace(record.ImageStoryboardModel)
 		} else if strings.TrimSpace(record.StoryboardModel) != "" {
@@ -236,7 +263,6 @@ func loadSkillStoryboardConfig(ctx context.Context, app *appstate.App, jobType s
 			rawReferences = record.ImageStoryboardReferences
 		}
 	default:
-		prompt = strings.TrimSpace(record.StoryboardPrompt)
 		if strings.TrimSpace(record.StoryboardModel) != "" {
 			model = strings.TrimSpace(record.StoryboardModel)
 		}
@@ -282,6 +308,18 @@ func optionalStringValue(value *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*value)
+}
+
+func appendUniqueVideoSubtitleRule(prompt string) string {
+	trimmed := strings.TrimSpace(prompt)
+	if trimmed == "" {
+		return defaultSkillVideoSubtitleRule
+	}
+	lower := strings.ToLower(trimmed)
+	if strings.Contains(lower, "不要字幕") || strings.Contains(lower, "无字幕") || strings.Contains(lower, "纯净画面") {
+		return trimmed
+	}
+	return trimmed + "\n" + defaultSkillVideoSubtitleRule
 }
 
 func resolveSkillVideoGenerationOptions(skill domain.ProductSkill, model *domain.AIModel) skillVideoGenerationOptions {

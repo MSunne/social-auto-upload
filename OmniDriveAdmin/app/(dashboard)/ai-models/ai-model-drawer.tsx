@@ -173,6 +173,7 @@ function AIModelDrawerContent({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const modelAlias = form.modelAlias.trim() || form.modelName.trim();
     const rawRate = parseOptionalNumber(form.rawRate);
     const billingAmount = parseOptionalNumber(form.billingAmount);
     const imageReferenceLimit = parseOptionalNumber(form.imageReferenceLimit);
@@ -181,7 +182,7 @@ function AIModelDrawerContent({
     const payload = {
       vendor: form.vendor.trim(),
       modelName: form.modelName.trim(),
-      modelAlias: form.modelAlias.trim() || form.modelName.trim(),
+      modelAlias,
       category: form.category,
       billingMode: form.billingMode,
       modelType: form.category,

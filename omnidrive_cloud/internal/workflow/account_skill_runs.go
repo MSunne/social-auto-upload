@@ -211,7 +211,7 @@ func PrepareAccountSkillRun(
 	return &PreparedAccountSkillRun{
 		JobType:      jobType,
 		ModelName:    strings.TrimSpace(skill.ModelName),
-		Prompt:       BuildSkillJobPrompt(skill),
+		Prompt:       BuildSkillJobPrompt(skill, jobType),
 		InputPayload: inputPayload,
 		Status:       status,
 		Message:      message,

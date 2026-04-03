@@ -277,7 +277,7 @@ export default function SkillsPage() {
               {/* Body */}
               <div className="flex-1 space-y-4 p-5">
                 <p className="text-sm leading-relaxed text-text-secondary line-clamp-2">
-                  {skill.description || "暂无描述"}
+                  {skill.description || "暂无简介"}
                 </p>
 
                 <div className="flex flex-wrap gap-2">

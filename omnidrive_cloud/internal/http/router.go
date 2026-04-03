@@ -92,10 +92,6 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 				accounts.Post("/{accountId}/skill-runs", accountHandler.CreateSkillRun)
 				accounts.Delete("/{accountId}/skill-runs/{jobId}", accountHandler.DeleteSkillRun)
 				accounts.Delete("/{accountId}", accountHandler.Delete)
-				accounts.Post("/{accountId}/validate", accountHandler.Validate)
-				accounts.Post("/remote-login", accountHandler.CreateRemoteLogin)
-				accounts.Get("/login-sessions/{sessionId}", accountHandler.GetLoginSession)
-				accounts.Post("/login-sessions/{sessionId}/actions", accountHandler.CreateLoginAction)
 			})
 
 			private.Route("/skills", func(skills chi.Router) {

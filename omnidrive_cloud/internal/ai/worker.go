@@ -39,9 +39,16 @@ type executionBillingBlockedError struct {
 	Result *store.ApplyUsageBillingResult
 }
 
+type storyboardOptimizationEnvelope struct {
+	GenerationPrompt string `json:"generationPrompt"`
+	PublishIntro     string `json:"publishIntro"`
+}
+
 const (
 	videoArtifactFinalizeMaxAttempts = 3
 	videoArtifactFinalizeRetryDelay  = 2 * time.Second
+	defaultStoryboardSystemPrompt    = "你是内容创作分镜与脚本优化助手。请结合用户目标、参考图片和参考文本，输出适合继续交给图片、视频或文本模型执行的精炼脚本。输出中需要保留主体、场景、镜头、风格、文案和节奏等关键信息。"
+	defaultPublishIntroPrompt        = "请结合任务说明、基础简介、标签、分镜脚本与参考资料，生成一段适合直接发布到第三方平台的简介。要求与生成内容保持同一主题和卖点，保留客户既定风格，但每次表达都自然变化，避免模板化和完全重复。"
 )
 
 const executionBillingRetryDelay = time.Minute
@@ -762,10 +769,20 @@ func (w *Worker) prepareStoryboardPrompt(ctx context.Context, job *domain.AIJob,
 
 	referenceTexts := normalizeStoryboardTexts(payload["referenceTexts"])
 	referenceImages := normalizeStoryboardImages(payload["referenceImages"])
+	publishPayload, _ := payload["publishPayload"].(map[string]any)
+	seedContentText := strings.TrimSpace(stringValueFromMap(publishPayload, "contentText", "contentTemplate"))
+	publishIntroEnabled := true
+	if raw, exists := payload["publishIntroEnabled"]; exists {
+		publishIntroEnabled = boolValue(raw)
+	}
+	publishPromptTemplate := strings.TrimSpace(stringValueFromMap(payload, "publishPromptTemplate"))
+	if publishIntroEnabled && publishPromptTemplate == "" {
+		publishPromptTemplate = defaultPublishIntroPrompt
+	}
 
 	systemPrompt := strings.TrimSpace(stringValueFromMap(config, "prompt"))
 	if systemPrompt == "" {
-		systemPrompt = "你是内容创作分镜与脚本优化助手。请结合用户目标、参考图片和参考文本，输出适合继续交给图片、视频或文本模型执行的精炼脚本。输出中需要保留主体、场景、镜头、风格、文案和节奏等关键信息。"
+		systemPrompt = defaultStoryboardSystemPrompt
 	}
 
 	baseURL, apiKey, err := w.resolveModelRuntimeConfig(ctx, modelName)
@@ -796,15 +813,20 @@ func (w *Worker) prepareStoryboardPrompt(ctx context.Context, job *domain.AIJob,
 		return nil, originalPrompt, err
 	}
 
-	optimizedPrompt := strings.TrimSpace(result.Text)
-	if optimizedPrompt == "" {
-		optimizedPrompt = originalPrompt
+	optimizedPrompt, optimizedContentText, responseMode := parseStoryboardOptimizationResponse(result.Text, originalPrompt, seedContentText)
+	if !publishIntroEnabled {
+		optimizedContentText = seedContentText
+		responseMode = strings.TrimSpace(responseMode + "_intro_disabled")
 	}
 
 	return map[string]any{
-		"modelName":       modelName,
-		"promptTemplate":  systemPrompt,
-		"optimizedPrompt": optimizedPrompt,
+		"modelName":             modelName,
+		"promptTemplate":        systemPrompt,
+		"publishPromptTemplate": publishPromptTemplate,
+		"publishIntroEnabled":   publishIntroEnabled,
+		"optimizedPrompt":       optimizedPrompt,
+		"optimizedContentText":  optimizedContentText,
+		"responseMode":          responseMode,
 		"referenceCount": map[string]int{
 			"images": len(referenceImages),
 			"texts":  len(referenceTexts),
@@ -837,11 +859,14 @@ func buildStoryboardFallbackPayload(job *domain.AIJob, originalPrompt string, er
 	config, _ := payload["storyboardConfig"].(map[string]any)
 	referenceTexts := normalizeStoryboardTexts(payload["referenceTexts"])
 	referenceImages := normalizeStoryboardImages(payload["referenceImages"])
+	publishPayload, _ := payload["publishPayload"].(map[string]any)
+	seedContentText := strings.TrimSpace(stringValueFromMap(publishPayload, "contentText", "contentTemplate"))
 
 	fallbackPayload := map[string]any{
-		"status":          "fallback",
-		"optimizedPrompt": originalPrompt,
-		"error":           strings.TrimSpace(errorString(err)),
+		"status":               "fallback",
+		"optimizedPrompt":      originalPrompt,
+		"optimizedContentText": seedContentText,
+		"error":                strings.TrimSpace(errorString(err)),
 		"referenceCount": map[string]int{
 			"images": len(referenceImages),
 			"texts":  len(referenceTexts),
@@ -1611,7 +1636,11 @@ func (w *Worker) prepareSkillVideoReferenceFrames(ctx context.Context, job *doma
 
 func buildStoryboardPrompt(job *domain.AIJob, originalPrompt string, payload map[string]any, referenceTexts []map[string]string, referenceImages []map[string]string, references any) string {
 	var builder strings.Builder
-	builder.WriteString("请优化下面的内容创作需求，并输出适合继续交给生成模型执行的分镜脚本。\n")
+	publishIntroEnabled := true
+	if raw, exists := payload["publishIntroEnabled"]; exists {
+		publishIntroEnabled = boolValue(raw)
+	}
+	builder.WriteString("请优化下面的内容创作需求，并同时生成后续发布用的简介。\n")
 	builder.WriteString("任务类型: ")
 	builder.WriteString(strings.TrimSpace(job.JobType))
 	builder.WriteString("\n")
@@ -1621,13 +1650,34 @@ func buildStoryboardPrompt(job *domain.AIJob, originalPrompt string, payload map
 		builder.WriteString("\n")
 	}
 	if desc := strings.TrimSpace(stringValueFromMap(payload, "skillDescription")); desc != "" {
-		builder.WriteString("技能说明: ")
+		builder.WriteString("基础简介: ")
 		builder.WriteString(desc)
+		builder.WriteString("\n")
+	}
+	if publishIntroEnabled {
+		if publishPrompt := strings.TrimSpace(stringValueFromMap(payload, "publishPromptTemplate")); publishPrompt != "" {
+			builder.WriteString("简介优化说明: ")
+			builder.WriteString(publishPrompt)
+			builder.WriteString("\n")
+		}
+	}
+	if tags := normalizeStringSlice(payload["skillTags"]); len(tags) > 0 {
+		builder.WriteString("标签: ")
+		builder.WriteString(strings.Join(tags, "、"))
 		builder.WriteString("\n")
 	}
 	builder.WriteString("用户提示词: ")
 	builder.WriteString(strings.TrimSpace(originalPrompt))
 	builder.WriteString("\n")
+	if publishIntroEnabled {
+		if publishPayload, ok := payload["publishPayload"].(map[string]any); ok {
+			if baseIntro := strings.TrimSpace(stringValueFromMap(publishPayload, "contentText", "contentTemplate")); baseIntro != "" {
+				builder.WriteString("当前基础发布简介: ")
+				builder.WriteString(baseIntro)
+				builder.WriteString("\n")
+			}
+		}
+	}
 
 	if len(referenceTexts) > 0 {
 		builder.WriteString("\n参考文本:\n")
@@ -1659,8 +1709,109 @@ func buildStoryboardPrompt(job *domain.AIJob, originalPrompt string, payload map
 			builder.WriteString("\n")
 		}
 	}
-	builder.WriteString("\n请直接输出最终可执行脚本，不要解释过程。")
+	if publishIntroEnabled {
+		builder.WriteString(`
+
+输出要求:
+1. 必须只输出一个 JSON 对象，不要使用 Markdown 代码块，不要补充解释。
+2. JSON 字段固定为:
+   - "generationPrompt": 给图片、视频或文本模型继续执行的最终脚本。
+   - "publishIntro": 给第三方平台发布时使用的简介；如果当前任务不需要简介，也请返回空字符串。
+3. generationPrompt 和 publishIntro 必须保持同一主题、同一卖点、同一风格，不能彼此矛盾。
+4. publishIntro 要保留客户预设风格，但表达要自然变化，避免与过往内容完全重复。
+`)
+	} else {
+		builder.WriteString(`
+
+输出要求:
+1. 必须只输出一个 JSON 对象，不要使用 Markdown 代码块，不要补充解释。
+2. JSON 字段固定为:
+   - "generationPrompt": 给图片、视频或文本模型继续执行的最终脚本。
+   - "publishIntro": 固定返回空字符串，不要改写发布简介。
+3. 只优化 generationPrompt，让它与基础简介、标签、任务说明和参考资料保持同一主题、同一卖点、同一风格。
+`)
+	}
 	return builder.String()
+}
+
+func parseStoryboardOptimizationResponse(raw string, fallbackPrompt string, fallbackContentText string) (string, string, string) {
+	cleaned := strings.TrimSpace(raw)
+	if cleaned == "" {
+		return strings.TrimSpace(fallbackPrompt), strings.TrimSpace(fallbackContentText), "empty"
+	}
+
+	var envelope storyboardOptimizationEnvelope
+	if err := json.Unmarshal([]byte(cleaned), &envelope); err == nil {
+		prompt := strings.TrimSpace(envelope.GenerationPrompt)
+		if prompt == "" {
+			prompt = strings.TrimSpace(fallbackPrompt)
+		}
+		contentText := strings.TrimSpace(envelope.PublishIntro)
+		if contentText == "" {
+			contentText = strings.TrimSpace(fallbackContentText)
+		}
+		return prompt, contentText, "json"
+	}
+
+	stripped := stripMarkdownCodeFence(cleaned)
+	if stripped != cleaned {
+		var fenced storyboardOptimizationEnvelope
+		if err := json.Unmarshal([]byte(stripped), &fenced); err == nil {
+			prompt := strings.TrimSpace(fenced.GenerationPrompt)
+			if prompt == "" {
+				prompt = strings.TrimSpace(fallbackPrompt)
+			}
+			contentText := strings.TrimSpace(fenced.PublishIntro)
+			if contentText == "" {
+				contentText = strings.TrimSpace(fallbackContentText)
+			}
+			return prompt, contentText, "json_fenced"
+		}
+	}
+
+	return stripped, strings.TrimSpace(fallbackContentText), "text_fallback"
+}
+
+func stripMarkdownCodeFence(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.HasPrefix(trimmed, "```") {
+		return trimmed
+	}
+	lines := strings.Split(trimmed, "\n")
+	if len(lines) < 2 {
+		return trimmed
+	}
+	if strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), "```") {
+		lines = lines[1 : len(lines)-1]
+	} else {
+		lines = lines[1:]
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func normalizeStringSlice(raw any) []string {
+	items, ok := raw.([]any)
+	if !ok {
+		if typed, ok := raw.([]string); ok {
+			result := make([]string, 0, len(typed))
+			for _, item := range typed {
+				trimmed := strings.TrimSpace(item)
+				if trimmed != "" {
+					result = append(result, trimmed)
+				}
+			}
+			return result
+		}
+		return nil
+	}
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		trimmed := strings.TrimSpace(stringValue(item))
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
 
 func (w *Worker) resolveSkillVideoCoverPromptTemplate(ctx context.Context, job *domain.AIJob) (string, error) {
@@ -1719,7 +1870,7 @@ func buildSkillVideoFramePrompt(coverPromptTemplate string, job *domain.AIJob, p
 		builder.WriteString("\n")
 	}
 	if desc := strings.TrimSpace(stringValueFromMap(payload, "skillDescription")); desc != "" {
-		builder.WriteString("技能说明: ")
+		builder.WriteString("基础简介: ")
 		builder.WriteString(desc)
 		builder.WriteString("\n")
 	}

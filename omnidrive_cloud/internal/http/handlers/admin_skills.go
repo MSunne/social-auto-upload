@@ -21,7 +21,14 @@ func NewAdminSkillHandler(app *appstate.App) *AdminSkillHandler {
 }
 
 type adminUpdateSkillRequest struct {
-	IsEnabled *bool `json:"isEnabled"`
+	Description              *string  `json:"description"`
+	PromptTemplate           *string  `json:"promptTemplate"`
+	StoryboardPromptTemplate *string  `json:"storyboardPromptTemplate"`
+	PublishPromptTemplate    *string  `json:"publishPromptTemplate"`
+	PublishIntroEnabled      *bool    `json:"publishIntroEnabled"`
+	Topics                   []string `json:"topics"`
+	StoryboardEnabled        *bool    `json:"storyboardEnabled"`
+	IsEnabled                *bool    `json:"isEnabled"`
 }
 
 func (h *AdminSkillHandler) ListSkills(w http.ResponseWriter, r *http.Request) {
@@ -58,10 +65,23 @@ func (h *AdminSkillHandler) UpdateSkill(w http.ResponseWriter, r *http.Request) 
 		render.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if payload.Description != nil {
+		trimmed := strings.TrimSpace(*payload.Description)
+		payload.Description = &trimmed
+	}
+	payload.Topics = normalizeSkillTopics(payload.Topics)
 
 	admin := httpcontext.CurrentAdmin(r.Context())
 	record, err := h.app.Store.UpdateProductSkillAdmin(r.Context(), skillID, store.UpdateProductSkillAdminInput{
-		IsEnabled: payload.IsEnabled,
+		Description:              payload.Description,
+		PromptTemplate:           payload.PromptTemplate,
+		StoryboardPromptTemplate: payload.StoryboardPromptTemplate,
+		PublishPromptTemplate:    payload.PublishPromptTemplate,
+		PublishIntroEnabled:      payload.PublishIntroEnabled,
+		Topics:                   payload.Topics,
+		TopicsTouched:            payload.Topics != nil,
+		StoryboardEnabled:        payload.StoryboardEnabled,
+		IsEnabled:                payload.IsEnabled,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to update skill")
@@ -80,8 +100,15 @@ func (h *AdminSkillHandler) UpdateSkill(w http.ResponseWriter, r *http.Request) 
 		Status:       "success",
 		Message:      auditStringPtr("已更新技能 " + record.Name),
 		Payload: mustJSONBytes(map[string]any{
-			"id":        record.ID,
-			"isEnabled": record.IsEnabled,
+			"id":                       record.ID,
+			"description":              record.Description,
+			"promptTemplate":           record.PromptTemplate,
+			"storyboardPromptTemplate": record.StoryboardPromptTemplate,
+			"publishPromptTemplate":    record.PublishPromptTemplate,
+			"publishIntroEnabled":      record.PublishIntroEnabled,
+			"topics":                   record.Topics,
+			"storyboardEnabled":        record.StoryboardEnabled,
+			"isEnabled":                record.IsEnabled,
 		}),
 	})
 

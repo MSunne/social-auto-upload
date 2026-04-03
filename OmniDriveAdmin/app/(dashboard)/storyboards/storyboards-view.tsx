@@ -114,8 +114,8 @@ export function StoryboardsView() {
     <div className="max-w-6xl space-y-6">
       <div className="flex items-start justify-between gap-4">
         <PageHeader
-          title="分镜优化管理"
-          subtitle="统一治理系统级分镜提示词。技能页只选择最终生成模型；若技能同时上传图片和文本参考，系统会先在这里完成分镜优化，再把优化结果交给技能的最终模型继续生成。"
+          title="分镜资源管理"
+          subtitle="统一治理系统级分镜模型和参考资料。技能自己的默认分镜模板已迁移到技能治理页；若技能同时上传图片和文本参考，系统会先按技能分镜模板优化，再把结果交给最终模型继续生成。"
         />
         <button
           onClick={handleSave}
@@ -133,8 +133,8 @@ export function StoryboardsView() {
           <div className="space-y-1 text-sm text-[var(--color-text-secondary)]">
             <p className="font-medium text-[var(--color-text-primary)]">执行逻辑</p>
             <p>1. 技能页里的“最终生成模型”来自后端已启用模型列表，并按输出格式筛选。</p>
-            <p>2. 如果技能资产里同时有参考图片和文本文件，系统会先在这里做分镜脚本优化。</p>
-            <p>3. 优化后的脚本会继续传给技能所选的图片或视频模型执行生成。</p>
+            <p>2. 如果技能资产里同时有参考图片和文本文件，系统会先按技能治理里的默认分镜做脚本优化。</p>
+            <p>3. 这里维护的是全局分镜模型与参考文件，不再作为新技能的统一分镜提示词入口。</p>
           </div>
         </div>
       </div>
@@ -147,7 +147,7 @@ export function StoryboardsView() {
               <h3 className="text-base font-medium text-[var(--color-text-primary)]">视频封面默认提示词</h3>
               <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
                 技能中心“封面提示词”默认从这里下发。视文模式做视频首帧时固定使用
-                {" "}`gemini-3-pro-image-preview`，如果技能未单独覆盖，就会回退到这里；客户上传多张图时同样用于尾帧。
+                {" "}系统封面模型，如果技能未单独覆盖，就会回退到这里；客户上传多张图时同样用于尾帧。
               </p>
             </div>
             <textarea
@@ -165,7 +165,7 @@ export function StoryboardsView() {
         <StoryboardSection
           icon={<Video className="h-4 w-4 text-[var(--color-primary)]" />}
           title="视频 / 通用分镜优化"
-          description="用于视频生成链路，也作为图片分镜未单独配置时的默认回退。"
+          description="用于配置视频/通用分镜的全局模型与参考资料。技能默认分镜提示词请到技能治理页维护。"
           promptValue={formData.storyboardPrompt || ""}
           modelValue={formData.storyboardModel || ""}
           references={formData.storyboardReferences || []}
@@ -183,7 +183,7 @@ export function StoryboardsView() {
         <StoryboardSection
           icon={<ImagePlus className="h-4 w-4 text-[var(--color-primary)]" />}
           title="图片分镜优化"
-          description="用于图片生成链路；若为空，系统会自动回退到视频 / 通用分镜配置。"
+          description="用于配置图片分镜的全局模型与参考资料。技能默认分镜提示词请到技能治理页维护。"
           promptValue={formData.imageStoryboardPrompt || ""}
           modelValue={formData.imageStoryboardModel || ""}
           references={formData.imageStoryboardReferences || []}
@@ -258,14 +258,17 @@ function StoryboardSection({
         </div>
 
         <div>
-          <label className="mb-1 block text-sm font-medium">系统提示词</label>
+          <label className="mb-1 block text-sm font-medium">历史全局提示词</label>
           <textarea
             value={promptValue}
             onChange={(event) => onPromptChange(event.target.value)}
             rows={8}
-            placeholder="描述希望大模型如何整合图片、文本、镜头、文案和节奏。"
+            placeholder="该字段仅保留历史配置，新技能默认分镜请到技能治理页维护。"
             className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm focus:border-[var(--color-primary)] focus:outline-none"
           />
+          <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+            该字段已不再作为新技能的统一分镜模板入口，仅保留历史配置兼容。
+          </p>
         </div>
 
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">

@@ -58,13 +58,13 @@
     "needsSync": false,
     "assetCount": 1,
     "message": null,
-    "lastSyncedAt": "2026-04-03T15:50:46.671813+08:00",
+    "lastSyncedAt": "2026-04-03T19:19:52.933557+08:00",
     "createdAt": "2026-03-21T16:32:04.522283+08:00",
-    "updatedAt": "2026-04-03T15:50:46.843874+08:00"
+    "updatedAt": "2026-04-03T19:19:53.151127+08:00"
   },
   "cache": {
     "manifestPath": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/02f463ee-04ce-4dc9-ab99-d60900f4fd26/manifest.json",
     "assetsDir": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/02f463ee-04ce-4dc9-ab99-d60900f4fd26/assets",
-    "syncedAt": "2026-04-03T07:52:48.538715Z"
+    "syncedAt": "2026-04-03T11:21:53.096111Z"
   }
 }

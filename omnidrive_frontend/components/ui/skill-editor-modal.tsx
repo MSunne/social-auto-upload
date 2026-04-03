@@ -46,6 +46,7 @@ type SkillFormState = {
   name: string;
   description: string;
   promptTemplate: string;
+  publishIntroEnabled: boolean;
   topicsText: string;
   coverPromptTemplate: string;
   coverPromptUsesSystemDefault: boolean;
@@ -99,6 +100,7 @@ const EMPTY_FORM: SkillFormState = {
   name: "",
   description: "",
   promptTemplate: "",
+  publishIntroEnabled: true,
   topicsText: "",
   coverPromptTemplate: "",
   coverPromptUsesSystemDefault: true,
@@ -121,6 +123,7 @@ function buildSkillFormState(skill?: Skill | null, coverPromptDefault = ""): Ski
     name: skill.name || "",
     description: skill.description || "",
     promptTemplate: skill.promptTemplate || "",
+    publishIntroEnabled: skill.publishIntroEnabled !== false,
     topicsText: (skill.topics || []).join("，"),
     coverPromptTemplate: customCoverPrompt || coverPromptDefault,
     coverPromptUsesSystemDefault: customCoverPrompt.length === 0,
@@ -131,6 +134,8 @@ function buildSkillFormState(skill?: Skill | null, coverPromptDefault = ""): Ski
   };
 }
 
+const DEFAULT_VIDEO_TASK_NOTE = "默认不要字幕";
+
 function isImageAsset(asset: SkillAsset) {
   return (asset.mimeType || "").startsWith("image/") || asset.assetType.includes("image");
 }
@@ -138,6 +143,22 @@ function isImageAsset(asset: SkillAsset) {
 function isTextAsset(asset: SkillAsset) {
   const mimeType = (asset.mimeType || "").toLowerCase();
   return mimeType.startsWith("text/") || asset.assetType.includes("text");
+}
+
+function getSkillBillingAmount(model?: AIModel | null) {
+  const amount = typeof model?.billingAmount === "number" ? model.billingAmount : model?.rawRate;
+  if (typeof amount !== "number" || Number.isNaN(amount)) {
+    return null;
+  }
+  return amount;
+}
+
+function formatSkillBillingAmount(model?: AIModel | null) {
+  const amount = getSkillBillingAmount(model);
+  if (amount === null) {
+    return "待配置";
+  }
+  return `${amount.toFixed(2)} 积分 / 次`;
 }
 
 export function SkillEditorModal({
@@ -263,6 +284,7 @@ export function SkillEditorModal({
     modelName: form.modelName.trim(),
     deviceId,
     promptTemplate: form.promptTemplate.trim() || null,
+    publishIntroEnabled: form.publishIntroEnabled,
     coverPromptTemplate: form.coverPromptUsesSystemDefault ? null : form.coverPromptTemplate.trim() || null,
     topics: form.topicsText
       .split(/[\n,，#\s]+/)
@@ -274,7 +296,7 @@ export function SkillEditorModal({
 
   const ensureSkillPayloadReady = (payload: ReturnType<typeof buildSkillPayload>) => {
     if (!payload.name || !payload.description || !payload.outputType || !payload.modelName) {
-      throw new Error("请先填写完整的技能名称、说明、输出格式和模型，再上传素材");
+      throw new Error("请先填写完整的技能名称、简介、输出格式和模型，再上传素材");
     }
   };
 
@@ -402,6 +424,10 @@ export function SkillEditorModal({
     setForm((current) => ({
       ...current,
       outputType: nextOutputType,
+      promptTemplate:
+        nextOutputType === "视文模式" && !current.promptTemplate.trim()
+          ? DEFAULT_VIDEO_TASK_NOTE
+          : current.promptTemplate,
       modelName:
         mapSkillOutputToModelCategory(current.outputType) === nextCategory ? current.modelName : "",
     }));
@@ -451,15 +477,15 @@ export function SkillEditorModal({
 
   const flowSteps = form.storyboardEnabled
     ? [
-        "客户输入图文和提示词",
-        "系统先做分镜优化",
-        getModelDisplayName(selectedModel, "最终模型待选择"),
-      ]
+      "客户输入素材、任务说明和简介",
+      "系统先做分镜优化",
+      getModelDisplayName(selectedModel, "最终模型待选择"),
+    ]
     : [
-        "客户输入图文和提示词",
-        "跳过分镜，直接执行",
-        getModelDisplayName(selectedModel, "最终模型待选择"),
-      ];
+      "客户输入素材、任务说明和简介",
+      "跳过分镜，直接执行",
+      getModelDisplayName(selectedModel, "最终模型待选择"),
+    ];
 
   return (
     <div className="fixed inset-0 z-[90] bg-[#050814]/85 px-4 py-4 backdrop-blur-xl sm:px-6 sm:py-6">
@@ -511,7 +537,7 @@ export function SkillEditorModal({
                 <div className="space-y-8">
                   <SectionCard
                     title="基础设定"
-                    description="先把这条技能的目标和最终产出说清楚。"
+                    description="先定义这条技能的简介、任务说明和标签。简介如何优化由管理员统一配置，你只决定是否启用。"
                   >
                     <label className="space-y-2.5">
                       <span className="text-sm font-medium text-white">技能名称</span>
@@ -559,45 +585,45 @@ export function SkillEditorModal({
 
                     <div className="grid gap-4 lg:grid-cols-2">
                       <label className="space-y-2.5">
-                        <span className="text-sm font-medium text-white">技能说明</span>
+                        <span className="text-sm font-medium text-white">简介</span>
                         <textarea
                           value={form.description}
                           onChange={(event) =>
                             setForm((current) => ({ ...current, description: event.target.value }))
                           }
                           rows={4}
-                          placeholder="描述内容目标、受众、语气、场景和限制。"
+                          placeholder="填写发布到三方平台的基础简介，说明主题、受众、语气、卖点和风格基线。"
                           className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
                         />
                       </label>
 
                       <label className="space-y-2.5">
-                        <span className="text-sm font-medium text-white">任务提示词</span>
+                        <span className="text-sm font-medium text-white">任务说明</span>
                         <textarea
                           value={form.promptTemplate}
                           onChange={(event) =>
                             setForm((current) => ({ ...current, promptTemplate: event.target.value }))
                           }
                           rows={4}
-                          placeholder="告诉系统重点表达什么，比如镜头感、文案节奏、品牌边界和禁用词。"
+                          placeholder="告诉系统重点表达什么，比如镜头感、节奏、品牌边界和禁用词。视文模式默认会补充“默认不要字幕”。"
                           className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
                         />
                       </label>
                     </div>
 
                     <label className="space-y-2.5">
-                      <span className="text-sm font-medium text-white">默认话题</span>
+                      <span className="text-sm font-medium text-white">标签</span>
                       <textarea
                         value={form.topicsText}
                         onChange={(event) =>
                           setForm((current) => ({ ...current, topicsText: event.target.value }))
                         }
-                        rows={2}
-                        placeholder="例如：春季穿搭，新品开箱，玩具测评。多个话题可用空格、逗号或换行分隔。"
+                        rows={4}
+                        placeholder="例如：小红书种草，抖音短视频，品牌口播。多个标签可用空格、逗号或换行分隔。"
                         className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
                       />
                       <p className="text-xs leading-5 text-text-secondary">
-                        这些话题会跟随技能进入账号发布任务，并继续传给 SAU 上传器。
+                        这些标签会跟随技能进入账号发布任务，并继续传给 SAU 上传器。
                       </p>
                     </label>
 
@@ -607,7 +633,7 @@ export function SkillEditorModal({
                           <span className="text-sm font-medium text-white">封面提示词</span>
                           <p className="text-xs leading-5 text-text-secondary">
                             仅视文模式生效。系统会把这段话和客户原始图片、参考资料一起交给
-                            {" "}`gemini-3-pro-image-preview` 重新设计视频封面首帧；客户上传多张图时会补做尾帧。
+                            {" "}系统封面模型重新设计视频封面首帧；客户上传多张图时会补做尾帧。
                           </p>
                         </div>
                         {form.coverPromptUsesSystemDefault ? (
@@ -658,16 +684,30 @@ export function SkillEditorModal({
                         ) : null}
                       </div>
                     </div>
-	                  </SectionCard>
+                  </SectionCard>
 
                   <SectionCard
                     title="执行方式"
-                    description="这里决定技能是否生效，以及最终交给哪个模型执行。"
+                    description="这里决定技能是否生效、是否启用简介 AI 优化，以及最终交给哪个模型执行。"
                   >
-                    <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="grid gap-4 lg:grid-cols-3">
+                      <SwitchCard
+                        title="简介 AI 优化"
+                        description="开启后，在每次发布前自动改写简介；关闭后沿用你填写的原始简介。"
+                        enabled={form.publishIntroEnabled}
+                        enabledLabel="已启用"
+                        disabledLabel="已关闭"
+                        accent="cyan"
+                        onToggle={() =>
+                          setForm((current) => ({
+                            ...current,
+                            publishIntroEnabled: !current.publishIntroEnabled,
+                          }))
+                        }
+                      />
                       <SwitchCard
                         title="AI 分镜优化"
-                        description="开启后，系统会先整理图片、文本和提示词，再交给最终模型。"
+                        description="开启后，系统会先统一优化分镜、任务说明和发布简介，再交给最终模型。"
                         enabled={form.storyboardEnabled}
                         enabledLabel="已启用"
                         disabledLabel="已关闭"
@@ -699,6 +739,19 @@ export function SkillEditorModal({
                       </div>
                       <p className="mt-2 text-sm leading-6 text-text-secondary">
                         这里只选一个最终模型，方便按质量、速度和成本做取舍。分镜模型在系统侧单独配置。
+                      </p>
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        <SummaryLine
+                          label="当前模型"
+                          value={selectedModel ? getModelDisplayName(selectedModel) : "请选择模型"}
+                        />
+                        <SummaryLine
+                          label="单次扣费"
+                          value={formatSkillBillingAmount(selectedModel)}
+                        />
+                      </div>
+                      <p className="mt-3 text-xs leading-5 text-text-secondary">
+                        创建前即可看到当前技能单次预计扣费，实际扣费以任务入账结果为准。
                       </p>
                     </div>
 
@@ -739,7 +792,11 @@ export function SkillEditorModal({
                                 </div>
                                 <SelectionBadge selected={selected} />
                               </div>
-                              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                                <MetricBlock
+                                  label="单次扣费"
+                                  value={formatSkillBillingAmount(model)}
+                                />
                                 <MetricBlock
                                   label="计费"
                                   value={model.billingMode || "待配置"}

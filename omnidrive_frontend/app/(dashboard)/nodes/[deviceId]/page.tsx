@@ -204,7 +204,7 @@ export default function NodeDetailPage({
                             {asDisplayText(skill.name, "未命名技能")}
                           </div>
                           <div className="mt-1 text-xs text-text-secondary">
-                            {asDisplayText(skill.description, "暂无技能说明")}
+                            {asDisplayText(skill.description, "暂无简介")}
                           </div>
                           <div className="mt-2 text-[11px] font-mono text-text-muted">{skill.id}</div>
                         </div>
@@ -222,7 +222,7 @@ export default function NodeDetailPage({
                               {skill.promptTemplate.length > 96 ? "..." : ""}
                             </p>
                           ) : (
-                            <p className="text-xs text-text-muted">未单独配置提示词</p>
+                            <p className="text-xs text-text-muted">未单独配置任务说明</p>
                           )}
                         </div>
                       </td>

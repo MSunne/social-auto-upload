@@ -246,6 +246,9 @@ CREATE TABLE IF NOT EXISTS product_skills (
     output_type TEXT NOT NULL,
     model_name TEXT NOT NULL,
     prompt_template TEXT,
+    storyboard_prompt_template TEXT,
+    publish_prompt_template TEXT,
+    publish_intro_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     cover_prompt_template TEXT,
     topics JSONB NOT NULL DEFAULT '[]'::jsonb,
     reference_payload JSONB,
@@ -466,6 +469,9 @@ ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_video_model TEXT;
 ALTER TABLE device_activation_configs ADD COLUMN IF NOT EXISTS activation_code_value TEXT;
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS device_id TEXT REFERENCES devices(id) ON DELETE SET NULL;
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS cover_prompt_template TEXT;
+ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS storyboard_prompt_template TEXT;
+ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS publish_prompt_template TEXT;
+ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS publish_intro_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS execution_time TIMESTAMPTZ;
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS repeat_daily BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS storyboard_enabled BOOLEAN NOT NULL DEFAULT TRUE;
@@ -502,6 +508,15 @@ ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS model_alias TEXT;
 UPDATE ai_models
 SET model_alias = model_name
 WHERE model_alias IS NULL OR TRIM(model_alias) = '';
+UPDATE ai_models
+SET model_alias = CASE model_name
+    WHEN 'gemini-3.1-pro-preview' THEN 'Gemini 3.1 Pro 对话'
+    WHEN 'gemini-3-pro-image-preview' THEN 'Gemini 3 Pro 图像'
+    WHEN 'veo-3.1-fast-fl' THEN 'Veo 3.1 极速视频'
+    ELSE model_alias
+END
+WHERE model_name IN ('gemini-3.1-pro-preview', 'gemini-3-pro-image-preview', 'veo-3.1-fast-fl')
+  AND (model_alias IS NULL OR TRIM(model_alias) = '' OR model_alias = model_name);
 ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS billing_mode TEXT;
 UPDATE ai_models
 SET billing_mode = CASE
@@ -1203,11 +1218,11 @@ CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_resource_type ON admin_audit_log
 CREATE INDEX IF NOT EXISTS idx_audit_events_owner_user_id ON audit_events(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_resource_type ON audit_events(resource_type);
 
-INSERT INTO ai_models (id, vendor, model_name, category, billing_mode, description, pricing_payload, is_enabled)
+INSERT INTO ai_models (id, vendor, model_name, model_alias, category, billing_mode, description, pricing_payload, is_enabled)
 VALUES
-    ('gemini-3.1-pro-preview', 'apiyi', 'gemini-3.1-pro-preview', 'chat', 'per_token', '默认思考与多模态理解模型', '{"unit":"credits","price":"dynamic"}', TRUE),
-    ('gemini-3-pro-image-preview', 'apiyi', 'gemini-3-pro-image-preview', 'image', 'per_call', '默认图片生成与编辑模型', '{"unit":"credits","price":"dynamic"}', TRUE),
-    ('veo-3.1-fast-fl', 'apiyi', 'veo-3.1-fast-fl', 'video', 'per_call', '默认视频生成模型', '{"unit":"credits","price":"dynamic"}', TRUE)
+    ('gemini-3.1-pro-preview', 'apiyi', 'gemini-3.1-pro-preview', 'Gemini 3.1 Pro 对话', 'chat', 'per_token', '默认思考与多模态理解模型', '{"unit":"credits","price":"dynamic"}', TRUE),
+    ('gemini-3-pro-image-preview', 'apiyi', 'gemini-3-pro-image-preview', 'Gemini 3 Pro 图像', 'image', 'per_call', '默认图片生成与编辑模型', '{"unit":"credits","price":"dynamic"}', TRUE),
+    ('veo-3.1-fast-fl', 'apiyi', 'veo-3.1-fast-fl', 'Veo 3.1 极速视频', 'video', 'per_call', '默认视频生成模型', '{"unit":"credits","price":"dynamic"}', TRUE)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO billing_packages (id, name, channel, price_cents, credit_amount, manual_bonus_credit_amount, badge, description, is_enabled, sort_order)

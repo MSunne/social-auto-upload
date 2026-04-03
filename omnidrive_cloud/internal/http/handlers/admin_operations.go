@@ -161,11 +161,20 @@ func adminSkillSummaryFromSkill(skill *domain.ProductSkill) *domain.AdminSkillSu
 		return nil
 	}
 	return &domain.AdminSkillSummary{
-		ID:         skill.ID,
-		Name:       skill.Name,
-		OutputType: skill.OutputType,
-		ModelName:  skill.ModelName,
-		IsEnabled:  skill.IsEnabled,
+		ID:                       skill.ID,
+		Name:                     skill.Name,
+		Description:              skill.Description,
+		OutputType:               skill.OutputType,
+		ModelName:                skill.ModelName,
+		ModelAlias:               skill.ModelAlias,
+		PromptTemplate:           skill.PromptTemplate,
+		StoryboardPromptTemplate: skill.StoryboardPromptTemplate,
+		PublishPromptTemplate:    skill.PublishPromptTemplate,
+		PublishIntroEnabled:      skill.PublishIntroEnabled,
+		CoverPromptTemplate:      skill.CoverPromptTemplate,
+		Topics:                   skill.Topics,
+		StoryboardEnabled:        skill.StoryboardEnabled,
+		IsEnabled:                skill.IsEnabled,
 	}
 }
 

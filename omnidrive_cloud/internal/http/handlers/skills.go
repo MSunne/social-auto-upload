@@ -19,6 +19,7 @@ import (
 	httpcontext "omnidrive_cloud/internal/http/context"
 	"omnidrive_cloud/internal/http/render"
 	"omnidrive_cloud/internal/store"
+	"omnidrive_cloud/internal/workflow"
 )
 
 type SkillHandler struct {
@@ -31,6 +32,7 @@ type createSkillRequest struct {
 	OutputType          string      `json:"outputType"`
 	ModelName           string      `json:"modelName"`
 	PromptTemplate      *string     `json:"promptTemplate"`
+	PublishIntroEnabled *bool       `json:"publishIntroEnabled"`
 	CoverPromptTemplate *string     `json:"coverPromptTemplate"`
 	Topics              []string    `json:"topics"`
 	ReferencePayload    interface{} `json:"referencePayload"`
@@ -47,6 +49,7 @@ type updateSkillRequest struct {
 	OutputType          *string     `json:"outputType"`
 	ModelName           *string     `json:"modelName"`
 	PromptTemplate      *string     `json:"promptTemplate"`
+	PublishIntroEnabled *bool       `json:"publishIntroEnabled"`
 	CoverPromptTemplate *string     `json:"coverPromptTemplate"`
 	Topics              []string    `json:"topics"`
 	ReferencePayload    interface{} `json:"referencePayload"`
@@ -81,6 +84,8 @@ func sanitizeSkillSchedule(skill *domain.ProductSkill) {
 	skill.ExecutionTime = nil
 	skill.RepeatDaily = false
 	skill.NextRunAt = nil
+	skill.PublishPromptTemplate = nil
+	skill.StoryboardPromptTemplate = nil
 }
 
 func parseSkillExecutionTime(raw string, now time.Time) (*time.Time, error) {
@@ -391,24 +396,30 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if payload.IsEnabled != nil {
 		isEnabled = *payload.IsEnabled
 	}
+	publishIntroEnabled := true
+	if payload.PublishIntroEnabled != nil {
+		publishIntroEnabled = *payload.PublishIntroEnabled
+	}
 
 	skill, err := h.app.Store.CreateSkill(r.Context(), store.CreateSkillInput{
-		ID:                  uuid.NewString(),
-		OwnerUserID:         user.ID,
-		DeviceID:            deviceID,
-		Name:                payload.Name,
-		Description:         payload.Description,
-		OutputType:          payload.OutputType,
-		ModelName:           payload.ModelName,
-		PromptTemplate:      payload.PromptTemplate,
-		CoverPromptTemplate: stringPtr(normalizePatchedString(payload.CoverPromptTemplate)),
-		Topics:              payload.Topics,
-		ReferencePayload:    referenceBytes,
-		ExecutionTime:       nil,
-		RepeatDaily:         false,
-		StoryboardEnabled:   storyboardEnabled,
-		NextRunAt:           nil,
-		IsEnabled:           isEnabled,
+		ID:                       uuid.NewString(),
+		OwnerUserID:              user.ID,
+		DeviceID:                 deviceID,
+		Name:                     payload.Name,
+		Description:              payload.Description,
+		OutputType:               payload.OutputType,
+		ModelName:                payload.ModelName,
+		PromptTemplate:           payload.PromptTemplate,
+		StoryboardPromptTemplate: stringPtr(workflow.DefaultSkillStoryboardPromptTemplate(payload.OutputType)),
+		PublishIntroEnabled:      publishIntroEnabled,
+		CoverPromptTemplate:      stringPtr(normalizePatchedString(payload.CoverPromptTemplate)),
+		Topics:                   payload.Topics,
+		ReferencePayload:         referenceBytes,
+		ExecutionTime:            nil,
+		RepeatDaily:              false,
+		StoryboardEnabled:        storyboardEnabled,
+		NextRunAt:                nil,
+		IsEnabled:                isEnabled,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to create skill")
@@ -433,10 +444,12 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 			"modelName":                     skill.ModelName,
 			"deviceId":                      skill.DeviceID,
 			"topics":                        skill.Topics,
+			"publishIntroEnabled":           skill.PublishIntroEnabled,
 			"coverPromptTemplateConfigured": skill.CoverPromptTemplate != nil,
 		}),
 	})
 
+	sanitizeSkillSchedule(skill)
 	render.JSON(w, http.StatusCreated, skill)
 }
 
@@ -490,6 +503,7 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 		OutputType:          payload.OutputType,
 		ModelName:           payload.ModelName,
 		PromptTemplate:      payload.PromptTemplate,
+		PublishIntroEnabled: payload.PublishIntroEnabled,
 		CoverPromptTemplate: stringPtr(normalizePatchedString(payload.CoverPromptTemplate)),
 		Topics:              payload.Topics,
 		TopicsTouched:       payload.Topics != nil,
@@ -531,12 +545,14 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 			"name":                payload.Name,
 			"modelName":           payload.ModelName,
 			"topics":              payload.Topics,
+			"publishIntroEnabled": payload.PublishIntroEnabled,
 			"coverPromptTemplate": stringPtr(normalizePatchedString(payload.CoverPromptTemplate)),
 			"storyboardEnabled":   payload.StoryboardEnabled,
 			"isEnabled":           payload.IsEnabled,
 		}),
 	})
 
+	sanitizeSkillSchedule(skill)
 	render.JSON(w, http.StatusOK, skill)
 }
 

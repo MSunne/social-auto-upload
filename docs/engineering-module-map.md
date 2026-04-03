@@ -364,3 +364,160 @@ flowchart LR
 4. 同步失败后，应该由哪边重试和兜底？
 
 先把这四个问题答对，后面的代码实现才不会继续跑偏。
+
+## 9. 线程速查图
+
+下面这组图是给后续线程快速查阅用的“简化版工程理解”，默认以 `AlTask.md` 末尾“逻辑调整（工程级）”为最高优先级。
+
+### 9.1 总体协作图
+
+```mermaid
+flowchart LR
+    User["用户"]
+    Third["第三方平台"]
+    OC["OpenClaw"]
+
+    subgraph OB["OmniBull / SAU（本地）"]
+        FE["sau_frontend / omnibull_frontend"]
+        BE["sau_backend.py"]
+        ACC["账号域\nlogin/auth/user_info/storageState"]
+        PUB["执行域\npublish_tasks + uploader/*"]
+        AIT["AI 镜像域\nomnidrive_ai_tasks"]
+        BR["OmniDriveBridge\nutils/omnidrive_agent.py"]
+    end
+
+    subgraph OD["OmniDrive（云端）"]
+        ODFE["omnidrive_frontend"]
+        ODC["omnidrive_cloud"]
+        AI["云端 AI 生成"]
+        TASK["云任务组织\n账号镜像\n技能同步"]
+    end
+
+    User --> FE
+    User --> ODFE
+    FE --> BE
+    BE --> ACC
+    BE --> PUB
+    BE --> AIT
+    BE --> BR
+
+    ACC <--> Third
+    PUB <--> Third
+
+    ODFE --> ODC
+    ODC --> AI
+    ODC --> TASK
+
+    BR <--> ODC
+
+    OC --> BE
+    OC --> ODC
+```
+
+### 9.2 主责边界图
+
+```mermaid
+flowchart TB
+    subgraph LOCAL["OmniBull 真实主存 / 真执行"]
+        L1["账号新增 / 验证 / 删除"]
+        L2["Cookie / storage_state"]
+        L3["本地发布队列"]
+        L4["真实发布结果"]
+    end
+
+    subgraph CLOUD["OmniDrive 真实主存 / 真组织"]
+        C1["AI 图片 / 视频 / 聊天任务"]
+        C2["云任务编排"]
+        C3["设备 / 技能 / 账户镜像"]
+        C4["计费 / 审计 / 历史"]
+    end
+
+    subgraph MIRROR["镜像与桥接"]
+        M1["账号状态镜像"]
+        M2["AI 结果回流"]
+        M3["发布状态回写"]
+    end
+
+    L1 --> M1
+    L2 --> M1
+    C1 --> M2
+    C2 --> M2
+    L3 --> M3
+    L4 --> M3
+```
+
+### 9.3 本地主链图
+
+```mermaid
+flowchart TB
+    FE["sau_frontend\n3 个菜单"]
+    BE["sau_backend.py\n统一入口"]
+    DB["SQLite\nuser_info\nfile_records\npublish_tasks\nomnidrive_ai_tasks"]
+
+    LOGIN["myUtils/login.py\n扫码登录 / 二次验证"]
+    AUTH["myUtils/auth.py\ncookie 校验"]
+    ACCS["utils/account_storage.py\n登录态持久化"]
+
+    PTM["utils/publish_task_manager.py\n入队 / 定时 / 串行执行 / needs_verify"]
+    AITM["utils/omnidrive_ai_task_manager.py\nAI 镜像任务管理"]
+    ODBR["utils/omnidrive_agent.py\n账号同步 / 任务同步 / 技能同步"]
+
+    UP["uploader/*\n视频号 / 抖音 / 快手等"]
+
+    FE --> BE
+    BE --> LOGIN
+    BE --> AUTH
+    BE --> ACCS
+    BE --> PTM
+    BE --> AITM
+    BE --> ODBR
+
+    LOGIN --> DB
+    AUTH --> DB
+    ACCS --> DB
+    PTM --> DB
+    AITM --> DB
+    ODBR --> DB
+
+    PTM --> UP
+    ODBR <--> AITM
+    ODBR <--> PTM
+```
+
+### 9.4 用户真实流程图
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant OB as OmniBull
+    participant OD as OmniDrive
+    participant B as Bridge
+    participant TP as 第三方平台
+
+    U->>OB: 在本地添加账号
+    OB->>TP: 扫码登录 / 二次验证 / cookie 校验
+    OB->>OB: 保存 user_info + storage_state
+    OB->>B: 同步账号状态
+    B->>OD: 更新账号镜像
+
+    U->>OD: 创建 AI 任务或云任务
+    OD->>OD: 生成产物 / 组织任务
+    OD->>B: 下发结果 URL + 任务元数据
+    B->>OB: 导入 AI 镜像 + 入本地发布队列
+
+    OB->>TP: 到点真实发布
+    TP-->>OB: 成功 / 失败 / 需人工验证
+    OB->>B: 回写执行状态
+    B->>OD: 更新云端状态
+```
+
+## 10. 基础信息
+
+- 云端服务器是：43.98.251.225，账户 `root/xhSL.1379`。
+- 前端域名：`aitoplus.com`，体验账户：`18888888888/123456`。
+- 管理端：`ad.aitoplus.com`，账户 `admin/123456`。
+- 管理端 web 位于：`/www/wwwroot/omnidrive_admin`
+- 前端 web 位于：`/www/wwwroot/aitoplus.com`
+- Go 代码位于：`/www/wwwroot/OmniDriveCloud`
+- 编译的 bin 位于：`/www/wwwroot/OmniDriveCloud/bin`
+- pgsql数据库:用户名和数据库都是omnidrive，密码是KRGkXp7ckx4P7abh

@@ -2216,6 +2216,10 @@ func (h *AIHandler) CreatePublishTask(w http.ResponseWriter, r *http.Request) {
 	if title == "" {
 		title = buildPublishTaskTitleFromAIJob(job, selectedArtifacts)
 	}
+	contentText := normalizeTrimmedString(payload.ContentText)
+	if contentText == nil {
+		contentText = resolvePublishContentTextFromAIJob(job)
+	}
 
 	runAt, ok := parseOptionalRFC3339(w, payload.RunAt, "runAt")
 	if !ok {
@@ -2245,7 +2249,7 @@ func (h *AIHandler) CreatePublishTask(w http.ResponseWriter, r *http.Request) {
 			Platform:     payload.Platform,
 			AccountName:  payload.AccountName,
 			Title:        title,
-			ContentText:  payload.ContentText,
+			ContentText:  contentText,
 			MediaPayload: mediaPayload,
 			Status:       "pending",
 			Message:      &taskMessage,
@@ -2736,6 +2740,59 @@ func isAllowedAIJobTransition(current string, next string) bool {
 	default:
 		return true
 	}
+}
+
+func resolvePublishContentTextFromAIJob(job *domain.AIJob) *string {
+	if job == nil {
+		return nil
+	}
+	if value := extractOptimizedPublishContentText(job.OutputPayload); value != "" {
+		return &value
+	}
+	inputPayload := decodeRawPayloadMap(job.InputPayload)
+	publishPayload, _ := inputPayload["publishPayload"].(map[string]any)
+	if value := readPayloadString(publishPayload, "contentText", "contentTemplate"); value != "" {
+		return &value
+	}
+	return nil
+}
+
+func extractOptimizedPublishContentText(raw []byte) string {
+	outputPayload := decodeRawPayloadMap(raw)
+	storyboardPayload, _ := outputPayload["storyboard"].(map[string]any)
+	if value := readPayloadString(storyboardPayload, "optimizedContentText"); value != "" {
+		return value
+	}
+	publishPayload, _ := outputPayload["publish"].(map[string]any)
+	return readPayloadString(publishPayload, "contentText")
+}
+
+func decodeRawPayloadMap(raw []byte) map[string]any {
+	if len(raw) == 0 {
+		return map[string]any{}
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return map[string]any{}
+	}
+	return payload
+}
+
+func readPayloadString(payload map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if payload == nil {
+			break
+		}
+		if raw, ok := payload[key]; ok {
+			switch typed := raw.(type) {
+			case string:
+				if value := strings.TrimSpace(typed); value != "" {
+					return value
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func computeAIJobActions(job *domain.AIJob, artifactCount int) domain.AIJobActionState {

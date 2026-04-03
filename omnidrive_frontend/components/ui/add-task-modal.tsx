@@ -482,7 +482,7 @@ export function AddTaskModal({
                             <div className="h-2.5 w-2.5 rounded-full bg-yellow-400/80" />
                             <div className="h-2.5 w-2.5 rounded-full bg-green-400/80" />
                           </div>
-                          <span className="text-[10px] font-bold text-white/50 tracking-widest uppercase ml-2">PROMPT TEMPLATE</span>
+                          <span className="text-[10px] font-bold text-white/50 tracking-widest uppercase ml-2">TASK INSTRUCTION</span>
                         </div>
                         <div className="p-4">
                           <p className="text-xs text-fuchsia-200/80 font-mono leading-relaxed break-words whitespace-pre-wrap">

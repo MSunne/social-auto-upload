@@ -1783,6 +1783,7 @@ class OmniDriveBridge:
         payload = job.get("inputPayload") or {}
         if not isinstance(payload, dict):
             payload = {}
+        payload = self._merge_remote_ai_publish_payload(payload, job)
 
         imported = self.ai_task_manager.import_remote_task(
             {
@@ -1816,6 +1817,32 @@ class OmniDriveBridge:
             return local_task_id
         return str((job or {}).get("id") or "").strip()
 
+    @staticmethod
+    def _extract_remote_ai_publish_intro(job):
+        output_payload = (job or {}).get("outputPayload") or {}
+        if not isinstance(output_payload, dict):
+            return None
+        storyboard_payload = output_payload.get("storyboard") or {}
+        if isinstance(storyboard_payload, dict):
+            value = str(storyboard_payload.get("optimizedContentText") or "").strip()
+            if value:
+                return value
+        publish_payload = output_payload.get("publish") or {}
+        if isinstance(publish_payload, dict):
+            value = str(publish_payload.get("contentText") or "").strip()
+            if value:
+                return value
+        return None
+
+    def _merge_remote_ai_publish_payload(self, payload, job):
+        merged = dict(payload or {})
+        publish_payload = dict(merged.get("publishPayload") or {})
+        optimized_intro = self._extract_remote_ai_publish_intro(job)
+        if optimized_intro:
+            publish_payload["contentText"] = optimized_intro
+            merged["publishPayload"] = publish_payload
+        return merged
+
     def _import_remote_ai_jobs(self):
         if not self.ai_task_manager:
             return 0
@@ -1843,6 +1870,7 @@ class OmniDriveBridge:
             payload = job.get("inputPayload") or {}
             if not isinstance(payload, dict):
                 payload = {}
+            payload = self._merge_remote_ai_publish_payload(payload, job)
 
             local_task = self.ai_task_manager.update_cloud_binding(
                 local_task_id,
