@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -33,7 +34,7 @@ func standardizeVideoArtifact(ctx context.Context, artifact BinaryArtifact, ffmp
 	}
 	inputPath := filepath.Join(tempDir, inputName)
 	outputFileName := standardizedVideoFileName(artifact.FileName)
-	outputPath := filepath.Join(tempDir, outputFileName)
+	outputPath := standardizedVideoOutputPath(tempDir, inputName, outputFileName)
 
 	if err := os.WriteFile(inputPath, inputBytes, 0o600); err != nil {
 		return BinaryArtifact{}, fmt.Errorf("write temp input video: %w", err)
@@ -59,11 +60,7 @@ func standardizeVideoArtifact(ctx context.Context, artifact BinaryArtifact, ffmp
 	)
 	output, err := command.CombinedOutput()
 	if err != nil {
-		message := strings.TrimSpace(string(output))
-		if message == "" {
-			message = err.Error()
-		}
-		return BinaryArtifact{}, fmt.Errorf("ffmpeg standardize video failed: %s", message)
+		return BinaryArtifact{}, fmt.Errorf("ffmpeg standardize video failed: %s", formatFFmpegExecutionError(err, output, ffmpegPath))
 	}
 
 	normalizedBytes, err := os.ReadFile(outputPath)
@@ -97,6 +94,23 @@ func ffmpegBinary(path string) string {
 	return trimmed
 }
 
+func formatFFmpegExecutionError(err error, output []byte, ffmpegPath string) string {
+	binary := ffmpegBinary(ffmpegPath)
+	message := strings.TrimSpace(string(output))
+
+	if errors.Is(err, exec.ErrNotFound) {
+		return fmt.Sprintf(
+			"ffmpeg executable not found: %s; install ffmpeg or set OMNIDRIVE_AI_VIDEO_STANDARDIZE_ENABLED=false",
+			binary,
+		)
+	}
+
+	if message == "" {
+		message = err.Error()
+	}
+	return fmt.Sprintf("%s (binary=%s)", message, binary)
+}
+
 func standardizedVideoFileName(fileName string) string {
 	cleaned := safeFileName(fileName)
 	if cleaned == "" {
@@ -108,6 +122,20 @@ func standardizedVideoFileName(fileName string) string {
 		base = "video"
 	}
 	return base + ".mp4"
+}
+
+func standardizedVideoOutputPath(tempDir string, inputName string, outputFileName string) string {
+	outputPath := filepath.Join(tempDir, outputFileName)
+	if filepath.Clean(outputPath) != filepath.Clean(filepath.Join(tempDir, inputName)) {
+		return outputPath
+	}
+
+	ext := filepath.Ext(outputFileName)
+	base := strings.TrimSuffix(outputFileName, ext)
+	if base == "" {
+		base = "video"
+	}
+	return filepath.Join(tempDir, base+".standardized"+ext)
 }
 
 func standardizedVideoFilter() string {

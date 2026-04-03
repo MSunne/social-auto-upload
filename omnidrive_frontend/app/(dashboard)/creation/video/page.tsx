@@ -691,13 +691,13 @@ function mergeVideoJobs(items: AIJob[]) {
 function sortJobsByTime(items: AIJob[]) {
   return [...items].sort((left, right) => {
     const timeDiff =
-      getJobTimelineTimestamp(right) - getJobTimelineTimestamp(left);
+      getJobTimelineTimestamp(left) - getJobTimelineTimestamp(right);
     if (timeDiff !== 0) {
       return timeDiff;
     }
     return (
-      new Date(right.updatedAt || 0).getTime() -
-      new Date(left.updatedAt || 0).getTime()
+      new Date(left.updatedAt || 0).getTime() -
+      new Date(right.updatedAt || 0).getTime()
     );
   });
 }
@@ -954,6 +954,7 @@ export default function VideoCreationPage() {
         listAIJobs({
           jobType: "video",
           source: VIDEO_CREATION_SOURCE,
+          payloadMode: "summary",
           limit: 50,
         }),
       refetchInterval: currentJobId ? 4000 : false,

@@ -176,9 +176,21 @@ function toPreviewItem(artifact: AIJobArtifact): ImagePreviewItem {
   };
 }
 
+function getJobSortTime(job: AIJob) {
+  return (
+    new Date(job.runAt || 0).getTime() ||
+    new Date(job.createdAt || 0).getTime() ||
+    new Date(job.updatedAt || 0).getTime()
+  );
+}
+
 function sortJobsByUpdatedAt(items: AIJob[]) {
   return [...items].sort((left, right) => {
-    return new Date(right.updatedAt || 0).getTime() - new Date(left.updatedAt || 0).getTime();
+    const timeDiff = getJobSortTime(left) - getJobSortTime(right);
+    if (timeDiff !== 0) {
+      return timeDiff;
+    }
+    return new Date(left.updatedAt || 0).getTime() - new Date(right.updatedAt || 0).getTime();
   });
 }
 

@@ -20,6 +20,7 @@ import {
   Plus,
   Loader2,
   X,
+  RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
 import {
@@ -133,6 +134,13 @@ export default function DeviceAccountsPage({
 
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
   const [isValidating, setIsValidating] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleSync = async () => {
+    setIsSyncing(true);
+    await queryClient.invalidateQueries({ queryKey: ["accounts", deviceId] });
+    setTimeout(() => setIsSyncing(false), 600);
+  };
 
   const deleteTarget = useMemo(
     () => accounts.find((account) => account.id === deleteTargetId) || null,
@@ -360,15 +368,24 @@ export default function DeviceAccountsPage({
               <h2 className="text-base font-bold text-text-primary uppercase tracking-wider">
                 平台账号
               </h2>
-              <p className="text-xs text-text-muted mt-0.5">
-                共{" "}
-                <span className="text-cyan font-semibold">
-                  {accounts.length}
-                </span>{" "}
-                个账号已同步
-              </p>
-            </div>
+            <p className="text-xs text-text-muted mt-0.5">
+              共{" "}
+              <span className="text-cyan font-semibold">
+                {accounts.length}
+              </span>{" "}
+              个账号已同步
+            </p>
           </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleSync}
+            disabled={isSyncing}
+            className="inline-flex items-center gap-2 rounded-xl border border-border/60 bg-surface/50 px-4 py-2 text-sm font-bold text-text-primary shadow-sm transition-all hover:bg-surface-elevated hover:-translate-y-0.5 disabled:opacity-50 cursor-pointer"
+          >
+            <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
+            同步列表
+          </button>
           <button
             onClick={() => setIsAccountModalOpen(true)}
             className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-accent to-cyan px-4 py-2 text-sm font-bold text-white shadow-lg shadow-accent/25 transition-all hover:shadow-xl hover:shadow-accent/35 hover:-translate-y-0.5 active:translate-y-0 cursor-pointer"
@@ -377,6 +394,7 @@ export default function DeviceAccountsPage({
             增加账号
           </button>
         </div>
+      </div>
 
         {accounts.length > 0 ? (
           <div className="overflow-x-auto w-full">

@@ -506,15 +506,24 @@ function buildMessagesFromHistory(job?: AIJob | null, artifacts: AIJobArtifact[]
     (typeof outputPayload.text === "string" && outputPayload.text.trim()) ||
     artifacts.find((item) => item.artifactType === "chat_response")?.textContent ||
     "";
+  const fallbackStatusText =
+    typeof job.message === "string" && job.message.trim()
+      ? job.message.trim()
+      : job.status === "running"
+        ? "聊天生成中..."
+        : job.status === "failed"
+          ? "本次对话失败，请重试。"
+          : "";
+  const assistantContent = outputText.trim() || fallbackStatusText;
 
-  if (outputText.trim()) {
+  if (assistantContent.trim()) {
     historyMessages.push({
       id: `${job.id}-assistant-final`,
       role: "assistant",
-      content: outputText.trim(),
-      rawContent: outputText.trim(),
+      content: assistantContent,
+      rawContent: assistantContent,
       timestamp: job.finishedAt || job.updatedAt,
-      state: job.status === "failed" ? "error" : "done",
+      state: job.status === "failed" ? "error" : job.status === "running" ? "streaming" : "done",
       modelName: getModelDisplayName(job),
       jobId: job.id,
     });

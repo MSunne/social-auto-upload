@@ -51,12 +51,17 @@ export const accountApi = {
    * @param {string} accountName - 账号名称
    * @returns {string} SSE 事件流 URL
    */
-  getLoginSSEUrl(platform, accountName) {
-    return `${API_BASE}/login?platform=${platform}&account=${encodeURIComponent(accountName)}`
+  getLoginSSEUrl(platformType, accountName) {
+    return `/login?type=${platformType}&id=${encodeURIComponent(accountName)}`
   },
 
   /** 远端登录请求 */
   remoteLogin(data) {
     return http.post('/remoteLogin', data)
   },
+
+  /** 强制同步到云端 */
+  forceSyncToCloud() {
+    return http.post('/api/agent/forceSync')
+  }
 }

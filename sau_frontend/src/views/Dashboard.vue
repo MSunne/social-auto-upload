@@ -84,7 +84,7 @@
         <el-icon><Compass /></el-icon> 快捷操作
       </h3>
       <el-row :gutter="16">
-        <el-col :xs="12" :sm="6" v-for="action in quickActions" :key="action.path">
+        <el-col :xs="12" :sm="12" v-for="action in quickActions" :key="action.path">
           <div class="action-card" @click="router.push(action.path)">
             <div class="action-icon" :class="action.color">
               <el-icon :size="24"><component :is="action.icon" /></el-icon>
@@ -94,37 +94,6 @@
           </div>
         </el-col>
       </el-row>
-    </div>
-
-    <!-- ═══ Recent Materials ═══ -->
-    <div class="section" style="margin-top: 24px">
-      <div class="section-header">
-        <h3 class="section-title">
-          <el-icon><Clock /></el-icon> 最近上传素材
-        </h3>
-        <el-button text type="primary" @click="router.push('/material-management')">查看全部</el-button>
-      </div>
-      <div class="glass-card table-wrapper">
-        <el-table
-          :data="appStore.recentMaterials"
-          v-loading="loading"
-          style="width: 100%"
-        >
-          <el-table-column prop="filename" label="文件名" min-width="260" />
-          <el-table-column prop="filesize" label="大小" width="100">
-            <template #default="{ row }">{{ row.filesize }} MB</template>
-          </el-table-column>
-          <el-table-column prop="upload_time" label="上传时间" width="180" />
-          <el-table-column label="类型" width="100">
-            <template #default="{ row }">
-              <el-tag :type="getFileTypeColor(row.filename)" size="small" effect="dark">
-                {{ getFileTypeLabel(row.filename) }}
-              </el-tag>
-            </template>
-          </el-table-column>
-        </el-table>
-      </div>
-      <el-empty v-if="!loading && appStore.recentMaterials.length === 0" description="暂无素材数据" />
     </div>
   </div>
 </template>
@@ -147,9 +116,7 @@ const loading = ref(false)
 
 const quickActions = [
   { path: '/account-management', label: '账号管理', desc: '管理所有平台账号', icon: 'UserFilled', color: 'violet' },
-  { path: '/material-management', label: '素材管理', desc: '上传和管理视频素材', icon: 'FolderOpened', color: 'pink' },
-  { path: '/publish-center', label: '发布中心', desc: '发布内容到各平台', icon: 'Promotion', color: 'cyan' },
-  { path: '/system-status', label: '系统状态', desc: '查看设备与连接', icon: 'DataLine', color: 'green' },
+  { path: '/task-center', label: '任务中心', desc: '查看执行任务', icon: 'Tickets', color: 'cyan' },
 ]
 
 const VIDEO_EXTS = ['.mp4', '.avi', '.mov', '.wmv', '.flv', '.mkv', '.webm']

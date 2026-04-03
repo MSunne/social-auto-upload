@@ -22,7 +22,45 @@ func aiJobQualifiedColumn(alias string, column string) string {
 	return trimmedAlias + "." + column
 }
 
-func aiJobSelectColumnsFor(alias string) string {
+const (
+	aiJobPayloadModeFull    = "full"
+	aiJobPayloadModeSummary = "summary"
+)
+
+func aiJobListPayloadMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", aiJobPayloadModeFull:
+		return aiJobPayloadModeFull
+	case aiJobPayloadModeSummary:
+		return aiJobPayloadModeSummary
+	default:
+		return aiJobPayloadModeFull
+	}
+}
+
+func aiJobInputPayloadSelectColumn(alias string, payloadMode string) string {
+	qualified := aiJobQualifiedColumn(alias, "input_payload")
+	if aiJobListPayloadMode(payloadMode) != aiJobPayloadModeSummary {
+		return qualified
+	}
+	return fmt.Sprintf(
+		`jsonb_strip_nulls(jsonb_build_object('skillName', %s->'skillName')) AS input_payload`,
+		qualified,
+	)
+}
+
+func aiJobOutputPayloadSelectColumn(alias string, payloadMode string) string {
+	qualified := aiJobQualifiedColumn(alias, "output_payload")
+	if aiJobListPayloadMode(payloadMode) != aiJobPayloadModeSummary {
+		return qualified
+	}
+	return fmt.Sprintf(
+		`jsonb_strip_nulls(jsonb_build_object('stage', %s->'stage')) AS output_payload`,
+		qualified,
+	)
+}
+
+func aiJobSelectColumnsFor(alias string, payloadMode string) string {
 	qualifiedModelName := aiJobQualifiedColumn(alias, "model_name")
 	columns := []string{
 		aiJobQualifiedColumn(alias, "id"),
@@ -40,8 +78,8 @@ func aiJobSelectColumnsFor(alias string) string {
 		),
 		aiJobQualifiedColumn(alias, "prompt"),
 		aiJobQualifiedColumn(alias, "status"),
-		aiJobQualifiedColumn(alias, "input_payload"),
-		aiJobQualifiedColumn(alias, "output_payload"),
+		aiJobInputPayloadSelectColumn(alias, payloadMode),
+		aiJobOutputPayloadSelectColumn(alias, payloadMode),
 		aiJobQualifiedColumn(alias, "message"),
 		aiJobQualifiedColumn(alias, "cost_credits"),
 		aiJobQualifiedColumn(alias, "lease_owner_device_id"),
@@ -59,7 +97,7 @@ func aiJobSelectColumnsFor(alias string) string {
 	return "\n\t" + strings.Join(columns, ",\n\t") + "\n"
 }
 
-var aiJobSelectColumns = aiJobSelectColumnsFor("ai_jobs")
+var aiJobSelectColumns = aiJobSelectColumnsFor("ai_jobs", aiJobPayloadModeFull)
 
 const aiModelSelectColumns = `
 	id, vendor, model_name, model_alias, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
@@ -390,11 +428,12 @@ func (s *Store) GetAIModelByIDOrName(ctx context.Context, value string) (*domain
 }
 
 func (s *Store) ListAIJobsByOwner(ctx context.Context, ownerUserID string, filter ListAIJobsFilter) ([]domain.AIJob, error) {
+	payloadMode := aiJobListPayloadMode(filter.PayloadMode)
 	query := fmt.Sprintf(`
 		SELECT %s
 		FROM ai_jobs
 		WHERE owner_user_id = $1
-	`, aiJobSelectColumns)
+	`, aiJobSelectColumnsFor("ai_jobs", payloadMode))
 	args := []any{ownerUserID}
 	argIndex := 2
 	if strings.TrimSpace(filter.JobType) != "" {
@@ -875,7 +914,7 @@ func (s *Store) HasActiveAIJobsBySkillAndSource(ctx context.Context, ownerUserID
 
 func (s *Store) ListRecurringAccountSkillTemplateJobs(ctx context.Context, limit int) ([]domain.AIJob, error) {
 	query := `
-		SELECT ` + aiJobSelectColumnsFor("recurring_jobs") + `
+		SELECT ` + aiJobSelectColumnsFor("recurring_jobs", aiJobPayloadModeFull) + `
 		FROM (
 			SELECT DISTINCT ON (COALESCE(input_payload->'scheduleConfig'->>'scheduleKey', ''))
 				` + aiJobSelectColumns + `
@@ -1033,7 +1072,7 @@ func (s *Store) ListAgentAIJobsByDevice(ctx context.Context, deviceID string, so
 
 func (s *Store) ListExecutableAIJobs(ctx context.Context, limit int) ([]domain.AIJob, error) {
 	query := `
-		SELECT ` + aiJobSelectColumnsFor("target") + `
+		SELECT ` + aiJobSelectColumnsFor("target", aiJobPayloadModeFull) + `
 		FROM ai_jobs AS target
 		WHERE target.status IN ('queued', 'waiting_recharge')
 		  AND target.source IN (` + executableAIJobSourcesSQL + `)
@@ -1328,7 +1367,7 @@ func (s *Store) FailStaleQueuedExecutableAIJobs(ctx context.Context, queuedBefor
 		    updated_at = NOW()
 		FROM candidates
 		WHERE target.id = candidates.id
-		RETURNING ` + aiJobSelectColumnsFor("target") + `
+		RETURNING ` + aiJobSelectColumnsFor("target", aiJobPayloadModeFull) + `
 	`
 
 	rows, err := s.pool.Query(ctx, query, args...)
@@ -1403,7 +1442,7 @@ func (s *Store) ClaimCloudAIJobLease(ctx context.Context, jobID string, leaseTok
 		            )
 	          )
 		  )
-		RETURNING `+aiJobSelectColumnsFor("target")+`
+		RETURNING `+aiJobSelectColumnsFor("target", aiJobPayloadModeFull)+`
 	`, jobID, leaseToken, leaseExpiresAt)
 
 	job, err := scanAIJob(row)

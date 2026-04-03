@@ -1384,6 +1384,13 @@ class OmniDriveBridge:
                 message = self._trim_message(payload.get("message"))
                 if not message or message == worker.get("lastMessage"):
                     return
+                # During verification, don't push intermediate log messages to cloud.
+                # They cause the frontend to re-render with stale verification payloads,
+                # creating a visual flicker between old and new verification views.
+                # The real verification state update will follow shortly after.
+                if worker.get("lastStatus") == "verification_required":
+                    worker["lastMessage"] = message
+                    return
                 self._post_login_event(
                     session_id,
                     status=worker.get("lastStatus") if worker.get("lastStatus") in {"running", "verification_required"} else "running",

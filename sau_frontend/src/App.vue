@@ -29,25 +29,9 @@
               <el-icon><User /></el-icon>
               <span>账号管理</span>
             </el-menu-item>
-            <el-menu-item index="/material-management">
-              <el-icon><Picture /></el-icon>
-              <span>素材管理</span>
-            </el-menu-item>
-            <el-menu-item index="/publish-center">
-              <el-icon><Upload /></el-icon>
-              <span>发布中心</span>
-            </el-menu-item>
             <el-menu-item index="/task-center">
               <el-icon><Tickets /></el-icon>
               <span>任务中心</span>
-            </el-menu-item>
-            <el-menu-item index="/system-status">
-              <el-icon><DataLine /></el-icon>
-              <span>系统状态</span>
-            </el-menu-item>
-            <el-menu-item index="/about">
-              <el-icon><InfoFilled /></el-icon>
-              <span>关于</span>
             </el-menu-item>
           </el-menu>
 

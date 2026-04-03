@@ -210,7 +210,7 @@ async def validate_active_page_detail(platform_type, page, *, settle_seconds=0.5
             return result
 
         state = str(result.get("state") or "").strip()
-        if state in {"login_required", "verification_required", "missing_storage", "unsupported_platform"}:
+        if state in {"missing_storage", "unsupported_platform"}:
             return result
 
     return last_result or _cookie_check_result(False, "error", "页面登录态校验失败", current_url=page.url)
@@ -238,7 +238,7 @@ async def validate_login_completion_detail(platform_type, page, *, settle_second
             return result
 
         state = str(result.get("state") or "").strip()
-        if state in {"login_required", "verification_required", "missing_storage", "unsupported_platform"}:
+        if state in {"missing_storage", "unsupported_platform"}:
             return result
 
     return last_result or _cookie_check_result(False, "error", "页面登录完成校验失败", current_url=page.url)
@@ -260,7 +260,7 @@ async def cookie_auth_douyin(account_ref, *, headless=None):
             context = await set_init_script(context)
             page = await context.new_page()
             await page.goto("https://creator.douyin.com/creator-micro/content/upload")
-            return await validate_cookie_page(page, 3)
+            return await validate_active_page_detail(3, page, settle_seconds=1.5, retries=4, retry_delay_seconds=1.0)
         finally:
             await browser.close()
 
@@ -288,7 +288,7 @@ async def cookie_auth_ks(account_ref, *, headless=None):
             context = await set_init_script(context)
             page = await context.new_page()
             await page.goto("https://cp.kuaishou.com/article/publish/video")
-            return await validate_cookie_page(page, 4)
+            return await validate_active_page_detail(4, page, settle_seconds=1.5, retries=4, retry_delay_seconds=1.0)
         finally:
             await browser.close()
 
@@ -302,7 +302,7 @@ async def cookie_auth_xhs(account_ref, *, headless=None):
             context = await set_init_script(context)
             page = await context.new_page()
             await page.goto("https://creator.xiaohongshu.com/creator-micro/content/upload")
-            return await validate_cookie_page(page, 1)
+            return await validate_active_page_detail(1, page, settle_seconds=1.5, retries=4, retry_delay_seconds=1.0)
         finally:
             await browser.close()
 

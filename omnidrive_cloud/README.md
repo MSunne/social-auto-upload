@@ -61,6 +61,21 @@ ffmpeg -version
 which ffmpeg
 ```
 
+Local macOS check:
+
+```bash
+brew install ffmpeg
+cd /Volumes/mud/project/github/social-auto-upload
+./scripts/test_ffmpeg_standardize.sh
+```
+
+To test one real input file:
+
+```bash
+cd /Volumes/mud/project/github/social-auto-upload
+./scripts/test_ffmpeg_standardize.sh /absolute/path/to/input.mp4
+```
+
 Optional environment variables:
 
 ```bash
@@ -75,6 +90,12 @@ OMNIDRIVE_AI_VIDEO_STANDARDIZE_ENABLED=true
 
 # default "ffmpeg"
 OMNIDRIVE_AI_VIDEO_FFMPEG_PATH=/usr/bin/ffmpeg
+```
+
+On Apple Silicon Macs installed through Homebrew, this is usually:
+
+```bash
+OMNIDRIVE_AI_VIDEO_FFMPEG_PATH=/opt/homebrew/bin/ffmpeg
 ```
 
 If standardization fails, the AI video job will fail at the cloud worker stage instead of silently producing a mismatched artifact.

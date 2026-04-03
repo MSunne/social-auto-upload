@@ -81,6 +81,18 @@
             <el-table-column prop="finishedAt" label="完成时间" min-width="180">
               <template #default="{ row }">{{ formatTime(row.finishedAt, 'utc') }}</template>
             </el-table-column>
+            <el-table-column label="操作" width="120" fixed="right">
+              <template #default="{ row }">
+                <el-button 
+                  v-if="['failed', 'needs_verify', 'cancelled'].includes(row.status)" 
+                  size="small" 
+                  type="primary" 
+                  plain 
+                  @click="retryTask(row)"
+                  :loading="row._retrying"
+                >重试</el-button>
+              </template>
+            </el-table-column>
           </el-table>
         </div>
       </el-tab-pane>
@@ -111,6 +123,23 @@ const fetchTasks = async () => {
     ElMessage.error('获取任务列表失败')
   }
   loading.value = false
+}
+
+const retryTask = async (row) => {
+  row._retrying = true
+  try {
+    const res = await publishApi.retryPublishTask(row.taskUuid)
+    if (res?.code === 200) {
+      ElMessage.success('任务已加入重试队列')
+      fetchTasks()
+    } else {
+      ElMessage.error(res?.msg || '重试请求失败')
+    }
+  } catch (e) {
+    ElMessage.error('网络请求失败')
+  } finally {
+    row._retrying = false
+  }
 }
 
 const tagType = (status) => {

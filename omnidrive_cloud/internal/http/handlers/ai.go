@@ -111,6 +111,8 @@ type persistedChatAttachment struct {
 	MessageIndex int     `json:"messageIndex"`
 }
 
+const streamChatPersistenceTimeout = 10 * time.Second
+
 var defaultChatSupportedFileTypes = []string{
 	"image/*",
 	".txt",
@@ -786,6 +788,7 @@ func (h *AIHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 		AccountID:     strings.TrimSpace(r.URL.Query().Get("accountId")),
 		Source:        strings.TrimSpace(r.URL.Query().Get("source")),
 		ExcludeSource: strings.TrimSpace(r.URL.Query().Get("excludeSource")),
+		PayloadMode:   strings.TrimSpace(r.URL.Query().Get("payloadMode")),
 		Limit:         limit,
 	})
 	if err != nil {
@@ -906,7 +909,7 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		failedStatus := "failed"
 		failedAt := time.Now().UTC()
-		_, _ = h.app.Store.UpdateAIJob(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
+		h.persistStreamChatTerminalUpdate(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
 			Status:          &failedStatus,
 			Message:         stringPtr(err.Error()),
 			FinishedAt:      &failedAt,
@@ -924,7 +927,7 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 		if _, err := h.app.Store.UpsertAIJobArtifacts(r.Context(), artifactInputs); err != nil {
 			failedStatus := "failed"
 			failedAt := time.Now().UTC()
-			_, _ = h.app.Store.UpdateAIJob(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
+			h.persistStreamChatTerminalUpdate(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
 				Status:          &failedStatus,
 				Message:         stringPtr("Failed to persist chat attachments"),
 				FinishedAt:      &failedAt,
@@ -946,7 +949,7 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 	if err != nil || updatedJob == nil {
 		failedStatus := "failed"
 		failedAt := time.Now().UTC()
-		_, _ = h.app.Store.UpdateAIJob(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
+		h.persistStreamChatTerminalUpdate(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
 			Status:          &failedStatus,
 			Message:         stringPtr("Failed to save chat payload"),
 			FinishedAt:      &failedAt,
@@ -964,7 +967,7 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		failedStatus := "failed"
 		failedAt := time.Now().UTC()
-		_, _ = h.app.Store.UpdateAIJob(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
+		h.persistStreamChatTerminalUpdate(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
 			Status:          &failedStatus,
 			Message:         stringPtr(err.Error()),
 			FinishedAt:      &failedAt,
@@ -989,7 +992,7 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		failedStatus := "failed"
 		failedAt := time.Now().UTC()
-		_, _ = h.app.Store.UpdateAIJob(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
+		h.persistStreamChatTerminalUpdate(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
 			Status:          &failedStatus,
 			Message:         stringPtr("Failed to initialize AI provider"),
 			FinishedAt:      &failedAt,
@@ -1004,10 +1007,14 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sawDoneEvent := false
+	streamWriteFailed := false
 	result, err := provider.GenerateChatStream(r.Context(), req, func(chunk aiclient.ChatStreamChunk) error {
+		if streamWriteFailed {
+			return nil
+		}
 		if chunk.Done {
 			sawDoneEvent = true
-			return writeSSEEvent(w, flusher, "done", chatStreamResponse{
+			if err := writeSSEEvent(w, flusher, "done", chatStreamResponse{
 				JobID:        jobID,
 				ModelName:    payload.ModelName,
 				Text:         chunk.Text,
@@ -1015,21 +1022,37 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 				Usage:        chunk.Usage,
 				FinishReason: chunk.FinishReason,
 				Done:         true,
-			})
+			}); err != nil {
+				streamWriteFailed = true
+				h.app.Logger.Warn("stream chat failed to flush terminal SSE chunk, continuing to persist completion",
+					"job_id", jobID,
+					"model_name", payload.ModelName,
+					"error", err,
+				)
+			}
+			return nil
 		}
 		if chunk.Progressed {
-			return writeSSEEvent(w, flusher, "progress", chatStreamResponse{
+			if err := writeSSEEvent(w, flusher, "progress", chatStreamResponse{
 				JobID:      jobID,
 				ModelName:  payload.ModelName,
 				Text:       chunk.Text,
 				Role:       chunk.Role,
 				Progressed: true,
-			})
+			}); err != nil {
+				streamWriteFailed = true
+				h.app.Logger.Warn("stream chat failed to flush progress SSE chunk, suppressing further stream writes",
+					"job_id", jobID,
+					"model_name", payload.ModelName,
+					"error", err,
+				)
+			}
+			return nil
 		}
 		if chunk.Delta == "" {
 			return nil
 		}
-		return writeSSEEvent(w, flusher, "delta", chatStreamResponse{
+		if err := writeSSEEvent(w, flusher, "delta", chatStreamResponse{
 			JobID:        jobID,
 			ModelName:    payload.ModelName,
 			Delta:        chunk.Delta,
@@ -1037,7 +1060,15 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 			Role:         chunk.Role,
 			Usage:        chunk.Usage,
 			FinishReason: chunk.FinishReason,
-		})
+		}); err != nil {
+			streamWriteFailed = true
+			h.app.Logger.Warn("stream chat failed to flush delta SSE chunk, suppressing further stream writes",
+				"job_id", jobID,
+				"model_name", payload.ModelName,
+				"error", err,
+			)
+		}
+		return nil
 	})
 	if err != nil {
 		failedStatus := "failed"
@@ -1045,7 +1076,7 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 		outputPayload := mustJSONBytes(map[string]any{
 			"error": err.Error(),
 		})
-		_, _ = h.app.Store.UpdateAIJob(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
+		h.persistStreamChatTerminalUpdate(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
 			Status:          &failedStatus,
 			OutputPayload:   outputPayload,
 			OutputTouched:   true,
@@ -1078,7 +1109,10 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 		result = &aiclient.ChatResult{}
 	}
 
-	billing := applyStreamChatBilling(h.app, r.Context(), updatedJob, result)
+	persistCtx, cancelPersist := h.streamChatPersistenceContext(r.Context())
+	defer cancelPersist()
+
+	billing := applyStreamChatBilling(h.app, persistCtx, updatedJob, result)
 	finishedAt := time.Now().UTC()
 
 	responsePayload := mustJSONBytes(map[string]any{
@@ -1092,7 +1126,7 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 	})
 	successStatus := "success"
 	successMessage := buildStreamChatCompletionMessage("聊天已完成", billing)
-	_, _ = h.app.Store.UpdateAIJob(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
+	if _, err := h.app.Store.UpdateAIJob(persistCtx, jobID, user.ID, store.UpdateAIJobInput{
 		Status:          &successStatus,
 		OutputPayload:   responsePayload,
 		OutputTouched:   true,
@@ -1100,9 +1134,11 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 		CostCredits:     billingResultCreditsPtr(billing),
 		FinishedAt:      &finishedAt,
 		FinishedTouched: true,
-	})
+	}); err != nil {
+		h.app.Logger.Warn("stream chat failed to persist completed job state", "job_id", jobID, "error", err)
+	}
 	if strings.TrimSpace(result.Text) != "" {
-		_, _ = h.app.Store.UpsertAIJobArtifacts(r.Context(), []store.UpsertAIJobArtifactInput{{
+		if _, err := h.app.Store.UpsertAIJobArtifacts(persistCtx, []store.UpsertAIJobArtifactInput{{
 			JobID:        jobID,
 			ArtifactKey:  "assistant-response",
 			ArtifactType: "chat_response",
@@ -1113,7 +1149,26 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 				"usage":        result.Usage,
 				"finishReason": result.FinishReason,
 			}),
-		}})
+		}}); err != nil {
+			h.app.Logger.Warn("stream chat failed to persist assistant response artifact", "job_id", jobID, "error", err)
+		}
+	}
+}
+
+func (h *AIHandler) streamChatPersistenceContext(parent context.Context) (context.Context, context.CancelFunc) {
+	base := context.Background()
+	if parent != nil {
+		base = context.WithoutCancel(parent)
+	}
+	return context.WithTimeout(base, streamChatPersistenceTimeout)
+}
+
+func (h *AIHandler) persistStreamChatTerminalUpdate(parent context.Context, jobID string, ownerUserID string, input store.UpdateAIJobInput) {
+	ctx, cancel := h.streamChatPersistenceContext(parent)
+	defer cancel()
+
+	if _, err := h.app.Store.UpdateAIJob(ctx, jobID, ownerUserID, input); err != nil {
+		h.app.Logger.Warn("stream chat failed to persist terminal job state", "job_id", jobID, "error", err)
 	}
 }
 

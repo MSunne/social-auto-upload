@@ -44,6 +44,9 @@
         <el-button @click="batchValidate" :loading="validating">
           <el-icon><CircleCheck /></el-icon> 批量验证
         </el-button>
+        <el-button @click="forceSync" :loading="syncing" type="success" plain>
+          <el-icon><UploadFilled /></el-icon> 同步至云端
+        </el-button>
         <el-button @click="fetchAccounts">
           <el-icon><Refresh /></el-icon>
         </el-button>
@@ -70,9 +73,6 @@
         <el-table-column label="操作" width="280" fixed="right">
           <template #default="{ row }">
             <el-button size="small" type="primary" plain @click="validateOne(row.id)" :loading="row._validating">验证</el-button>
-            <el-button size="small" plain @click="exportCookie(row)">
-              <el-icon><Download /></el-icon> Cookie
-            </el-button>
             <el-button size="small" type="danger" plain @click="deleteAccount(row.id)">删除</el-button>
           </template>
         </el-table-column>
@@ -80,10 +80,10 @@
     </div>
 
     <!-- ═══ Add Account Dialog ═══ -->
-    <el-dialog v-model="showAddDialog" title="添加账号" width="480px" destroy-on-close>
+    <el-dialog v-model="showAddDialog" title="添加账号" width="480px" destroy-on-close :close-on-click-modal="!loginState.started" :close-on-press-escape="!loginState.started" :show-close="!loginState.started">
       <el-form label-width="80px">
         <el-form-item label="平台">
-          <el-select v-model="newAccount.platform" placeholder="选择平台" style="width: 100%">
+          <el-select v-model="newAccount.platform" placeholder="选择平台" style="width: 100%" :disabled="loginState.started">
             <el-option label="抖音" value="douyin" />
             <el-option label="快手" value="kuaishou" />
             <el-option label="视频号" value="shipinhao" />
@@ -91,7 +91,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="账号名">
-          <el-input v-model="newAccount.name" placeholder="自定义账号名称" />
+          <el-input v-model="newAccount.name" placeholder="自定义账号名称" :disabled="loginState.started" />
         </el-form-item>
       </el-form>
 
@@ -103,21 +103,10 @@
       </div>
 
       <template #footer>
-        <el-button @click="showAddDialog = false">取消</el-button>
+        <el-button @click="showAddDialog = false" :disabled="loginState.started">取消</el-button>
         <el-button type="primary" @click="startLogin" :loading="loginState.started" :disabled="!newAccount.platform || !newAccount.name">
           {{ loginState.started ? '登录中…' : '扫码登录' }}
         </el-button>
-      </template>
-    </el-dialog>
-
-    <!-- ═══ Cookie Import Dialog ═══ -->
-    <el-dialog v-model="showImportDialog" title="导入 Cookie" width="500px">
-      <el-upload drag :auto-upload="true" :action="uploadCookieUrl" :headers="authHeaders" :on-success="onCookieUploaded" accept=".json,.txt">
-        <el-icon class="el-icon--upload"><Upload /></el-icon>
-        <div class="el-upload__text">拖拽 Cookie 文件到这里，或<em>点击上传</em></div>
-      </el-upload>
-      <template #footer>
-        <el-button @click="showImportDialog = false">关闭</el-button>
       </template>
     </el-dialog>
   </div>
@@ -133,15 +122,14 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 const accountStore = useAccountStore()
 const loading = ref(false)
 const validating = ref(false)
+const syncing = ref(false)
 const searchQuery = ref('')
 const showAddDialog = ref(false)
-const showImportDialog = ref(false)
 
 const newAccount = ref({ platform: '', name: '' })
 const loginState = ref({ started: false, messages: [] })
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5409'
-const uploadCookieUrl = `${apiBase}/uploadCookie`
 const authHeaders = computed(() => ({ Authorization: `Bearer ${localStorage.getItem('token') || ''}` }))
 
 const filteredAccounts = computed(() => {
@@ -166,8 +154,10 @@ const validateOne = async (id) => {
   if (acc) acc._validating = true
   try {
     const res = await accountApi.validateAccount(id)
-    const row = res?.data || null
-    const isValid = Number(row?.status) === 1
+    const rowData = res?.data || []
+    // The backend returns an array from serialize_account_row: [id, type, filePath, userName, status]
+    const statusVal = Array.isArray(rowData) && rowData.length >= 5 ? rowData[4] : rowData?.status
+    const isValid = Number(statusVal) === 1
     ElMessage[isValid ? 'success' : 'warning'](isValid ? '验证成功' : '账号状态异常，需要重新登录')
     fetchAccounts()
   } catch { ElMessage.error('验证失败') }
@@ -193,16 +183,31 @@ const deleteAccount = async (id) => {
   } catch { ElMessage.error('删除失败') }
 }
 
-const exportCookie = async (row) => {
+const forceSync = async () => {
+  syncing.value = true
   try {
-    const url = `${apiBase}/downloadCookie?id=${row.id}`
-    window.open(url, '_blank')
-  } catch { ElMessage.error('导出失败') }
+    const res = await accountApi.forceSyncToCloud()
+    if (res?.code === 200) {
+      ElMessage.success('已触发云端同步')
+    } else {
+      ElMessage.warning(res?.msg || '同步请求已发送，请在云端查看')
+    }
+  } catch { 
+    ElMessage.success('已触发云端同步，后台将自动重试')
+  }
+  syncing.value = false
 }
 
 const startLogin = () => {
+  const platformTypeMap = { 'xiaohongshu': 1, 'shipinhao': 2, 'douyin': 3, 'kuaishou': 4 }
+  const platformType = platformTypeMap[newAccount.value.platform]
+  if (!platformType) {
+    ElMessage.error('无效的平台类型')
+    return
+  }
+
   loginState.value = { started: true, messages: [{ text: '正在初始化登录…', type: 'info' }] }
-  const sseUrl = accountApi.getLoginSSEUrl(newAccount.value.platform, newAccount.value.name)
+  const sseUrl = accountApi.getLoginSSEUrl(platformType, newAccount.value.name)
   const es = createSSE(sseUrl)
 
   es.onmessage = (e) => {
@@ -226,15 +231,7 @@ const startLogin = () => {
   })
 }
 
-const onCookieUploaded = (res) => {
-  if (res.code === 200) {
-    ElMessage.success('Cookie 导入成功')
-    showImportDialog.value = false
-    fetchAccounts()
-  } else {
-    ElMessage.error(res.msg || '导入失败')
-  }
-}
+
 
 onMounted(fetchAccounts)
 </script>

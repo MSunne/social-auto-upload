@@ -25,6 +25,11 @@ export const publishApi = {
     return http.get(`/publishTaskDetail?uuid=${uuid}`)
   },
 
+  /** 重试发布任务 */
+  retryPublishTask(uuid) {
+    return http.post('/retryPublishTask', { uuid })
+  },
+
   /** 通过 Skill API 创建发布任务 */
   createSkillPublish(data) {
     return http.post('/api/skill/publish', data)

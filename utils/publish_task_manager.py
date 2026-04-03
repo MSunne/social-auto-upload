@@ -639,6 +639,22 @@ class PublishTaskManager:
 
                 account_lock = self._get_account_lock(account_file_path)
                 with account_lock:
+                    account_status, account_msg = self._check_account_status(account_file_path)
+                    if account_status != 1:
+                        self._update_task(
+                            task["taskUuid"],
+                            status="needs_verify",
+                            message=f"账号 Cookie 已失效，请在平台重新验证: {account_msg}",
+                            finished=True,
+                        )
+                        task_logger.warning(
+                            "publish worker aborted task due to invalid account status task_uuid={} account_file={} msg={}",
+                            task.get("taskUuid"),
+                            account_file_path,
+                            account_msg,
+                        )
+                        continue
+
                     self._run_task(task)
             except Exception as exc:
                 task_logger.exception(
@@ -733,6 +749,22 @@ class PublishTaskManager:
             row["account_name"],
         )
         return task
+
+    def _check_account_status(self, account_file_path):
+        try:
+            with self._connect() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT status, lastValidationMessage FROM user_info WHERE filePath = ?",
+                    (account_file_path,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    return int(row["status"] or 0), str(row["lastValidationMessage"] or "本地 cookie 当前不可用")
+        except Exception:
+            pass
+        return 1, ""
 
     def _run_task(self, task):
         payload = task["payload"] or {}

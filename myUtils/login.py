@@ -137,7 +137,15 @@ QR_SCANNED_TEXTS = [
     "请在手机上确认登录",
     "请在手机确认登录",
     "请在手机上点击确认",
+    "需在手机上进行确认",
+    "需在手机上进行确认登录",
+    "请在手机上进行确认",
 ]
+
+# Grace period (seconds) after QR image disappears before accepting weak verification challenges.
+# During this window, only strong verification signals (e.g. "接收短信验证码") are accepted.
+# This prevents the right-side login form elements from being misidentified as real verification.
+QR_HIDDEN_GRACE_SECONDS = 12.0
 
 QR_REFRESH_TEXTS = [
     "点击刷新",
@@ -874,6 +882,66 @@ async def get_verification_search_target(page, anchor_locator=None, option_texts
     return page
 
 
+# Page layout noise keywords that should be filtered from verification status messages.
+# These are common navigation text, brand names, and UI chrome that leak into the message
+# when the verification challenge detector scans the entire page.
+_STATUS_LINE_NOISE_KEYWORDS = {
+    "\u7f51\u5740", "\u6293\u53d6", "\u5bfc\u822a", "\u9996\u9875", "\u767b\u5f55/\u6ce8\u518c", "\u767b\u5f55\u6216\u6ce8\u518c",
+    "\u6211\u662f\u521b\u4f5c\u8005", "\u6211\u662fMCN\u673a\u6784", "\u6211\u662fMCN",
+    "\u626b\u7801\u767b\u5f55", "\u5bc6\u7801\u767b\u5f55", "\u9a8c\u8bc1\u7801\u767b\u5f55",
+    "\u7528\u6237\u534f\u8bae", "\u9690\u79c1\u653f\u7b56", "\u670d\u52a1\u534f\u8bae",
+    "\u53d6\u6d88\u767b\u5f55", "\u8fd4\u56de\u767b\u5f55",
+    "\u60a8\u7684\u6d4f\u89c8\u5668", "\u4e0b\u8f7d", "\u5b89\u88c5",
+}
+
+# Specific platform/brand names to filter
+_STATUS_LINE_NOISE_BRANDS = {
+    "\u6296\u97f3", "\u5feb\u624b", "\u5c0f\u7ea2\u4e66", "\u89c6\u9891\u53f7", "\u767e\u5bb6\u53f7",
+    "\u6296\u97f3\u521b\u4f5c\u8005\u4e2d\u5fc3", "\u5feb\u624b\u521b\u4f5c\u8005",
+}
+
+
+def _clean_verification_status_lines(status_lines, title=None, option_texts=None, input_hints=None):
+    """Filter out page layout noise from verification status message lines."""
+    if not status_lines:
+        return []
+
+    all_known = set()
+    if title:
+        all_known.add(normalize_action_text(title))
+    for text in (option_texts or []):
+        all_known.add(normalize_action_text(text))
+    for text in (input_hints or []):
+        all_known.add(normalize_action_text(text))
+    for text in QR_SCANNED_TEXTS:
+        all_known.add(normalize_action_text(text))
+    for text in QR_EXPIRED_TEXTS:
+        all_known.add(normalize_action_text(text))
+    for text in QR_REFRESH_TEXTS:
+        all_known.add(normalize_action_text(text))
+
+    cleaned = []
+    for line in status_lines:
+        normalized = normalize_action_text(line)
+        if not normalized or len(normalized) < 2:
+            continue
+        # Skip lines already represented by title/options/hints
+        if normalized in all_known:
+            continue
+        # Skip page layout noise
+        if any(keyword in normalized for keyword in _STATUS_LINE_NOISE_KEYWORDS):
+            continue
+        # Skip pure brand names
+        if normalized in _STATUS_LINE_NOISE_BRANDS:
+            continue
+        # Skip lines that look like concatenated page layout (contain multiple semicolons or are too generic)
+        if normalized.count("\u00b7") >= 2 or normalized.count("\uff1b") >= 2:
+            continue
+        cleaned.append(normalized)
+
+    return cleaned
+
+
 async def detect_verification_challenge(page):
     title, option_texts, anchor_locator = await get_verification_anchor(page)
     search_target = await get_verification_search_target(page, anchor_locator, option_texts=option_texts)
@@ -890,9 +958,11 @@ async def detect_verification_challenge(page):
         return None
     if not title and not option_texts and input_hints and not has_submit:
         return None
+    # Clean status_lines: filter out page layout noise (navigation text, brand names, etc.)
+    cleaned_status_lines = _clean_verification_status_lines(status_lines, title, option_texts, input_hints)
     payload = {
         "title": title or "需要额外验证",
-        "message": "；".join(status_lines) if status_lines else "检测到登录验证，请在远端页面选择验证方式，必要时输入验证码或密码。",
+        "message": "；".join(cleaned_status_lines) if cleaned_status_lines else "检测到登录验证，请在远端页面选择验证方式，必要时输入验证码或密码。",
         "options": option_texts,
         "supportsTextInput": bool(input_hints),
         "inputHints": input_hints,
@@ -1565,25 +1635,26 @@ async def submit_verification_action(page, input_locator=None):
             return False
 
     # Only try safe strategies: click the submit button, or press Enter on the input field.
-    # Do NOT try page_enter or tab_then_enter — those blindly press Enter/Tab and can hit
-    # the "取消" (Cancel) button on platforms like Douyin where it sits next to "验证" (Verify).
     for name, strategy in (
         ("click_submit", _try_click),
         ("input_enter", _try_input_enter),
     ):
-        applied = await strategy()
-        if not applied:
-            continue
-        dispatched = True
-
+        try:
+            applied = await strategy()
+            if applied:
+                dispatched = True
+                break
+        except Exception:
+            pass
+            
+    if dispatched:
         if await _after_dispatch_pause():
             log_throttled(
                 login_logger,
                 "INFO",
                 f"login.submit.success:{id(page)}",
                 1,
-                "verification submit completed via strategy={} current_url={}",
-                name,
+                "verification submit completed current_url={}",
                 page.url if not page.is_closed() else "closed",
             )
             return True
@@ -1804,7 +1875,8 @@ async def sync_login_qr_state(status_queue, command_queue, page, qr_locator=None
             },
         )
     elif not is_scanned and tracker.get("isScanned"):
-        tracker["isScanned"] = False
+        if qr_signature and qr_signature != tracker.get("lastQrSignature"):
+            tracker["isScanned"] = False
 
     return qr_state
 
@@ -1951,36 +2023,25 @@ async def drain_remote_actions(page, command_queue, status_queue=None, qr_action
     if command_queue is None:
         return False
 
-    now = asyncio.get_running_loop().time()
     handled = False
-    deferred_actions = []
     while True:
         try:
             action = command_queue.get_nowait()
         except Empty:
             break
 
+        action_type = str(action.get("actionType") or "").strip()
+        if action_type in {"cancel_session", "cancel_login"}:
+            login_logger.info("drain_remote_actions processing explicit cancellation action")
+            try:
+                await page.close()
+            except Exception:
+                pass
+            raise LoginCancelled()
+
         applied = await apply_remote_action(page, action, status_queue, command_queue, qr_action_root=qr_action_root)
         if applied:
             handled = True
-            continue
-
-        retry_count = int(action.get("_retryCount") or 0)
-        retry_deadline = float(action.get("_retryDeadline") or 0.0)
-        if retry_deadline <= 0:
-            retry_deadline = now + REMOTE_ACTION_RETRY_WINDOW_SECONDS
-        if (
-            retry_count < REMOTE_ACTION_MAX_RETRIES
-            and now <= retry_deadline
-            and str(action.get("actionType") or "").strip() not in {"cancel_session", "cancel_login"}
-        ):
-            deferred_action = dict(action)
-            deferred_action["_retryCount"] = retry_count + 1
-            deferred_action["_retryDeadline"] = retry_deadline
-            deferred_actions.append(deferred_action)
-
-    for action in deferred_actions:
-        command_queue.put(action)
 
     return handled
 
@@ -2005,6 +2066,7 @@ async def wait_for_login_result(
     last_signature = None
     qr_tracker = {"lastQrData": initial_qr_data, "isExpired": False, "isScanned": False}
     qr_hidden_since = None
+    qr_was_visible_at = None
     verification_started_at = None
     verification_cleared_since = None
     verification_observed = False
@@ -2026,21 +2088,36 @@ async def wait_for_login_result(
                 tracker=qr_tracker,
             )
             qr_visible = await is_locator_visible(qr_locator)
+            if qr_visible:
+                qr_was_visible_at = now
             qr_phase_waiting_scan = bool(
                 qr_locator is not None and qr_visible and not qr_state.get("isScanned") and not qr_state.get("isExpired")
             )
+            # When QR just disappeared (user scanned, avatar replaces QR image),
+            # suppress weak verification challenges during the grace period.
+            # This prevents the right-side login form "获取验证码" from being
+            # misidentified as a real verification challenge.
+            qr_phase_pending_confirm = bool(
+                qr_locator is not None
+                and not qr_visible
+                and not qr_state.get("isExpired")
+                and qr_was_visible_at is not None
+                and now - qr_was_visible_at < QR_HIDDEN_GRACE_SECONDS
+                and verification_started_at is None
+            )
             challenge = await detect_verification_challenge(page)
-            if challenge and qr_phase_waiting_scan and not is_strong_verification_challenge(challenge):
+            if challenge and (qr_phase_waiting_scan or qr_phase_pending_confirm) and not is_strong_verification_challenge(challenge):
                 log_throttled(
                     login_logger,
                     "INFO",
                     f"login.wait.weak_verification:{original_url}",
                     5,
-                    "ignoring weak verification signal while qr is still waiting scan original_url={} current_url={} title={} options={}",
+                    "ignoring weak verification signal while qr phase active original_url={} current_url={} title={} options={} pending_confirm={}",
                     original_url,
                     page.url,
                     (challenge.get("payload") or {}).get("title"),
                     (challenge.get("payload") or {}).get("options"),
+                    qr_phase_pending_confirm,
                 )
                 challenge = None
             if challenge:

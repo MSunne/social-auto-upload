@@ -314,9 +314,6 @@ def resolve_browser_executable_path(*, headless=False):
     if bundled_browser_path:
         return bundled_browser_path
 
-    if headless:
-        return None
-
     return _resolve_system_browser_executable_path()
 
 

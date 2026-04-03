@@ -66,6 +66,7 @@ pick_npm_bin() {
   local candidate
   for candidate in "${candidates[@]}"; do
     if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+      export PATH="$(cd -- "$(dirname -- "${candidate}")" && pwd):${PATH}"
       printf '%s\n' "${candidate}"
       return 0
     fi
@@ -276,6 +277,7 @@ run_stack() {
     log ERROR "npm not found. Set SAU_NPM_BIN or install Node.js."
     exit 1
   }
+  export PATH="$(cd -- "$(dirname -- "${npm_bin}")" && pwd):${PATH}"
 
   if [[ ! -f "${ROOT_DIR}/conf.py" ]]; then
     log ERROR "conf.py not found at ${ROOT_DIR}/conf.py"

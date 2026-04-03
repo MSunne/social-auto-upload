@@ -168,7 +168,15 @@ class OmniDriveAITaskManager:
                     linked_publish_task_uuid = COALESCE(excluded.linked_publish_task_uuid, omnidrive_ai_tasks.linked_publish_task_uuid),
                     artifact_refs_json = excluded.artifact_refs_json,
                     finished_at = excluded.finished_at,
-                    updated_at = CURRENT_TIMESTAMP
+                    updated_at = CASE
+                        WHEN omnidrive_ai_tasks.status IS NOT excluded.status
+                          OR omnidrive_ai_tasks.cloud_status IS NOT excluded.cloud_status
+                          OR omnidrive_ai_tasks.message IS NOT excluded.message
+                          OR omnidrive_ai_tasks.artifact_refs_json IS NOT excluded.artifact_refs_json
+                          OR omnidrive_ai_tasks.linked_publish_task_uuid IS NOT COALESCE(excluded.linked_publish_task_uuid, omnidrive_ai_tasks.linked_publish_task_uuid)
+                        THEN CURRENT_TIMESTAMP
+                        ELSE omnidrive_ai_tasks.updated_at
+                    END
                 """,
                 (
                     task_uuid,
@@ -304,7 +312,14 @@ class OmniDriveAITaskManager:
                     END,
                     message = COALESCE(?, message),
                     finished_at = ?,
-                    updated_at = CURRENT_TIMESTAMP
+                    updated_at = CASE
+                        WHEN status IS NOT ?
+                          OR cloud_status IS NOT ?
+                          OR message IS NOT COALESCE(?, message)
+                          OR cloud_job_id IS NOT ?
+                        THEN CURRENT_TIMESTAMP
+                        ELSE updated_at
+                    END
                 WHERE task_uuid = ?
                 """,
                 (
@@ -321,6 +336,10 @@ class OmniDriveAITaskManager:
                     1 if reset_delivery_state else 0,
                     message,
                     finished_at,
+                    local_status,
+                    cloud_status,
+                    message,
+                    cloud_job_id,
                     task_uuid,
                 ),
             )
@@ -350,10 +369,16 @@ class OmniDriveAITaskManager:
                     status = ?,
                     message = COALESCE(?, message),
                     finished_at = ?,
-                    updated_at = CURRENT_TIMESTAMP
+                    updated_at = CASE
+                        WHEN cloud_status IS NOT ?
+                          OR status IS NOT ?
+                          OR message IS NOT COALESCE(?, message)
+                        THEN CURRENT_TIMESTAMP
+                        ELSE updated_at
+                    END
                 WHERE task_uuid = ?
                 """,
-                (cloud_status, next_status, message, finished_at, task_uuid),
+                (cloud_status, next_status, message, finished_at, cloud_status, next_status, message, task_uuid),
             )
             conn.commit()
         ai_logger.debug(
@@ -377,10 +402,21 @@ class OmniDriveAITaskManager:
                         ELSE 'output_ready'
                     END,
                     message = COALESCE(?, message),
-                    updated_at = CURRENT_TIMESTAMP
+                    updated_at = CASE
+                        WHEN artifact_refs_json IS NOT ?
+                          OR linked_publish_task_uuid IS NOT COALESCE(?, linked_publish_task_uuid)
+                          OR status IS NOT (CASE WHEN COALESCE(?, linked_publish_task_uuid) IS NOT NULL THEN 'publish_pending' ELSE 'output_ready' END)
+                          OR message IS NOT COALESCE(?, message)
+                        THEN CURRENT_TIMESTAMP
+                        ELSE updated_at
+                    END
                 WHERE task_uuid = ?
                 """,
                 (
+                    json.dumps(artifact_refs or [], ensure_ascii=False),
+                    linked_publish_task_uuid,
+                    linked_publish_task_uuid,
+                    message,
                     json.dumps(artifact_refs or [], ensure_ascii=False),
                     linked_publish_task_uuid,
                     linked_publish_task_uuid,
@@ -420,10 +456,15 @@ class OmniDriveAITaskManager:
                 SET status = ?,
                     message = COALESCE(?, message),
                     finished_at = ?,
-                    updated_at = CURRENT_TIMESTAMP
+                    updated_at = CASE
+                        WHEN status IS NOT ?
+                          OR message IS NOT COALESCE(?, message)
+                        THEN CURRENT_TIMESTAMP
+                        ELSE updated_at
+                    END
                 WHERE task_uuid = ?
                 """,
-                (next_status, message, finished_at, task_uuid),
+                (next_status, message, finished_at, next_status, message, task_uuid),
             )
             conn.commit()
         ai_logger.debug(
@@ -518,10 +559,15 @@ class OmniDriveAITaskManager:
                 SET status = ?,
                     message = COALESCE(?, message),
                     finished_at = ?,
-                    updated_at = CURRENT_TIMESTAMP
+                    updated_at = CASE
+                        WHEN status IS NOT ?
+                          OR message IS NOT COALESCE(?, message)
+                        THEN CURRENT_TIMESTAMP
+                        ELSE updated_at
+                    END
                 WHERE task_uuid = ?
                 """,
-                (next_status, next_message, finished_at, str(row[0] or "").strip()),
+                (next_status, next_message, finished_at, next_status, next_message, str(row[0] or "").strip()),
             )
             recovered += cursor.rowcount
 

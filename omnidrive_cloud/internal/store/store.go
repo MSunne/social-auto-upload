@@ -548,6 +548,7 @@ type ListAIJobsFilter struct {
 	AccountID     string
 	Source        string
 	ExcludeSource string
+	PayloadMode   string
 	Limit         int
 }
 

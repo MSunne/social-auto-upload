@@ -87,7 +87,7 @@ export default function TasksPage() {
   });
   const { data: aiJobs = [], isLoading: aiLoading } = useQuery<AIJob[]>({
     queryKey: ["aiJobs"],
-    queryFn: () => listAIJobs({ limit: 200, excludeSource: "omnidrive_chat" }),
+    queryFn: () => listAIJobs({ limit: 200, excludeSource: "omnidrive_chat", payloadMode: "summary" }),
   });
 
   const deviceMap = useMemo(() => {
@@ -136,10 +136,13 @@ export default function TasksPage() {
     });
 
     return [...aiRows, ...publishRows].sort((left, right) => {
-      return (
-        new Date(right.workflowTime || right.updatedAt || 0).getTime() -
-        new Date(left.workflowTime || left.updatedAt || 0).getTime()
-      );
+      const timeDiff =
+        new Date(left.workflowTime || left.updatedAt || 0).getTime() -
+        new Date(right.workflowTime || right.updatedAt || 0).getTime();
+      if (timeDiff !== 0) {
+        return timeDiff;
+      }
+      return left.id.localeCompare(right.id);
     });
   }, [aiJobs, deviceMap, publishTasks]);
 

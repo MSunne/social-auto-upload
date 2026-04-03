@@ -2613,6 +2613,20 @@ def delete_account():
             cursor.execute("DELETE FROM user_info WHERE id = ?", (account_id,))
             conn.commit()
 
+            # 通知云端此账号已被删除
+            global omnidrive_agent
+            if omnidrive_agent:
+                try:
+                    omnidrive_agent._request("POST", "/api/v1/agent/accounts/sync", payload={
+                        "deviceCode": omnidrive_agent.device_code,
+                        "platform": PLATFORM_LABELS.get(str(record["type"]), ""),
+                        "accountName": record["userName"],
+                        "status": "deleted",
+                        "lastMessage": "Account explicitly deleted by user locally"
+                    })
+                except Exception as sync_exc:
+                    print(f"⚠️ 云端销毁通知失败 (不影响本地删除): {sync_exc}")
+
         return jsonify({
             "code": 200,
             "msg": "account deleted successfully",
@@ -2749,6 +2763,17 @@ def omnidrive_agent_status():
             "agent": agent_status,
         }
     }), 200
+
+@app.route('/api/agent/forceSync', methods=['POST'])
+def force_sync_cloud():
+    ensure_omnidrive_agent_started()
+    if omnidrive_agent:
+        try:
+            omnidrive_agent._sync_accounts()
+            return jsonify({"code": 200, "msg": "Sync triggered successfully"}), 200
+        except Exception as e:
+            return jsonify({"code": 500, "msg": str(e)}), 500
+    return jsonify({"code": 400, "msg": "Agent not running"}), 400
 
 
 def create_local_ai_task(data, source="local_ui"):
@@ -3435,6 +3460,46 @@ def get_publish_task_detail():
         "data": task,
     }), 200
 
+@app.route('/retryPublishTask', methods=['POST'])
+def retry_publish_task():
+    try:
+        ensure_publish_task_manager_started()
+        data = request.json or {}
+        task_uuid = data.get("uuid")
+        if not task_uuid:
+            return jsonify({"code": 400, "msg": "缺少任务 UUID", "data": None}), 400
+            
+        task = publish_task_manager.get_task(task_uuid)
+        if not task:
+            return jsonify({"code": 404, "msg": "任务不存在", "data": None}), 404
+            
+        status = str(task.get("status") or "")
+        if status not in {"failed", "needs_verify", "cancelled"}:
+            return jsonify({"code": 400, "msg": "只有失败、取消或需要验证的任务才能重试", "data": None}), 400
+
+        with publish_task_manager._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                UPDATE publish_tasks
+                SET status = 'pending',
+                    message = '人工重试等待执行',
+                    auto_retry_count = 0,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE task_uuid = ?
+                ''',
+                (task_uuid,)
+            )
+            changed = cursor.rowcount == 1
+            conn.commit()
+
+        if changed:
+            publish_task_manager._sync_task(task_uuid)
+            return jsonify({"code": 200, "msg": "任务已重新加入队列"})
+        return jsonify({"code": 500, "msg": "重试失败"}), 500
+    except Exception as exc:
+        return jsonify({"code": 500, "msg": f"重试任务失败: {exc}"}), 500
+
 # Cookie文件上传API
 @app.route('/uploadCookie', methods=['POST'])
 def upload_cookie():
@@ -3614,13 +3679,33 @@ def sse_stream(status_queue):
     while True:
         if not status_queue.empty():
             msg = status_queue.get()
-            yield f"data: {msg}\n\n"
+            if isinstance(msg, dict):
+                event_type = msg.get("type", "message")
+                data_str = json.dumps(msg, ensure_ascii=False)
+                if event_type == "qr_status":
+                    yield f"event: qr\ndata: {data_str}\n\n"
+                elif event_type == "error":
+                    yield f"event: error\ndata: {data_str}\n\n"
+                else:
+                    yield f"event: {event_type}\ndata: {data_str}\n\n"
+            elif isinstance(msg, str):
+                if msg.startswith("data:image/"):
+                    yield f"event: qr\ndata: \n\n"
+                elif msg == "200":
+                    yield f"event: done\ndata: 200\n\n"
+                elif msg == "CANCELLED":
+                    yield f"event: error\ndata: 取消登录\n\n"
+                elif msg == "500":
+                    yield f"event: error\ndata: 内部错误\n\n"
+                else:
+                    yield f"data: {msg}\n\n"
         else:
             # 避免 CPU 占满
             time.sleep(0.1)
 
 if __name__ == '__main__':
     ensure_publish_task_manager_started()
+    ensure_omnidrive_ai_task_manager_started()
     ensure_cloud_agent_started()
     ensure_omnidrive_agent_started()
     ensure_openclaw_omnidrive_models_synced()

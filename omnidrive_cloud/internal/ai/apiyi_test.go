@@ -18,7 +18,7 @@ import (
 	"omnidrive_cloud/internal/config"
 )
 
-func TestResolveEndpointURLAvoidsDuplicatedVideoPath(t *testing.T) {
+func TestResolveEndpointURLAvoidsDuplicatedPathSegments(t *testing.T) {
 	provider, err := NewAPIYIProvider(config.Config{
 		APIYIBaseURL: "https://api.apiyi.com",
 		APIYIApiKey:  "sk-test",
@@ -51,6 +51,18 @@ func TestResolveEndpointURLAvoidsDuplicatedVideoPath(t *testing.T) {
 			endpoint: "/v1/videos",
 			want:     "https://api.apiyi.com/v1/videos",
 		},
+		{
+			name:     "gemini_model_path",
+			baseURL:  "https://api.apiyi.com/v1beta/models/gemini-3-pro-image-preview",
+			endpoint: "/v1beta/models/gemini-3-pro-image-preview:generateContent",
+			want:     "https://api.apiyi.com/v1beta/models/gemini-3-pro-image-preview:generateContent",
+		},
+		{
+			name:     "prefixed_gemini_model_path",
+			baseURL:  "https://gateway.example.com/provider/v1beta/models/gemini-3-pro-image-preview",
+			endpoint: "/v1beta/models/gemini-3-pro-image-preview:generateContent",
+			want:     "https://gateway.example.com/provider/v1beta/models/gemini-3-pro-image-preview:generateContent",
+		},
 	}
 
 	for _, tc := range cases {
@@ -59,6 +71,39 @@ func TestResolveEndpointURLAvoidsDuplicatedVideoPath(t *testing.T) {
 				t.Fatalf("resolveEndpointURL(%q, %q) = %q, want %q", tc.baseURL, tc.endpoint, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestGenerateImageDoesNotDuplicateConfiguredGeminiModelPath(t *testing.T) {
+	var capturedPath string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"aW1hZ2U="}}]}}]}`))
+	}))
+	defer server.Close()
+
+	provider, err := NewAPIYIProvider(config.Config{
+		APIYIBaseURL: server.URL,
+		APIYIApiKey:  "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewAPIYIProvider returned error: %v", err)
+	}
+
+	_, err = provider.GenerateImage(context.Background(), ImageRequest{
+		Model:   "gemini-3-pro-image-preview",
+		BaseURL: server.URL + "/v1beta/models/gemini-3-pro-image-preview",
+		APIKey:  "sk-image",
+		Prompt:  "生成产品海报",
+	})
+	if err != nil {
+		t.Fatalf("GenerateImage returned error: %v", err)
+	}
+
+	if capturedPath != "/v1beta/models/gemini-3-pro-image-preview:generateContent" {
+		t.Fatalf("unexpected request path %q", capturedPath)
 	}
 }
 
@@ -680,7 +725,7 @@ func TestDownloadVideoParsesSoraVideoURL(t *testing.T) {
 		t.Fatalf("NewAPIYIProvider returned error: %v", err)
 	}
 
-	artifact, err := provider.DownloadVideo(context.Background(), "video_123", "sora-2", server.URL, "sk-sora")
+	artifact, err := provider.DownloadVideo(context.Background(), "video_123", "sora-2", server.URL, "sk-sora", "")
 	if err != nil {
 		t.Fatalf("DownloadVideo returned error: %v", err)
 	}
@@ -688,6 +733,46 @@ func TestDownloadVideoParsesSoraVideoURL(t *testing.T) {
 		t.Fatalf("unexpected fileName %q", artifact.FileName)
 	}
 	if string(artifact.Data) != "video-bytes" {
+		t.Fatalf("unexpected artifact data %q", string(artifact.Data))
+	}
+}
+
+func TestDownloadVideoUsesProvidedContentURL(t *testing.T) {
+	directHits := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/files/direct.mp4":
+			directHits++
+			w.Header().Set("Content-Type", "video/mp4")
+			w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": "direct.mp4"}))
+			_, _ = w.Write([]byte("direct-video-bytes"))
+		case "/v1/videos/video_123/content":
+			t.Fatalf("content endpoint should not be called when content URL is already known")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	provider, err := NewAPIYIProvider(config.Config{
+		APIYIBaseURL: server.URL,
+		APIYIApiKey:  "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewAPIYIProvider returned error: %v", err)
+	}
+
+	artifact, err := provider.DownloadVideo(context.Background(), "video_123", "veo-3.1-fast-fl", server.URL, "sk-veo", server.URL+"/files/direct.mp4")
+	if err != nil {
+		t.Fatalf("DownloadVideo returned error: %v", err)
+	}
+	if directHits != 1 {
+		t.Fatalf("expected direct url to be fetched exactly once, got %d", directHits)
+	}
+	if artifact.FileName != "direct.mp4" {
+		t.Fatalf("unexpected fileName %q", artifact.FileName)
+	}
+	if string(artifact.Data) != "direct-video-bytes" {
 		t.Fatalf("unexpected artifact data %q", string(artifact.Data))
 	}
 }

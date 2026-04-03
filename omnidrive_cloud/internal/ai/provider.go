@@ -11,7 +11,7 @@ type Provider interface {
 	GenerateImage(ctx context.Context, req ImageRequest) (*ImageResult, error)
 	SubmitVideo(ctx context.Context, req VideoRequest) (*VideoSubmission, error)
 	GetVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string) (*VideoStatus, error)
-	DownloadVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string) (*BinaryArtifact, error)
+	DownloadVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string, contentURL string) (*BinaryArtifact, error)
 }
 
 type ChatMessage struct {

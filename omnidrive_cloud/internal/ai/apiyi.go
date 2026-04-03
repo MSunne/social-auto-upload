@@ -604,7 +604,11 @@ func (p *APIYIProvider) GetVideo(ctx context.Context, videoID string, model stri
 	return status, nil
 }
 
-func (p *APIYIProvider) DownloadVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string) (*BinaryArtifact, error) {
+func (p *APIYIProvider) DownloadVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string, contentURL string) (*BinaryArtifact, error) {
+	if directURL := strings.TrimSpace(contentURL); directURL != "" {
+		return p.downloadBinary(ctx, directURL, fmt.Sprintf("%s.mp4", videoID), "video/mp4")
+	}
+
 	endpointURL := p.resolveEndpointURL(baseURL, fmt.Sprintf("/v1/videos/%s/content", url.PathEscape(videoID)))
 	httpReq, err := p.newRetryableRequest(ctx, http.MethodGet, endpointURL, nil, func(r *http.Request) {
 		r.Header.Set("Authorization", p.resolveVideoAuthorization(model, apiKey))
@@ -816,11 +820,14 @@ func (p *APIYIProvider) resolveEndpointURL(override string, endpointPath string)
 	}
 
 	basePath := sanitizeEndpointPath(parsedURL.Path)
+	mergedPath := mergeEndpointPaths(basePath, endpointPath)
 	switch {
 	case basePath == "":
 		parsedURL.Path = endpointPath
 	case basePath == endpointPath, strings.HasSuffix(basePath, endpointPath):
 		parsedURL.Path = basePath
+	case mergedPath != "":
+		parsedURL.Path = mergedPath
 	case strings.HasPrefix(endpointPath, basePath+"/"), endpointPath == basePath:
 		parsedURL.Path = endpointPath
 	default:
@@ -1092,6 +1099,28 @@ func sanitizeEndpointPath(value string) string {
 		return ""
 	}
 	return "/" + strings.Trim(strings.ReplaceAll(value, "//", "/"), "/")
+}
+
+func mergeEndpointPaths(basePath string, endpointPath string) string {
+	basePath = sanitizeEndpointPath(basePath)
+	endpointPath = sanitizeEndpointPath(endpointPath)
+	if basePath == "" || endpointPath == "" {
+		return ""
+	}
+	if basePath == endpointPath || strings.HasSuffix(basePath, endpointPath) {
+		return basePath
+	}
+
+	for start := 0; start < len(basePath); start++ {
+		if basePath[start] != '/' {
+			continue
+		}
+		suffix := basePath[start:]
+		if strings.HasPrefix(endpointPath, suffix) {
+			return sanitizeEndpointPath(basePath[:start] + endpointPath)
+		}
+	}
+	return ""
 }
 
 func firstNonZeroInt64(values ...int64) int64 {

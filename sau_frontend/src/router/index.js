@@ -14,35 +14,11 @@ const routes = [
     meta: { title: '账号管理' },
   },
   {
-    path: '/material-management',
-    name: 'MaterialManagement',
-    component: () => import('../views/MaterialManagement.vue'),
-    meta: { title: '素材管理' },
-  },
-  {
-    path: '/publish-center',
-    name: 'PublishCenter',
-    component: () => import('../views/PublishCenter.vue'),
-    meta: { title: '发布中心' },
-  },
-  {
     path: '/task-center',
     name: 'TaskCenter',
     component: () => import('../views/TaskCenter.vue'),
     meta: { title: '任务中心' },
-  },
-  {
-    path: '/system-status',
-    name: 'SystemStatus',
-    component: () => import('../views/SystemStatus.vue'),
-    meta: { title: '系统状态' },
-  },
-  {
-    path: '/about',
-    name: 'About',
-    component: () => import('../views/About.vue'),
-    meta: { title: '关于' },
-  },
+  }
 ]
 
 const router = createRouter({

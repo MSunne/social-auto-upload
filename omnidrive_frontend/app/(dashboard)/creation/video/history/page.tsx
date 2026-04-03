@@ -89,6 +89,14 @@ function extractVideoArtifactsFromPayload(job?: AIJob | null): VideoPreviewItem[
   return pickVideoArtifacts(artifacts);
 }
 
+function getJobTimelineTime(job: AIJob) {
+  return (
+    new Date(job.runAt || 0).getTime() ||
+    new Date(job.createdAt || 0).getTime() ||
+    new Date(job.updatedAt || 0).getTime()
+  );
+}
+
 function buildVideoPreviewSource(url?: string | null) {
   const trimmed = (url || "").trim();
   if (!trimmed) return "";
@@ -226,7 +234,13 @@ export default function VideoHistoryPage() {
 
   const { data: rawJobs = [], isLoading } = useQuery({
     queryKey: ["aiJobs", { jobType: "video", source: "omnidrive_cloud" }],
-    queryFn: () => listAIJobs({ jobType: "video", source: "omnidrive_cloud", limit: 100 }),
+    queryFn: () =>
+      listAIJobs({
+        jobType: "video",
+        source: "omnidrive_cloud",
+        payloadMode: "summary",
+        limit: 100,
+      }),
     refetchInterval: (query) => {
       const active = query.state.data?.some((job) => !isTerminalJob(job));
       return active ? 3000 : false;
@@ -247,6 +261,12 @@ export default function VideoHistoryPage() {
       if (filter === "failed" && (!isTerminal || isSuccess)) return false;
 
       return true;
+    }).sort((left, right) => {
+      const timeDiff = getJobTimelineTime(left) - getJobTimelineTime(right);
+      if (timeDiff !== 0) {
+        return timeDiff;
+      }
+      return new Date(left.updatedAt || 0).getTime() - new Date(right.updatedAt || 0).getTime();
     });
   }, [rawJobs, filter, searchQuery]);
 

@@ -39,6 +39,11 @@ type executionBillingBlockedError struct {
 	Result *store.ApplyUsageBillingResult
 }
 
+const (
+	videoArtifactFinalizeMaxAttempts = 3
+	videoArtifactFinalizeRetryDelay  = 2 * time.Second
+)
+
 const executionBillingRetryDelay = time.Minute
 const mediaFailureAutoRetryLimit = 1
 const mediaFailureAutoRetryDelay = 30 * time.Second
@@ -407,7 +412,7 @@ func (w *Worker) executeImage(ctx context.Context, job *domain.AIJob, leaseToken
 	if err != nil {
 		return err
 	}
-	storyboardPayload, optimizedPrompt, err := w.prepareStoryboardPrompt(ctx, job, leaseToken, req.Prompt)
+	storyboardPayload, optimizedPrompt, err := w.prepareOptionalMediaStoryboardPrompt(ctx, job, leaseToken, req.Prompt)
 	if err != nil {
 		return err
 	}
@@ -490,7 +495,7 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 	if err != nil {
 		return err
 	}
-	storyboardPayload, optimizedPrompt, err := w.prepareStoryboardPrompt(ctx, job, leaseToken, req.Prompt)
+	storyboardPayload, optimizedPrompt, err := w.prepareOptionalMediaStoryboardPrompt(ctx, job, leaseToken, req.Prompt)
 	if err != nil {
 		return err
 	}
@@ -576,43 +581,16 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 
 		switch state.RemoteStatus {
 		case "completed":
-			artifact, err := w.provider.DownloadVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey)
+			artifact, err := w.downloadAndFinalizeVideoArtifact(ctx, job, req, &state, apiKey)
 			if err != nil {
 				if isTransientVideoProviderExecutionError(err) {
 					return buildTemporaryVideoRequeueError(job, state, err)
 				}
 				return err
 			}
-			if strings.TrimSpace(artifact.FileName) == "" {
-				artifact.FileName = "video.mp4"
-			}
-			if strings.TrimSpace(artifact.MIMEType) == "" {
-				artifact.MIMEType = "video/mp4"
-			}
 			artifactKey := strings.TrimSpace(artifact.ArtifactKey)
 			if artifactKey == "" {
 				artifactKey = safeArtifactKey(artifact.FileName, "video.mp4")
-			}
-			if w.app.Config.AIVideoStandardizeEnabled {
-				originalFileName := artifact.FileName
-				originalSizeBytes := len(artifact.Data)
-				standardizedArtifact, standardizeErr := standardizeVideoArtifact(ctx, *artifact, w.app.Config.AIVideoFFmpegPath)
-				if standardizeErr != nil {
-					return standardizeErr
-				}
-				artifact = &standardizedArtifact
-				w.app.Logger.Info(
-					"ai worker standardized video artifact",
-					"job_id", job.ID,
-					"model_name", job.ModelName,
-					"source_file_name", originalFileName,
-					"output_file_name", artifact.FileName,
-					"source_size_bytes", originalSizeBytes,
-					"output_size_bytes", len(artifact.Data),
-					"video_codec", "h264",
-					"fps", standardizedVideoFPS,
-					"scale_ratio", standardizedVideoScaleRatio,
-				)
 			}
 			input, err := w.saveBinaryArtifact(ctx, job, "video", artifactKey, "apiyi", *artifact)
 			if err != nil {
@@ -674,6 +652,100 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 			}
 		}
 	}
+}
+
+func (w *Worker) downloadAndFinalizeVideoArtifact(ctx context.Context, job *domain.AIJob, req VideoRequest, state *videoExecutionState, apiKey string) (*BinaryArtifact, error) {
+	var lastErr error
+
+	for attempt := 1; attempt <= videoArtifactFinalizeMaxAttempts; attempt++ {
+		if attempt > 1 {
+			latestStatus, statusErr := w.provider.GetVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey)
+			if statusErr != nil {
+				w.app.Logger.Warn(
+					"ai worker failed to refresh completed video status before retry",
+					"job_id", job.ID,
+					"attempt", attempt,
+					"max_attempts", videoArtifactFinalizeMaxAttempts,
+					"error", statusErr,
+				)
+			} else {
+				state.RemoteStatus = strings.TrimSpace(latestStatus.Status)
+				state.ProgressPercent = latestStatus.ProgressPercent
+				state.ContentURL = strings.TrimSpace(latestStatus.ContentURL)
+				state.UpdatedAt = firstNonNilTime(latestStatus.UpdatedAt, time.Now().UTC())
+				if latestStatus.Message != "" {
+					state.Message = latestStatus.Message
+				}
+				if latestStatus.FailureCode != "" {
+					state.FailureCode = latestStatus.FailureCode
+				}
+			}
+		}
+
+		artifact, err := w.provider.DownloadVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey, state.ContentURL)
+		if err == nil {
+			if strings.TrimSpace(artifact.FileName) == "" {
+				artifact.FileName = "video.mp4"
+			}
+			if strings.TrimSpace(artifact.MIMEType) == "" {
+				artifact.MIMEType = "video/mp4"
+			}
+			if !w.app.Config.AIVideoStandardizeEnabled {
+				return artifact, nil
+			}
+
+			originalFileName := artifact.FileName
+			originalSizeBytes := len(artifact.Data)
+			standardizedArtifact, standardizeErr := standardizeVideoArtifact(ctx, *artifact, w.app.Config.AIVideoFFmpegPath)
+			if standardizeErr == nil {
+				artifact = &standardizedArtifact
+				w.app.Logger.Info(
+					"ai worker standardized video artifact",
+					"job_id", job.ID,
+					"model_name", job.ModelName,
+					"source_file_name", originalFileName,
+					"output_file_name", artifact.FileName,
+					"source_size_bytes", originalSizeBytes,
+					"output_size_bytes", len(artifact.Data),
+					"video_codec", "h264",
+					"fps", standardizedVideoFPS,
+					"scale_ratio", standardizedVideoScaleRatio,
+					"attempt", attempt,
+				)
+				return artifact, nil
+			}
+			err = standardizeErr
+		}
+
+		lastErr = err
+		if attempt == videoArtifactFinalizeMaxAttempts || ctx.Err() != nil {
+			break
+		}
+
+		delay := time.Duration(attempt) * videoArtifactFinalizeRetryDelay
+		w.app.Logger.Warn(
+			"ai worker retrying completed video download/standardize",
+			"job_id", job.ID,
+			"model_name", job.ModelName,
+			"remote_video_id", state.RemoteVideoID,
+			"content_url", state.ContentURL,
+			"attempt", attempt,
+			"max_attempts", videoArtifactFinalizeMaxAttempts,
+			"retry_after", delay.String(),
+			"error", err,
+		)
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("video artifact finalization failed")
+	}
+	return nil, lastErr
 }
 
 func (w *Worker) prepareStoryboardPrompt(ctx context.Context, job *domain.AIJob, leaseToken string, originalPrompt string) (map[string]any, string, error) {
@@ -738,6 +810,47 @@ func (w *Worker) prepareStoryboardPrompt(ctx context.Context, job *domain.AIJob,
 			"texts":  len(referenceTexts),
 		},
 	}, optimizedPrompt, nil
+}
+
+func (w *Worker) prepareOptionalMediaStoryboardPrompt(ctx context.Context, job *domain.AIJob, leaseToken string, originalPrompt string) (map[string]any, string, error) {
+	storyboardPayload, optimizedPrompt, err := w.prepareStoryboardPrompt(ctx, job, leaseToken, originalPrompt)
+	if err == nil {
+		return storyboardPayload, optimizedPrompt, nil
+	}
+	if ctx.Err() != nil {
+		return nil, originalPrompt, ctx.Err()
+	}
+
+	fallbackPayload := buildStoryboardFallbackPayload(job, originalPrompt, err)
+	w.app.Logger.Warn(
+		"ai worker failed to optimize storyboard prompt, falling back to original prompt",
+		"job_id", job.ID,
+		"job_type", job.JobType,
+		"model_name", job.ModelName,
+		"error", err,
+	)
+	return fallbackPayload, originalPrompt, nil
+}
+
+func buildStoryboardFallbackPayload(job *domain.AIJob, originalPrompt string, err error) map[string]any {
+	payload := decodePayloadMap(job.InputPayload)
+	config, _ := payload["storyboardConfig"].(map[string]any)
+	referenceTexts := normalizeStoryboardTexts(payload["referenceTexts"])
+	referenceImages := normalizeStoryboardImages(payload["referenceImages"])
+
+	fallbackPayload := map[string]any{
+		"status":          "fallback",
+		"optimizedPrompt": originalPrompt,
+		"error":           strings.TrimSpace(errorString(err)),
+		"referenceCount": map[string]int{
+			"images": len(referenceImages),
+			"texts":  len(referenceTexts),
+		},
+	}
+	if modelName := strings.TrimSpace(stringValueFromMap(config, "modelName")); modelName != "" {
+		fallbackPayload["modelName"] = modelName
+	}
+	return fallbackPayload
 }
 
 func (w *Worker) renewLease(ctx context.Context, jobID string, leaseToken string, leaseExpiresAt time.Time) (time.Time, error) {

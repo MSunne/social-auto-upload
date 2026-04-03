@@ -55,9 +55,31 @@ cursor.execute('''CREATE TABLE IF NOT EXISTS publish_tasks (
     verification_data TEXT,
     artifact_path TEXT,
     worker_name TEXT,
+    auto_retry_count INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     started_at DATETIME,
+    finished_at DATETIME
+)
+''')
+
+cursor.execute('''CREATE TABLE IF NOT EXISTS omnidrive_ai_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_uuid TEXT NOT NULL UNIQUE,
+    source TEXT NOT NULL DEFAULT 'local_ui',
+    job_type TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    skill_id TEXT,
+    prompt TEXT,
+    status TEXT NOT NULL DEFAULT 'queued_cloud',
+    message TEXT,
+    payload_json TEXT NOT NULL,
+    cloud_job_id TEXT,
+    cloud_status TEXT,
+    linked_publish_task_uuid TEXT,
+    artifact_refs_json TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     finished_at DATETIME
 )
 ''')

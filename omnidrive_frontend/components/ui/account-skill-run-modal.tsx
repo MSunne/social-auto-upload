@@ -1,13 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   CalendarClock,
   Check,
   ChevronRight,
+  Clock,
   Loader2,
   Plus,
   Repeat,
+  Repeat1,
   Search,
   Sparkles,
   Trash2,
@@ -82,7 +84,6 @@ function buildDefaultTimeOfDay() {
   return new Intl.DateTimeFormat("zh-CN", {
     hour: "2-digit",
     minute: "2-digit",
-    second: "2-digit",
     hour12: false,
   }).format(date);
 }
@@ -150,17 +151,53 @@ function TimeInput({
   value: string;
   onChange: (val: string) => void;
 }) {
-  const normalizedValue = normalizeTimeOfDay(value) || "00:00:00";
+  const normalizedValue = (normalizeTimeOfDay(value) || "00:00").slice(0, 5);
+  const initialParts = normalizedValue.split(":");
+  const [hours, setHours] = useState(initialParts[0] || "00");
+  const [minutes, setMinutes] = useState(initialParts[1] || "00");
+
+  useEffect(() => {
+    const parts = (normalizeTimeOfDay(value) || "00:00").slice(0, 5).split(":");
+    setHours(parts[0] || "00");
+    setMinutes(parts[1] || "00");
+  }, [value]);
+
+  const handleHourBlur = () => {
+    let num = parseInt(hours, 10);
+    if (isNaN(num)) num = 0;
+    if (num > 23) num = 23;
+    const padded = num.toString().padStart(2, "0");
+    setHours(padded);
+    onChange(`${padded}:${minutes}`);
+  };
+
+  const handleMinuteBlur = () => {
+    let num = parseInt(minutes, 10);
+    if (isNaN(num)) num = 0;
+    if (num > 59) num = 59;
+    const padded = num.toString().padStart(2, "0");
+    setMinutes(padded);
+    onChange(`${hours}:${padded}`);
+  };
 
   return (
-    <div className="flex h-11 items-center rounded-2xl border border-white/10 bg-white/6 px-4 text-base font-semibold text-white transition-all focus-within:border-accent/40 focus-within:bg-white/8 focus-within:ring-4 focus-within:ring-accent/10">
+    <div className="flex h-[42px] items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/40 px-3 transition-all focus-within:border-accent/60 focus-within:ring-2 focus-within:ring-accent/20 hover:border-white/30">
       <input
-        type="time"
-        step={1}
-        value={normalizedValue}
-        onChange={(event) => onChange(normalizeTimeOfDay(event.target.value))}
-        className="w-[160px] bg-transparent text-center outline-none [color-scheme:dark] [&::-webkit-calendar-picker-indicator]:hidden"
-        aria-label="发布时间"
+        type="text"
+        value={hours}
+        onChange={(e) => setHours(e.target.value.replace(/\D/g, "").slice(0, 2))}
+        onBlur={handleHourBlur}
+        className="w-8 bg-transparent text-center text-lg font-bold tracking-wider text-white outline-none selection:bg-accent/40"
+        placeholder="00"
+      />
+      <span className="mx-1 font-bold text-white/50">:</span>
+      <input
+        type="text"
+        value={minutes}
+        onChange={(e) => setMinutes(e.target.value.replace(/\D/g, "").slice(0, 2))}
+        onBlur={handleMinuteBlur}
+        className="w-8 bg-transparent text-center text-lg font-bold tracking-wider text-white outline-none selection:bg-accent/40"
+        placeholder="00"
       />
     </div>
   );
@@ -382,100 +419,163 @@ export function AccountSkillRunModal({
                   <CalendarClock className="h-4 w-4 text-amber-300" />
                   时间计划
                 </div>
-                <div className="space-y-3">
+                <div className="space-y-4">
                   {scheduleSlots.map((slot, index) => (
                     <div
                       key={slot.scheduleKey || `${index}-${slot.timeOfDay}`}
-                      className="rounded-[20px] border border-white/10 bg-[#0d1729] p-4"
+                      className="relative overflow-hidden rounded-[20px] border border-white/10 bg-white/[0.02] p-5 transition-shadow hover:shadow-lg hover:shadow-black/20"
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-medium text-white">
-                            时间 {index + 1}
-                          </p>
-                          <p className="mt-1 text-xs text-text-secondary">
-                            只选时分秒，不选年月日。系统会自动算出下一次执行日期。
-                          </p>
+                      <div className="mb-4 flex items-center justify-between border-b border-white/5 pb-4">
+                        <div className="flex items-center gap-2.5">
+                          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan/15 text-xs font-bold text-cyan">
+                            {index + 1}
+                          </div>
+                          <span className="text-[15px] font-semibold text-white">任务时段配置</span>
                         </div>
                         {!isEditing && scheduleSlots.length > 1 ? (
                           <button
                             type="button"
                             onClick={() =>
                               setScheduleSlots((current) =>
-                                current.filter(
-                                  (_, itemIndex) => itemIndex !== index,
-                                ),
+                                current.filter((_, itemIndex) => itemIndex !== index),
                               )
                             }
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-text-muted transition-all hover:border-danger hover:bg-danger/10 hover:text-danger"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/5 text-text-muted transition-all hover:bg-danger/20 hover:text-danger"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
                         ) : null}
                       </div>
-                      <div className="mt-5 flex flex-wrap items-center gap-3">
-                        <TimeInput
-                          value={slot.timeOfDay}
-                          onChange={(nextValue) => {
-                            setScheduleSlots((current) =>
-                              current.map((item, itemIndex) =>
-                                itemIndex === index
-                                  ? { ...item, timeOfDay: nextValue }
-                                  : item,
-                              ),
-                            );
-                          }}
-                        />
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setScheduleSlots((current) =>
-                              current.map((item, itemIndex) =>
-                                itemIndex === index
-                                  ? { ...item, repeatDaily: !item.repeatDaily }
-                                  : item,
-                              ),
-                            )
-                          }
-                          className={cn(
-                            "inline-flex h-11 items-center gap-2 rounded-2xl border px-4 text-sm font-medium transition-all",
-                            slot.repeatDaily
-                              ? "border-cyan/35 bg-cyan/12 text-white"
-                              : "border-white/10 bg-white/5 text-text-secondary hover:border-white/20 hover:text-white",
-                          )}
-                        >
-                          <Repeat className="h-4 w-4" />
-                          {slot.repeatDaily ? "每天重复" : "只执行一次"}
-                        </button>
-                        <label className="flex h-11 items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 text-sm text-text-secondary transition-all focus-within:border-accent/40 focus-within:bg-white/8 focus-within:ring-4 focus-within:ring-accent/10">
-                          <span className="font-medium">生成提前</span>
-                          <input
-                            type="number"
-                            min={0}
-                            max={1440}
-                            step={5}
-                            value={normalizeGenerationLeadMinutes(
-                              slot.generationLeadMinutes,
-                            )}
-                            onChange={(event) => {
-                              const nextValue = normalizeGenerationLeadMinutes(
-                                event.target.valueAsNumber,
-                              );
+
+                      <div className="flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/5">
+                        {/* 预期发布时间 */}
+                        <div className="flex items-center justify-between gap-4 p-4 transition-all hover:bg-white/[0.02]">
+                          <div>
+                            <p className="text-sm font-medium text-white">预期发布时间</p>
+                            <p className="mt-0.5 text-xs text-text-muted">指定任务计划发布的具体时刻</p>
+                          </div>
+                          <TimeInput
+                            value={slot.timeOfDay}
+                            onChange={(nextValue) => {
                               setScheduleSlots((current) =>
                                 current.map((item, itemIndex) =>
-                                  itemIndex === index
-                                    ? {
-                                        ...item,
-                                        generationLeadMinutes: nextValue,
-                                      }
-                                    : item,
+                                  itemIndex === index ? { ...item, timeOfDay: nextValue } : item,
                                 ),
                               );
                             }}
-                            className="w-12 bg-transparent p-0 text-center font-semibold text-white outline-none"
                           />
-                          <span className="font-medium">分钟</span>
-                        </label>
+                        </div>
+
+                        {/* 执行频次 */}
+                        <div className="flex items-center justify-between gap-4 border-t border-white/5 p-4 transition-all hover:bg-white/[0.02]">
+                          <div>
+                            <p className="text-sm font-medium text-white">执行频次</p>
+                            <p className="mt-0.5 text-xs text-text-muted">
+                              {slot.repeatDaily ? "每天自动续排" : "执行结束后归档"}
+                            </p>
+                          </div>
+                          <div className="flex shrink-0 rounded-xl bg-black/40 p-1">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setScheduleSlots((current) =>
+                                  current.map((item, itemIndex) =>
+                                    itemIndex === index ? { ...item, repeatDaily: false } : item,
+                                  ),
+                                )
+                              }
+                              className={cn(
+                                "flex min-w-[80px] items-center justify-center rounded-lg px-3 py-1.5 text-xs font-semibold transition-all",
+                                !slot.repeatDaily
+                                  ? "bg-white/10 text-white shadow-sm"
+                                  : "text-text-muted hover:text-white",
+                              )}
+                            >
+                              单次执行
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setScheduleSlots((current) =>
+                                  current.map((item, itemIndex) =>
+                                    itemIndex === index ? { ...item, repeatDaily: true } : item,
+                                  ),
+                                )
+                              }
+                              className={cn(
+                                "flex min-w-[80px] items-center justify-center rounded-lg px-3 py-1.5 text-xs font-semibold transition-all",
+                                slot.repeatDaily
+                                  ? "bg-accent/20 text-accent-light shadow-sm"
+                                  : "text-text-muted hover:text-white",
+                              )}
+                            >
+                              每天循环
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* 防风控提前量 */}
+                        <div className="flex flex-col gap-3 border-t border-white/5 p-4 transition-all hover:bg-white/[0.02]">
+                          <div className="flex items-center justify-between gap-4">
+                            <div>
+                              <p className="text-sm font-medium text-white">防风控提前量</p>
+                              <p className="mt-0.5 text-xs text-text-muted">决定大模型提前多久开始生成内容</p>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2">
+                              <div className="flex items-center overflow-hidden rounded-xl border border-white/10 bg-black/40 px-2 transition-all focus-within:border-cyan/40 focus-within:ring-1 focus-within:ring-cyan/40">
+                                <Clock className="h-3.5 w-3.5 text-white/30" />
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={1440}
+                                  step={5}
+                                  value={normalizeGenerationLeadMinutes(slot.generationLeadMinutes)}
+                                  onChange={(event) => {
+                                    const nextValue = normalizeGenerationLeadMinutes(event.target.valueAsNumber);
+                                    setScheduleSlots((current) =>
+                                      current.map((item, itemIndex) =>
+                                        itemIndex === index ? { ...item, generationLeadMinutes: nextValue } : item,
+                                      ),
+                                    );
+                                  }}
+                                  className="w-14 bg-transparent py-1.5 text-center text-sm font-bold text-white outline-none"
+                                />
+                              </div>
+                              <span className="text-xs font-medium text-text-muted">分钟</span>
+                            </div>
+                          </div>
+                          
+                          {/* 预设按钮 */}
+                          <div className="flex items-center gap-2 pt-1">
+                            {[
+                              { label: '踩点生成', value: 0 },
+                              { label: '15分钟', value: 15 },
+                              { label: '半小时', value: 30 },
+                              { label: '一小时', value: 60 },
+                              { label: '两小时', value: 120 },
+                            ].map((preset) => (
+                              <button
+                                key={preset.value}
+                                type="button"
+                                onClick={() => {
+                                  setScheduleSlots((current) =>
+                                    current.map((item, itemIndex) =>
+                                      itemIndex === index ? { ...item, generationLeadMinutes: preset.value } : item,
+                                    ),
+                                  );
+                                }}
+                                className={cn(
+                                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition-all",
+                                  normalizeGenerationLeadMinutes(slot.generationLeadMinutes) === preset.value
+                                    ? "bg-cyan/20 text-cyan-400 border border-cyan/30"
+                                    : "bg-black/30 text-text-muted border border-transparent hover:bg-black/50 hover:text-white",
+                                )}
+                              >
+                                {preset.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   ))}
