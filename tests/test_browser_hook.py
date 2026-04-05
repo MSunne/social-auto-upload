@@ -52,6 +52,20 @@ class BrowserHookTests(unittest.TestCase):
         )
         install_mock.assert_not_called()
 
+    def test_resolve_browser_executable_path_prefers_system_browser_for_headed_launch(self):
+        with mock.patch.object(
+            browser_hook,
+            "_resolve_system_browser_executable_path",
+            return_value="/usr/bin/google-chrome",
+        ), mock.patch.object(
+            browser_hook,
+            "resolve_playwright_browser_executable_path",
+            return_value="/opt/playwright/chromium/chrome-linux/chrome",
+        ):
+            path = browser_hook.resolve_browser_executable_path(headless=False)
+
+        self.assertEqual(path, "/usr/bin/google-chrome")
+
     def test_get_browser_options_auto_installs_bundled_browser_when_missing(self):
         with mock.patch.object(
             browser_hook,

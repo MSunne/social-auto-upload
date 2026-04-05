@@ -5,10 +5,13 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=omnibull
-Group=omnibull
+PermissionsStartOnly=true
+User=sun
+Group=sun
 WorkingDirectory=/opt/omnibull/social-auto-upload
+Environment=HOME=/home/sun
 EnvironmentFile=-/etc/omnibull/omnibull.env
+ExecStartPre=+/usr/bin/install -d -o root -g sun -m 0775 /etc/omnibull
 ExecStart=/opt/omnibull/social-auto-upload/scripts/sau_linux.sh run
 Restart=always
 RestartSec=5

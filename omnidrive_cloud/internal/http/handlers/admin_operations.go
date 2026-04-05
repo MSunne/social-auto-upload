@@ -186,6 +186,7 @@ func adminUserActions(row *domain.AdminUserRow) domain.AdminUserActionState {
 		CanUpdate:     true,
 		CanDeactivate: row.User.IsActive,
 		CanActivate:   !row.User.IsActive,
+		CanDelete:     true,
 	}
 }
 
@@ -1121,6 +1122,48 @@ func (h *AdminConsoleHandler) UpdateUser(w http.ResponseWriter, r *http.Request)
 	}
 
 	render.JSON(w, http.StatusOK, record)
+}
+
+func (h *AdminConsoleHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
+	userID := strings.TrimSpace(chi.URLParam(r, "userId"))
+	if userID == "" {
+		render.Error(w, http.StatusBadRequest, "userId is required")
+		return
+	}
+
+	record, err := h.app.Store.GetAdminUserByID(r.Context(), userID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load user")
+		return
+	}
+	if record == nil {
+		render.Error(w, http.StatusNotFound, "User not found")
+		return
+	}
+	h.decorateAdminUserRow(record)
+
+	deleted, ownedDeviceCount, err := h.app.Store.DeleteAdminUserCascade(r.Context(), userID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to delete user")
+		return
+	}
+	if !deleted {
+		render.Error(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	h.recordAdminAction(r.Context(), "user", &record.User.ID, "delete", "删除用户", "success", auditStringPtr("用户及其测试数据已由运营后台删除"), mustJSONBytes(map[string]any{
+		"userName":          record.User.Name,
+		"userEmail":         record.User.Email,
+		"ownedDeviceCount":  ownedDeviceCount,
+		"mediaAccountCount": record.Assets.MediaAccountCount,
+		"publishTaskCount":  record.Assets.PublishTaskCount,
+		"aiJobCount":        record.Assets.AIJobCount,
+	}))
+
+	render.JSON(w, http.StatusOK, map[string]any{
+		"deleted": true,
+	})
 }
 
 func (h *AdminConsoleHandler) BulkActionUsers(w http.ResponseWriter, r *http.Request) {

@@ -108,6 +108,25 @@ func (h *AdminConsoleHandler) ListPricingRules(w http.ResponseWriter, r *http.Re
 	}, nil)
 }
 
+func (h *AdminConsoleHandler) ListWorkflowDurationRules(w http.ResponseWriter, r *http.Request) {
+	items, err := h.app.Store.ListWorkflowDurationRules(r.Context())
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load workflow duration rules")
+		return
+	}
+	enabledCount := 0
+	for _, item := range items {
+		if item.IsEnabled {
+			enabledCount++
+		}
+	}
+	page := adminPageQuery{Page: 1, PageSize: max(1, len(items))}
+	renderAdminList(w, page, int64(len(items)), items, map[string]any{
+		"enabledCount":  enabledCount,
+		"disabledCount": len(items) - enabledCount,
+	}, nil)
+}
+
 func (h *AdminConsoleHandler) ListOrders(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, summary, err := h.app.Store.ListAdminOrders(r.Context(), store.AdminOrderListFilter{

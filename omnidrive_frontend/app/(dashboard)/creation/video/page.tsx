@@ -223,6 +223,13 @@ function isSuccessJob(job?: AIJob | null) {
   return ["success", "completed"].includes(job.status);
 }
 
+function isMissingAIJobError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return /not found|未找到|不存在/i.test(error.message);
+}
+
 function toPreviewItem(artifact: AIJobArtifact): VideoPreviewItem {
   return {
     id: artifact.id,
@@ -595,10 +602,12 @@ function normalizeVideoProgress(stageKey: string, rawProgress: number | null) {
         return 8;
       case "queued_generation":
         return 14;
+      case "covering":
+        return 24;
       case "storyboarding":
-        return 28;
+        return 36;
       case "generating":
-        return 38;
+        return 52;
       default:
         return 24;
     }
@@ -610,10 +619,12 @@ function normalizeVideoProgress(stageKey: string, rawProgress: number | null) {
       return clampPercent(clamped, 5, 12);
     case "queued_generation":
       return clampPercent(clamped, 10, 24);
+    case "covering":
+      return clampPercent(clamped, 18, 40);
     case "storyboarding":
-      return clampPercent(clamped, 18, 45);
+      return clampPercent(clamped, 30, 58);
     case "generating":
-      return clampPercent(clamped, 20, 92);
+      return clampPercent(clamped, 45, 92);
     default:
       return clampPercent(clamped, 5, 92);
   }
@@ -730,12 +741,20 @@ function buildVideoProgress(job?: AIJob | null) {
       hint: stage.description || "任务已创建，等待到易侧接收。",
     };
   }
+  if (stage.key === "covering") {
+    return {
+      value: normalizeVideoProgress(stage.key, actualProgress),
+      label: stage.label,
+      tone: "progress" as ProgressTone,
+      hint: stage.description || "正在生成视频首帧封面。",
+    };
+  }
   if (stage.key === "storyboarding") {
     return {
       value: normalizeVideoProgress(stage.key, actualProgress),
       label: stage.label,
       tone: "progress" as ProgressTone,
-      hint: stage.description || "正在优化脚本和镜头描述。",
+      hint: stage.description || "正在一次性生成封面和新的视频脚本。",
     };
   }
   if (stage.key === "generating") {
@@ -864,6 +883,7 @@ export default function VideoCreationPage() {
   const [selectedModel, setSelectedModel] = useState("");
   const [selectedDuration, setSelectedDuration] = useState("");
   const [selectedResolution, setSelectedResolution] = useState("");
+  const [storyboardEnabled, setStoryboardEnabled] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [referenceFrames, setReferenceFrames] = useState<ReferenceFrame[]>([]);
@@ -966,7 +986,7 @@ export default function VideoCreationPage() {
     queryKey: ["aiJob", "video", currentJobId],
     queryFn: () => getAIJob(currentJobId as string),
     enabled: Boolean(currentJobId),
-    retry: false,
+    retry: 2,
     refetchInterval: (query) => {
       const job = query.state.data as AIJob | undefined;
       return currentJobId && !isTerminalJob(job) ? 3000 : false;
@@ -1097,12 +1117,15 @@ export default function VideoCreationPage() {
   }, [currentJobId, effectiveCurrentJob]);
 
   useEffect(() => {
-    if (!currentJobError) {
+    if (!currentJobId || !isMissingAIJobError(currentJobError)) {
+      return;
+    }
+    if (videoJobs.some((job) => job.id === currentJobId)) {
       return;
     }
     writeStoredVideoCurrentJobId(null);
     setCurrentJobId(null);
-  }, [currentJobError]);
+  }, [currentJobError, currentJobId, videoJobs]);
 
   useEffect(() => {
     if (!selectedModel && videoModels.length > 0) {
@@ -1220,6 +1243,7 @@ export default function VideoCreationPage() {
         source: VIDEO_CREATION_SOURCE,
         inputPayload: {
           prompt: prompt.trim(),
+          storyboardEnabled,
           aspectRatio: selectedResolutionOption.aspectRatio,
           resolution: selectedResolutionOption.resolution,
           durationSeconds: selectedDurationOption.seconds,
@@ -1231,11 +1255,15 @@ export default function VideoCreationPage() {
         },
       };
       const job = await createAIJob(payload);
+      queryClient.setQueryData<AIJob>(["aiJob", "video", job.id], job);
+      queryClient.setQueryData<AIJob[]>(["aiJobs", "video"], (previous = []) =>
+        mergeVideoJobs([job, ...previous]),
+      );
       setCurrentJobId(job.id);
       setSelectedJobId(job.id);
       setPreviewIndex(0);
       writeStoredVideoCurrentJobId(job.id);
-      await refetchVideoJobs();
+      void queryClient.invalidateQueries({ queryKey: ["aiJobs", "video"] });
     } catch (error) {
       setSubmitError(
         error instanceof Error ? error.message : "视频生成请求失败",
@@ -1508,6 +1536,57 @@ export default function VideoCreationPage() {
                   </div>
                 </button>
               ))}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border/60 bg-surface px-3 py-3">
+            <button
+              type="button"
+              onClick={() => setStoryboardEnabled((current) => !current)}
+              className={cn(
+                "flex w-full items-start justify-between gap-3 text-left transition-colors",
+                storyboardEnabled
+                  ? "text-text-primary"
+                  : "text-text-secondary hover:text-text-primary",
+              )}
+            >
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <Wand2 className="h-4 w-4 text-accent" />
+                  分镜优化
+                </div>
+                <p className="text-xs leading-5 text-text-muted">
+                  {storyboardEnabled
+                    ? "启用后会用管理员分镜规则一次性产出首帧封面和新视频脚本，再进入视频生成。"
+                    : "关闭后仍会先生成新封面首帧，但视频继续沿用你当前输入的业务提示词。"}
+                </p>
+              </div>
+              <span
+                className={cn(
+                  "mt-0.5 inline-flex min-w-[64px] items-center justify-center rounded-full border px-2.5 py-1 text-[11px] font-medium",
+                  storyboardEnabled
+                    ? "border-accent/40 bg-accent/10 text-accent"
+                    : "border-border bg-surface-hover text-text-muted",
+                )}
+              >
+                {storyboardEnabled ? (
+                  <span className="inline-flex items-center gap-1">
+                    <Check className="h-3.5 w-3.5" />
+                    已开启
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1">
+                    <X className="h-3.5 w-3.5" />
+                    已关闭
+                  </span>
+                )}
+              </span>
+            </button>
+            <div className="mt-3 flex items-start gap-2 rounded-lg border border-border/40 bg-background/50 px-2.5 py-2 text-[11px] text-text-muted">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan" />
+              <span>
+                业务 prompt 始终来自当前输入内容。管理员配置只作为分镜优化规则，不会替代你的任务说明。
+              </span>
             </div>
           </div>
 

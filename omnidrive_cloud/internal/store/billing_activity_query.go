@@ -248,6 +248,87 @@ const billingActivitiesUserBaseQuery = `
 		UNION ALL
 
 		SELECT
+			s.id,
+			'ai_billing_session'::TEXT AS kind,
+			s.user_id,
+			s.created_at AS occurred_at,
+			s.updated_at AS result_at,
+			CASE
+				WHEN s.special_price_credits IS NOT NULL AND s.special_price_credits > 0
+					THEN FORMAT('视文模式 %s 秒任务特价', s.duration_seconds)
+				ELSE 'AI 视频制作计费'
+			END AS title,
+			COALESCE(s.message,
+				CASE
+					WHEN s.special_price_credits IS NOT NULL AND s.special_price_credits > 0
+						THEN '已按任务特价结算'
+					ELSE '已按实际执行模型步骤结算'
+				END
+			) AS detail,
+			CASE WHEN s.status = 'refunded' THEN 'returned' ELSE s.status END AS status,
+			NULL::TEXT AS entry_type,
+			NULL::TEXT AS channel,
+			s.source_type,
+			s.workflow_code AS meter_code,
+			NULL::TEXT AS meter_name,
+			NULL::TEXT AS model_name,
+			NULL::TEXT AS model_alias,
+			CASE
+				WHEN s.workflow_code = 'video_text' THEN 'video'
+				ELSE NULL::TEXT
+			END AS job_type,
+			COALESCE(s.source_id, s.id) AS reference,
+			s.source_type AS reference_type,
+			s.source_id AS reference_id,
+			s.source_id,
+			NULL::BIGINT AS amount_cents,
+			NULL::BIGINT AS credit_delta,
+			NULL::BIGINT AS usage_quantity,
+			s.billed_credits AS debited_credits,
+			NULL::BIGINT AS credit_amount,
+			NULL::BIGINT AS bonus_credit_amount,
+			s.message AS bill_message,
+			jsonb_build_object(
+				'workflowCode', s.workflow_code,
+				'outputType', s.output_type,
+				'durationSeconds', s.duration_seconds,
+				'segmentSeconds', s.segment_seconds,
+				'specialRuleId', s.special_rule_id,
+				'specialPriceCredits', s.special_price_credits,
+				'plannedCredits', s.planned_credits,
+				'billedCredits', s.billed_credits,
+				'refundedCredits', s.refunded_credits,
+				'billingItems', COALESCE((
+					SELECT jsonb_agg(jsonb_build_object(
+						'id', i.id,
+						'itemKey', i.item_key,
+						'itemType', i.item_type,
+						'label', i.label,
+						'modelName', i.model_name,
+						'modelAlias', COALESCE(am2.model_alias, i.model_name),
+						'meterCode', i.meter_code,
+						'quantity', i.quantity,
+						'unit', i.unit,
+						'unitPriceCredits', i.unit_price_credits,
+						'plannedCredits', i.planned_credits,
+						'billedCredits', i.billed_credits,
+						'refundedCredits', i.refunded_credits,
+						'sortOrder', i.sort_order,
+						'isVisible', i.is_visible,
+						'status', i.status,
+						'payload', i.payload
+					) ORDER BY i.sort_order ASC, i.created_at ASC)
+					FROM ai_billing_items i
+					LEFT JOIN ai_models am2 ON am2.model_name = i.model_name
+					WHERE i.session_id = s.id
+				), '[]'::jsonb)
+			) AS payload
+		FROM ai_billing_sessions s
+		WHERE s.user_id = $1
+
+		UNION ALL
+
+		SELECT
 			wl.id,
 			'wallet_ledger'::TEXT AS kind,
 			wl.user_id,
@@ -278,6 +359,7 @@ const billingActivitiesUserBaseQuery = `
 			wl.metadata::JSONB AS payload
 		FROM wallet_ledgers wl
 		WHERE wl.user_id = $1
+		  AND COALESCE(wl.reference_type, '') <> 'ai_billing_session'
 
 		UNION ALL
 
@@ -318,6 +400,13 @@ const billingActivitiesUserBaseQuery = `
 		LEFT JOIN billing_meters m ON m.code = e.meter_code
 		LEFT JOIN ai_models am ON am.model_name = e.model_name
 		WHERE e.user_id = $1
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM ai_billing_sessions s
+			WHERE s.user_id = e.user_id
+			  AND s.source_type = e.source_type
+			  AND s.source_id = e.source_id
+		  )
 	)
 `
 
@@ -360,6 +449,89 @@ const billingActivitiesAdminBaseQuery = `
 		UNION ALL
 
 		SELECT
+			s.id,
+			'ai_billing_session'::TEXT AS kind,
+			s.user_id,
+			COALESCE(u.email, '') AS user_email,
+			COALESCE(u.name, '') AS user_name,
+			s.created_at AS occurred_at,
+			s.updated_at AS result_at,
+			CASE
+				WHEN s.special_price_credits IS NOT NULL AND s.special_price_credits > 0
+					THEN FORMAT('视文模式 %s 秒任务特价', s.duration_seconds)
+				ELSE 'AI 视频制作计费'
+			END AS title,
+			COALESCE(s.message,
+				CASE
+					WHEN s.special_price_credits IS NOT NULL AND s.special_price_credits > 0
+						THEN '已按任务特价结算'
+					ELSE '已按实际执行模型步骤结算'
+				END
+			) AS detail,
+			CASE WHEN s.status = 'refunded' THEN 'returned' ELSE s.status END AS status,
+			NULL::TEXT AS entry_type,
+			NULL::TEXT AS channel,
+			s.source_type,
+			s.workflow_code AS meter_code,
+			NULL::TEXT AS meter_name,
+			NULL::TEXT AS model_name,
+			NULL::TEXT AS model_alias,
+			CASE
+				WHEN s.workflow_code = 'video_text' THEN 'video'
+				ELSE NULL::TEXT
+			END AS job_type,
+			COALESCE(s.source_id, s.id) AS reference,
+			s.source_type AS reference_type,
+			s.source_id AS reference_id,
+			s.source_id,
+			NULL::BIGINT AS amount_cents,
+			NULL::BIGINT AS credit_delta,
+			NULL::BIGINT AS usage_quantity,
+			s.billed_credits AS debited_credits,
+			NULL::BIGINT AS credit_amount,
+			NULL::BIGINT AS bonus_credit_amount,
+			s.message AS bill_message,
+			jsonb_build_object(
+				'workflowCode', s.workflow_code,
+				'outputType', s.output_type,
+				'durationSeconds', s.duration_seconds,
+				'segmentSeconds', s.segment_seconds,
+				'specialRuleId', s.special_rule_id,
+				'specialPriceCredits', s.special_price_credits,
+				'plannedCredits', s.planned_credits,
+				'billedCredits', s.billed_credits,
+				'refundedCredits', s.refunded_credits,
+				'billingItems', COALESCE((
+					SELECT jsonb_agg(jsonb_build_object(
+						'id', i.id,
+						'itemKey', i.item_key,
+						'itemType', i.item_type,
+						'label', i.label,
+						'modelName', i.model_name,
+						'modelAlias', COALESCE(am2.model_alias, i.model_name),
+						'meterCode', i.meter_code,
+						'quantity', i.quantity,
+						'unit', i.unit,
+						'unitPriceCredits', i.unit_price_credits,
+						'plannedCredits', i.planned_credits,
+						'billedCredits', i.billed_credits,
+						'refundedCredits', i.refunded_credits,
+						'sortOrder', i.sort_order,
+						'isVisible', i.is_visible,
+						'status', i.status,
+						'payload', i.payload
+					) ORDER BY i.sort_order ASC, i.created_at ASC)
+					FROM ai_billing_items i
+					LEFT JOIN ai_models am2 ON am2.model_name = i.model_name
+					WHERE i.session_id = s.id
+				), '[]'::jsonb)
+			) AS payload
+		FROM ai_billing_sessions s
+		LEFT JOIN users u ON u.id = s.user_id
+
+		UNION ALL
+
+		SELECT
 			wl.id,
 			'wallet_ledger'::TEXT AS kind,
 			wl.user_id,
@@ -392,6 +564,7 @@ const billingActivitiesAdminBaseQuery = `
 			wl.metadata::JSONB AS payload
 		FROM wallet_ledgers wl
 		LEFT JOIN users u ON u.id = wl.user_id
+		WHERE COALESCE(wl.reference_type, '') <> 'ai_billing_session'
 
 		UNION ALL
 
@@ -434,6 +607,13 @@ const billingActivitiesAdminBaseQuery = `
 		LEFT JOIN users u ON u.id = e.user_id
 		LEFT JOIN billing_meters m ON m.code = e.meter_code
 		LEFT JOIN ai_models am ON am.model_name = e.model_name
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM ai_billing_sessions s
+			WHERE s.user_id = e.user_id
+			  AND s.source_type = e.source_type
+			  AND s.source_id = e.source_id
+		)
 	)
 `
 
@@ -471,7 +651,10 @@ func (s *Store) ListBillingActivitiesByUser(ctx context.Context, userID string, 
 			COALESCE(SUM(amount_cents) FILTER (WHERE kind = 'recharge_order'), 0)::BIGINT,
 			COALESCE(SUM(credit_delta) FILTER (WHERE kind = 'wallet_ledger' AND credit_delta > 0), 0)::BIGINT,
 			COALESCE(SUM(ABS(credit_delta)) FILTER (WHERE kind = 'wallet_ledger' AND credit_delta < 0), 0)::BIGINT,
-			COALESCE(SUM(debited_credits) FILTER (WHERE kind = 'usage_event' AND status = 'billed'), 0)::BIGINT
+			COALESCE(SUM(debited_credits) FILTER (
+				WHERE (kind = 'usage_event' AND status = 'billed')
+				   OR (kind = 'ai_billing_session' AND status IN ('billed', 'partially_refunded'))
+			), 0)::BIGINT
 		FROM activities
 		%s
 	`, billingActivitiesUserBaseQuery, whereClause), args...).Scan(
@@ -549,7 +732,10 @@ func (s *Store) ListAdminBillingActivities(ctx context.Context, filter AdminBill
 			COALESCE(SUM(amount_cents) FILTER (WHERE kind = 'recharge_order'), 0)::BIGINT,
 			COALESCE(SUM(credit_delta) FILTER (WHERE kind = 'wallet_ledger' AND credit_delta > 0), 0)::BIGINT,
 			COALESCE(SUM(ABS(credit_delta)) FILTER (WHERE kind = 'wallet_ledger' AND credit_delta < 0), 0)::BIGINT,
-			COALESCE(SUM(debited_credits) FILTER (WHERE kind = 'usage_event' AND status = 'billed'), 0)::BIGINT
+			COALESCE(SUM(debited_credits) FILTER (
+				WHERE (kind = 'usage_event' AND status = 'billed')
+				   OR (kind = 'ai_billing_session' AND status IN ('billed', 'partially_refunded'))
+			), 0)::BIGINT
 		FROM activities
 		%s
 	`, billingActivitiesAdminBaseQuery, whereClause), args...).Scan(

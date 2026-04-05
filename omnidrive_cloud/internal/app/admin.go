@@ -19,6 +19,7 @@ var adminPermissionCatalog = []store.UpsertAdminPermissionInput{
 	{Code: "user.read", Name: "Read Users", Description: "查看用户列表、资料与账务摘要", Category: "user"},
 	{Code: "user.update", Name: "Update Users", Description: "更新用户内部资料和状态", Category: "user"},
 	{Code: "user.freeze", Name: "Freeze Users", Description: "冻结或恢复用户", Category: "user"},
+	{Code: "user.delete", Name: "Delete Users", Description: "删除用户及其测试数据", Category: "user"},
 	{Code: "device.read", Name: "Read Devices", Description: "查看设备列表、状态与工作负载", Category: "device"},
 	{Code: "device.update", Name: "Update Devices", Description: "更新设备配置、启停和绑定支持动作", Category: "device"},
 	{Code: "task.read", Name: "Read Tasks", Description: "查看发布任务、账号登录与 AI 作业", Category: "task"},
@@ -47,6 +48,7 @@ var systemAdminRoleCatalog = []store.UpsertAdminRoleInput{
 			"user.read",
 			"user.update",
 			"user.freeze",
+			"user.delete",
 			"device.read",
 			"device.update",
 			"task.read",
@@ -73,6 +75,7 @@ var systemAdminRoleCatalog = []store.UpsertAdminRoleInput{
 		PermissionCodes: []string{
 			"user.read",
 			"user.update",
+			"user.delete",
 			"device.read",
 			"device.update",
 			"task.read",

@@ -22,6 +22,7 @@ func scanSkill(row pgx.Row) (*domain.ProductSkill, error) {
 	var publishPromptTemplate *string
 	var publishIntroEnabled bool
 	var coverPromptTemplate *string
+	var fixedDurationSeconds *int
 	var topicsPayload []byte
 	var referencePayload []byte
 	var executionTime *time.Time
@@ -37,6 +38,7 @@ func scanSkill(row pgx.Row) (*domain.ProductSkill, error) {
 		&skill.OutputType,
 		&skill.ModelName,
 		&skill.ModelAlias,
+		&fixedDurationSeconds,
 		&promptTemplate,
 		&storyboardPromptTemplate,
 		&publishPromptTemplate,
@@ -57,6 +59,7 @@ func scanSkill(row pgx.Row) (*domain.ProductSkill, error) {
 	}
 
 	skill.DeviceID = normalizeOptionalString(deviceID)
+	skill.FixedDurationSeconds = fixedDurationSeconds
 	skill.PromptTemplate = trimmedStringPointer(promptTemplate)
 	skill.StoryboardPromptTemplate = trimmedStringPointer(storyboardPromptTemplate)
 	skill.PublishPromptTemplate = trimmedStringPointer(publishPromptTemplate)
@@ -78,6 +81,7 @@ func scanSkillWithLoad(row pgx.Row) (*domain.ProductSkill, error) {
 	var publishPromptTemplate *string
 	var publishIntroEnabled bool
 	var coverPromptTemplate *string
+	var fixedDurationSeconds *int
 	var topicsPayload []byte
 	var referencePayload []byte
 	var executionTime *time.Time
@@ -93,6 +97,7 @@ func scanSkillWithLoad(row pgx.Row) (*domain.ProductSkill, error) {
 		&skill.OutputType,
 		&skill.ModelName,
 		&skill.ModelAlias,
+		&fixedDurationSeconds,
 		&promptTemplate,
 		&storyboardPromptTemplate,
 		&publishPromptTemplate,
@@ -121,6 +126,7 @@ func scanSkillWithLoad(row pgx.Row) (*domain.ProductSkill, error) {
 	}
 
 	skill.DeviceID = normalizeOptionalString(deviceID)
+	skill.FixedDurationSeconds = fixedDurationSeconds
 	skill.PromptTemplate = trimmedStringPointer(promptTemplate)
 	skill.StoryboardPromptTemplate = trimmedStringPointer(storyboardPromptTemplate)
 	skill.PublishPromptTemplate = trimmedStringPointer(publishPromptTemplate)
@@ -137,6 +143,7 @@ func scanSkillWithLoad(row pgx.Row) (*domain.ProductSkill, error) {
 const skillSelectColumns = `
 	id, owner_user_id, device_id, name, description, output_type, model_name,
 	COALESCE((SELECT am.model_alias FROM ai_models am WHERE am.model_name = product_skills.model_name LIMIT 1), product_skills.model_name) AS model_alias,
+	fixed_duration_seconds,
 	prompt_template, storyboard_prompt_template, publish_prompt_template, publish_intro_enabled, cover_prompt_template, topics, reference_payload, execution_time, repeat_daily, storyboard_enabled, next_run_at, last_run_at,
 	is_enabled, created_at, updated_at
 `
@@ -459,12 +466,12 @@ func (s *Store) CreateSkill(ctx context.Context, input CreateSkillInput) (*domai
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO product_skills (
 			id, owner_user_id, device_id, name, description, output_type, model_name,
-			prompt_template, storyboard_prompt_template, publish_prompt_template, publish_intro_enabled, cover_prompt_template, topics, reference_payload, execution_time, repeat_daily, storyboard_enabled, next_run_at, is_enabled
+			fixed_duration_seconds, prompt_template, storyboard_prompt_template, publish_prompt_template, publish_intro_enabled, cover_prompt_template, topics, reference_payload, execution_time, repeat_daily, storyboard_enabled, next_run_at, is_enabled
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 		RETURNING `+skillSelectColumns+`
 	`, input.ID, input.OwnerUserID, input.DeviceID, input.Name, input.Description, input.OutputType, input.ModelName,
-		input.PromptTemplate, input.StoryboardPromptTemplate, input.PublishPromptTemplate, input.PublishIntroEnabled, input.CoverPromptTemplate, topicsPayload, input.ReferencePayload, input.ExecutionTime, input.RepeatDaily, input.StoryboardEnabled, input.NextRunAt, input.IsEnabled)
+		input.FixedDurationSeconds, input.PromptTemplate, input.StoryboardPromptTemplate, input.PublishPromptTemplate, input.PublishIntroEnabled, input.CoverPromptTemplate, topicsPayload, input.ReferencePayload, input.ExecutionTime, input.RepeatDaily, input.StoryboardEnabled, input.NextRunAt, input.IsEnabled)
 
 	return scanSkill(row)
 }
@@ -481,6 +488,10 @@ func (s *Store) UpdateSkill(ctx context.Context, skillID string, ownerUserID str
 	var deviceID any
 	if input.DeviceTouched {
 		deviceID = input.DeviceID
+	}
+	var fixedDurationSeconds any
+	if input.FixedDurationTouched {
+		fixedDurationSeconds = input.FixedDurationSeconds
 	}
 	var executionTime any
 	if input.ExecutionTouched {
@@ -505,36 +516,40 @@ func (s *Store) UpdateSkill(ctx context.Context, skillID string, ownerUserID str
 			    description = COALESCE($6, description),
 			    output_type = COALESCE($7, output_type),
 			    model_name = COALESCE($8, model_name),
-			    prompt_template = COALESCE($9, prompt_template),
-			    storyboard_prompt_template = COALESCE($10, storyboard_prompt_template),
-			    publish_prompt_template = COALESCE($11, publish_prompt_template),
-			    publish_intro_enabled = COALESCE($12, publish_intro_enabled),
-			    cover_prompt_template = COALESCE($13, cover_prompt_template),
+			    fixed_duration_seconds = CASE
+			        WHEN $9 = TRUE THEN $10
+			        ELSE fixed_duration_seconds
+			    END,
+			    prompt_template = COALESCE($11, prompt_template),
+			    storyboard_prompt_template = COALESCE($12, storyboard_prompt_template),
+			    publish_prompt_template = COALESCE($13, publish_prompt_template),
+			    publish_intro_enabled = COALESCE($14, publish_intro_enabled),
+			    cover_prompt_template = COALESCE($15, cover_prompt_template),
 			    topics = CASE
-			        WHEN $14 = TRUE THEN $15
+			        WHEN $16 = TRUE THEN $17
 			        ELSE topics
 			    END,
-			    reference_payload = COALESCE($16, reference_payload),
+			    reference_payload = COALESCE($18, reference_payload),
 			    execution_time = CASE
-			        WHEN $17 = TRUE THEN $18
+			        WHEN $19 = TRUE THEN $20
 			        ELSE execution_time
 			    END,
-			    repeat_daily = COALESCE($19, repeat_daily),
-			    storyboard_enabled = COALESCE($20, storyboard_enabled),
+			    repeat_daily = COALESCE($21, repeat_daily),
+			    storyboard_enabled = COALESCE($22, storyboard_enabled),
 			    next_run_at = CASE
-			        WHEN $21 = TRUE THEN $22
+			        WHEN $23 = TRUE THEN $24
 			        ELSE next_run_at
 			    END,
 			    last_run_at = CASE
-			        WHEN $23 = TRUE THEN $24
+			        WHEN $25 = TRUE THEN $26
 			        ELSE last_run_at
 			    END,
-			    is_enabled = COALESCE($25, is_enabled),
+			    is_enabled = COALESCE($27, is_enabled),
 			    updated_at = NOW()
 			WHERE id = $1 AND owner_user_id = $2
 			RETURNING `+skillSelectColumns+`
 		`, skillID, ownerUserID, input.DeviceTouched, deviceID, input.Name, input.Description, input.OutputType, input.ModelName,
-		input.PromptTemplate, input.StoryboardPromptTemplate, input.PublishPromptTemplate, input.PublishIntroEnabled, input.CoverPromptTemplate, input.TopicsTouched, topicsPayload, referencePayload, input.ExecutionTouched, executionTime,
+		input.FixedDurationTouched, fixedDurationSeconds, input.PromptTemplate, input.StoryboardPromptTemplate, input.PublishPromptTemplate, input.PublishIntroEnabled, input.CoverPromptTemplate, input.TopicsTouched, topicsPayload, referencePayload, input.ExecutionTouched, executionTime,
 		input.RepeatDaily, input.StoryboardEnabled, input.NextRunTouched, nextRunAt, input.LastRunTouched, lastRunAt, input.IsEnabled)
 
 	skill, err := scanSkill(row)

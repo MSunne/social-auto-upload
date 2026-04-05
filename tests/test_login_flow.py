@@ -1,6 +1,5 @@
 import threading
 import unittest
-from queue import Queue
 from unittest import mock
 
 from myUtils import login as login_module
@@ -102,37 +101,6 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(login_module.score_action_label_match("验证", "验证"), 0)
         self.assertGreater(login_module.score_action_label_match("立即验证", "验证"), 0)
 
-    async def test_fill_text_and_submit_prefers_submit_button_before_keyboard_enter(self):
-        page = _FakePage()
-        input_locator = mock.Mock()
-        input_locator.press = mock.AsyncMock()
-
-        with mock.patch.object(
-            login_module,
-            "find_first_editable_input",
-            new=mock.AsyncMock(return_value=input_locator),
-        ), mock.patch.object(
-            login_module,
-            "fill_input_like_user",
-            new=mock.AsyncMock(return_value=True),
-        ), mock.patch.object(
-            login_module,
-            "click_submit_action",
-            new=mock.AsyncMock(return_value=True),
-        ) as submit_mock:
-            result = await login_module.apply_remote_action(
-                page,
-                {
-                    "actionType": "fill_text_and_submit",
-                    "payload": {"text": "123456"},
-                },
-            )
-
-        self.assertTrue(result)
-        submit_mock.assert_awaited_once_with(page)
-        input_locator.press.assert_not_awaited()
-        page.keyboard.press.assert_not_awaited()
-
     async def test_click_verification_option_prefers_interactive_action_over_generic_text(self):
         page = _FakePage()
         target = mock.Mock()
@@ -190,52 +158,6 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("验证", attempted_exact)
         self.assertNotIn("验证", attempted_partial)
 
-    async def test_submit_verification_action_falls_back_to_enter_when_click_has_no_effect(self):
-        page = _FakePage()
-        input_locator = mock.Mock()
-        input_locator.click = mock.AsyncMock()
-        input_locator.press = mock.AsyncMock()
-
-        signatures = iter(["same", "same", "same", "changed"])
-
-        async def fake_snapshot(_page):
-            return next(signatures)
-
-        with mock.patch.object(
-            login_module,
-            "get_verification_signature_snapshot",
-            new=mock.AsyncMock(side_effect=fake_snapshot),
-        ), mock.patch.object(
-            login_module,
-            "click_submit_action",
-            new=mock.AsyncMock(return_value=True),
-        ) as click_mock:
-            result = await login_module.submit_verification_action(page, input_locator=input_locator)
-
-        self.assertTrue(result)
-        click_mock.assert_awaited_once_with(page)
-        input_locator.press.assert_awaited_once_with("Enter")
-
-    async def test_submit_verification_action_returns_false_when_no_strategy_dispatches(self):
-        page = _FakePage()
-        input_locator = mock.Mock()
-        input_locator.click = mock.AsyncMock(side_effect=RuntimeError("no focus"))
-        input_locator.press = mock.AsyncMock(side_effect=RuntimeError("no enter"))
-        page.keyboard.press = mock.AsyncMock(side_effect=RuntimeError("blocked"))
-
-        with mock.patch.object(
-            login_module,
-            "get_verification_signature_snapshot",
-            new=mock.AsyncMock(return_value="same"),
-        ), mock.patch.object(
-            login_module,
-            "click_submit_action",
-            new=mock.AsyncMock(return_value=False),
-        ):
-            result = await login_module.submit_verification_action(page, input_locator=input_locator)
-
-        self.assertFalse(result)
-
     async def test_detect_verification_challenge_uses_dynamic_status_lines_in_message_and_signature(self):
         page = _FakePage(url="https://creator.test/verify")
 
@@ -268,29 +190,6 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(challenge["payload"]["message"], "验证码错误，请重新输入；14s后重新发送")
         self.assertIn("验证码错误，请重新输入；14s后重新发送", challenge["signature"])
-
-    async def test_select_option_falls_back_to_resend_action_for_code_requests(self):
-        page = _FakePage()
-
-        async def fake_click_verification_option(_page, text):
-            return text == "重新发送"
-
-        with mock.patch.object(
-            login_module,
-            "click_verification_option",
-            new=mock.AsyncMock(side_effect=fake_click_verification_option),
-        ) as click_mock:
-            result = await login_module.apply_remote_action(
-                page,
-                {
-                    "actionType": "select_option",
-                    "payload": {"optionText": "接收短信验证码"},
-                },
-            )
-
-        self.assertTrue(result)
-        attempted_texts = [call.args[1] for call in click_mock.await_args_list]
-        self.assertIn("重新发送", attempted_texts)
 
     async def test_wait_for_login_result_uses_success_validator_after_verification(self):
         page = _FakePage()
@@ -522,49 +421,6 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result)
         self.assertGreaterEqual(success_validator.await_count, 2)
-
-    async def test_drain_remote_actions_requeues_failed_action_for_retry(self):
-        page = _FakePage()
-        command_queue = Queue()
-        command_queue.put(
-            {
-                "actionType": "fill_text_and_submit",
-                "payload": {"text": "123456"},
-            }
-        )
-
-        with mock.patch.object(
-            login_module,
-            "apply_remote_action",
-            new=mock.AsyncMock(return_value=False),
-        ):
-            handled = await login_module.drain_remote_actions(page, command_queue)
-
-        self.assertFalse(handled)
-        retried = command_queue.get_nowait()
-        self.assertEqual(retried["actionType"], "fill_text_and_submit")
-        self.assertEqual(retried["_retryCount"], 1)
-
-    async def test_drain_remote_actions_drops_action_after_retry_limit(self):
-        page = _FakePage()
-        command_queue = Queue()
-        command_queue.put(
-            {
-                "actionType": "fill_text_and_submit",
-                "payload": {"text": "123456"},
-                "_retryCount": login_module.REMOTE_ACTION_MAX_RETRIES,
-            }
-        )
-
-        with mock.patch.object(
-            login_module,
-            "apply_remote_action",
-            new=mock.AsyncMock(return_value=False),
-        ):
-            handled = await login_module.drain_remote_actions(page, command_queue)
-
-        self.assertFalse(handled)
-        self.assertTrue(command_queue.empty())
 
     async def test_persist_login_state_with_retry_continues_after_page_closed(self):
         page = _FakePage(url="https://creator.test/success")

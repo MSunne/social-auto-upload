@@ -19,6 +19,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 SSH_KEY_PATH = Path.home() / ".ssh" / "omnidrive_live_sync"
 REMOTE_HOST = "root@43.98.251.225"
 TMP_API_BINARY = Path("/tmp/omnidrive-api-live-sync")
+TMP_BOOTSTRAP_BINARY = Path("/tmp/omnidrive-bootstrap-db-live-sync")
 POLL_INTERVAL_SECONDS = float(os.environ.get("OMNIDRIVE_LIVE_SYNC_POLL_INTERVAL_SECONDS", "2"))
 DEBOUNCE_SECONDS = float(os.environ.get("OMNIDRIVE_LIVE_SYNC_DEBOUNCE_SECONDS", "2"))
 
@@ -190,15 +191,20 @@ def sync_target_files(target: Target, changed_files: set[str], removed_files: se
         archive_path.unlink(missing_ok=True)
 
 
-def build_cloud_api_binary() -> None:
+def build_cloud_binaries() -> None:
     run_shell(
         "cd omnidrive_cloud && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 "
         f"go build -o {TMP_API_BINARY} ./cmd/omnidrive-api",
         cwd=ROOT_DIR,
     )
+    run_shell(
+        "cd omnidrive_cloud && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 "
+        f"go build -o {TMP_BOOTSTRAP_BINARY} ./cmd/omnidrive-bootstrap-db",
+        cwd=ROOT_DIR,
+    )
 
 
-def upload_cloud_api_binary() -> None:
+def upload_cloud_binaries() -> None:
     run_command(
         [
             "scp",
@@ -210,12 +216,25 @@ def upload_cloud_api_binary() -> None:
             f"{REMOTE_HOST}:{TMP_API_BINARY}",
         ]
     )
+    run_command(
+        [
+            "scp",
+            "-i",
+            str(SSH_KEY_PATH),
+            "-o",
+            "BatchMode=yes",
+            str(TMP_BOOTSTRAP_BINARY),
+            f"{REMOTE_HOST}:{TMP_BOOTSTRAP_BINARY}",
+        ]
+    )
 
 
 def restart_cloud_api() -> None:
     remote_shell(
         "set -e; "
+        f"install -m 0755 {TMP_BOOTSTRAP_BINARY} /www/wwwroot/OmniDriveCloud/bin/omnidrive-bootstrap-db; "
         f"install -m 0755 {TMP_API_BINARY} /www/wwwroot/OmniDriveCloud/bin/omnidrive-api; "
+        "su -s /bin/bash www -c 'cd /www/wwwroot/OmniDriveCloud && ./bin/omnidrive-bootstrap-db'; "
         "pkill -x omnidrive-api || true; "
         "sleep 1; "
         "su -s /bin/bash www -c 'cd /www/wwwroot/OmniDriveCloud && "
@@ -255,8 +274,8 @@ def sync_targets(changed_files: dict[str, set[str]], removed_files: dict[str, se
     if "omnidrive_cloud" in target_names:
         log("syncing omnidrive_cloud")
         sync_target_files(TARGETS["omnidrive_cloud"], changed_files["omnidrive_cloud"], removed_files["omnidrive_cloud"])
-        build_cloud_api_binary()
-        upload_cloud_api_binary()
+        build_cloud_binaries()
+        upload_cloud_binaries()
         restart_cloud_api()
         verify_remote_log_is_clean()
         log("synced omnidrive_cloud")

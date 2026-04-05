@@ -1,9 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { useUsers, useBulkActionUsers } from "@/lib/hooks/useUsers";
+import { useUsers, useBulkActionUsers, useDeleteUser } from "@/lib/hooks/useUsers";
 import { PageHeader } from "@/components/ui/common";
-import { Search, Loader2, ShieldOff, ShieldCheck, UserCircle } from "lucide-react";
+import { Search, Loader2, ShieldOff, ShieldCheck, Trash2, UserCircle } from "lucide-react";
+
+const formatDate = (value: string) =>
+  new Date(value).toLocaleDateString("zh-CN");
+
+const formatTime = (value: string) =>
+  new Date(value).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+const formatShortId = (value: string) =>
+  value.length > 12 ? `${value.slice(0, 8)}...${value.slice(-4)}` : value;
 
 export function UsersView() {
   const [page, setPage] = useState(1);
@@ -11,9 +20,11 @@ export function UsersView() {
   const [searchInput, setSearchInput] = useState("");
   const [status, setStatus] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [actionUserId, setActionUserId] = useState<string | null>(null);
 
   const { data, isLoading, error } = useUsers({ page, pageSize: 20, query: query || undefined, status: status || undefined });
   const bulkAction = useBulkActionUsers();
+  const deleteUser = useDeleteUser();
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,10 +50,47 @@ export function UsersView() {
     const label = action === "deactivate" ? "封禁" : "解封";
     if (!confirm(`确认对 ${selected.size} 个用户执行「${label}」操作？`)) return;
     try {
-      await bulkAction.mutateAsync({ ids: Array.from(selected), action });
+      await bulkAction.mutateAsync({ userIds: Array.from(selected), action });
       setSelected(new Set());
     } catch {
       alert("操作失败，请重试");
+    }
+  };
+
+  const handleRowStatusAction = async (userId: string, action: "deactivate" | "activate") => {
+    const label = action === "deactivate" ? "封禁" : "解封";
+    if (!confirm(`确认要${label}该用户吗？`)) return;
+    setActionUserId(userId);
+    try {
+      await bulkAction.mutateAsync({ userIds: [userId], action });
+      setSelected(prev => {
+        const next = new Set(prev);
+        next.delete(userId);
+        return next;
+      });
+    } catch {
+      alert(`${label}失败，请重试`);
+    } finally {
+      setActionUserId(current => current === userId ? null : current);
+    }
+  };
+
+  const handleDeleteUser = async (userId: string, userName: string) => {
+    if (!confirm(`确认彻底删除用户「${userName}」及其设备、媒体号、任务和账务关联数据？此操作不可恢复。`)) {
+      return;
+    }
+    setActionUserId(userId);
+    try {
+      await deleteUser.mutateAsync(userId);
+      setSelected(prev => {
+        const next = new Set(prev);
+        next.delete(userId);
+        return next;
+      });
+    } catch (deleteError) {
+      alert(deleteError instanceof Error ? deleteError.message : "删除失败，请重试");
+    } finally {
+      setActionUserId(current => current === userId ? null : current);
     }
   };
 
@@ -61,7 +109,7 @@ export function UsersView() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-text-secondary)]" />
           <input
             type="text"
-            placeholder="搜索邮箱 / 用户名..."
+            placeholder="搜索邮箱 / 用户名 / 手机号 / 用户ID..."
             value={searchInput}
             onChange={e => setSearchInput(e.target.value)}
             className="w-full pl-9 pr-4 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-sm focus:outline-none focus:border-[var(--color-primary)] transition-all"
@@ -116,12 +164,13 @@ export function UsersView() {
                 <th className="px-4 py-4 font-medium">设备 / 媒体号</th>
                 <th className="px-4 py-4 font-medium">任务 / AI作业</th>
                 <th className="px-4 py-4 font-medium">注册时间</th>
+                <th className="px-4 py-4 font-medium text-right">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
               {isLoading && (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center">
+                  <td colSpan={8} className="px-6 py-12 text-center">
                     <Loader2 className="h-6 w-6 animate-spin mx-auto text-[var(--color-text-secondary)]" />
                     <p className="mt-2 text-[var(--color-text-secondary)] text-sm">加载用户数据中...</p>
                   </td>
@@ -129,12 +178,12 @@ export function UsersView() {
               )}
               {error && (
                 <tr>
-                  <td colSpan={7} className="px-6 py-10 text-center text-red-500 text-sm">加载失败，请重试</td>
+                  <td colSpan={8} className="px-6 py-10 text-center text-red-500 text-sm">加载失败，请重试</td>
                 </tr>
               )}
               {data && data.items.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-[var(--color-text-secondary)] text-sm">未找到符合条件的用户</td>
+                  <td colSpan={8} className="px-6 py-12 text-center text-[var(--color-text-secondary)] text-sm">未找到符合条件的用户</td>
                 </tr>
               )}
               {data && data.items.map(row => (
@@ -157,7 +206,26 @@ export function UsersView() {
                       </div>
                       <div>
                         <div className="font-medium text-[var(--color-text-primary)]">{row.user.name}</div>
-                        <div className="text-xs text-[var(--color-text-secondary)] mt-0.5">{row.user.email}</div>
+                        <div className="mt-0.5 text-xs text-[var(--color-text-secondary)]">
+                          {row.user.phone ? `手机 ${row.user.phone}` : "手机未绑定"}
+                        </div>
+                        {row.user.email ? (
+                          <div className="text-xs text-[var(--color-text-secondary)]">{row.user.email}</div>
+                        ) : null}
+                        <div
+                          className="max-w-[260px] truncate text-[11px] text-[var(--color-text-secondary)]/80"
+                          title={row.user.id}
+                        >
+                          UID {formatShortId(row.user.id)}
+                        </div>
+                        {row.notes ? (
+                          <div
+                            className="max-w-[260px] truncate text-[11px] text-[var(--color-text-secondary)]/80"
+                            title={row.notes}
+                          >
+                            备注 {row.notes}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   </td>
@@ -166,6 +234,9 @@ export function UsersView() {
                     <div className="font-mono text-sm font-medium">{row.billing.creditBalance.toLocaleString()}</div>
                     <div className="text-xs text-[var(--color-text-secondary)] mt-0.5">
                       充 ¥{(row.billing.totalRechargeAmountCents / 100).toFixed(0)}
+                    </div>
+                    <div className="text-xs text-[var(--color-text-secondary)]">
+                      冻 {row.billing.frozenCreditBalance.toLocaleString()}
                     </div>
                   </td>
                   <td className="px-4 py-4">
@@ -177,7 +248,42 @@ export function UsersView() {
                     <div className="text-xs text-[var(--color-text-secondary)]">{row.assets.aiJobCount.toLocaleString()} AI作业</div>
                   </td>
                   <td className="px-4 py-4 text-xs text-[var(--color-text-secondary)]">
-                    {new Date(row.user.createdAt).toLocaleDateString("zh-CN")}
+                    <div>{formatDate(row.user.createdAt)}</div>
+                    <div className="mt-0.5">{formatTime(row.user.createdAt)}</div>
+                  </td>
+                  <td className="px-4 py-4">
+                    <div className="flex justify-end gap-2">
+                      {row.user.isActive ? (
+                        <button
+                          type="button"
+                          onClick={() => handleRowStatusAction(row.user.id, "deactivate")}
+                          disabled={Boolean(actionUserId) || bulkAction.isPending || deleteUser.isPending || !row.actions.canDeactivate}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-1.5 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/10 disabled:opacity-50"
+                        >
+                          {actionUserId === row.user.id && bulkAction.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldOff className="h-3.5 w-3.5" />}
+                          封禁
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleRowStatusAction(row.user.id, "activate")}
+                          disabled={Boolean(actionUserId) || bulkAction.isPending || deleteUser.isPending || !row.actions.canActivate}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-green-500/30 px-3 py-1.5 text-xs font-medium text-green-400 transition-colors hover:bg-green-500/10 disabled:opacity-50"
+                        >
+                          {actionUserId === row.user.id && bulkAction.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                          解封
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteUser(row.user.id, row.user.name)}
+                        disabled={Boolean(actionUserId) || bulkAction.isPending || deleteUser.isPending || !row.actions.canDelete}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-1.5 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/10 disabled:opacity-50"
+                      >
+                        {actionUserId === row.user.id && deleteUser.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                        删除
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

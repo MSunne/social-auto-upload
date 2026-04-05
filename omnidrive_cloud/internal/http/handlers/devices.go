@@ -39,6 +39,7 @@ func applyEffectiveDeviceModelDefaults(device *domain.Device, settings effective
 	if device == nil {
 		return
 	}
+	applyEffectiveDevicePlatformCapabilities(device)
 	if device.DefaultChatModel == nil || strings.TrimSpace(*device.DefaultChatModel) == "" {
 		value := settings.DefaultChatModel
 		device.DefaultChatModel = &value

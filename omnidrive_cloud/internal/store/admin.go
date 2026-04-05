@@ -365,7 +365,7 @@ func (s *Store) ListAdminUsers(ctx context.Context, filter AdminUserListFilter) 
 	argIndex := 1
 
 	if query := strings.TrimSpace(filter.Query); query != "" {
-		whereParts = append(whereParts, fmt.Sprintf("(u.email ILIKE $%d OR u.name ILIKE $%d OR u.id ILIKE $%d OR COALESCE(u.notes, '') ILIKE $%d)", argIndex, argIndex, argIndex, argIndex))
+		whereParts = append(whereParts, fmt.Sprintf("(u.email ILIKE $%d OR COALESCE(u.phone, '') ILIKE $%d OR u.name ILIKE $%d OR u.id ILIKE $%d OR COALESCE(u.notes, '') ILIKE $%d)", argIndex, argIndex, argIndex, argIndex, argIndex))
 		args = append(args, ilikePattern(query))
 		argIndex++
 	}
@@ -401,6 +401,7 @@ func (s *Store) ListAdminUsers(ctx context.Context, filter AdminUserListFilter) 
 			SELECT
 				u.id,
 				COALESCE(u.email, ''),
+				COALESCE(u.phone, ''),
 				u.name,
 				u.is_active,
 				u.notes,
@@ -464,30 +465,11 @@ func (s *Store) ListAdminUsers(ctx context.Context, filter AdminUserListFilter) 
 
 	items := make([]domain.AdminUserRow, 0)
 	for rows.Next() {
-		var item domain.AdminUserRow
-		var notes *string
-		if scanErr := rows.Scan(
-			&item.User.ID,
-			&item.User.Email,
-			&item.User.Name,
-			&item.User.IsActive,
-			&notes,
-			&item.User.CreatedAt,
-			&item.User.UpdatedAt,
-			&item.Billing.CreditBalance,
-			&item.Billing.FrozenCreditBalance,
-			&item.Billing.TotalRechargeAmountCents,
-			&item.Billing.TotalRechargeCount,
-			&item.Billing.TotalConsumeCredits,
-			&item.Assets.DeviceCount,
-			&item.Assets.MediaAccountCount,
-			&item.Assets.PublishTaskCount,
-			&item.Assets.AIJobCount,
-		); scanErr != nil {
+		item, scanErr := scanAdminUserRow(rows.Scan)
+		if scanErr != nil {
 			return nil, 0, scanErr
 		}
-		item.Notes = notes
-		items = append(items, item)
+		items = append(items, *item)
 	}
 	return items, total, rows.Err()
 }

@@ -16,25 +16,38 @@ type User struct {
 }
 
 type Device struct {
-	ID                    string          `json:"id"`
-	OwnerUserID           *string         `json:"ownerUserId"`
-	DeviceCode            string          `json:"deviceCode"`
-	AgentKey              string          `json:"-"`
-	Name                  string          `json:"name"`
-	LocalIP               *string         `json:"localIp"`
-	PublicIP              *string         `json:"publicIp"`
-	DefaultReasoningModel *string         `json:"defaultReasoningModel"`
-	DefaultChatModel      *string         `json:"defaultChatModel,omitempty"`
-	DefaultImageModel     *string         `json:"defaultImageModel,omitempty"`
-	DefaultVideoModel     *string         `json:"defaultVideoModel,omitempty"`
-	IsEnabled             bool            `json:"isEnabled"`
-	RuntimePayload        json.RawMessage `json:"runtimePayload,omitempty"`
-	LastSeenAt            *time.Time      `json:"lastSeenAt"`
-	Notes                 *string         `json:"notes"`
-	CreatedAt             time.Time       `json:"createdAt"`
-	UpdatedAt             time.Time       `json:"updatedAt"`
-	Status                string          `json:"status"`
-	Load                  DeviceLoad      `json:"load"`
+	ID                           string               `json:"id"`
+	OwnerUserID                  *string              `json:"ownerUserId"`
+	DeviceCode                   string               `json:"deviceCode"`
+	AgentKey                     string               `json:"-"`
+	Name                         string               `json:"name"`
+	LocalIP                      *string              `json:"localIp"`
+	PublicIP                     *string              `json:"publicIp"`
+	DefaultReasoningModel        *string              `json:"defaultReasoningModel"`
+	DefaultChatModel             *string              `json:"defaultChatModel,omitempty"`
+	DefaultImageModel            *string              `json:"defaultImageModel,omitempty"`
+	DefaultVideoModel            *string              `json:"defaultVideoModel,omitempty"`
+	PlatformCapabilities         []PlatformCapability `json:"platformCapabilities,omitempty"`
+	PlatformCapabilitiesRevision *string              `json:"platformCapabilitiesRevision,omitempty"`
+	IsEnabled                    bool                 `json:"isEnabled"`
+	RuntimePayload               json.RawMessage      `json:"runtimePayload,omitempty"`
+	LastSeenAt                   *time.Time           `json:"lastSeenAt"`
+	Notes                        *string              `json:"notes"`
+	CreatedAt                    time.Time            `json:"createdAt"`
+	UpdatedAt                    time.Time            `json:"updatedAt"`
+	Status                       string               `json:"status"`
+	Load                         DeviceLoad           `json:"load"`
+}
+
+type PlatformCapability struct {
+	PlatformType   int     `json:"platformType"`
+	Slug           string  `json:"slug"`
+	Label          string  `json:"label"`
+	DisplayOrder   int     `json:"displayOrder"`
+	Visible        bool    `json:"visible"`
+	LoginEnabled   bool    `json:"loginEnabled"`
+	PublishEnabled bool    `json:"publishEnabled"`
+	DisabledReason *string `json:"disabledReason,omitempty"`
 }
 
 func (d Device) GetAgentKey() string {
@@ -143,6 +156,7 @@ type ProductSkill struct {
 	OutputType               string           `json:"outputType"`
 	ModelName                string           `json:"modelName"`
 	ModelAlias               string           `json:"modelAlias,omitempty"`
+	FixedDurationSeconds     *int             `json:"fixedDurationSeconds,omitempty"`
 	PromptTemplate           *string          `json:"promptTemplate"`
 	StoryboardPromptTemplate *string          `json:"storyboardPromptTemplate"`
 	PublishPromptTemplate    *string          `json:"publishPromptTemplate"`
@@ -674,6 +688,8 @@ type AIJobWorkspace struct {
 	Skill              *ProductSkill       `json:"skill,omitempty"`
 	Artifacts          []AIJobArtifact     `json:"artifacts"`
 	PublishTasks       []PublishTask       `json:"publishTasks"`
+	BillingSession     *AIBillingSession   `json:"billingSession,omitempty"`
+	BillingItems       []AIBillingItem     `json:"billingItems,omitempty"`
 	BillingUsageEvents []BillingUsageEvent `json:"billingUsageEvents"`
 	Bridge             AIJobBridgeState    `json:"bridge"`
 	Actions            AIJobActionState    `json:"actions"`
@@ -747,6 +763,68 @@ type BillingPricingRule struct {
 	IsEnabled         bool      `json:"isEnabled"`
 	CreatedAt         time.Time `json:"createdAt"`
 	UpdatedAt         time.Time `json:"updatedAt"`
+}
+
+type WorkflowDurationRule struct {
+	ID                  string    `json:"id"`
+	WorkflowCode        string    `json:"workflowCode"`
+	OutputType          string    `json:"outputType"`
+	DurationSeconds     int       `json:"durationSeconds"`
+	SegmentSeconds      int       `json:"segmentSeconds"`
+	SpecialPriceCredits *int64    `json:"specialPriceCredits,omitempty"`
+	IsEnabled           bool      `json:"isEnabled"`
+	SortOrder           int       `json:"sortOrder"`
+	Description         *string   `json:"description,omitempty"`
+	CreatedAt           time.Time `json:"createdAt"`
+	UpdatedAt           time.Time `json:"updatedAt"`
+}
+
+type AIBillingSession struct {
+	ID                  string          `json:"id"`
+	UserID              string          `json:"userId"`
+	SourceType          string          `json:"sourceType"`
+	SourceID            string          `json:"sourceId"`
+	WorkflowCode        string          `json:"workflowCode"`
+	OutputType          string          `json:"outputType"`
+	DurationSeconds     int             `json:"durationSeconds"`
+	SegmentSeconds      int             `json:"segmentSeconds"`
+	SpecialRuleID       *string         `json:"specialRuleId,omitempty"`
+	SpecialPriceCredits *int64          `json:"specialPriceCredits,omitempty"`
+	PlannedCredits      int64           `json:"plannedCredits"`
+	BilledCredits       int64           `json:"billedCredits"`
+	RefundedCredits     int64           `json:"refundedCredits"`
+	Status              string          `json:"status"`
+	Message             *string         `json:"message,omitempty"`
+	Payload             json.RawMessage `json:"payload,omitempty"`
+	CreatedAt           time.Time       `json:"createdAt"`
+	UpdatedAt           time.Time       `json:"updatedAt"`
+}
+
+type AIBillingItem struct {
+	ID               string          `json:"id"`
+	SessionID        string          `json:"sessionId"`
+	UserID           string          `json:"userId"`
+	SourceType       string          `json:"sourceType"`
+	SourceID         string          `json:"sourceId"`
+	ItemKey          string          `json:"itemKey"`
+	ItemType         string          `json:"itemType"`
+	Label            string          `json:"label"`
+	ModelName        *string         `json:"modelName,omitempty"`
+	ModelAlias       *string         `json:"modelAlias,omitempty"`
+	MeterCode        *string         `json:"meterCode,omitempty"`
+	Quantity         int64           `json:"quantity"`
+	Unit             string          `json:"unit"`
+	UnitPriceCredits int64           `json:"unitPriceCredits"`
+	PlannedCredits   int64           `json:"plannedCredits"`
+	BilledCredits    int64           `json:"billedCredits"`
+	RefundedCredits  int64           `json:"refundedCredits"`
+	SortOrder        int             `json:"sortOrder"`
+	IsVisible        bool            `json:"isVisible"`
+	Status           string          `json:"status"`
+	WalletLedgerID   *string         `json:"walletLedgerId,omitempty"`
+	Payload          json.RawMessage `json:"payload,omitempty"`
+	CreatedAt        time.Time       `json:"createdAt"`
+	UpdatedAt        time.Time       `json:"updatedAt"`
 }
 
 type BillingQuotaBalance struct {

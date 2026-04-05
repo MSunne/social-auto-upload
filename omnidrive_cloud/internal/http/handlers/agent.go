@@ -23,6 +23,19 @@ type AgentHandler struct {
 	app *appstate.App
 }
 
+func normalizeAgentAccountSyncStatus(value string) (status string, isDelete bool, ok bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "active":
+		return "active", false, true
+	case "inactive":
+		return "inactive", false, true
+	case "deleted":
+		return "deleted", true, true
+	default:
+		return "", false, false
+	}
+}
+
 func requestBaseURL(r *http.Request) string {
 	if r == nil {
 		return ""
@@ -273,6 +286,7 @@ func (h *AgentHandler) IssueDeviceSession(w http.ResponseWriter, r *http.Request
 		render.Error(w, http.StatusUnauthorized, "Bound user is unavailable")
 		return
 	}
+	applyEffectiveDevicePlatformCapabilities(device)
 
 	token, err := h.app.Tokens.IssueTokenWithDuration(user.ID, deviceSessionTokenTTL)
 	if err != nil {
@@ -288,14 +302,16 @@ func (h *AgentHandler) IssueDeviceSession(w http.ResponseWriter, r *http.Request
 		"cloudUrl":    requestBaseURL(r),
 		"user":        user,
 		"device": map[string]any{
-			"id":                    device.ID,
-			"deviceCode":            device.DeviceCode,
-			"name":                  device.Name,
-			"isEnabled":             device.IsEnabled,
-			"defaultReasoningModel": device.DefaultReasoningModel,
-			"defaultChatModel":      device.DefaultChatModel,
-			"defaultImageModel":     device.DefaultImageModel,
-			"defaultVideoModel":     device.DefaultVideoModel,
+			"id":                           device.ID,
+			"deviceCode":                   device.DeviceCode,
+			"name":                         device.Name,
+			"isEnabled":                    device.IsEnabled,
+			"defaultReasoningModel":        device.DefaultReasoningModel,
+			"defaultChatModel":             device.DefaultChatModel,
+			"defaultImageModel":            device.DefaultImageModel,
+			"defaultVideoModel":            device.DefaultVideoModel,
+			"platformCapabilities":         device.PlatformCapabilities,
+			"platformCapabilitiesRevision": device.PlatformCapabilitiesRevision,
 		},
 		"source": "agent_device_session",
 	})
@@ -322,6 +338,11 @@ func (h *AgentHandler) SyncAccount(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusBadRequest, "deviceCode, platform, accountName, and status are required")
 		return
 	}
+	normalizedStatus, deleteRequested, ok := normalizeAgentAccountSyncStatus(payload.Status)
+	if !ok {
+		render.Error(w, http.StatusBadRequest, "status must be active, inactive, or deleted")
+		return
+	}
 
 	device, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
 	if err != nil {
@@ -334,6 +355,23 @@ func (h *AgentHandler) SyncAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if !agentKeyMatches(device, agentKey) {
 		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+		return
+	}
+
+	if deleteRequested {
+		deleted, err := h.app.Store.DeletePlatformAccountByTarget(
+			r.Context(),
+			device.ID,
+			payload.Platform,
+			payload.AccountName,
+		)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to delete synced account")
+			return
+		}
+		render.JSON(w, http.StatusOK, map[string]any{
+			"deleted": deleted,
+		})
 		return
 	}
 
@@ -352,7 +390,7 @@ func (h *AgentHandler) SyncAccount(w http.ResponseWriter, r *http.Request) {
 		device.ID,
 		payload.Platform,
 		payload.AccountName,
-		payload.Status,
+		normalizedStatus,
 		payload.LastMessage,
 		lastAuthenticatedAt,
 	)

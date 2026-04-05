@@ -38,6 +38,13 @@ OMNIDRIVE_DATABASE_DSN='postgres://postgres:YOUR_PASSWORD@127.0.0.1:5432/omnidri
 go run ./cmd/omnidrive-api
 ```
 
+`omnidrive-bootstrap-db` now does two things:
+
+- create the target database when it does not exist
+- connect to the target database and apply the latest schema updates
+
+For production deployments that keep `OMNIDRIVE_AUTO_CREATE_SCHEMA=false`, run the bootstrap command explicitly before restarting the API so table/column drift does not break newer handlers.
+
 ## AI Video Artifact Standardization
 
 Cloud-generated video artifacts are now standardized before they are saved as the final AI output artifact and before they are later mirrored into OmniBull.

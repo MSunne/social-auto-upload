@@ -22,6 +22,7 @@ import (
 	httpcontext "omnidrive_cloud/internal/http/context"
 	"omnidrive_cloud/internal/http/render"
 	"omnidrive_cloud/internal/store"
+	"omnidrive_cloud/internal/workflow"
 )
 
 type AIHandler struct {
@@ -126,6 +127,71 @@ var defaultChatSupportedFileTypes = []string{
 	".xml",
 	".html",
 	".htm",
+}
+
+func normalizeVideoStoryboardEnabled(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		normalized := strings.ToLower(strings.TrimSpace(typed))
+		return normalized == "true" || normalized == "1" || normalized == "yes" || normalized == "on"
+	case float64:
+		return typed != 0
+	case int:
+		return typed != 0
+	default:
+		return false
+	}
+}
+
+func normalizeCreateAIJobInputPayload(jobType string, prompt *string, raw any) ([]byte, error) {
+	if raw == nil && strings.TrimSpace(jobType) != "video" {
+		return nil, nil
+	}
+	if strings.TrimSpace(jobType) != "video" {
+		return json.Marshal(raw)
+	}
+
+	payload := map[string]any{}
+	if raw != nil {
+		marshaled, err := json.Marshal(raw)
+		if err != nil {
+			return nil, err
+		}
+		if len(marshaled) > 0 && string(marshaled) != "null" {
+			if err := json.Unmarshal(marshaled, &payload); err != nil {
+				return nil, fmt.Errorf("video inputPayload must be an object")
+			}
+		}
+	}
+
+	if prompt != nil {
+		trimmedPrompt := strings.TrimSpace(*prompt)
+		if existing := strings.TrimSpace(openAIStringValue(payload["prompt"])); existing == "" {
+			payload["prompt"] = trimmedPrompt
+		}
+	}
+	payload["storyboardEnabled"] = normalizeVideoStoryboardEnabled(payload["storyboardEnabled"])
+	return json.Marshal(payload)
+}
+
+func applySkillWorkflowPricingSnapshot(raw []byte, skill *domain.ProductSkill, rule *domain.WorkflowDurationRule) ([]byte, error) {
+	if skill == nil || rule == nil || skill.FixedDurationSeconds == nil || *skill.FixedDurationSeconds <= 0 {
+		return raw, nil
+	}
+	payload := decodeRawPayloadMap(raw)
+	payload["fixedDurationSeconds"] = *skill.FixedDurationSeconds
+	payload["durationSeconds"] = *skill.FixedDurationSeconds
+	payload["workflowPricing"] = map[string]any{
+		"workflowCode":        rule.WorkflowCode,
+		"outputType":          rule.OutputType,
+		"ruleId":              rule.ID,
+		"durationSeconds":     rule.DurationSeconds,
+		"segmentSeconds":      rule.SegmentSeconds,
+		"specialPriceCredits": rule.SpecialPriceCredits,
+	}
+	return json.Marshal(payload)
 }
 
 func NewAIHandler(app *appstate.App) *AIHandler {
@@ -839,7 +905,13 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 
 	var inputPayload []byte
 	if payload.InputPayload != nil {
-		inputPayload, err = json.Marshal(payload.InputPayload)
+		inputPayload, err = normalizeCreateAIJobInputPayload(payload.JobType, payload.Prompt, payload.InputPayload)
+		if err != nil {
+			render.Error(w, http.StatusBadRequest, "inputPayload must be valid json")
+			return
+		}
+	} else if payload.JobType == "video" {
+		inputPayload, err = normalizeCreateAIJobInputPayload(payload.JobType, payload.Prompt, nil)
 		if err != nil {
 			render.Error(w, http.StatusBadRequest, "inputPayload must be valid json")
 			return
@@ -1236,22 +1308,27 @@ func (h *AIHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var skillID *string
+	var (
+		skill   *domain.ProductSkill
+		skillID *string
+	)
 	if payload.SkillID != nil && strings.TrimSpace(*payload.SkillID) != "" {
 		trimmed := strings.TrimSpace(*payload.SkillID)
-		skill, skillErr := h.app.Store.GetOwnedSkillByID(r.Context(), trimmed, user.ID)
+		loadedSkill, skillErr := h.app.Store.GetOwnedSkillByID(r.Context(), trimmed, user.ID)
 		if skillErr != nil {
 			render.Error(w, http.StatusInternalServerError, "Failed to validate skill")
 			return
 		}
-		if skill == nil {
+		if loadedSkill == nil {
 			render.Error(w, http.StatusNotFound, "Skill not found")
 			return
 		}
-		if skill.OutputType != payload.JobType {
+		expectedJobType, ok := workflow.MapSkillOutputTypeToJobType(loadedSkill.OutputType)
+		if !ok || expectedJobType != payload.JobType {
 			render.Error(w, http.StatusConflict, "Skill outputType does not match AI job type")
 			return
 		}
+		skill = loadedSkill
 		skillID = &trimmed
 	}
 
@@ -1263,11 +1340,28 @@ func (h *AIHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if skill != nil && payload.JobType == "video" && skill.FixedDurationSeconds != nil && *skill.FixedDurationSeconds > 0 {
+		rule, ruleErr := h.app.Store.FindEnabledWorkflowDurationRule(r.Context(), videoTextWorkflowCode, workflowOutputTypeForSkill(skill.OutputType), *skill.FixedDurationSeconds)
+		if ruleErr != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to resolve workflow duration rule")
+			return
+		}
+		if rule == nil {
+			render.Error(w, http.StatusConflict, "Skill fixed duration is not enabled in workflow duration rules")
+			return
+		}
+		inputPayload, err = applySkillWorkflowPricingSnapshot(inputPayload, skill, rule)
+		if err != nil {
+			render.Error(w, http.StatusBadRequest, "inputPayload must be valid json")
+			return
+		}
+	}
 
 	jobID := uuid.NewString()
 	billingPreview, err := previewAIJobBilling(r.Context(), h.app, &domain.AIJob{
 		ID:           jobID,
 		OwnerUserID:  user.ID,
+		SkillID:      skillID,
 		ModelName:    payload.ModelName,
 		JobType:      payload.JobType,
 		InputPayload: inputPayload,
@@ -1791,6 +1885,11 @@ func (h *AIHandler) WorkspaceJob(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to load billing usage events")
 		return
 	}
+	billingSession, billingItems, err := h.app.Store.GetAIBillingSessionBySource(r.Context(), "ai_job", job.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load AI billing session")
+		return
+	}
 
 	render.JSON(w, http.StatusOK, domain.AIJobWorkspace{
 		Job:                *job,
@@ -1798,6 +1897,8 @@ func (h *AIHandler) WorkspaceJob(w http.ResponseWriter, r *http.Request) {
 		Skill:              skill,
 		Artifacts:          artifacts,
 		PublishTasks:       publishTasks,
+		BillingSession:     billingSession,
+		BillingItems:       billingItems,
 		BillingUsageEvents: billingUsageEvents,
 		Bridge:             buildAIJobBridgeState(job, artifacts, publishTasks),
 		Actions:            computeAIJobActions(job, len(artifacts)),

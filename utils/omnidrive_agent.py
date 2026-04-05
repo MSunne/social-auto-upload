@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from queue import Empty, Queue
+from urllib.parse import urlparse
 
 import requests
 import conf as app_conf
@@ -19,56 +20,11 @@ from conf import BASE_DIR
 from utils.device_meta import get_local_ip
 from utils.log import agent_logger, log_throttled
 from utils.materials import list_material_directory, list_material_roots, read_material_file
-
-
-LOGIN_PLATFORM_CONFIG = {
-    "xiaohongshu": {
-        "type": 1,
-        "label": "小红书",
-        "aliases": ("xiaohongshu", "小红书"),
-    },
-    "wechat_channel": {
-        "type": 2,
-        "label": "视频号",
-        "aliases": ("wechat_channel", "视频号", "wechat"),
-    },
-    "douyin": {
-        "type": 3,
-        "label": "抖音",
-        "aliases": ("douyin", "抖音"),
-    },
-    "kuaishou": {
-        "type": 4,
-        "label": "快手",
-        "aliases": ("kuaishou", "快手"),
-    },
-}
-
-PLATFORM_TYPE_BY_NAME = {
-    config["label"]: config["type"]
-    for config in LOGIN_PLATFORM_CONFIG.values()
-}
-
-PLATFORM_NAME_BY_TYPE = {
-    config["type"]: config["label"]
-    for config in LOGIN_PLATFORM_CONFIG.values()
-}
-
-LOGIN_PLATFORM_ALIAS_MAP = {}
-for platform_slug, config in LOGIN_PLATFORM_CONFIG.items():
-    normalized_aliases = {
-        str(alias or "").strip().lower()
-        for alias in config.get("aliases") or ()
-        if str(alias or "").strip()
-    }
-    normalized_aliases.add(platform_slug)
-    normalized_aliases.add(str(config.get("label") or "").strip().lower())
-    for alias in normalized_aliases:
-        LOGIN_PLATFORM_ALIAS_MAP[alias] = {
-            "slug": platform_slug,
-            "type": int(config["type"]),
-            "label": str(config["label"]).strip(),
-        }
+from utils.platform_capabilities import (
+    PLATFORM_ALIAS_MAP as LOGIN_PLATFORM_ALIAS_MAP,
+    PLATFORM_NAME_BY_TYPE,
+    PLATFORM_TYPE_BY_NAME,
+)
 
 SYNCABLE_LOCAL_SOURCES = ("local_api", "openclaw_skill", "omnidrive_agent", "omnidrive_ai")
 SYNCABLE_LOCAL_AI_SOURCES = ("local_ui", "openclaw_skill")
@@ -82,6 +38,10 @@ ACCOUNT_VALIDATION_INTERVAL_SECONDS = max(
     int(getattr(app_conf, "OMNIDRIVE_ACCOUNT_VALIDATION_INTERVAL", 21600)),
 )
 ACCOUNT_VALIDATION_BATCH_SIZE = 2
+
+
+class OmniDriveEndpointUnavailable(RuntimeError):
+    pass
 
 
 class OmniDriveBridge:
@@ -141,11 +101,15 @@ class OmniDriveBridge:
         self._active_login_worker = None
         self._agent_started_at_epoch = time.time()
         self._login_startup_cleanup_done = False
+        self._cloud_retry_after_monotonic = 0.0
+        self._cloud_unavailable_message = None
         self._state = {
             "running": False,
             "deviceName": self.device_name,
             "deviceCode": self.device_code,
             "cloudUrl": self.cloud_base_url,
+            "cloudReachable": None,
+            "cloudRetryAt": None,
             "lastHeartbeatAt": None,
             "lastAccountSyncAt": None,
             "lastMaterialSyncAt": None,
@@ -291,6 +255,18 @@ class OmniDriveBridge:
                 if now - last_login_poll >= self.poll_interval:
                     self._poll_remote_login_tasks()
                     last_login_poll = now
+            except OmniDriveEndpointUnavailable as exc:
+                self._update_state(lastError=str(exc))
+                log_throttled(
+                    agent_logger,
+                    "WARNING",
+                    f"omnidrive_agent.cloud_unavailable:{self.device_code}",
+                    max(self.heartbeat_interval, 30),
+                    "omnidrive bridge waiting for omnidrive api device_code={} cloud_url={} error={}",
+                    self.device_code,
+                    self.cloud_base_url,
+                    exc,
+                )
             except Exception as exc:
                 self._update_state(lastError=str(exc))
                 log_throttled(
@@ -315,18 +291,90 @@ class OmniDriveBridge:
         }
 
     def _request(self, method, path, *, params=None, payload=None):
-        response = self._session.request(
-            method=method,
-            url=f"{self.cloud_base_url}{path}",
-            headers=self._headers(),
-            params=params,
-            json=payload,
-            timeout=self.http_timeout,
-        )
+        self._ensure_cloud_endpoint_available()
+        try:
+            response = self._session.request(
+                method=method,
+                url=f"{self.cloud_base_url}{path}",
+                headers=self._headers(),
+                params=params,
+                json=payload,
+                timeout=self.http_timeout,
+            )
+        except requests.ConnectionError as exc:
+            if self._is_loopback_cloud_endpoint():
+                raise OmniDriveEndpointUnavailable(self._mark_cloud_unavailable(exc)) from exc
+            raise
         response.raise_for_status()
+        if self._is_loopback_cloud_endpoint():
+            self._mark_cloud_reachable()
         if not response.content:
             return None
         return response.json()
+
+    @staticmethod
+    def _is_loopback_host(hostname):
+        normalized = str(hostname or "").strip().strip("[]").lower()
+        return normalized in {"127.0.0.1", "localhost", "::1"}
+
+    def _cloud_probe_target(self):
+        if not self.cloud_base_url:
+            return None
+        parsed = urlparse(self.cloud_base_url)
+        if not self._is_loopback_host(parsed.hostname):
+            return None
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        return parsed.hostname, port
+
+    def _is_loopback_cloud_endpoint(self):
+        return self._cloud_probe_target() is not None
+
+    def _mark_cloud_unavailable(self, exc):
+        retry_seconds = max(5, min(self.heartbeat_interval, 30))
+        retry_at_epoch = time.time() + retry_seconds
+        message = f"OmniDrive API unavailable at {self.cloud_base_url}: {exc}"
+        self._cloud_retry_after_monotonic = time.monotonic() + retry_seconds
+        self._cloud_unavailable_message = message
+        self._update_state(
+            cloudReachable=False,
+            cloudRetryAt=datetime.fromtimestamp(retry_at_epoch, tz=timezone.utc).astimezone().isoformat(),
+            lastError=message,
+        )
+        return message
+
+    def _mark_cloud_reachable(self):
+        was_unavailable = bool(self._cloud_unavailable_message)
+        self._cloud_retry_after_monotonic = 0.0
+        self._cloud_unavailable_message = None
+        self._update_state(
+            cloudReachable=True,
+            cloudRetryAt=None,
+        )
+        if was_unavailable:
+            agent_logger.info(
+                "omnidrive bridge reconnected device_code={} cloud_url={}",
+                self.device_code,
+                self.cloud_base_url,
+            )
+
+    def _ensure_cloud_endpoint_available(self):
+        target = self._cloud_probe_target()
+        if target is None:
+            return
+
+        if self._cloud_retry_after_monotonic and time.monotonic() < self._cloud_retry_after_monotonic:
+            raise OmniDriveEndpointUnavailable(
+                self._cloud_unavailable_message or f"OmniDrive API unavailable at {self.cloud_base_url}"
+            )
+
+        host, port = target
+        try:
+            with socket.create_connection((host, port), timeout=min(float(self.http_timeout), 1.0)):
+                pass
+        except OSError as exc:
+            raise OmniDriveEndpointUnavailable(self._mark_cloud_unavailable(exc)) from exc
+
+        self._mark_cloud_reachable()
 
     def _heartbeat(self):
         data = self._request(

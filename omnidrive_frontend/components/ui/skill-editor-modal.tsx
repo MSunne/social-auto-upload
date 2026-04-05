@@ -46,6 +46,7 @@ type SkillFormState = {
   name: string;
   description: string;
   promptTemplate: string;
+  fixedDurationSeconds: string;
   publishIntroEnabled: boolean;
   topicsText: string;
   coverPromptTemplate: string;
@@ -100,6 +101,7 @@ const EMPTY_FORM: SkillFormState = {
   name: "",
   description: "",
   promptTemplate: "",
+  fixedDurationSeconds: "",
   publishIntroEnabled: true,
   topicsText: "",
   coverPromptTemplate: "",
@@ -123,6 +125,10 @@ function buildSkillFormState(skill?: Skill | null, coverPromptDefault = ""): Ski
     name: skill.name || "",
     description: skill.description || "",
     promptTemplate: skill.promptTemplate || "",
+    fixedDurationSeconds:
+      typeof skill.fixedDurationSeconds === "number" && skill.fixedDurationSeconds > 0
+        ? String(skill.fixedDurationSeconds)
+        : "",
     publishIntroEnabled: skill.publishIntroEnabled !== false,
     topicsText: (skill.topics || []).join("，"),
     coverPromptTemplate: customCoverPrompt || coverPromptDefault,
@@ -161,6 +167,10 @@ function formatSkillBillingAmount(model?: AIModel | null) {
   return `${amount.toFixed(2)} 积分 / 次`;
 }
 
+function isVideoTextOutput(outputType: string) {
+  return normalizeSkillOutputLabel(outputType) === "视文模式";
+}
+
 export function SkillEditorModal({
   isOpen,
   deviceId,
@@ -197,6 +207,10 @@ export function SkillEditorModal({
     enabled: isOpen,
   });
   const coverPromptDefault = (skillEditorDefaults?.coverPromptTemplateDefault || "").trim();
+  const videoTextDurationOptions = useMemo(
+    () => skillEditorDefaults?.videoTextDurationOptions || [],
+    [skillEditorDefaults?.videoTextDurationOptions],
+  );
 
   const availableModels = useMemo(
     () => models.filter((item) => item.isEnabled && item.category === modelCategory),
@@ -260,6 +274,21 @@ export function SkillEditorModal({
   }, [isOpen, coverPromptDefault]);
 
   useEffect(() => {
+    if (!isOpen || !isVideoTextOutput(form.outputType) || form.fixedDurationSeconds || videoTextDurationOptions.length === 0) {
+      return;
+    }
+    setForm((current) => {
+      if (!isVideoTextOutput(current.outputType) || current.fixedDurationSeconds) {
+        return current;
+      }
+      return {
+        ...current,
+        fixedDurationSeconds: String(videoTextDurationOptions[0].durationSeconds),
+      };
+    });
+  }, [form.fixedDurationSeconds, form.outputType, isOpen, videoTextDurationOptions]);
+
+  useEffect(() => {
     if (!coverPromptWarningOpen) {
       setCoverPromptUnlockCountdown(0);
       return;
@@ -284,6 +313,9 @@ export function SkillEditorModal({
     modelName: form.modelName.trim(),
     deviceId,
     promptTemplate: form.promptTemplate.trim() || null,
+    fixedDurationSeconds: isVideoTextOutput(form.outputType) && form.fixedDurationSeconds
+      ? Number(form.fixedDurationSeconds)
+      : null,
     publishIntroEnabled: form.publishIntroEnabled,
     coverPromptTemplate: form.coverPromptUsesSystemDefault ? null : form.coverPromptTemplate.trim() || null,
     topics: form.topicsText
@@ -428,6 +460,10 @@ export function SkillEditorModal({
         nextOutputType === "视文模式" && !current.promptTemplate.trim()
           ? DEFAULT_VIDEO_TASK_NOTE
           : current.promptTemplate,
+      fixedDurationSeconds:
+        nextOutputType === "视文模式"
+          ? current.fixedDurationSeconds || (videoTextDurationOptions[0] ? String(videoTextDurationOptions[0].durationSeconds) : "")
+          : "",
       modelName:
         mapSkillOutputToModelCategory(current.outputType) === nextCategory ? current.modelName : "",
     }));
@@ -582,6 +618,38 @@ export function SkillEditorModal({
                         })}
                       </div>
                     </div>
+
+                    {isVideoTextOutput(form.outputType) ? (
+                      <label className="space-y-2.5">
+                        <span className="text-sm font-medium text-white">固定视频时长</span>
+                        <select
+                          value={form.fixedDurationSeconds}
+                          onChange={(event) =>
+                            setForm((current) => ({ ...current, fixedDurationSeconds: event.target.value }))
+                          }
+                          className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white outline-none transition-all focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
+                        >
+                          <option value="" disabled className="bg-slate-950 text-white">
+                            请选择固定时长
+                          </option>
+                          {videoTextDurationOptions.map((option) => (
+                            <option
+                              key={option.ruleId}
+                              value={String(option.durationSeconds)}
+                              className="bg-slate-950 text-white"
+                            >
+                              {option.label}
+                              {typeof option.specialPriceCredits === "number" && option.specialPriceCredits > 0
+                                ? ` · 特价 ${option.specialPriceCredits} 积分`
+                                : " · 按实际模型步骤计费"}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-xs leading-5 text-text-secondary">
+                          视文模式按技能固定时长执行。命中特价时优先按任务套餐计费，否则按实际执行到的模型步骤累计计费。
+                        </p>
+                      </label>
+                    ) : null}
 
                     <div className="grid gap-4 lg:grid-cols-2">
                       <label className="space-y-2.5">

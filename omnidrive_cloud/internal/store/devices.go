@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -20,6 +21,8 @@ func scanDevice(row pgx.Row) (*domain.Device, error) {
 	var chatModel *string
 	var imageModel *string
 	var videoModel *string
+	var platformCapabilities []byte
+	var platformCapabilitiesRevision *string
 	var notes *string
 	var agentKey *string
 	var runtimePayload []byte
@@ -38,6 +41,8 @@ func scanDevice(row pgx.Row) (*domain.Device, error) {
 		&chatModel,
 		&imageModel,
 		&videoModel,
+		&platformCapabilities,
+		&platformCapabilitiesRevision,
 		&device.IsEnabled,
 		&runtimePayload,
 		&lastSeenAt,
@@ -58,6 +63,10 @@ func scanDevice(row pgx.Row) (*domain.Device, error) {
 	device.DefaultChatModel = chatModel
 	device.DefaultImageModel = imageModel
 	device.DefaultVideoModel = videoModel
+	if len(platformCapabilities) > 0 {
+		_ = json.Unmarshal(platformCapabilities, &device.PlatformCapabilities)
+	}
+	device.PlatformCapabilitiesRevision = platformCapabilitiesRevision
 	device.RuntimePayload = bytesOrNil(runtimePayload)
 	device.LastSeenAt = lastSeenAt
 	device.Notes = notes
@@ -73,6 +82,8 @@ func scanDeviceWithLoad(row pgx.Row) (*domain.Device, error) {
 	var chatModel *string
 	var imageModel *string
 	var videoModel *string
+	var platformCapabilities []byte
+	var platformCapabilitiesRevision *string
 	var notes *string
 	var agentKey *string
 	var runtimePayload []byte
@@ -91,6 +102,8 @@ func scanDeviceWithLoad(row pgx.Row) (*domain.Device, error) {
 		&chatModel,
 		&imageModel,
 		&videoModel,
+		&platformCapabilities,
+		&platformCapabilitiesRevision,
 		&device.IsEnabled,
 		&runtimePayload,
 		&lastSeenAt,
@@ -124,6 +137,10 @@ func scanDeviceWithLoad(row pgx.Row) (*domain.Device, error) {
 	device.DefaultChatModel = chatModel
 	device.DefaultImageModel = imageModel
 	device.DefaultVideoModel = videoModel
+	if len(platformCapabilities) > 0 {
+		_ = json.Unmarshal(platformCapabilities, &device.PlatformCapabilities)
+	}
+	device.PlatformCapabilitiesRevision = platformCapabilitiesRevision
 	device.RuntimePayload = bytesOrNil(runtimePayload)
 	device.LastSeenAt = lastSeenAt
 	device.Notes = notes
@@ -135,6 +152,7 @@ func scanDeviceWithLoad(row pgx.Row) (*domain.Device, error) {
 const deviceSelectColumns = `
 	id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
 	default_reasoning_model, default_chat_model, default_image_model, default_video_model,
+	platform_capabilities, platform_capabilities_revision,
 	is_enabled, runtime_payload, last_seen_at, notes,
 	created_at, updated_at
 `
@@ -142,6 +160,7 @@ const deviceSelectColumns = `
 const deviceSelectColumnsQualified = `
 	devices.id, devices.owner_user_id, devices.device_code, devices.agent_key, devices.name, devices.local_ip, devices.public_ip,
 	devices.default_reasoning_model, devices.default_chat_model, devices.default_image_model, devices.default_video_model,
+	devices.platform_capabilities, devices.platform_capabilities_revision,
 	devices.is_enabled, devices.runtime_payload, devices.last_seen_at, devices.notes,
 	devices.created_at, devices.updated_at
 `
@@ -192,14 +211,7 @@ func (s *Store) ListDevicesByOwner(ctx context.Context, ownerUserID string) ([]d
 }
 
 func (s *Store) GetDeviceByID(ctx context.Context, deviceID string) (*domain.Device, error) {
-	row := s.pool.QueryRow(ctx, `
-		SELECT id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
-		       default_reasoning_model, default_chat_model, default_image_model, default_video_model,
-		       is_enabled, runtime_payload, last_seen_at, notes,
-		       created_at, updated_at
-		FROM devices
-		WHERE id = $1
-	`, deviceID)
+	row := s.pool.QueryRow(ctx, "SELECT "+deviceSelectColumns+" FROM devices WHERE id = $1", deviceID)
 	device, err := scanDevice(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -225,14 +237,7 @@ func (s *Store) GetOwnedDevice(ctx context.Context, deviceID string, ownerUserID
 }
 
 func (s *Store) GetDeviceByCode(ctx context.Context, deviceCode string) (*domain.Device, error) {
-	row := s.pool.QueryRow(ctx, `
-		SELECT id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
-		       default_reasoning_model, default_chat_model, default_image_model, default_video_model,
-		       is_enabled, runtime_payload, last_seen_at, notes,
-		       created_at, updated_at
-		FROM devices
-		WHERE device_code = $1
-	`, deviceCode)
+	row := s.pool.QueryRow(ctx, "SELECT "+deviceSelectColumns+" FROM devices WHERE device_code = $1", deviceCode)
 	device, err := scanDevice(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -251,10 +256,7 @@ func (s *Store) ClaimDevice(ctx context.Context, deviceCode string, ownerUserID 
 		    updated_at = NOW()
 		WHERE device_code = $1
 		  AND (owner_user_id IS NULL OR owner_user_id = $2)
-		RETURNING id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
-		          default_reasoning_model, default_chat_model, default_image_model, default_video_model,
-		          is_enabled, runtime_payload, last_seen_at, notes,
-		          created_at, updated_at
+		RETURNING `+deviceSelectColumns+`
 	`, deviceCode, ownerUserID)
 
 	device, err := scanDevice(row)
@@ -278,10 +280,7 @@ func (s *Store) UpdateDevice(ctx context.Context, deviceID string, ownerUserID s
 		    is_enabled = COALESCE($8, is_enabled),
 		    updated_at = NOW()
 		WHERE id = $1 AND owner_user_id = $2
-		RETURNING id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
-		          default_reasoning_model, default_chat_model, default_image_model, default_video_model,
-		          is_enabled, runtime_payload, last_seen_at, notes,
-		          created_at, updated_at
+		RETURNING `+deviceSelectColumns+`
 	`, deviceID, ownerUserID, input.Name, input.DefaultReasoningModel, input.DefaultChatModel, input.DefaultImageModel, input.DefaultVideoModel, input.IsEnabled)
 
 	device, err := scanDevice(row)
@@ -331,10 +330,7 @@ func (s *Store) UpsertHeartbeatDevice(ctx context.Context, input HeartbeatInput)
 			    updated_at = NOW()
 			WHERE id = (SELECT id FROM fingerprint_match)
 			  AND NOT EXISTS (SELECT 1 FROM current_match)
-			RETURNING id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
-			          default_reasoning_model, default_chat_model, default_image_model, default_video_model,
-			          is_enabled, runtime_payload, last_seen_at, notes,
-			          created_at, updated_at
+			RETURNING `+deviceSelectColumns+`
 		`,
 			input.DeviceFingerprint,
 			input.DeviceCode,
@@ -373,10 +369,7 @@ func (s *Store) UpsertHeartbeatDevice(ctx context.Context, input HeartbeatInput)
 		    runtime_payload = EXCLUDED.runtime_payload,
 		    last_seen_at = EXCLUDED.last_seen_at,
 		    updated_at = NOW()
-		RETURNING id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
-		          default_reasoning_model, default_chat_model, default_image_model, default_video_model,
-		          is_enabled, runtime_payload, last_seen_at, notes,
-		          created_at, updated_at
+		RETURNING `+deviceSelectColumns+`
 	`,
 		uuid.NewString(),
 		input.DeviceCode,
@@ -412,9 +405,7 @@ func (s *Store) UnbindDevice(ctx context.Context, deviceID string, ownerUserID s
 		    default_video_model = NULL,
 		    updated_at = NOW()
 		WHERE id = $1 AND owner_user_id = $2
-		RETURNING id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
-		          default_reasoning_model, default_chat_model, default_image_model, default_video_model,
-		          is_enabled, runtime_payload, last_seen_at, notes, created_at, updated_at
+		RETURNING `+deviceSelectColumns+`
 	`, deviceID, ownerUserID)
 
 	device, err := scanDevice(row)
@@ -458,9 +449,7 @@ func (s *Store) AdminUnbindDevice(ctx context.Context, deviceID string) (*domain
 		    updated_at = NOW()
 		WHERE id = $1
 		  AND owner_user_id IS NOT NULL
-		RETURNING id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
-		          default_reasoning_model, default_chat_model, default_image_model, default_video_model,
-		          is_enabled, runtime_payload, last_seen_at, notes, created_at, updated_at
+		RETURNING `+deviceSelectColumns+`
 	`, deviceID)
 
 	device, err := scanDevice(row)

@@ -490,7 +490,7 @@ def dedupe_verification_option_labels(labels):
         if not canonical or canonical in seen_canonical:
             continue
         seen_canonical.add(canonical)
-        unique_labels.append(normalized)
+        unique_labels.append(canonical)
 
     if len(unique_labels) <= 1:
         return unique_labels

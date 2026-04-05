@@ -27,37 +27,39 @@ type SkillHandler struct {
 }
 
 type createSkillRequest struct {
-	Name                string      `json:"name"`
-	Description         string      `json:"description"`
-	OutputType          string      `json:"outputType"`
-	ModelName           string      `json:"modelName"`
-	PromptTemplate      *string     `json:"promptTemplate"`
-	PublishIntroEnabled *bool       `json:"publishIntroEnabled"`
-	CoverPromptTemplate *string     `json:"coverPromptTemplate"`
-	Topics              []string    `json:"topics"`
-	ReferencePayload    interface{} `json:"referencePayload"`
-	DeviceID            *string     `json:"deviceId"`
-	ExecutionTime       *string     `json:"executionTime"`
-	RepeatDaily         *bool       `json:"repeatDaily"`
-	StoryboardEnabled   *bool       `json:"storyboardEnabled"`
-	IsEnabled           *bool       `json:"isEnabled"`
+	Name                 string      `json:"name"`
+	Description          string      `json:"description"`
+	OutputType           string      `json:"outputType"`
+	ModelName            string      `json:"modelName"`
+	FixedDurationSeconds *int        `json:"fixedDurationSeconds"`
+	PromptTemplate       *string     `json:"promptTemplate"`
+	PublishIntroEnabled  *bool       `json:"publishIntroEnabled"`
+	CoverPromptTemplate  *string     `json:"coverPromptTemplate"`
+	Topics               []string    `json:"topics"`
+	ReferencePayload     interface{} `json:"referencePayload"`
+	DeviceID             *string     `json:"deviceId"`
+	ExecutionTime        *string     `json:"executionTime"`
+	RepeatDaily          *bool       `json:"repeatDaily"`
+	StoryboardEnabled    *bool       `json:"storyboardEnabled"`
+	IsEnabled            *bool       `json:"isEnabled"`
 }
 
 type updateSkillRequest struct {
-	Name                *string     `json:"name"`
-	Description         *string     `json:"description"`
-	OutputType          *string     `json:"outputType"`
-	ModelName           *string     `json:"modelName"`
-	PromptTemplate      *string     `json:"promptTemplate"`
-	PublishIntroEnabled *bool       `json:"publishIntroEnabled"`
-	CoverPromptTemplate *string     `json:"coverPromptTemplate"`
-	Topics              []string    `json:"topics"`
-	ReferencePayload    interface{} `json:"referencePayload"`
-	DeviceID            *string     `json:"deviceId"`
-	ExecutionTime       *string     `json:"executionTime"`
-	RepeatDaily         *bool       `json:"repeatDaily"`
-	StoryboardEnabled   *bool       `json:"storyboardEnabled"`
-	IsEnabled           *bool       `json:"isEnabled"`
+	Name                 *string     `json:"name"`
+	Description          *string     `json:"description"`
+	OutputType           *string     `json:"outputType"`
+	ModelName            *string     `json:"modelName"`
+	FixedDurationSeconds *int        `json:"fixedDurationSeconds"`
+	PromptTemplate       *string     `json:"promptTemplate"`
+	PublishIntroEnabled  *bool       `json:"publishIntroEnabled"`
+	CoverPromptTemplate  *string     `json:"coverPromptTemplate"`
+	Topics               []string    `json:"topics"`
+	ReferencePayload     interface{} `json:"referencePayload"`
+	DeviceID             *string     `json:"deviceId"`
+	ExecutionTime        *string     `json:"executionTime"`
+	RepeatDaily          *bool       `json:"repeatDaily"`
+	StoryboardEnabled    *bool       `json:"storyboardEnabled"`
+	IsEnabled            *bool       `json:"isEnabled"`
 }
 
 type createSkillAssetRequest struct {
@@ -70,7 +72,15 @@ type createSkillAssetRequest struct {
 }
 
 type skillEditorDefaultsResponse struct {
-	CoverPromptTemplateDefault string `json:"coverPromptTemplateDefault"`
+	CoverPromptTemplateDefault string                      `json:"coverPromptTemplateDefault"`
+	VideoTextDurationOptions   []skillEditorDurationOption `json:"videoTextDurationOptions"`
+}
+
+type skillEditorDurationOption struct {
+	DurationSeconds     int    `json:"durationSeconds"`
+	SegmentSeconds      int    `json:"segmentSeconds"`
+	SpecialPriceCredits *int64 `json:"specialPriceCredits,omitempty"`
+	Label               string `json:"label"`
 }
 
 func NewSkillHandler(app *appstate.App) *SkillHandler {
@@ -86,6 +96,52 @@ func sanitizeSkillSchedule(skill *domain.ProductSkill) {
 	skill.NextRunAt = nil
 	skill.PublishPromptTemplate = nil
 	skill.StoryboardPromptTemplate = nil
+}
+
+const videoTextWorkflowCode = "video_text"
+
+func isVideoTextOutputType(outputType string) bool {
+	switch strings.TrimSpace(outputType) {
+	case "video", "video_text", "视文模式":
+		return true
+	default:
+		return false
+	}
+}
+
+func workflowOutputTypeForSkill(outputType string) string {
+	if isVideoTextOutputType(outputType) {
+		return "视文模式"
+	}
+	return strings.TrimSpace(outputType)
+}
+
+func normalizeFixedDurationSeconds(value *int) *int {
+	if value == nil || *value <= 0 {
+		return nil
+	}
+	return value
+}
+
+func (h *SkillHandler) validateSkillFixedDuration(ctx context.Context, outputType string, fixedDurationSeconds *int) (*domain.WorkflowDurationRule, error) {
+	normalized := normalizeFixedDurationSeconds(fixedDurationSeconds)
+	if !isVideoTextOutputType(outputType) {
+		if normalized != nil {
+			return nil, fmt.Errorf("fixedDurationSeconds only supports 视文模式")
+		}
+		return nil, nil
+	}
+	if normalized == nil {
+		return nil, fmt.Errorf("视文模式必须配置 fixedDurationSeconds")
+	}
+	rule, err := h.app.Store.FindEnabledWorkflowDurationRule(ctx, videoTextWorkflowCode, workflowOutputTypeForSkill(outputType), *normalized)
+	if err != nil {
+		return nil, err
+	}
+	if rule == nil {
+		return nil, fmt.Errorf("当前固定时长未命中启用中的视文模式时长策略")
+	}
+	return rule, nil
 }
 
 func parseSkillExecutionTime(raw string, now time.Time) (*time.Time, error) {
@@ -178,8 +234,23 @@ func (h *SkillHandler) EditorDefaults(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to load skill defaults")
 		return
 	}
+	durationRules, err := h.app.Store.ListEnabledWorkflowDurationRules(r.Context(), videoTextWorkflowCode, "视文模式")
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load workflow duration rules")
+		return
+	}
+	durationOptions := make([]skillEditorDurationOption, 0, len(durationRules))
+	for _, item := range durationRules {
+		durationOptions = append(durationOptions, skillEditorDurationOption{
+			DurationSeconds:     item.DurationSeconds,
+			SegmentSeconds:      item.SegmentSeconds,
+			SpecialPriceCredits: item.SpecialPriceCredits,
+			Label:               fmt.Sprintf("%ds", item.DurationSeconds),
+		})
+	}
 	render.JSON(w, http.StatusOK, skillEditorDefaultsResponse{
 		CoverPromptTemplateDefault: strings.TrimSpace(settings.VideoCoverPrompt),
+		VideoTextDurationOptions:   durationOptions,
 	})
 }
 
@@ -391,6 +462,10 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if _, err := h.validateSkillFixedDuration(r.Context(), payload.OutputType, payload.FixedDurationSeconds); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	isEnabled := true
 	if payload.IsEnabled != nil {
@@ -409,6 +484,7 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Description:              payload.Description,
 		OutputType:               payload.OutputType,
 		ModelName:                payload.ModelName,
+		FixedDurationSeconds:     normalizeFixedDurationSeconds(payload.FixedDurationSeconds),
 		PromptTemplate:           payload.PromptTemplate,
 		StoryboardPromptTemplate: stringPtr(workflow.DefaultSkillStoryboardPromptTemplate(payload.OutputType)),
 		PublishIntroEnabled:      publishIntroEnabled,
@@ -442,6 +518,7 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Payload: mustJSONBytes(map[string]any{
 			"name":                          skill.Name,
 			"modelName":                     skill.ModelName,
+			"fixedDurationSeconds":          skill.FixedDurationSeconds,
 			"deviceId":                      skill.DeviceID,
 			"topics":                        skill.Topics,
 			"publishIntroEnabled":           skill.PublishIntroEnabled,
@@ -478,6 +555,27 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	existing, err := h.app.Store.GetOwnedSkillByID(r.Context(), skillID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load skill")
+		return
+	}
+	if existing == nil {
+		render.Error(w, http.StatusNotFound, "Skill not found")
+		return
+	}
+	nextOutputType := existing.OutputType
+	if payload.OutputType != nil && strings.TrimSpace(*payload.OutputType) != "" {
+		nextOutputType = strings.TrimSpace(*payload.OutputType)
+	}
+	nextFixedDurationSeconds := existing.FixedDurationSeconds
+	if payload.FixedDurationSeconds != nil {
+		nextFixedDurationSeconds = normalizeFixedDurationSeconds(payload.FixedDurationSeconds)
+	}
+	if _, err := h.validateSkillFixedDuration(r.Context(), nextOutputType, nextFixedDurationSeconds); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	var deviceID *string
 	deviceTouched := payload.DeviceID != nil
 	if deviceTouched {
@@ -498,26 +596,28 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 	repeatDaily := false
 
 	skill, err := h.app.Store.UpdateSkill(r.Context(), skillID, user.ID, store.UpdateSkillInput{
-		Name:                payload.Name,
-		Description:         payload.Description,
-		OutputType:          payload.OutputType,
-		ModelName:           payload.ModelName,
-		PromptTemplate:      payload.PromptTemplate,
-		PublishIntroEnabled: payload.PublishIntroEnabled,
-		CoverPromptTemplate: stringPtr(normalizePatchedString(payload.CoverPromptTemplate)),
-		Topics:              payload.Topics,
-		TopicsTouched:       payload.Topics != nil,
-		ReferencePayload:    referenceBytes,
-		ReferenceTouched:    referenceTouched,
-		DeviceID:            deviceID,
-		DeviceTouched:       deviceTouched,
-		ExecutionTime:       nil,
-		ExecutionTouched:    true,
-		RepeatDaily:         &repeatDaily,
-		StoryboardEnabled:   payload.StoryboardEnabled,
-		NextRunAt:           nil,
-		NextRunTouched:      true,
-		IsEnabled:           payload.IsEnabled,
+		Name:                 payload.Name,
+		Description:          payload.Description,
+		OutputType:           payload.OutputType,
+		ModelName:            payload.ModelName,
+		FixedDurationSeconds: nextFixedDurationSeconds,
+		FixedDurationTouched: payload.FixedDurationSeconds != nil || (payload.OutputType != nil && !isVideoTextOutputType(nextOutputType)),
+		PromptTemplate:       payload.PromptTemplate,
+		PublishIntroEnabled:  payload.PublishIntroEnabled,
+		CoverPromptTemplate:  stringPtr(normalizePatchedString(payload.CoverPromptTemplate)),
+		Topics:               payload.Topics,
+		TopicsTouched:        payload.Topics != nil,
+		ReferencePayload:     referenceBytes,
+		ReferenceTouched:     referenceTouched,
+		DeviceID:             deviceID,
+		DeviceTouched:        deviceTouched,
+		ExecutionTime:        nil,
+		ExecutionTouched:     true,
+		RepeatDaily:          &repeatDaily,
+		StoryboardEnabled:    payload.StoryboardEnabled,
+		NextRunAt:            nil,
+		NextRunTouched:       true,
+		IsEnabled:            payload.IsEnabled,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to update skill")
@@ -542,13 +642,14 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Status:       "success",
 		Message:      auditStringPtr("产品技能已更新"),
 		Payload: mustJSONBytes(map[string]any{
-			"name":                payload.Name,
-			"modelName":           payload.ModelName,
-			"topics":              payload.Topics,
-			"publishIntroEnabled": payload.PublishIntroEnabled,
-			"coverPromptTemplate": stringPtr(normalizePatchedString(payload.CoverPromptTemplate)),
-			"storyboardEnabled":   payload.StoryboardEnabled,
-			"isEnabled":           payload.IsEnabled,
+			"name":                 payload.Name,
+			"modelName":            payload.ModelName,
+			"fixedDurationSeconds": nextFixedDurationSeconds,
+			"topics":               payload.Topics,
+			"publishIntroEnabled":  payload.PublishIntroEnabled,
+			"coverPromptTemplate":  stringPtr(normalizePatchedString(payload.CoverPromptTemplate)),
+			"storyboardEnabled":    payload.StoryboardEnabled,
+			"isEnabled":            payload.IsEnabled,
 		}),
 	})
 

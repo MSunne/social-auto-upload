@@ -10,6 +10,11 @@ export const accountApi = {
     return http.get('/getAccounts')
   },
 
+  /** 获取本地平台能力列表 */
+  getPlatforms() {
+    return http.get('/api/platforms')
+  },
+
   /** 验证全部账号（较慢） */
   getValidAccounts() {
     return http.get('/getValidAccounts')
@@ -53,11 +58,6 @@ export const accountApi = {
    */
   getLoginSSEUrl(platformType, accountName) {
     return `/login?type=${platformType}&id=${encodeURIComponent(accountName)}`
-  },
-
-  /** 远端登录请求 */
-  remoteLogin(data) {
-    return http.post('/remoteLogin', data)
   },
 
   /** 强制同步到云端 */

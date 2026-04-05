@@ -91,7 +91,7 @@ set menu_color_normal=white/black
 set menu_color_highlight=black/light-gray
 set theme=/boot/grub/themes/deepin/theme.txt
 set default=0
-set timeout=4
+set timeout=-1
 
 menuentry "OmniBull Factory Restore" {
 	set gfxpayload=keep
@@ -136,7 +136,6 @@ render_isolinux_cfg() {
   cat > "${output}" <<EOF
 label omnibull-restore
 	menu label ^OmniBull Factory Restore
-	menu default
 	linux /live/vmlinuz.efi
 	initrd /live/initrd
 	append boot=live components quiet splash union=overlay locales=zh_CN.UTF-8 systemd.unit=multi-user.target omni.factory.recovery=1
@@ -313,11 +312,7 @@ main() {
   lsblk -o PATH,SIZE,FSTYPE,LABEL,MODEL "\${target_disk}" || true
   echo
   echo "This will erase all partitions on \${target_disk}."
-  read -r -p "Type RESTORE to continue: " confirm
-  if [[ "\${confirm}" != "RESTORE" ]]; then
-    say "Confirmation did not match. Aborting."
-    pause_shell
-  fi
+  echo "Restore will start now."
 
   export OMNIBULL_FACTORY_BUNDLE_DIR="\${bundle_dir}"
   say "Starting restore using bundle \${bundle_dir}"
@@ -383,24 +378,17 @@ build_recovery_iso() {
   mksquashfs "${overlay_root}" "${overlay_sqfs}" -noappend -comp xz >/dev/null
 
   rm -f "${output_iso}"
-  set +e
   xorriso \
     -indev "${source_spec}" \
     -outdev "${output_iso}" \
-    -boot_image any replay \
+    -boot_image any keep \
     -overwrite on \
     -map "${grub_cfg}" /boot/grub/grub.cfg \
     -map "${isolinux_cfg}" /isolinux/live.cfg \
     -map "${module_file}" /live/filesystem.module \
     -map "${overlay_sqfs}" /live/filesystem-omnibull.squashfs \
     -commit \
-    -end >/dev/null
-  local xorriso_status=$?
-  set -e
-  if [[ "${xorriso_status}" -ne 0 && "${xorriso_status}" -ne 32 ]]; then
-    echo "xorriso failed with exit code ${xorriso_status}" >&2
-    exit "${xorriso_status}"
-  fi
+    -end
 }
 
 find_last_free_start_mib() {
@@ -432,8 +420,8 @@ write_bundle_partition() {
   cat > "${mount_root}/START_HERE.txt" <<EOF
 OmniBull Factory Recovery USB
 
-This USB boots directly into OmniBull Factory Restore.
-If auto-start does not happen, choose "OmniBull Factory Restore" from the boot menu.
+This USB waits at the boot menu. The operator must manually choose "OmniBull Factory Restore".
+After the target disk is confirmed, restore starts immediately without typing RESTORE.
 
 Bundle location:
   $(basename "${bundle_dir}")
@@ -441,6 +429,9 @@ Bundle location:
 Manual recovery command inside a Linux rescue environment:
   sudo bash /media/${bundle_label}/$(basename "${bundle_dir}")/restore.sh /dev/sda
 EOF
+  if [[ -f "${bundle_dir}/OPERATOR_QUICKSTART.md" ]]; then
+    cp "${bundle_dir}/OPERATOR_QUICKSTART.md" "${mount_root}/OPERATOR_QUICKSTART.md"
+  fi
   sync
   umount "${mount_root}"
 }

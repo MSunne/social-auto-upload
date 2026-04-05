@@ -21,6 +21,7 @@ import type { BillingActivity, BillingActivityListResponse, BillingSummary } fro
 
 const KIND_OPTIONS = [
   { value: "", label: "全部记录" },
+  { value: "ai_billing_session", label: "AI 任务账单" },
   { value: "usage_event", label: "AI 计费" },
   { value: "wallet_ledger", label: "钱包账变" },
   { value: "recharge_order", label: "充值订单" },
@@ -120,6 +121,9 @@ function getActivityTypeLabel(item: BillingActivity) {
   if (item.kind === "recharge_order") {
     return "充值订单";
   }
+  if (item.kind === "ai_billing_session") {
+    return "AI 任务账单";
+  }
   if (item.kind === "wallet_ledger") {
     if ((item.creditDelta ?? 0) > 0) {
       return "钱包入账";
@@ -132,6 +136,9 @@ function getActivityTypeLabel(item: BillingActivity) {
 function getActivityBusinessLabel(item: BillingActivity) {
   if (item.kind === "recharge_order") {
     return CHANNEL_LABELS[item.channel ?? ""] || item.channel || "充值";
+  }
+  if (item.kind === "ai_billing_session") {
+    return item.jobType ? JOB_TYPE_LABELS[item.jobType] || item.jobType : "AI 视频";
   }
   if (item.kind === "wallet_ledger") {
     return ENTRY_TYPE_LABELS[item.entryType ?? ""] || item.entryType || "钱包账变";
@@ -146,6 +153,17 @@ function getActivityBusinessLabel(item: BillingActivity) {
 }
 
 function getActivityAmount(item: BillingActivity) {
+  if (item.kind === "ai_billing_session") {
+    const refundedCredits = getPayloadNumber(item, "refundedCredits");
+    return {
+      text: `-${(item.debitedCredits ?? 0).toLocaleString("zh-CN")} 积分`,
+      meta:
+        refundedCredits > 0
+          ? `已退款 ${refundedCredits.toLocaleString("zh-CN")} 积分`
+          : `${getPayloadNumber(item, "plannedCredits").toLocaleString("zh-CN")} 积分预扣后结算`,
+      tone: "text-warning",
+    };
+  }
   if (item.kind === "recharge_order" && typeof item.amountCents === "number") {
     const credits = (item.creditAmount ?? 0) + (item.bonusCreditAmount ?? 0);
     return {
@@ -186,13 +204,60 @@ function getActivityAmount(item: BillingActivity) {
   };
 }
 
+function getBillingItemsFromPayload(item: BillingActivity) {
+  const payload = getPayloadRecord(item);
+  const rawItems = payload?.billingItems;
+  return Array.isArray(rawItems) ? rawItems : [];
+}
+
 function buildActivityMeta(item: BillingActivity) {
+  if (item.kind === "ai_billing_session") {
+    const payload = getPayloadRecord(item);
+    const detailItems = getBillingItemsFromPayload(item);
+    const visibleItems = detailItems.filter((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return false;
+      }
+      const visible = (entry as Record<string, unknown>).isVisible;
+      return visible !== false;
+    });
+    const parts = [
+      typeof payload?.durationSeconds === "number" ? `${payload.durationSeconds} 秒` : "",
+      typeof payload?.specialPriceCredits === "number" ? "任务特价" : `步骤项 ${visibleItems.length || detailItems.length} 个`,
+      item.reference,
+    ];
+    return parts.filter(Boolean).join(" · ");
+  }
   const modelLabel =
     item.modelName || item.modelAlias
       ? getModelDisplayName(item, "")
       : "";
   const parts = [modelLabel, item.meterName || item.meterCode, item.reference];
   return parts.filter(Boolean).join(" · ");
+}
+
+function buildSessionDetailLines(item: BillingActivity) {
+  if (item.kind !== "ai_billing_session") {
+    return [];
+  }
+  const payload = getPayloadRecord(item);
+  if (typeof payload?.specialPriceCredits === "number" && payload.specialPriceCredits > 0) {
+    return [
+      `任务特价：${payload.specialPriceCredits.toLocaleString("zh-CN")} 积分`,
+      typeof payload.durationSeconds === "number" ? `固定时长：${payload.durationSeconds} 秒` : "",
+    ].filter(Boolean);
+  }
+  return getBillingItemsFromPayload(item)
+    .filter((entry) => entry && typeof entry === "object" && ((entry as Record<string, unknown>).isVisible !== false))
+    .slice(0, 4)
+    .map((entry) => {
+      const record = entry as Record<string, unknown>;
+      const label = typeof record.label === "string" ? record.label : "计费项";
+      const billedCredits = typeof record.billedCredits === "number" ? record.billedCredits : 0;
+      const refundedCredits = typeof record.refundedCredits === "number" ? record.refundedCredits : 0;
+      const refundText = refundedCredits > 0 ? ` / 退款 ${refundedCredits.toLocaleString("zh-CN")} 积分` : "";
+      return `${label}：扣费 ${billedCredits.toLocaleString("zh-CN")} 积分${refundText}`;
+    });
 }
 
 export default function FinancePage() {
@@ -415,6 +480,7 @@ export default function FinancePage() {
                   {activitiesData.items.map((item) => {
                     const amount = getActivityAmount(item);
                     const meta = buildActivityMeta(item);
+                    const detailLines = buildSessionDetailLines(item);
                     return (
                       <tr key={`${item.kind}-${item.id}`} className="transition-colors hover:bg-surface-hover/20">
                         <td className="px-6 py-4 text-xs text-text-secondary">{formatDateTime(item.occurredAt)}</td>
@@ -431,6 +497,15 @@ export default function FinancePage() {
                           </div>
                           {meta ? (
                             <div className="mt-1 text-xs text-text-muted">{meta}</div>
+                          ) : null}
+                          {detailLines.length > 0 ? (
+                            <div className="mt-2 space-y-1">
+                              {detailLines.map((line) => (
+                                <div key={line} className="text-xs text-text-secondary">
+                                  {line}
+                                </div>
+                              ))}
+                            </div>
                           ) : null}
                         </td>
                         <td className="px-6 py-4">{renderActivityStatus(item.status)}</td>

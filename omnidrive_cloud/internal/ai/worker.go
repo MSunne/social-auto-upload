@@ -47,7 +47,7 @@ type storyboardOptimizationEnvelope struct {
 const (
 	videoArtifactFinalizeMaxAttempts = 3
 	videoArtifactFinalizeRetryDelay  = 2 * time.Second
-	defaultStoryboardSystemPrompt    = "你是内容创作分镜与脚本优化助手。请结合用户目标、参考图片和参考文本，输出适合继续交给图片、视频或文本模型执行的精炼脚本。输出中需要保留主体、场景、镜头、风格、文案和节奏等关键信息。"
+	defaultStoryboardSystemPrompt    = DefaultVideoStoryboardSystemPrompt
 	defaultPublishIntroPrompt        = "请结合任务说明、基础简介、标签、分镜脚本与参考资料，生成一段适合直接发布到第三方平台的简介。要求与生成内容保持同一主题和卖点，保留客户既定风格，但每次表达都自然变化，避免模板化和完全重复。"
 )
 
@@ -498,16 +498,13 @@ func (w *Worker) executeImage(ctx context.Context, job *domain.AIJob, leaseToken
 }
 
 func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken string, leaseExpiresAt time.Time) error {
+	if snapshot := parseWorkflowPricingSnapshot(job); snapshot != nil {
+		return w.executeWorkflowVideo(ctx, job, leaseToken, leaseExpiresAt, snapshot)
+	}
+
 	req, err := BuildVideoRequest(job)
 	if err != nil {
 		return err
-	}
-	storyboardPayload, optimizedPrompt, err := w.prepareOptionalMediaStoryboardPrompt(ctx, job, leaseToken, req.Prompt)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(optimizedPrompt) != "" {
-		req.Prompt = optimizedPrompt
 	}
 	baseURL, apiKey, err := w.resolveModelRuntimeConfig(ctx, job.ModelName)
 	if err != nil {
@@ -520,17 +517,14 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 	if strings.TrimSpace(state.BaseURL) == "" {
 		state.BaseURL = baseURL
 	}
-	if err := w.prepareSkillVideoReferenceFrames(ctx, job, &req, &state); err != nil {
-		state.FrameRedesign = map[string]any{
-			"enabled": true,
-			"status":  "fallback",
-			"error":   strings.TrimSpace(err.Error()),
-		}
-		w.app.Logger.Warn("ai worker failed to redesign skill video frames, falling back to original references",
-			"job_id", job.ID,
-			"model_name", job.ModelName,
-			"error", err,
-		)
+	storyboardPayload, err := w.prepareVideoGenerationInputs(ctx, job, leaseToken, &req, &state)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(state.FinalPrompt) != "" {
+		req.Prompt = state.FinalPrompt
+	} else {
+		state.FinalPrompt = strings.TrimSpace(req.Prompt)
 	}
 	req.Model = normalizeVideoModel(strings.TrimSpace(job.ModelName), req.AspectRatio, len(req.ReferenceImages) > 0)
 	if strings.TrimSpace(state.RemoteVideoID) == "" {
@@ -1330,6 +1324,42 @@ func (w *Worker) applyUsageBilling(ctx context.Context, job *domain.AIJob, input
 }
 
 func (w *Worker) ensureExecutionBilling(ctx context.Context, job *domain.AIJob) error {
+	if plan, planErr := BuildWorkflowBillingPlan(ctx, w.app, job); planErr != nil {
+		return planErr
+	} else if plan != nil {
+		summary, summaryErr := w.app.Store.GetBillingSummaryByUser(ctx, strings.TrimSpace(job.OwnerUserID))
+		if summaryErr != nil {
+			return summaryErr
+		}
+		preview := workflowBillingPlanToUsageResult(plan, summary.CreditBalance)
+		if preview != nil && preview.BillStatus == "failed" {
+			return &executionBillingBlockedError{Result: preview}
+		}
+
+		session, items, err := EnsureWorkflowBillingSession(ctx, w.app, job)
+		if err != nil {
+			return err
+		}
+		message := "AI 启动前任务级预扣费完成"
+		if session != nil {
+			message = fmt.Sprintf("AI 启动前任务级预扣费完成，预扣 %d 积分", session.PlannedCredits)
+		}
+		w.recordAuditEvent(ctx, job, "ai_workflow_billing_precharged", "AI 启动前任务级预扣费完成", "success", stringPtr(message), map[string]any{
+			"jobType":   job.JobType,
+			"modelName": job.ModelName,
+			"source":    job.Source,
+			"plannedCredits": func() int64 {
+				if session == nil {
+					return 0
+				}
+				return session.PlannedCredits
+			}(),
+			"session": session,
+			"items":   items,
+		})
+		return nil
+	}
+
 	input := BuildEstimatedUsageBillingInput(job)
 	if len(input.Metrics) == 0 {
 		return nil
@@ -1361,6 +1391,13 @@ func (w *Worker) ensureExecutionBilling(ctx context.Context, job *domain.AIJob) 
 }
 
 func (w *Worker) returnUsageCreditsForFailure(ctx context.Context, job *domain.AIJob, failureMessage string) {
+	if plan, err := BuildWorkflowBillingPlan(ctx, w.app, job); err == nil && plan != nil {
+		if refundErr := w.app.Store.RefundAIBillingSessionBySource(ctx, "ai_job", job.ID, failureMessage); refundErr != nil {
+			w.app.Logger.Error("ai worker failed to refund workflow billing session", "job_id", job.ID, "error", refundErr)
+		}
+		return
+	}
+
 	input := BuildEstimatedUsageBillingInput(job)
 	if len(input.Metrics) == 0 {
 		return
@@ -1382,17 +1419,39 @@ func resultBillMessage(result *store.ApplyUsageBillingResult) *string {
 }
 
 type videoExecutionState struct {
-	BaseURL         string
-	RemoteVideoID   string
-	RemoteStatus    string
-	ProgressPercent *int
-	ContentURL      string
-	Message         string
-	FailureCode     string
-	SubmittedAt     time.Time
-	UpdatedAt       time.Time
-	ReferenceFrames []map[string]any
-	FrameRedesign   map[string]any
+	BaseURL                   string
+	RemoteVideoID             string
+	RemoteStatus              string
+	ProgressPercent           *int
+	ContentURL                string
+	Message                   string
+	FailureCode               string
+	SubmittedAt               time.Time
+	UpdatedAt                 time.Time
+	ReferenceFrames           []map[string]any
+	FrameRedesign             map[string]any
+	FinalPrompt               string
+	Storyboard                map[string]any
+	DurationSeconds           int
+	SegmentSeconds            int
+	PlannedSegments           int
+	ActiveSegment             int
+	ActualDuration            int
+	PartialSuccess            bool
+	CompletedSegments         []videoCompletedSegment
+	SuccessfulBillingItemKeys []string
+}
+
+type videoCompletedSegment struct {
+	SegmentIndex    int            `json:"segmentIndex"`
+	ArtifactKey     string         `json:"artifactKey"`
+	FileName        string         `json:"fileName,omitempty"`
+	MimeType        string         `json:"mimeType,omitempty"`
+	StorageKey      string         `json:"storageKey,omitempty"`
+	PublicURL       string         `json:"publicUrl,omitempty"`
+	SizeBytes       int64          `json:"sizeBytes,omitempty"`
+	DurationSeconds int            `json:"durationSeconds,omitempty"`
+	ReferenceFrame  map[string]any `json:"referenceFrame,omitempty"`
 }
 
 func buildVideoOutputPayload(job *domain.AIJob, state videoExecutionState, artifacts []domain.AIJobArtifact) []byte {
@@ -1420,9 +1479,48 @@ func buildVideoOutputPayload(job *domain.AIJob, state videoExecutionState, artif
 	if len(state.FrameRedesign) > 0 {
 		payload["videoFrameRedesign"] = state.FrameRedesign
 	}
+	if strings.TrimSpace(state.FinalPrompt) != "" {
+		videoPayload["generationPrompt"] = state.FinalPrompt
+		payload["generationPrompt"] = state.FinalPrompt
+	}
+	if len(state.Storyboard) > 0 {
+		payload["storyboard"] = state.Storyboard
+	}
 	if state.ProgressPercent != nil {
 		videoPayload["progressPercent"] = *state.ProgressPercent
 		payload["progressPercent"] = *state.ProgressPercent
+	}
+	if state.DurationSeconds > 0 {
+		videoPayload["durationSeconds"] = state.DurationSeconds
+		payload["durationSeconds"] = state.DurationSeconds
+	}
+	if state.SegmentSeconds > 0 {
+		videoPayload["segmentSeconds"] = state.SegmentSeconds
+		payload["segmentSeconds"] = state.SegmentSeconds
+	}
+	if state.PlannedSegments > 0 {
+		videoPayload["plannedSegments"] = state.PlannedSegments
+		payload["plannedSegments"] = state.PlannedSegments
+	}
+	if state.ActiveSegment > 0 {
+		videoPayload["activeSegment"] = state.ActiveSegment
+		payload["activeSegment"] = state.ActiveSegment
+	}
+	if state.ActualDuration > 0 {
+		videoPayload["actualDurationSeconds"] = state.ActualDuration
+		payload["actualDurationSeconds"] = state.ActualDuration
+	}
+	if state.PartialSuccess {
+		videoPayload["partialSuccess"] = true
+		payload["partialSuccess"] = true
+	}
+	if len(state.CompletedSegments) > 0 {
+		videoPayload["completedSegments"] = state.CompletedSegments
+		payload["completedSegments"] = state.CompletedSegments
+	}
+	if len(state.SuccessfulBillingItemKeys) > 0 {
+		videoPayload["successfulBillingItemKeys"] = state.SuccessfulBillingItemKeys
+		payload["successfulBillingItemKeys"] = state.SuccessfulBillingItemKeys
 	}
 	return mustJSON(payload)
 }
@@ -1497,6 +1595,19 @@ func parseVideoExecutionState(raw []byte) videoExecutionState {
 		normalizeObjectSlice(videoPayload["referenceFrames"]),
 	)
 	state.FrameRedesign = normalizeObject(payload["videoFrameRedesign"])
+	state.FinalPrompt = strings.TrimSpace(firstNonEmptyString(
+		stringValue(payload["generationPrompt"]),
+		stringValue(videoPayload["generationPrompt"]),
+	))
+	state.Storyboard = normalizeObject(payload["storyboard"])
+	state.DurationSeconds = intValue(firstNonNilValue(payload["durationSeconds"], videoPayload["durationSeconds"]))
+	state.SegmentSeconds = intValue(firstNonNilValue(payload["segmentSeconds"], videoPayload["segmentSeconds"]))
+	state.PlannedSegments = intValue(firstNonNilValue(payload["plannedSegments"], videoPayload["plannedSegments"]))
+	state.ActiveSegment = intValue(firstNonNilValue(payload["activeSegment"], videoPayload["activeSegment"]))
+	state.ActualDuration = intValue(firstNonNilValue(payload["actualDurationSeconds"], videoPayload["actualDurationSeconds"]))
+	state.PartialSuccess = boolValue(firstNonNilValue(payload["partialSuccess"], videoPayload["partialSuccess"]))
+	state.CompletedSegments = normalizeCompletedVideoSegments(firstNonNilValue(payload["completedSegments"], videoPayload["completedSegments"]))
+	state.SuccessfulBillingItemKeys = normalizeStringSlice(firstNonNilValue(payload["successfulBillingItemKeys"], videoPayload["successfulBillingItemKeys"]))
 	return state
 }
 
@@ -1530,108 +1641,387 @@ func summarizeArtifacts(items []domain.AIJobArtifact) []map[string]any {
 	return result
 }
 
-func (w *Worker) prepareSkillVideoReferenceFrames(ctx context.Context, job *domain.AIJob, req *VideoRequest, state *videoExecutionState) error {
+func (w *Worker) prepareVideoGenerationInputs(ctx context.Context, job *domain.AIJob, leaseToken string, req *VideoRequest, state *videoExecutionState) (map[string]any, error) {
 	if job == nil || req == nil || state == nil {
-		return nil
+		return nil, nil
 	}
 
 	payload := decodePayloadMap(job.InputPayload)
-	if !shouldPrepareSkillVideoReferenceFrames(job, payload) {
-		return nil
+	if videoStoryboardEnabled(payload) {
+		storyboardPayload, err := w.prepareVideoStoryboardPackage(ctx, job, leaseToken, payload, req, state)
+		if err == nil {
+			return storyboardPayload, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		storyboardPayload = buildVideoStoryboardFallbackPayload(job, req.Prompt, err)
+		state.Storyboard = storyboardPayload
+		w.app.Logger.Warn(
+			"ai worker failed to generate storyboard package, falling back to cover-only flow",
+			"job_id", job.ID,
+			"model_name", job.ModelName,
+			"error", err,
+		)
+
+		coverPayload, coverErr := w.prepareVideoCoverReferenceFrame(ctx, job, leaseToken, payload, req, state)
+		if coverErr != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			state.FrameRedesign = map[string]any{
+				"enabled": true,
+				"status":  "fallback",
+				"mode":    "cover_only",
+				"error":   strings.TrimSpace(coverErr.Error()),
+			}
+			w.app.Logger.Warn(
+				"ai worker failed to generate fallback cover frame, using original references",
+				"job_id", job.ID,
+				"model_name", job.ModelName,
+				"error", coverErr,
+			)
+			return storyboardPayload, nil
+		}
+		if len(coverPayload) > 0 {
+			storyboardPayload["cover"] = coverPayload
+		}
+		return storyboardPayload, nil
 	}
 
-	if existingRefs := mediaInputsFromVideoReferenceFrames(state.ReferenceFrames); len(existingRefs) > 0 {
-		req.ReferenceImages = existingRefs
+	if _, err := w.prepareVideoCoverReferenceFrame(ctx, job, leaseToken, payload, req, state); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		state.FrameRedesign = map[string]any{
-			"enabled":    true,
-			"status":     "reused",
-			"frameCount": len(existingRefs),
+			"enabled": true,
+			"status":  "fallback",
+			"mode":    "cover_only",
+			"error":   strings.TrimSpace(err.Error()),
 		}
-		return nil
+		w.app.Logger.Warn(
+			"ai worker failed to generate video cover frame, using original references",
+			"job_id", job.ID,
+			"model_name", job.ModelName,
+			"error", err,
+		)
+	}
+	return nil, nil
+}
+
+func videoStoryboardEnabled(payload map[string]any) bool {
+	if raw, exists := payload["storyboardEnabled"]; exists {
+		return boolValue(raw)
+	}
+	config, _ := payload["storyboardConfig"].(map[string]any)
+	return boolValue(config["enabled"])
+}
+
+func (w *Worker) prepareVideoStoryboardPackage(ctx context.Context, job *domain.AIJob, leaseToken string, payload map[string]any, req *VideoRequest, state *videoExecutionState) (map[string]any, error) {
+	if existingRefs := mediaInputsFromVideoReferenceFrames(state.ReferenceFrames); len(existingRefs) > 0 && strings.TrimSpace(state.FinalPrompt) != "" {
+		req.ReferenceImages = existingRefs
+		req.Prompt = state.FinalPrompt
+		if len(state.Storyboard) > 0 {
+			return state.Storyboard, nil
+		}
+		return map[string]any{
+			"status":          "reused",
+			"optimizedPrompt": state.FinalPrompt,
+		}, nil
 	}
 
-	sourceReferenceImages := collectSkillVideoSourceImages(payload)
+	sourceReferenceImages := append([]MediaInput(nil), req.ReferenceImages...)
 	referenceTexts := normalizeStoryboardTexts(payload["referenceTexts"])
-	coverPromptTemplate, err := w.resolveSkillVideoCoverPromptTemplate(ctx, job)
+	storyboardPrompt, storyboardModel, storyboardReferences, err := w.resolveVideoStoryboardConfig(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	frameModelName := "gemini-3-pro-image-preview"
-	imageBaseURL, imageAPIKey, err := w.resolveModelRuntimeConfig(ctx, frameModelName)
+	publishPayload, _ := payload["publishPayload"].(map[string]any)
+	seedContentText := strings.TrimSpace(stringValueFromMap(publishPayload, "contentText", "contentTemplate"))
+	publishIntroEnabled := true
+	if raw, exists := payload["publishIntroEnabled"]; exists {
+		publishIntroEnabled = boolValue(raw)
+	}
+	publishPromptTemplate := strings.TrimSpace(stringValueFromMap(payload, "publishPromptTemplate"))
+	if publishIntroEnabled && publishPromptTemplate == "" {
+		publishPromptTemplate = defaultPublishIntroPrompt
+	}
+
+	userPrompt := buildVideoStoryboardPackagePrompt(job, req.Prompt, payload, referenceTexts, sourceReferenceImages, storyboardReferences)
+	w.syncVideoRunningStage(ctx, job, leaseToken, *state, "storyboarding", "AI 正在生成封面与视频脚本", map[string]any{
+		"storyboard": map[string]any{
+			"status":    "running",
+			"modelName": storyboardModel,
+			"startedAt": time.Now().UTC().Format(time.RFC3339),
+		},
+	})
+
+	baseURL, apiKey, err := w.resolveModelRuntimeConfig(ctx, storyboardModel)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	roles := []string{"first"}
-	if len(sourceReferenceImages) > 1 {
-		roles = append(roles, "last")
-	}
-
-	inputs := make([]store.UpsertAIJobArtifactInput, 0, len(roles))
-	frameMetadata := make([]map[string]any, 0, len(roles))
-	for _, role := range roles {
-		prompt := buildSkillVideoFramePrompt(coverPromptTemplate, job, payload, req.Prompt, referenceTexts, role, len(sourceReferenceImages))
-		result, err := w.provider.GenerateImage(ctx, ImageRequest{
-			Model:           frameModelName,
-			BaseURL:         imageBaseURL,
-			APIKey:          imageAPIKey,
-			Prompt:          prompt,
-			ReferenceImages: sourceReferenceImages,
-			AspectRatio:     req.AspectRatio,
-			Resolution:      req.Resolution,
-		})
-		if err != nil {
-			return err
-		}
-		if len(result.Images) == 0 {
-			return fmt.Errorf("frame redesign did not return any image")
-		}
-
-		image := result.Images[0]
-		artifactKey := fmt.Sprintf("video-%s-frame%s", role, extensionForMIME(image.MIMEType, ".png"))
-		input, err := w.saveBinaryArtifact(ctx, job, "image", artifactKey, "apiyi", image)
-		if err != nil {
-			return err
-		}
-		inputs = append(inputs, input)
-		frameMetadata = append(frameMetadata, map[string]any{
-			"role":        role,
-			"artifactKey": input.ArtifactKey,
-			"prompt":      prompt,
-			"modelName":   frameModelName,
-		})
-	}
-
-	artifacts, err := w.app.Store.UpsertAIJobArtifacts(ctx, inputs)
+	result, err := w.provider.GenerateStoryboardPackage(ctx, StoryboardPackageRequest{
+		Model:           storyboardModel,
+		BaseURL:         baseURL,
+		APIKey:          apiKey,
+		SystemPrompt:    storyboardPrompt,
+		Prompt:          userPrompt,
+		ReferenceImages: sourceReferenceImages,
+		AspectRatio:     req.AspectRatio,
+		Resolution:      req.Resolution,
+	})
 	if err != nil {
-		return err
-	}
-	artifactByKey := make(map[string]domain.AIJobArtifact, len(artifacts))
-	for _, item := range artifacts {
-		artifactByKey[item.ArtifactKey] = item
-	}
-	for index := range frameMetadata {
-		key := strings.TrimSpace(stringValue(frameMetadata[index]["artifactKey"]))
-		if artifact, ok := artifactByKey[key]; ok {
-			frameMetadata[index]["fileName"] = stringValue(artifact.FileName)
-			frameMetadata[index]["mimeType"] = stringValue(artifact.MimeType)
-			frameMetadata[index]["publicUrl"] = stringValue(artifact.PublicURL)
-			frameMetadata[index]["storageKey"] = stringValue(artifact.StorageKey)
-			frameMetadata[index]["sizeBytes"] = artifact.SizeBytes
-		}
+		return nil, err
 	}
 
-	state.ReferenceFrames = frameMetadata
+	frameMetadata, framePayload, err := w.saveVideoReferenceFrame(ctx, job, result.Cover, "first", userPrompt, storyboardModel)
+	if err != nil {
+		return nil, err
+	}
+
+	optimizedContentText := seedContentText
+	if publishIntroEnabled && strings.TrimSpace(result.PublishIntro) != "" {
+		optimizedContentText = strings.TrimSpace(result.PublishIntro)
+	}
+	responseMode := strings.TrimSpace(stringValue(result.Metadata["responseMode"]))
+	if responseMode == "" {
+		responseMode = "json"
+	}
+
+	state.ReferenceFrames = []map[string]any{frameMetadata}
 	state.FrameRedesign = map[string]any{
 		"enabled":                   true,
 		"status":                    "generated",
-		"modelName":                 frameModelName,
-		"frameCount":                len(frameMetadata),
+		"mode":                      "storyboard_package",
+		"modelName":                 storyboardModel,
+		"frameCount":                1,
 		"sourceReferenceImageCount": len(sourceReferenceImages),
 		"sourceReferenceTextCount":  len(referenceTexts),
 	}
-	req.ReferenceImages = mediaInputsFromVideoReferenceFrames(frameMetadata)
-	return nil
+	state.FinalPrompt = strings.TrimSpace(result.GenerationPrompt)
+	state.Storyboard = map[string]any{
+		"status":                "generated",
+		"mode":                  "cover_and_script",
+		"modelName":             storyboardModel,
+		"promptTemplate":        storyboardPrompt,
+		"publishPromptTemplate": publishPromptTemplate,
+		"publishIntroEnabled":   publishIntroEnabled,
+		"optimizedPrompt":       state.FinalPrompt,
+		"optimizedContentText":  optimizedContentText,
+		"responseMode":          responseMode,
+		"referenceCount": map[string]int{
+			"images": len(sourceReferenceImages),
+			"texts":  len(referenceTexts),
+		},
+		"coverArtifactKey": stringValue(frameMetadata["artifactKey"]),
+	}
+	if framePayload != nil {
+		state.Storyboard["cover"] = framePayload
+	}
+
+	req.ReferenceImages = mediaInputsFromVideoReferenceFrames(state.ReferenceFrames)
+	req.Prompt = state.FinalPrompt
+	w.syncVideoRunningStage(ctx, job, leaseToken, *state, "storyboarding", "AI 已生成封面与视频脚本，准备提交视频生成", map[string]any{
+		"storyboard": state.Storyboard,
+	})
+	return state.Storyboard, nil
+}
+
+func (w *Worker) prepareVideoCoverReferenceFrame(ctx context.Context, job *domain.AIJob, leaseToken string, payload map[string]any, req *VideoRequest, state *videoExecutionState) (map[string]any, error) {
+	if existingRefs := mediaInputsFromVideoReferenceFrames(state.ReferenceFrames); len(existingRefs) > 0 {
+		req.ReferenceImages = existingRefs
+		if len(state.FrameRedesign) == 0 {
+			state.FrameRedesign = map[string]any{
+				"enabled":    true,
+				"status":     "reused",
+				"mode":       "cover_only",
+				"frameCount": len(existingRefs),
+			}
+		}
+		return map[string]any{
+			"status":     "reused",
+			"frameCount": len(existingRefs),
+		}, nil
+	}
+
+	sourceReferenceImages := append([]MediaInput(nil), req.ReferenceImages...)
+	referenceTexts := normalizeStoryboardTexts(payload["referenceTexts"])
+	coverPromptTemplate, err := w.resolveSkillVideoCoverPromptTemplate(ctx, job)
+	if err != nil {
+		return nil, err
+	}
+	frameModelName, imageBaseURL, imageAPIKey, err := w.resolveVideoCoverModelRuntimeConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	w.syncVideoRunningStage(ctx, job, leaseToken, *state, "covering", "AI 正在生成封面首帧", nil)
+
+	prompt := buildSkillVideoFramePrompt(coverPromptTemplate, job, payload, req.Prompt, referenceTexts, "first", len(sourceReferenceImages))
+	result, err := w.provider.GenerateImage(ctx, ImageRequest{
+		Model:           frameModelName,
+		BaseURL:         imageBaseURL,
+		APIKey:          imageAPIKey,
+		Prompt:          prompt,
+		ReferenceImages: sourceReferenceImages,
+		AspectRatio:     req.AspectRatio,
+		Resolution:      req.Resolution,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(result.Images) == 0 {
+		return nil, fmt.Errorf("cover generation did not return any image")
+	}
+
+	frameMetadata, framePayload, err := w.saveVideoReferenceFrame(ctx, job, result.Images[0], "first", prompt, frameModelName)
+	if err != nil {
+		return nil, err
+	}
+
+	state.ReferenceFrames = []map[string]any{frameMetadata}
+	state.FrameRedesign = map[string]any{
+		"enabled":                   true,
+		"status":                    "generated",
+		"mode":                      "cover_only",
+		"modelName":                 frameModelName,
+		"frameCount":                1,
+		"sourceReferenceImageCount": len(sourceReferenceImages),
+		"sourceReferenceTextCount":  len(referenceTexts),
+	}
+	req.ReferenceImages = mediaInputsFromVideoReferenceFrames(state.ReferenceFrames)
+	w.syncVideoRunningStage(ctx, job, leaseToken, *state, "covering", "AI 已生成封面首帧，准备提交视频生成", nil)
+	return framePayload, nil
+}
+
+func (w *Worker) syncVideoRunningStage(ctx context.Context, job *domain.AIJob, leaseToken string, state videoExecutionState, stage string, message string, extras map[string]any) {
+	if job == nil {
+		return
+	}
+	outputPayload := mergeMetadataIntoPayload(buildVideoOutputPayload(job, state, nil), "stage", strings.TrimSpace(stage))
+	for key, value := range extras {
+		outputPayload = mergeMetadataIntoPayload(outputPayload, key, value)
+	}
+	if _, err := w.syncRunningState(ctx, job, leaseToken, message, outputPayload); err != nil {
+		w.app.Logger.Warn("ai worker failed to sync video stage", "job_id", job.ID, "stage", stage, "error", err)
+	}
+}
+
+func (w *Worker) saveVideoReferenceFrame(ctx context.Context, job *domain.AIJob, image BinaryArtifact, role string, prompt string, modelName string) (map[string]any, map[string]any, error) {
+	artifactKey := fmt.Sprintf("video-%s-frame%s", strings.TrimSpace(role), extensionForMIME(image.MIMEType, ".png"))
+	input, err := w.saveBinaryArtifact(ctx, job, "image", artifactKey, "apiyi", image)
+	if err != nil {
+		return nil, nil, err
+	}
+	artifacts, err := w.app.Store.UpsertAIJobArtifacts(ctx, []store.UpsertAIJobArtifactInput{input})
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(artifacts) == 0 {
+		return nil, nil, fmt.Errorf("reference frame artifact was not persisted")
+	}
+	artifact := artifacts[0]
+	frameMetadata := map[string]any{
+		"role":        role,
+		"artifactKey": artifact.ArtifactKey,
+		"prompt":      prompt,
+		"modelName":   modelName,
+		"fileName":    stringValue(artifact.FileName),
+		"mimeType":    stringValue(artifact.MimeType),
+		"publicUrl":   stringValue(artifact.PublicURL),
+		"storageKey":  stringValue(artifact.StorageKey),
+		"sizeBytes":   artifact.SizeBytes,
+	}
+	framePayload := map[string]any{
+		"role":        role,
+		"artifactKey": artifact.ArtifactKey,
+		"fileName":    stringValue(artifact.FileName),
+		"mimeType":    stringValue(artifact.MimeType),
+		"publicUrl":   stringValue(artifact.PublicURL),
+	}
+	return frameMetadata, framePayload, nil
+}
+
+func (w *Worker) resolveVideoStoryboardConfig(ctx context.Context) (string, string, []map[string]any, error) {
+	prompt := strings.TrimSpace(DefaultVideoStoryboardSystemPrompt)
+	references := make([]map[string]any, 0)
+	fallbackModel := strings.TrimSpace(w.app.Config.DefaultChatModel)
+
+	settings, err := w.app.Store.GetAdminSystemSettings(ctx)
+	if err != nil {
+		return "", "", nil, err
+	}
+	if settings != nil {
+		if value := strings.TrimSpace(settings.StoryboardPrompt); value != "" {
+			prompt = value
+		}
+		if value := strings.TrimSpace(settings.DefaultChatModel); value != "" {
+			fallbackModel = value
+		}
+		if len(settings.StoryboardReferences) > 0 {
+			var parsed []map[string]any
+			if err := json.Unmarshal(settings.StoryboardReferences, &parsed); err == nil {
+				references = parsed
+			}
+		}
+	}
+
+	candidates := nonEmpty([]string{
+		func() string {
+			if settings == nil {
+				return ""
+			}
+			return strings.TrimSpace(settings.StoryboardModel)
+		}(),
+		strings.TrimSpace(DefaultVideoStoryboardModelName),
+		fallbackModel,
+	})
+	for _, candidate := range candidates {
+		model, modelErr := w.app.Store.GetAIModelByName(ctx, candidate)
+		if modelErr != nil {
+			return "", "", nil, modelErr
+		}
+		if SupportsStoryboardPackageModel(model) {
+			return prompt, candidate, references, nil
+		}
+	}
+	return "", "", nil, fmt.Errorf("storyboard model is not configured or does not support cover+script generation")
+}
+
+func (w *Worker) resolveVideoCoverModelRuntimeConfig(ctx context.Context) (string, string, string, error) {
+	candidates := nonEmpty([]string{
+		strings.TrimSpace(DefaultVideoCoverModelName),
+		strings.TrimSpace(w.app.Config.DefaultImageModel),
+	})
+	for _, candidate := range candidates {
+		model, err := w.app.Store.GetAIModelByName(ctx, candidate)
+		if err != nil {
+			return "", "", "", err
+		}
+		if model == nil || !model.IsEnabled || strings.TrimSpace(model.Category) != "image" {
+			continue
+		}
+		baseURL, apiKey := ResolveModelRuntimeConfig(w.app.Config, model)
+		if strings.TrimSpace(baseURL) == "" {
+			continue
+		}
+		return candidate, baseURL, apiKey, nil
+	}
+	return "", "", "", fmt.Errorf("video cover model is not configured")
+}
+
+func buildVideoStoryboardFallbackPayload(job *domain.AIJob, originalPrompt string, err error) map[string]any {
+	payload := decodePayloadMap(job.InputPayload)
+	publishPayload, _ := payload["publishPayload"].(map[string]any)
+	seedContentText := strings.TrimSpace(stringValueFromMap(publishPayload, "contentText", "contentTemplate"))
+	return map[string]any{
+		"status":               "fallback",
+		"mode":                 "cover_only",
+		"optimizedPrompt":      strings.TrimSpace(originalPrompt),
+		"optimizedContentText": seedContentText,
+		"error":                strings.TrimSpace(errorString(err)),
+	}
 }
 
 func buildStoryboardPrompt(job *domain.AIJob, originalPrompt string, payload map[string]any, referenceTexts []map[string]string, referenceImages []map[string]string, references any) string {
@@ -1734,6 +2124,98 @@ func buildStoryboardPrompt(job *domain.AIJob, originalPrompt string, payload map
 	return builder.String()
 }
 
+func buildVideoStoryboardPackagePrompt(job *domain.AIJob, originalPrompt string, payload map[string]any, referenceTexts []map[string]string, referenceImages []MediaInput, references []map[string]any) string {
+	var builder strings.Builder
+	publishIntroEnabled := true
+	if raw, exists := payload["publishIntroEnabled"]; exists {
+		publishIntroEnabled = boolValue(raw)
+	}
+	builder.WriteString("请基于当前业务提示词和参考素材，同时完成视频首帧封面设计与视频脚本优化。\n")
+	builder.WriteString("任务类型: video\n")
+	if source := strings.TrimSpace(job.Source); source != "" {
+		builder.WriteString("任务来源: ")
+		builder.WriteString(source)
+		builder.WriteString("\n")
+	}
+	if name := strings.TrimSpace(stringValueFromMap(payload, "skillName")); name != "" {
+		builder.WriteString("技能名称: ")
+		builder.WriteString(name)
+		builder.WriteString("\n")
+	}
+	if desc := strings.TrimSpace(stringValueFromMap(payload, "skillDescription")); desc != "" {
+		builder.WriteString("技能简介: ")
+		builder.WriteString(desc)
+		builder.WriteString("\n")
+	}
+	builder.WriteString("业务提示词: ")
+	builder.WriteString(strings.TrimSpace(originalPrompt))
+	builder.WriteString("\n")
+	if publishIntroEnabled {
+		if publishPrompt := strings.TrimSpace(stringValueFromMap(payload, "publishPromptTemplate")); publishPrompt != "" {
+			builder.WriteString("发布简介规则: ")
+			builder.WriteString(publishPrompt)
+			builder.WriteString("\n")
+		}
+		if publishPayload, ok := payload["publishPayload"].(map[string]any); ok {
+			if baseIntro := strings.TrimSpace(stringValueFromMap(publishPayload, "contentText", "contentTemplate")); baseIntro != "" {
+				builder.WriteString("当前基础发布简介: ")
+				builder.WriteString(baseIntro)
+				builder.WriteString("\n")
+			}
+		}
+	}
+	if tags := normalizeStringSlice(payload["skillTags"]); len(tags) > 0 {
+		builder.WriteString("标签: ")
+		builder.WriteString(strings.Join(tags, "、"))
+		builder.WriteString("\n")
+	}
+	builder.WriteString("参考图片数量: ")
+	builder.WriteString(fmt.Sprintf("%d", len(referenceImages)))
+	builder.WriteString("\n")
+	if len(referenceImages) > 0 {
+		builder.WriteString("参考图片文件:\n")
+		for _, item := range referenceImages {
+			builder.WriteString("- ")
+			builder.WriteString(strings.TrimSpace(item.FileName))
+			builder.WriteString("\n")
+		}
+	}
+	if len(referenceTexts) > 0 {
+		builder.WriteString("\n参考文本:\n")
+		for _, item := range referenceTexts {
+			builder.WriteString("- ")
+			builder.WriteString(item["fileName"])
+			builder.WriteString(": ")
+			builder.WriteString(item["content"])
+			builder.WriteString("\n")
+		}
+	}
+	if len(references) > 0 {
+		if raw, err := json.Marshal(references); err == nil && len(raw) > 0 {
+			builder.WriteString("\n管理员补充参考:\n")
+			builder.Write(raw)
+			builder.WriteString("\n")
+		}
+	}
+	builder.WriteString(`
+
+输出要求:
+1. 你必须同时生成一张可直接用作视频首帧封面的图片。
+2. 你还必须输出一个 JSON 对象，不要使用 Markdown 代码块，不要补充解释。
+3. JSON 字段固定为:
+   - "generationPrompt": 给视频模型继续执行的最终脚本。
+   - "publishIntro": 给第三方平台发布时使用的简介；如果当前任务不需要简介，也请返回空字符串。
+4. 封面图片和 generationPrompt 必须使用同一主体、同一场景逻辑、同一卖点与同一风格，不能互相矛盾。
+5. generationPrompt 需要保留真实产品、镜头节奏、动作与场景变化，不要输出泛泛描述。
+6. 封面必须保留真实产品特征，不要替换商品，不要只做纯文字海报。
+`)
+	if !publishIntroEnabled {
+		builder.WriteString(`7. publishIntro 固定返回空字符串，不要改写发布简介。
+`)
+	}
+	return builder.String()
+}
+
 func parseStoryboardOptimizationResponse(raw string, fallbackPrompt string, fallbackContentText string) (string, string, string) {
 	cleaned := strings.TrimSpace(raw)
 	if cleaned == "" {
@@ -1810,6 +2292,44 @@ func normalizeStringSlice(raw any) []string {
 		if trimmed != "" {
 			result = append(result, trimmed)
 		}
+	}
+	return result
+}
+
+func firstNonNilValue(values ...any) any {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func normalizeCompletedVideoSegments(raw any) []videoCompletedSegment {
+	items, ok := raw.([]any)
+	if !ok {
+		if typed, ok := raw.([]videoCompletedSegment); ok {
+			return typed
+		}
+		return nil
+	}
+	result := make([]videoCompletedSegment, 0, len(items))
+	for _, item := range items {
+		typed, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		result = append(result, videoCompletedSegment{
+			SegmentIndex:    intValue(typed["segmentIndex"]),
+			ArtifactKey:     strings.TrimSpace(stringValue(typed["artifactKey"])),
+			FileName:        strings.TrimSpace(stringValue(typed["fileName"])),
+			MimeType:        strings.TrimSpace(stringValue(typed["mimeType"])),
+			StorageKey:      strings.TrimSpace(stringValue(typed["storageKey"])),
+			PublicURL:       strings.TrimSpace(stringValue(typed["publicUrl"])),
+			SizeBytes:       int64(intValue(typed["sizeBytes"])),
+			DurationSeconds: intValue(typed["durationSeconds"]),
+			ReferenceFrame:  normalizeObject(typed["referenceFrame"]),
+		})
 	}
 	return result
 }
@@ -1979,18 +2499,8 @@ func normalizeStoryboardImages(raw any) []map[string]string {
 }
 
 func shouldPrepareSkillVideoReferenceFrames(job *domain.AIJob, payload map[string]any) bool {
-	if job == nil || !strings.EqualFold(strings.TrimSpace(job.JobType), "video") {
-		return false
-	}
-	source := strings.TrimSpace(job.Source)
-	switch source {
-	case "account_skill_binding":
-		return true
-	case "openclaw_skill":
-		return strings.TrimSpace(stringValue(job.SkillID)) != ""
-	default:
-		return false
-	}
+	_ = payload
+	return job != nil && strings.EqualFold(strings.TrimSpace(job.JobType), "video")
 }
 
 func collectSkillVideoSourceImages(payload map[string]any) []MediaInput {

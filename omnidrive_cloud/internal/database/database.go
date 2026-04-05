@@ -12,7 +12,8 @@ import (
 )
 
 type Database struct {
-	Pool *pgxpool.Pool
+	Pool   *pgxpool.Pool
+	Logger *slog.Logger
 }
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Database, error) {
@@ -34,7 +35,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Database
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
 
-	db := &Database{Pool: pool}
+	db := &Database{Pool: pool, Logger: logger}
 	if cfg.AutoCreateSchema {
 		if err := db.EnsureSchema(ctx); err != nil {
 			pool.Close()

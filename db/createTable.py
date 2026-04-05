@@ -1,9 +1,8 @@
-import sqlite3
-import json
 import os
+import sqlite3
 
 # 数据库文件路径（如果不存在会自动创建）
-db_file = './database.db'
+db_file = os.environ.get('OMNIBULL_DB_PATH', './database.db')
 
 # 如果数据库已存在，则删除旧的表（可选）
 # if os.path.exists(db_file):
@@ -62,6 +61,36 @@ cursor.execute('''CREATE TABLE IF NOT EXISTS publish_tasks (
     finished_at DATETIME
 )
 ''')
+
+cursor.execute('''CREATE TABLE IF NOT EXISTS platform_capabilities (
+    platform_type INTEGER PRIMARY KEY,
+    slug TEXT NOT NULL UNIQUE,
+    label TEXT NOT NULL,
+    display_order INTEGER NOT NULL DEFAULT 0,
+    visible INTEGER NOT NULL DEFAULT 1,
+    login_enabled INTEGER NOT NULL DEFAULT 1,
+    publish_enabled INTEGER NOT NULL DEFAULT 1,
+    disabled_reason TEXT,
+    source_revision TEXT,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+''')
+
+cursor.executemany(
+    '''
+    INSERT OR IGNORE INTO platform_capabilities (
+        platform_type, slug, label, display_order, visible, login_enabled,
+        publish_enabled, disabled_reason, source_revision
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''',
+    [
+        (3, 'douyin', '抖音', 10, 1, 1, 1, None, None),
+        (4, 'kuaishou', '快手', 20, 1, 1, 1, None, None),
+        (2, 'wechat_channel', '视频号', 30, 1, 1, 1, None, None),
+        (1, 'xiaohongshu', '小红书', 40, 1, 0, 0, '本期未开放', None),
+    ]
+)
 
 cursor.execute('''CREATE TABLE IF NOT EXISTS omnidrive_ai_tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

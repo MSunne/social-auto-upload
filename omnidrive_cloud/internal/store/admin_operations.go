@@ -96,6 +96,7 @@ func scanAdminUserRow(scan scanFn) (*domain.AdminUserRow, error) {
 	if err := scan(
 		&item.User.ID,
 		&item.User.Email,
+		&item.User.Phone,
 		&item.User.Name,
 		&item.User.IsActive,
 		&notes,
@@ -125,6 +126,8 @@ func scanAdminDeviceRow(scan scanFn) (*domain.AdminDeviceRow, error) {
 	var chatModel *string
 	var imageModel *string
 	var videoModel *string
+	var platformCapabilities []byte
+	var platformCapabilitiesRevision *string
 	var notes *string
 	var agentKey *string
 	var runtimePayload []byte
@@ -157,6 +160,8 @@ func scanAdminDeviceRow(scan scanFn) (*domain.AdminDeviceRow, error) {
 		&chatModel,
 		&imageModel,
 		&videoModel,
+		&platformCapabilities,
+		&platformCapabilitiesRevision,
 		&item.Device.IsEnabled,
 		&runtimePayload,
 		&lastSeenAt,
@@ -204,6 +209,10 @@ func scanAdminDeviceRow(scan scanFn) (*domain.AdminDeviceRow, error) {
 	item.Device.DefaultChatModel = chatModel
 	item.Device.DefaultImageModel = imageModel
 	item.Device.DefaultVideoModel = videoModel
+	if len(platformCapabilities) > 0 {
+		_ = json.Unmarshal(platformCapabilities, &item.Device.PlatformCapabilities)
+	}
+	item.Device.PlatformCapabilitiesRevision = platformCapabilitiesRevision
 	item.Device.RuntimePayload = bytesOrNil(runtimePayload)
 	item.Device.LastSeenAt = lastSeenAt
 	item.Device.Notes = notes
@@ -611,6 +620,7 @@ func (s *Store) GetAdminUserByID(ctx context.Context, userID string) (*domain.Ad
 			SELECT
 				u.id,
 				COALESCE(u.email, ''),
+				COALESCE(u.phone, ''),
 				u.name,
 				u.is_active,
 				u.notes,

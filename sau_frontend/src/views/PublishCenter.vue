@@ -290,8 +290,9 @@
                 :key="platform.key"
                 :label="platform.key"
                 class="platform-radio"
+                :disabled="!platform.publishEnabled"
               >
-                {{ platform.name }}
+                {{ platform.name }}<span v-if="!platform.publishEnabled">（{{ platform.disabledReason || '暂未开放' }}）</span>
               </el-radio>
             </el-radio-group>
           </div>
@@ -491,11 +492,12 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { Upload, Plus, Close, Folder } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useAccountStore } from '@/stores/account'
 import { useAppStore } from '@/stores/app'
+import { accountApi } from '@/api/account'
 import { materialApi } from '@/api/material'
 import { http } from '@/utils/request'
 
@@ -529,13 +531,12 @@ const batchPublishing = ref(false)
 const batchPublishMessage = ref('')
 const batchPublishType = ref('info')
 
-// 平台列表 - 对应后端type字段
-const platforms = [
-  { key: 3, name: '抖音' },
-  { key: 4, name: '快手' },
-  { key: 2, name: '视频号' },
-  { key: 1, name: '小红书' }
-]
+const platforms = computed(() => accountStore.publishPlatforms.map(item => ({
+  key: item.platformType,
+  name: item.label,
+  publishEnabled: item.publishEnabled,
+  disabledReason: item.disabledReason || '',
+})))
 
 const defaultTabInit = {
   name: 'tab1',
@@ -543,7 +544,7 @@ const defaultTabInit = {
   fileList: [], // 后端返回的文件名列表
   displayFileList: [], // 用于显示的文件列表
   selectedAccounts: [], // 选中的账号ID列表
-  selectedPlatform: 1, // 选中的平台（单选）
+  selectedPlatform: 3, // 选中的平台（单选）
   title: '',
   productLink: '', // 商品链接
   productTitle: '', // 商品名称
@@ -581,16 +582,18 @@ const currentTab = ref(null)
 // 获取账号状态管理
 const accountStore = useAccountStore()
 
+const ensureTabPlatformSelection = (tab) => {
+  const capability = accountStore.getPlatformCapability(tab.selectedPlatform)
+  if (capability && capability.publishEnabled) return
+  tab.selectedPlatform = accountStore.defaultPublishPlatformType || 3
+}
+
 // 根据选择的平台获取可用账号列表
 const availableAccounts = computed(() => {
-  const platformMap = {
-    3: '抖音',
-    2: '视频号',
-    1: '小红书',
-    4: '快手'
-  }
-  const currentPlatform = currentTab.value ? platformMap[currentTab.value.selectedPlatform] : null
-  return currentPlatform ? accountStore.accounts.filter(acc => acc.platform === currentPlatform) : []
+  const selectedType = Number(currentTab.value?.selectedPlatform || 0)
+  return selectedType
+    ? accountStore.accounts.filter(acc => Number(acc.type) === selectedType)
+    : []
 })
 
 // 话题相关状态
@@ -610,6 +613,7 @@ const addTab = () => {
   const newTab = makeNewTab()
   newTab.name = `tab${tabCounter}`
   newTab.label = `发布${tabCounter}`
+  ensureTabPlatformSelection(newTab)
   tabs.push(newTab)
   activeTab.value = newTab.name
 }
@@ -783,6 +787,13 @@ const confirmPublish = async (tab) => {
     tab.publishing = false
     throw new Error('请选择发布平台')
   }
+  const capability = accountStore.getPlatformCapability(tab.selectedPlatform)
+  if (capability && !capability.publishEnabled) {
+    const message = capability.disabledReason || '当前平台发布暂未开放'
+    ElMessage.error(message)
+    tab.publishing = false
+    throw new Error(message)
+  }
   if (tab.selectedAccounts.length === 0) {
     ElMessage.error('请选择发布账号')
     tab.publishing = false
@@ -835,6 +846,28 @@ const confirmPublish = async (tab) => {
   }
 }
 
+const fetchPlatformCapabilities = async () => {
+  try {
+    const res = await accountApi.getPlatforms()
+    if (res?.data) {
+      accountStore.setPlatforms(res.data)
+      tabs.forEach(ensureTabPlatformSelection)
+    }
+  } catch (error) {
+    console.error('获取平台能力失败:', error)
+  }
+}
+
+const fetchAccountsIfNeeded = async () => {
+  if (accountStore.accounts.length > 0) return
+  try {
+    const res = await accountApi.getAccounts()
+    if (res?.data) accountStore.setAccounts(res.data)
+  } catch (error) {
+    console.error('获取账号失败:', error)
+  }
+}
+
 // 显示上传选项
 const showUploadOptions = (tab) => {
   currentUploadTab.value = tab
@@ -871,6 +904,11 @@ const selectMaterialLibrary = async () => {
   selectedMaterials.value = []
   materialLibraryVisible.value = true
 }
+
+onMounted(async () => {
+  await fetchPlatformCapabilities()
+  await fetchAccountsIfNeeded()
+})
 
 // 确认素材选择
 const confirmMaterialSelection = () => {

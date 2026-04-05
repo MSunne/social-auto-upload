@@ -39,6 +39,7 @@ pick_python_bin() {
   local configured="${SAU_PYTHON_BIN:-}"
   local candidates=(
     "${configured}"
+    "/opt/omnibull/venv/bin/python"
     "${ROOT_DIR}/.venv/bin/python"
     "${ROOT_DIR}/venv/bin/python"
     "${ROOT_DIR}/env/bin/python"
@@ -60,6 +61,7 @@ pick_npm_bin() {
   local configured="${SAU_NPM_BIN:-}"
   local candidates=(
     "${configured}"
+    "/opt/node-v22/bin/npm"
     "${HOME}/.local/node-current/bin/npm"
     "$(command -v npm || true)"
   )

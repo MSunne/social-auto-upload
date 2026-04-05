@@ -212,6 +212,21 @@ class OmniDriveBridgeTests(unittest.TestCase):
         self.assertEqual(payload["deviceFingerprint"], "fingerprint-1")
         self.assertEqual(payload["runtimePayload"]["deviceFingerprint"], "fingerprint-1")
 
+    def test_request_waits_when_loopback_omnidrive_api_is_unavailable(self):
+        bridge = self.make_bridge()
+        bridge.cloud_base_url = "http://127.0.0.1:8410"
+
+        with mock.patch.object(agent_module.socket, "create_connection", side_effect=OSError("connection refused")):
+            with mock.patch.object(bridge._session, "request") as mock_request:
+                with self.assertRaises(agent_module.OmniDriveEndpointUnavailable):
+                    bridge._request("POST", "/api/v1/agent/heartbeat", payload={})
+
+        mock_request.assert_not_called()
+        status = bridge.status()
+        self.assertFalse(status["cloudReachable"])
+        self.assertIsNotNone(status["cloudRetryAt"])
+        self.assertIn("127.0.0.1:8410", status["lastError"])
+
     def test_sync_skills_cleans_stale_assets_and_records_local_paths(self):
         bridge = self.make_bridge()
         skill_assets_dir = bridge._skill_cache_dir / "skill-1" / "assets"

@@ -11,21 +11,17 @@ import (
 func TestShouldPrepareSkillVideoReferenceFrames(t *testing.T) {
 	videoJob := &domain.AIJob{JobType: "video", Source: "account_skill_binding"}
 	if !shouldPrepareSkillVideoReferenceFrames(videoJob, map[string]any{}) {
-		t.Fatalf("expected account skill video job to enable frame redesign")
+		t.Fatalf("expected video job to enable cover preparation")
 	}
 
 	openClawSkillJob := &domain.AIJob{JobType: "video", Source: "openclaw_skill"}
-	if shouldPrepareSkillVideoReferenceFrames(openClawSkillJob, map[string]any{}) {
-		t.Fatalf("expected openclaw video job without skillId to skip frame redesign")
-	}
-	openClawSkillJob.SkillID = stringPtr("skill-1")
 	if !shouldPrepareSkillVideoReferenceFrames(openClawSkillJob, map[string]any{}) {
-		t.Fatalf("expected openclaw video job with skillId to enable frame redesign")
+		t.Fatalf("expected direct openclaw video job to enable cover preparation")
 	}
 
 	imageJob := &domain.AIJob{JobType: "image", Source: "account_skill_binding"}
 	if shouldPrepareSkillVideoReferenceFrames(imageJob, map[string]any{}) {
-		t.Fatalf("expected non-video job to skip frame redesign")
+		t.Fatalf("expected non-video job to skip cover preparation")
 	}
 }
 

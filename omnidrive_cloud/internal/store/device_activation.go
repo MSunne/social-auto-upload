@@ -214,10 +214,7 @@ func (s *Store) ClaimDeviceWithActivation(ctx context.Context, activationCode st
 		    updated_at = NOW()
 		WHERE id = $1
 		  AND (owner_user_id IS NULL OR owner_user_id = $2)
-		RETURNING id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
-		          default_reasoning_model, default_chat_model, default_image_model, default_video_model,
-		          is_enabled, runtime_payload, last_seen_at, notes,
-		          created_at, updated_at
+		RETURNING `+deviceSelectColumns+`
 	`, record.DeviceID, ownerUserID)
 
 	device, err := scanDevice(row)

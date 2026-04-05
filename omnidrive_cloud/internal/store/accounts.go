@@ -248,32 +248,11 @@ func (s *Store) DeleteOwnedAccount(ctx context.Context, accountID string, ownerU
 		return false, err
 	}
 
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM publish_tasks
-		WHERE device_id = $1
-		  AND platform = $2
-		  AND account_name = $3
-	`, deviceID, platform, accountName); err != nil {
-		return false, err
-	}
-
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM login_sessions
-		WHERE device_id = $1
-		  AND platform = $2
-		  AND account_name = $3
-	`, deviceID, platform, accountName); err != nil {
-		return false, err
-	}
-
-	commandTag, err := tx.Exec(ctx, `
-		DELETE FROM platform_accounts
-		WHERE id = $1
-	`, accountID)
+	deleted, err := s.deletePlatformAccountTargetTx(ctx, tx, deviceID, platform, accountName)
 	if err != nil {
 		return false, err
 	}
-	if commandTag.RowsAffected() == 0 {
+	if !deleted {
 		return false, nil
 	}
 
@@ -281,6 +260,66 @@ func (s *Store) DeleteOwnedAccount(ctx context.Context, accountID string, ownerU
 		return false, err
 	}
 	return true, nil
+}
+
+func (s *Store) DeletePlatformAccountByTarget(ctx context.Context, deviceID string, platform string, accountName string) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+
+	deleted, err := s.deletePlatformAccountTargetTx(ctx, tx, deviceID, platform, accountName)
+	if err != nil {
+		return false, err
+	}
+	if !deleted {
+		return false, nil
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Store) deletePlatformAccountTargetTx(ctx context.Context, tx pgx.Tx, deviceID string, platform string, accountName string) (bool, error) {
+	var deletedCount int64
+
+	commandTag, err := tx.Exec(ctx, `
+		DELETE FROM publish_tasks
+		WHERE device_id = $1
+		  AND platform = $2
+		  AND account_name = $3
+	`, deviceID, platform, accountName)
+	if err != nil {
+		return false, err
+	}
+	deletedCount += commandTag.RowsAffected()
+
+	commandTag, err = tx.Exec(ctx, `
+		DELETE FROM login_sessions
+		WHERE device_id = $1
+		  AND platform = $2
+		  AND account_name = $3
+	`, deviceID, platform, accountName)
+	if err != nil {
+		return false, err
+	}
+	deletedCount += commandTag.RowsAffected()
+
+	commandTag, err = tx.Exec(ctx, `
+		DELETE FROM platform_accounts
+		WHERE device_id = $1
+		  AND platform = $2
+		  AND account_name = $3
+	`, deviceID, platform, accountName)
+	if err != nil {
+		return false, err
+	}
+	deletedCount += commandTag.RowsAffected()
+
+	return deletedCount > 0, nil
 }
 
 func (s *Store) ListRetiredPlatformAccountsByDevice(ctx context.Context, deviceID string) ([]domain.AgentRetiredAccountItem, error) {

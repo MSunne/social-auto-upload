@@ -37,7 +37,6 @@ from utils.account_storage import (
     update_account_runtime_status,
 )
 from utils.cloud_agent import CloudAgent
-from utils.cloud_qr_bridge import CloudLoginBridge
 from utils.cloud_sync import CloudSyncClient
 from utils.device_identity import load_device_identity
 from utils.device_meta import get_device_code
@@ -50,6 +49,16 @@ from utils.materials import (
 )
 from utils.omnidrive_agent import OmniDriveBridge
 from utils.omnidrive_ai_task_manager import OmniDriveAITaskManager
+from utils.platform_capabilities import (
+    PLATFORM_LABELS,
+    PLATFORM_LABELS_STR,
+    cache_platform_capabilities_from_session_payload,
+    ensure_platform_capability_schema,
+    ensure_platform_operation_enabled,
+    format_platform_unavailable_message,
+    get_platform_capability,
+    get_visible_platform_capabilities,
+)
 from utils.publish_task_manager import PublishTaskManager
 from utils.runtime_health import build_runtime_health, log_runtime_health
 from utils.log import (
@@ -65,12 +74,7 @@ from utils.log import (
 active_queues = {}
 app = Flask(__name__)
 ensure_account_storage_schema()
-PLATFORM_LABELS = {
-    '1': '小红书',
-    '2': '视频号',
-    '3': '抖音',
-    '4': '快手'
-}
+ensure_platform_capability_schema()
 NOISY_REQUEST_INTERVALS = {
     '/cloudAgentStatus': 20,
     '/omnidriveAgentStatus': 20,
@@ -388,7 +392,7 @@ def serialize_account_detail(row, status=None):
     return {
         "id": row['id'],
         "platformType": platform_type,
-        "platformName": PLATFORM_LABELS.get(str(platform_type), "未知平台"),
+        "platformName": PLATFORM_LABELS.get(platform_type, "未知平台"),
         "filePath": row['filePath'],
         "cookieFilePath": row['filePath'],
         "cookieAbsolutePath": str(cookie_path.resolve()),
@@ -726,6 +730,29 @@ def get_omnidrive_agent_config():
     }
 
 
+def _sync_platform_capabilities_from_session_payload(payload):
+    try:
+        return cache_platform_capabilities_from_session_payload(payload)
+    except Exception as exc:
+        app_logger.warning("sync platform capabilities from OmniDrive session failed error={}", exc)
+        return get_visible_platform_capabilities()
+
+
+def refresh_platform_capabilities_from_omnidrive():
+    if not OMNIDRIVE_AGENT_ENABLED or not OMNIDRIVE_BASE_URL or not OMNIDRIVE_AGENT_KEY:
+        return get_visible_platform_capabilities()
+
+    try:
+        status_code, payload = fetch_omnidrive_device_session()
+    except Exception as exc:
+        app_logger.warning("refresh platform capabilities from OmniDrive failed error={}", exc)
+        return get_visible_platform_capabilities()
+
+    if status_code >= 400:
+        return get_visible_platform_capabilities()
+    return _sync_platform_capabilities_from_session_payload(payload)
+
+
 def fetch_omnidrive_device_session():
     if not OMNIDRIVE_BASE_URL:
         raise RuntimeError("OMNIDRIVE_BASE_URL 未配置")
@@ -748,6 +775,7 @@ def fetch_omnidrive_device_session():
             if isinstance(parsed, dict):
                 parsed.setdefault("apiBaseUrl", OMNIDRIVE_BASE_URL)
                 parsed.setdefault("cloudUrl", parsed.get("apiBaseUrl") or OMNIDRIVE_BASE_URL)
+                _sync_platform_capabilities_from_session_payload(parsed)
             return response.status, parsed
     except urllib_error.HTTPError as exc:
         payload = exc.read().decode("utf-8")
@@ -2455,6 +2483,23 @@ def getAccounts():
         }), 500
 
 
+@app.route("/api/platforms", methods=["GET"])
+def get_platforms():
+    try:
+        platform_items = refresh_platform_capabilities_from_omnidrive()
+        return jsonify({
+            "code": 200,
+            "msg": "success",
+            "data": platform_items,
+        }), 200
+    except Exception as exc:
+        return jsonify({
+            "code": 500,
+            "msg": f"获取平台能力失败: {exc}",
+            "data": None,
+        }), 500
+
+
 @app.route("/getValidAccounts",methods=['GET'])
 async def getValidAccounts():
     with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
@@ -2619,7 +2664,7 @@ def delete_account():
                 try:
                     omnidrive_agent._request("POST", "/api/v1/agent/accounts/sync", payload={
                         "deviceCode": omnidrive_agent.device_code,
-                        "platform": PLATFORM_LABELS.get(str(record["type"]), ""),
+                        "platform": PLATFORM_LABELS.get(int(record["type"] or 0), ""),
                         "accountName": record["userName"],
                         "status": "deleted",
                         "lastMessage": "Account explicitly deleted by user locally"
@@ -2644,10 +2689,18 @@ def delete_account():
 # SSE 登录接口
 @app.route('/login')
 def login():
-    # 1 小红书 2 视频号 3 抖音 4 快手
     type = request.args.get('type')
-    # 账号名
-    id = request.args.get('id')
+    id = str(request.args.get('id') or '').strip()
+
+    if not type:
+        return jsonify({"code": 400, "msg": "缺少平台类型", "data": None}), 400
+    if not id:
+        return jsonify({"code": 400, "msg": "账号名称不能为空", "data": None}), 400
+
+    try:
+        capability = ensure_platform_operation_enabled(type, "login")
+    except ValueError as exc:
+        return jsonify({"code": 400, "msg": str(exc), "data": None}), 400
 
     # 模拟一个用于异步通信的队列
     status_queue = Queue()
@@ -2664,76 +2717,8 @@ def login():
     response.headers['X-Accel-Buffering'] = 'no'  # 关键：禁用 Nginx 缓冲
     response.headers['Content-Type'] = 'text/event-stream'
     response.headers['Connection'] = 'keep-alive'
+    response.headers['X-OmniBull-Platform'] = capability["label"]
     return response
-
-
-@app.route('/remoteLogin', methods=['GET', 'POST'])
-def remote_login():
-    data = get_request_payload()
-    type = str(data.get('type', '')).strip()
-    account_name = str(data.get('id') or data.get('accountName') or '').strip()
-    cloud_url = str(data.get('cloudUrl') or '').strip()
-    device_name = str(data.get('deviceName') or '').strip() or None
-    platform_name = PLATFORM_LABELS.get(type)
-
-    if not platform_name:
-        return jsonify({
-            "code": 400,
-            "msg": "不支持的平台类型",
-            "data": None
-        }), 400
-
-    if not account_name:
-        return jsonify({
-            "code": 400,
-            "msg": "账号名称不能为空",
-            "data": None
-        }), 400
-
-    if not cloud_url:
-        return jsonify({
-            "code": 400,
-            "msg": "cloudUrl 不能为空",
-            "data": None
-        }), 400
-
-    try:
-        bridge = CloudLoginBridge(cloud_url, platform_name, account_name, device_name=device_name)
-        session_data = bridge.create_session()
-        status_queue = Queue()
-        command_queue = Queue()
-        action_stop_event = threading.Event()
-
-        threading.Thread(
-            target=run_async_function,
-            args=(type, account_name, status_queue, command_queue),
-            daemon=True
-        ).start()
-        threading.Thread(
-            target=bridge.poll_actions_loop,
-            args=(command_queue, action_stop_event),
-            daemon=True
-        ).start()
-
-        def relay_and_stop():
-            try:
-                relay_remote_login_status(status_queue, bridge)
-            finally:
-                action_stop_event.set()
-
-        threading.Thread(target=relay_and_stop, daemon=True).start()
-
-        return jsonify({
-            "code": 200,
-            "msg": "远端扫码登录已启动",
-            "data": session_data
-        }), 200
-    except Exception as exc:
-        return jsonify({
-            "code": 500,
-            "msg": f"启动远端扫码登录失败: {exc}",
-            "data": None
-        }), 500
 
 
 @app.route('/cloudAgentStatus', methods=['GET'])

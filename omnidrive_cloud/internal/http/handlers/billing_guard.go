@@ -18,6 +18,13 @@ func previewAIJobBilling(ctx context.Context, app *appstate.App, job *domain.AIJ
 			Details:    []store.UsageBillingDetail{},
 		}, nil
 	}
+	workflowPreview, err := aiclient.PreviewWorkflowBilling(ctx, app, job)
+	if err != nil {
+		return nil, err
+	}
+	if workflowPreview != nil {
+		return workflowPreview, nil
+	}
 	return app.Store.PreviewUsageBilling(ctx, aiclient.BuildEstimatedUsageBillingInput(job))
 }
 

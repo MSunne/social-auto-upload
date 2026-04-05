@@ -447,6 +447,62 @@ func TestGenerateImageUsesGeminiImageConfigAndInlineData(t *testing.T) {
 	}
 }
 
+func TestGenerateStoryboardPackageParsesCoverAndPrompt(t *testing.T) {
+	var payload map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll returned error: %v", err)
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("json.Unmarshal returned error: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"{\"generationPrompt\":\"新的视频脚本\",\"publishIntro\":\"新的发布简介\"}"},{"inlineData":{"mimeType":"image/png","data":"aW1hZ2U="}}]}}]}`))
+	}))
+	defer server.Close()
+
+	provider, err := NewAPIYIProvider(config.Config{
+		APIYIBaseURL: server.URL,
+		APIYIApiKey:  "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewAPIYIProvider returned error: %v", err)
+	}
+
+	result, err := provider.GenerateStoryboardPackage(context.Background(), StoryboardPackageRequest{
+		Model:        "gemini-3.1-pro-preview",
+		BaseURL:      server.URL,
+		APIKey:       "sk-storyboard",
+		SystemPrompt: "请生成首帧和视频脚本",
+		Prompt:       "业务提示词",
+		AspectRatio:  "16:9",
+		Resolution:   "1280x720",
+	})
+	if err != nil {
+		t.Fatalf("GenerateStoryboardPackage returned error: %v", err)
+	}
+	if result.GenerationPrompt != "新的视频脚本" {
+		t.Fatalf("unexpected generationPrompt %q", result.GenerationPrompt)
+	}
+	if result.PublishIntro != "新的发布简介" {
+		t.Fatalf("unexpected publishIntro %q", result.PublishIntro)
+	}
+	if string(result.Cover.Data) != "image" {
+		t.Fatalf("unexpected cover image payload %q", string(result.Cover.Data))
+	}
+
+	generationConfig, _ := payload["generationConfig"].(map[string]any)
+	modalities, _ := generationConfig["responseModalities"].([]any)
+	if len(modalities) != 2 || modalities[0] != "TEXT" || modalities[1] != "IMAGE" {
+		t.Fatalf("unexpected responseModalities %#v", modalities)
+	}
+	if _, ok := payload["system_instruction"]; !ok {
+		t.Fatalf("expected system_instruction payload, got %#v", payload)
+	}
+}
+
 func TestGenerateChatStreamAggregatesSSEChunks(t *testing.T) {
 	var capturedPath string
 	var capturedAuth string

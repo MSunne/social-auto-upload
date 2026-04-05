@@ -105,11 +105,13 @@ const statusColors: Record<string, string> = {
   publish_failed: "bg-danger/15 text-danger",
   invalid: "bg-danger/15 text-danger",
   rejected: "bg-danger/15 text-danger",
+  deleted: "bg-text-muted/15 text-text-muted",
   invalidated: "bg-text-muted/15 text-text-muted",
   inactive: "bg-text-muted/15 text-text-muted",
   pending: "bg-info/15 text-info",
   running: "bg-info/15 text-info",
   generating: "bg-info/15 text-info",
+  covering: "bg-info/15 text-info",
   storyboarding: "bg-info/15 text-info",
   publishing: "bg-info/15 text-info",
   queued_generation: "bg-info/15 text-info",
@@ -154,11 +156,13 @@ const statusLabels: Record<string, string> = {
   publish_failed: "发布失败",
   waiting_recharge: "欠费",
   rejected: "已驳回",
+  deleted: "已删除",
   needs_verify: "待验证",
   awaiting_scan: "等待扫码",
   awaiting_verification: "等待验证",
   generating: "生成中",
-  storyboarding: "优化分镜中",
+  covering: "生成封面中",
+  storyboarding: "封面脚本优化中",
   publishing: "发布中",
   queued_generation: "等待生成",
   pending_payment: "待支付",
@@ -195,6 +199,7 @@ export function StatusBadge({ status, size = "sm" }: StatusBadgeProps) {
           status === "active" ||
           status === "running" ||
           status === "generating" ||
+          status === "covering" ||
           status === "storyboarding" ||
           status === "publishing"
             ? "pulse-online"
@@ -224,6 +229,7 @@ export function StatusBadge({ status, size = "sm" }: StatusBadgeProps) {
           status === "pending" ||
           status === "running" ||
           status === "generating" ||
+          status === "covering" ||
           status === "storyboarding" ||
           status === "publishing" ||
           status === "queued_generation" ||

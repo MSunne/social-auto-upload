@@ -17,11 +17,17 @@ import {
   Server,
 } from "lucide-react";
 
+type SaveNotice = {
+  tone: "success" | "error";
+  text: string;
+};
+
 export function SettingsView() {
   const { data: config, isLoading, error } = useSystemConfig();
   const { data: aiModelsData } = useAIModels({ page: 1, pageSize: 500 });
   const updateM = useUpdateSystemConfig();
   const [formData, setFormData] = useState<Partial<AdminSystemConfig>>({});
+  const [saveNotice, setSaveNotice] = useState<SaveNotice | null>(null);
 
   const aiModels = useMemo(() => aiModelsData?.items || [], [aiModelsData?.items]);
   const chatModelOptions = useMemo(
@@ -47,11 +53,16 @@ export function SettingsView() {
   }, [config]);
 
   const handleSave = async () => {
+    setSaveNotice(null);
     try {
-      await updateM.mutateAsync(formData);
-      window.alert("配置保存成功");
+      const savedConfig = await updateM.mutateAsync(buildSystemConfigUpdatePayload(formData));
+      setFormData(JSON.parse(JSON.stringify(savedConfig)));
+      setSaveNotice({ tone: "success", text: "系统配置已保存。" });
     } catch (saveError) {
-      window.alert(saveError instanceof Error ? saveError.message : "配置保存失败");
+      setSaveNotice({
+        tone: "error",
+        text: saveError instanceof Error ? saveError.message : "配置保存失败",
+      });
     }
   };
 
@@ -126,14 +137,27 @@ export function SettingsView() {
           title="系统全局配置"
           subtitle="控制全平台的计费通道、AI 默认模型，以及分镜优化链路的管理员策略。"
         />
-        <button
-          onClick={handleSave}
-          disabled={updateM.isPending}
-          className="flex items-center gap-2 rounded-lg bg-[var(--color-primary)] px-4 py-2 font-medium text-white transition-colors hover:brightness-110 disabled:opacity-50"
-        >
-          {updateM.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-          保存全站配置
-        </button>
+        <div className="flex flex-col items-end gap-2">
+          <button
+            onClick={handleSave}
+            disabled={updateM.isPending}
+            className="flex items-center gap-2 rounded-lg bg-[var(--color-primary)] px-4 py-2 font-medium text-white transition-colors hover:brightness-110 disabled:opacity-50"
+          >
+            {updateM.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            保存全站配置
+          </button>
+          {saveNotice ? (
+            <p
+              className={`text-sm ${
+                saveNotice.tone === "success"
+                  ? "text-emerald-600"
+                  : "text-red-500"
+              }`}
+            >
+              {saveNotice.text}
+            </p>
+          ) : null}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -170,11 +194,12 @@ export function SettingsView() {
                 <input
                   type="email"
                   value={formData.adminEmail || ""}
-                  onChange={(event) =>
-                    setFormData((current) => ({ ...current, adminEmail: event.target.value }))
-                  }
+                  readOnly
                   className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm focus:border-[var(--color-primary)] focus:outline-none"
                 />
+                <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                  当前值来自服务启动环境变量，暂不支持在此页持久化修改。
+                </p>
               </div>
             </div>
           </div>
@@ -325,7 +350,7 @@ export function SettingsView() {
           <div className="space-y-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-6">
             <h3 className="flex items-center gap-2 border-b border-[var(--color-border)] pb-2 text-base font-medium">
               <MessageSquare className="h-4 w-4 text-[var(--color-primary)]" />
-              短信注册 / 阿里云 Dypnsapi
+              短信注册 / 阿里云短信
             </h3>
             <p className="text-sm text-[var(--color-text-secondary)]">
               注册页发送验证码时会读取这里的配置。模板参数里请使用 <code>##code##</code> 作为验证码占位符。
@@ -447,12 +472,71 @@ export function SettingsView() {
                   placeholder="6"
                 />
               </div>
+              <div className="flex items-center justify-end border-t border-[var(--color-border)] pt-4">
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={updateM.isPending}
+                  className="inline-flex items-center gap-2 rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white transition-colors hover:brightness-110 disabled:opacity-50"
+                >
+                  {updateM.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4" />
+                  )}
+                  保存当前配置
+                </button>
+              </div>
             </div>
           </div>
         </div>
       </div>
+
+      <div className="flex justify-end border-t border-[var(--color-border)] pt-4">
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={updateM.isPending}
+          className="inline-flex items-center gap-2 rounded-lg bg-[var(--color-primary)] px-4 py-2 font-medium text-white transition-colors hover:brightness-110 disabled:opacity-50"
+        >
+          {updateM.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+          保存系统设置
+        </button>
+      </div>
     </div>
   );
+}
+
+function buildSystemConfigUpdatePayload(formData: Partial<AdminSystemConfig>) {
+  return {
+    aiWorkerEnabled: Boolean(formData.aiWorkerEnabled),
+    paymentChannels: [...(formData.paymentChannels ?? [])],
+    billingManualSupport: {
+      name: formData.billingManualSupport?.name ?? "",
+      contact: formData.billingManualSupport?.contact ?? "",
+      qrCodeUrl: formData.billingManualSupport?.qrCodeUrl ?? "",
+      note: formData.billingManualSupport?.note ?? "",
+    },
+    smsRegistration: {
+      enabled: Boolean(formData.smsRegistration?.enabled),
+      provider: formData.smsRegistration?.provider ?? "aliyun_dypnsapi",
+      endpoint: formData.smsRegistration?.endpoint ?? "",
+      accessKeyId: formData.smsRegistration?.accessKeyId ?? "",
+      accessKeySecret: formData.smsRegistration?.accessKeySecret ?? "",
+      signName: formData.smsRegistration?.signName ?? "",
+      templateCode: formData.smsRegistration?.templateCode ?? "",
+      templateParam: formData.smsRegistration?.templateParam ?? '{"code":"##code##"}',
+      schemeName: formData.smsRegistration?.schemeName ?? "",
+      defaultCountryCode: formData.smsRegistration?.defaultCountryCode ?? "86",
+      validMinutes: formData.smsRegistration?.validMinutes ?? 10,
+      cooldownSeconds: formData.smsRegistration?.cooldownSeconds ?? 60,
+      dailyLimit: formData.smsRegistration?.dailyLimit ?? 10,
+      codeLength: formData.smsRegistration?.codeLength ?? 6,
+    },
+    defaultChatModel: formData.defaultChatModel ?? "",
+    defaultImageModel: formData.defaultImageModel ?? "",
+    defaultVideoModel: formData.defaultVideoModel ?? "",
+  };
 }
 
 function InputField({

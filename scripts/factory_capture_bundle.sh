@@ -184,7 +184,10 @@ stop_services() {
 
 restart_services() {
   local item
-  for item in "${STOPPED_SERVICES[@]:-}"; do
+  if [[ "${#STOPPED_SERVICES[@]}" -eq 0 ]]; then
+    return 0
+  fi
+  for item in "${STOPPED_SERVICES[@]}"; do
     log "starting service ${item}"
     systemctl start "${item}" || true
   done
@@ -193,6 +196,27 @@ restart_services() {
 
 cleanup() {
   restart_services
+}
+
+
+preflight_sanitization_checks() {
+  if [[ "${OMNIBULL_FACTORY_ALLOW_DIRTY:-0}" == "1" ]]; then
+    return 0
+  fi
+
+  local -a identity_candidates=(
+    "/etc/omnibull/device.json"
+    "${ROOT_CAPTURE_SOURCE%/}/opt/omnibull/social-auto-upload/runtime/device.identity.json"
+    "${ROOT_CAPTURE_SOURCE%/}/persistent/omnibull/runtime/device.identity.json"
+  )
+  local path
+  for path in "${identity_candidates[@]}"; do
+    if [[ -f "${path}" ]]; then
+      log "refusing to capture because cloned device identity still exists: ${path}"
+      log "run scripts/factory_prepare_capture.sh first, or set OMNIBULL_FACTORY_ALLOW_DIRTY=1 to bypass"
+      exit 1
+    fi
+  done
 }
 
 
@@ -291,7 +315,26 @@ create_archive() {
 copy_bundle_helpers() {
   cp "${ROOT_DIR}/scripts/factory_restore_bundle.sh" "${STAGING_DIR}/restore.sh"
   chmod +x "${STAGING_DIR}/restore.sh"
-  cp "${ROOT_DIR}/docs/omnibull_factory_fast_mode.md" "${STAGING_DIR}/README_FACTORY.md"
+  if [[ -f "${ROOT_DIR}/docs/omnibull_factory_fast_mode.md" ]]; then
+    cp "${ROOT_DIR}/docs/omnibull_factory_fast_mode.md" "${STAGING_DIR}/README_FACTORY.md"
+  else
+    cat > "${STAGING_DIR}/README_FACTORY.md" <<'EOF'
+# OmniBull Factory Bundle
+
+This bundle was captured from a sanitized factory master.
+
+Contents:
+- `archives/`: partition archives used by `restore.sh`
+- `meta/`: disk layout and capture metadata
+- `provisioning/`: optional supplier overrides
+
+Usage:
+1. Put this directory onto the recovery USB bundle partition.
+2. Boot the target device from the recovery USB.
+3. Choose `OmniBull Factory Restore`.
+4. Follow the on-screen restore prompt.
+EOF
+  fi
 
   cat > "${PROVISIONING_DIR}/README.txt" <<'EOF'
 Optional supplier/device overrides live here.
@@ -337,6 +380,8 @@ main() {
   write_exclude_files
   trap cleanup EXIT
   stop_services
+  ROOT_CAPTURE_SOURCE="$(resolve_root_capture_source)"
+  preflight_sanitization_checks
   write_metadata_files
   write_partition_map
   write_capture_env

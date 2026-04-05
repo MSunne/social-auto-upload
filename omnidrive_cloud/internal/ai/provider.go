@@ -9,6 +9,7 @@ type Provider interface {
 	GenerateChat(ctx context.Context, req ChatRequest) (*ChatResult, error)
 	GenerateChatStream(ctx context.Context, req ChatRequest, onChunk func(ChatStreamChunk) error) (*ChatResult, error)
 	GenerateImage(ctx context.Context, req ImageRequest) (*ImageResult, error)
+	GenerateStoryboardPackage(ctx context.Context, req StoryboardPackageRequest) (*StoryboardPackageResult, error)
 	SubmitVideo(ctx context.Context, req VideoRequest) (*VideoSubmission, error)
 	GetVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string) (*VideoStatus, error)
 	DownloadVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string, contentURL string) (*BinaryArtifact, error)
@@ -79,6 +80,26 @@ type ImageResult struct {
 	Images      []BinaryArtifact `json:"images"`
 	Text        string           `json:"text,omitempty"`
 	RawResponse []byte           `json:"rawResponse,omitempty"`
+}
+
+type StoryboardPackageRequest struct {
+	Model           string       `json:"model"`
+	BaseURL         string       `json:"baseUrl,omitempty"`
+	APIKey          string       `json:"apiKey,omitempty"`
+	SystemPrompt    string       `json:"systemPrompt,omitempty"`
+	Prompt          string       `json:"prompt"`
+	ReferenceImages []MediaInput `json:"referenceImages,omitempty"`
+	AspectRatio     string       `json:"aspectRatio,omitempty"`
+	Resolution      string       `json:"resolution,omitempty"`
+}
+
+type StoryboardPackageResult struct {
+	Cover            BinaryArtifact `json:"cover"`
+	GenerationPrompt string         `json:"generationPrompt"`
+	PublishIntro     string         `json:"publishIntro,omitempty"`
+	Text             string         `json:"text,omitempty"`
+	RawResponse      []byte         `json:"rawResponse,omitempty"`
+	Metadata         map[string]any `json:"metadata,omitempty"`
 }
 
 type VideoRequest struct {

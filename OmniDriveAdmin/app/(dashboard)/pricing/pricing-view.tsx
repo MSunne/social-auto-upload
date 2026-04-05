@@ -1,21 +1,75 @@
 "use client";
 
 import { useState } from "react";
-import { usePricingPackages, usePricingRules, useUpdatePricingPackage } from "@/lib/hooks/usePricing";
+import {
+  useCreateWorkflowDurationRule,
+  usePricingPackages,
+  usePricingRules,
+  useUpdatePricingPackage,
+  useUpdateWorkflowDurationRule,
+  useWorkflowDurationRules,
+} from "@/lib/hooks/usePricing";
 import { PageHeader } from "@/components/ui/common";
 import { Plus, Loader2, CheckCircle, XCircle, Edit2 } from "lucide-react";
-import { BillingPackage } from "@/lib/types";
+import { BillingPackage, WorkflowDurationRule } from "@/lib/types";
 import { getModelDisplayName } from "@/lib/model-display";
 import { PricingPackageDrawer } from "./pricing-package-drawer";
+
+type WorkflowRuleFormState = {
+  id?: string;
+  workflowCode: string;
+  outputType: string;
+  durationSeconds: string;
+  segmentSeconds: string;
+  specialPriceCredits: string;
+  sortOrder: string;
+  description: string;
+  isEnabled: boolean;
+};
+
+const EMPTY_WORKFLOW_RULE_FORM: WorkflowRuleFormState = {
+  workflowCode: "video_text",
+  outputType: "视文模式",
+  durationSeconds: "8",
+  segmentSeconds: "8",
+  specialPriceCredits: "",
+  sortOrder: "100",
+  description: "",
+  isEnabled: true,
+};
+
+function buildWorkflowRuleForm(rule?: WorkflowDurationRule | null): WorkflowRuleFormState {
+  if (!rule) {
+    return { ...EMPTY_WORKFLOW_RULE_FORM };
+  }
+  return {
+    id: rule.id,
+    workflowCode: rule.workflowCode,
+    outputType: rule.outputType,
+    durationSeconds: String(rule.durationSeconds),
+    segmentSeconds: String(rule.segmentSeconds),
+    specialPriceCredits:
+      typeof rule.specialPriceCredits === "number" && rule.specialPriceCredits > 0
+        ? String(rule.specialPriceCredits)
+        : "",
+    sortOrder: String(rule.sortOrder),
+    description: rule.description || "",
+    isEnabled: Boolean(rule.isEnabled),
+  };
+}
 
 export function PricingView() {
   const [selectedPackage, setSelectedPackage] = useState<BillingPackage | null>(null);
   const [showCreateDrawer, setShowCreateDrawer] = useState(false);
-  const [activeTab, setActiveTab] = useState<"packages" | "rules">("packages");
+  const [activeTab, setActiveTab] = useState<"packages" | "rules" | "workflow">("packages");
+  const [workflowRuleForm, setWorkflowRuleForm] = useState<WorkflowRuleFormState>(EMPTY_WORKFLOW_RULE_FORM);
 
   const { data: packagesData, isLoading: packagesLoading } = usePricingPackages();
   const { data: rulesData, isLoading: rulesLoading } = usePricingRules();
+  const { data: workflowRulesData, isLoading: workflowRulesLoading } = useWorkflowDurationRules();
   const updatePackage = useUpdatePricingPackage();
+  const createWorkflowRule = useCreateWorkflowDurationRule();
+  const updateWorkflowRule = useUpdateWorkflowDurationRule();
 
   const handleTogglePackage = async (pkg: BillingPackage) => {
     try {
@@ -34,6 +88,35 @@ export function PricingView() {
       return <span key={c} className={`px-1.5 py-0.5 text-[10px] rounded border font-medium ${color}`}>{label}</span>;
     });
 
+  const handleWorkflowRuleSubmit = async () => {
+    const payload = {
+      workflowCode: workflowRuleForm.workflowCode.trim(),
+      outputType: workflowRuleForm.outputType.trim(),
+      durationSeconds: Number(workflowRuleForm.durationSeconds),
+      segmentSeconds: Number(workflowRuleForm.segmentSeconds),
+      specialPriceCredits: workflowRuleForm.specialPriceCredits.trim()
+        ? Number(workflowRuleForm.specialPriceCredits)
+        : undefined,
+      sortOrder: Number(workflowRuleForm.sortOrder || "100"),
+      description: workflowRuleForm.description.trim() || undefined,
+      isEnabled: workflowRuleForm.isEnabled,
+    };
+    if (!payload.workflowCode || !payload.outputType || payload.durationSeconds <= 0 || payload.segmentSeconds <= 0) {
+      alert("请先填写完整的工作流编码、输出类型、固定时长和分段时长。");
+      return;
+    }
+    try {
+      if (workflowRuleForm.id) {
+        await updateWorkflowRule.mutateAsync({ ruleId: workflowRuleForm.id, payload });
+      } else {
+        await createWorkflowRule.mutateAsync(payload);
+      }
+      setWorkflowRuleForm({ ...EMPTY_WORKFLOW_RULE_FORM });
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "保存时长规则失败，请重试");
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between">
@@ -50,10 +133,10 @@ export function PricingView() {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-[var(--color-border)]">
-        {(["packages", "rules"] as const).map(tab => (
+        {(["packages", "rules", "workflow"] as const).map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)}
             className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${activeTab === tab ? "border-[var(--color-primary)] text-[var(--color-primary)]" : "border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"}`}>
-            {tab === "packages" ? "充值套餐" : "积分计费规则"}
+            {tab === "packages" ? "充值套餐" : tab === "rules" ? "积分计费规则" : "视文模式时长策略"}
           </button>
         ))}
       </div>
@@ -175,6 +258,134 @@ export function PricingView() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "workflow" && (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">视文模式固定时长策略</h3>
+                <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
+                  用于控制技能可选时长，以及是否命中全局任务特价。未配置特价时，回退为按实际模型步骤累计计费。
+                </p>
+              </div>
+              {workflowRuleForm.id ? (
+                <button
+                  type="button"
+                  onClick={() => setWorkflowRuleForm({ ...EMPTY_WORKFLOW_RULE_FORM })}
+                  className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                >
+                  新建规则
+                </button>
+              ) : null}
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <label className="space-y-1 text-sm">
+                <span className="text-[var(--color-text-secondary)]">工作流编码</span>
+                <input value={workflowRuleForm.workflowCode} onChange={(event) => setWorkflowRuleForm((current) => ({ ...current, workflowCode: event.target.value }))} className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]" />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-[var(--color-text-secondary)]">输出类型</span>
+                <input value={workflowRuleForm.outputType} onChange={(event) => setWorkflowRuleForm((current) => ({ ...current, outputType: event.target.value }))} className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]" />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-[var(--color-text-secondary)]">固定时长（秒）</span>
+                <input value={workflowRuleForm.durationSeconds} onChange={(event) => setWorkflowRuleForm((current) => ({ ...current, durationSeconds: event.target.value }))} className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]" />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-[var(--color-text-secondary)]">分段时长（秒）</span>
+                <input value={workflowRuleForm.segmentSeconds} onChange={(event) => setWorkflowRuleForm((current) => ({ ...current, segmentSeconds: event.target.value }))} className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]" />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-[var(--color-text-secondary)]">任务特价（积分）</span>
+                <input value={workflowRuleForm.specialPriceCredits} onChange={(event) => setWorkflowRuleForm((current) => ({ ...current, specialPriceCredits: event.target.value }))} placeholder="留空表示按步骤计费" className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]" />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-[var(--color-text-secondary)]">排序</span>
+                <input value={workflowRuleForm.sortOrder} onChange={(event) => setWorkflowRuleForm((current) => ({ ...current, sortOrder: event.target.value }))} className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]" />
+              </label>
+              <label className="space-y-1 text-sm md:col-span-2">
+                <span className="text-[var(--color-text-secondary)]">说明</span>
+                <input value={workflowRuleForm.description} onChange={(event) => setWorkflowRuleForm((current) => ({ ...current, description: event.target.value }))} className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-[var(--color-text-primary)] outline-none focus:border-[var(--color-primary)]" />
+              </label>
+            </div>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text-primary)]">
+                <input type="checkbox" checked={workflowRuleForm.isEnabled} onChange={(event) => setWorkflowRuleForm((current) => ({ ...current, isEnabled: event.target.checked }))} />
+                启用当前规则
+              </label>
+              <button
+                type="button"
+                onClick={() => void handleWorkflowRuleSubmit()}
+                disabled={createWorkflowRule.isPending || updateWorkflowRule.isPending}
+                className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary)]/90 disabled:opacity-60"
+              >
+                {createWorkflowRule.isPending || updateWorkflowRule.isPending ? "保存中..." : workflowRuleForm.id ? "更新规则" : "创建规则"}
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-[var(--color-border)] overflow-hidden bg-[var(--color-bg-primary)]">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="text-xs text-[var(--color-text-secondary)] uppercase bg-[var(--color-bg-secondary)] border-b border-[var(--color-border)]">
+                  <tr>
+                    <th className="px-6 py-4 font-medium">工作流</th>
+                    <th className="px-6 py-4 font-medium">时长 / 分段</th>
+                    <th className="px-6 py-4 font-medium">任务特价</th>
+                    <th className="px-6 py-4 font-medium">排序</th>
+                    <th className="px-6 py-4 font-medium">状态</th>
+                    <th className="px-6 py-4 font-medium text-right">操作</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--color-border)]">
+                  {workflowRulesLoading && (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-12 text-center">
+                        <Loader2 className="h-5 w-5 animate-spin mx-auto text-[var(--color-text-secondary)]" />
+                      </td>
+                    </tr>
+                  )}
+                  {workflowRulesData?.items.map((rule) => (
+                    <tr key={rule.id} className={`hover:bg-[var(--color-bg-secondary)]/50 transition-colors ${!rule.isEnabled ? "opacity-50" : ""}`}>
+                      <td className="px-6 py-4">
+                        <div className="font-medium text-[var(--color-text-primary)]">{rule.workflowCode}</div>
+                        <div className="mt-1 text-xs text-[var(--color-text-secondary)]">{rule.outputType}</div>
+                        {rule.description ? <div className="mt-1 text-xs text-[var(--color-text-secondary)]">{rule.description}</div> : null}
+                      </td>
+                      <td className="px-6 py-4 font-mono text-xs">
+                        {rule.durationSeconds}s / {rule.segmentSeconds}s
+                      </td>
+                      <td className="px-6 py-4 text-xs">
+                        {typeof rule.specialPriceCredits === "number" && rule.specialPriceCredits > 0 ? (
+                          <span className="text-amber-400 font-medium">{rule.specialPriceCredits} 积分</span>
+                        ) : (
+                          <span className="text-[var(--color-text-secondary)]">按步骤计费</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 text-xs">{rule.sortOrder}</td>
+                      <td className="px-6 py-4">
+                        {rule.isEnabled
+                          ? <span className="text-xs text-green-500 font-medium">● 启用</span>
+                          : <span className="text-xs text-[var(--color-text-secondary)]">● 停用</span>}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <button
+                          type="button"
+                          onClick={() => setWorkflowRuleForm(buildWorkflowRuleForm(rule))}
+                          className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-primary)] hover:underline"
+                        >
+                          <Edit2 className="h-3 w-3" /> 编辑
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

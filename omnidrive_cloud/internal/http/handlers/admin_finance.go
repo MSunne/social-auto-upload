@@ -65,6 +65,29 @@ type updateAdminBillingPackageRequest struct {
 	Entitlements            []adminBillingPackageEntitlementRequest `json:"entitlements"`
 }
 
+type createWorkflowDurationRuleRequest struct {
+	ID                  string  `json:"id"`
+	WorkflowCode        string  `json:"workflowCode"`
+	OutputType          string  `json:"outputType"`
+	DurationSeconds     int     `json:"durationSeconds"`
+	SegmentSeconds      int     `json:"segmentSeconds"`
+	SpecialPriceCredits *int64  `json:"specialPriceCredits"`
+	IsEnabled           *bool   `json:"isEnabled"`
+	SortOrder           *int    `json:"sortOrder"`
+	Description         *string `json:"description"`
+}
+
+type updateWorkflowDurationRuleRequest struct {
+	WorkflowCode        *string `json:"workflowCode"`
+	OutputType          *string `json:"outputType"`
+	DurationSeconds     *int    `json:"durationSeconds"`
+	SegmentSeconds      *int    `json:"segmentSeconds"`
+	SpecialPriceCredits *int64  `json:"specialPriceCredits"`
+	IsEnabled           *bool   `json:"isEnabled"`
+	SortOrder           *int    `json:"sortOrder"`
+	Description         *string `json:"description"`
+}
+
 type createWalletAdjustmentRequest struct {
 	UserID        string          `json:"userId"`
 	AmountDelta   int64           `json:"amountDelta"`
@@ -488,6 +511,147 @@ func (h *AdminFinanceHandler) UpdatePricingPackage(w http.ResponseWriter, r *htt
 			"creditAmount":            item.CreditAmount,
 			"manualBonusCreditAmount": item.ManualBonusCreditAmount,
 			"isEnabled":               item.IsEnabled,
+		}),
+	})
+
+	render.JSON(w, http.StatusOK, item)
+}
+
+func (h *AdminFinanceHandler) CreateWorkflowDurationRule(w http.ResponseWriter, r *http.Request) {
+	var payload createWorkflowDurationRuleRequest
+	if err := render.DecodeJSON(r, &payload); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	ruleID := strings.TrimSpace(payload.ID)
+	if ruleID == "" {
+		ruleID = "workflow-duration-" + uuid.NewString()
+	}
+	workflowCode := strings.TrimSpace(payload.WorkflowCode)
+	if workflowCode == "" {
+		workflowCode = "video_text"
+	}
+	outputType := strings.TrimSpace(payload.OutputType)
+	if outputType == "" {
+		outputType = "视文模式"
+	}
+	segmentSeconds := payload.SegmentSeconds
+	if segmentSeconds <= 0 {
+		segmentSeconds = 8
+	}
+	if payload.DurationSeconds <= 0 {
+		render.Error(w, http.StatusBadRequest, "durationSeconds must be positive")
+		return
+	}
+	isEnabled := true
+	if payload.IsEnabled != nil {
+		isEnabled = *payload.IsEnabled
+	}
+	sortOrder := 0
+	if payload.SortOrder != nil {
+		sortOrder = *payload.SortOrder
+	}
+
+	item, err := h.app.Store.CreateWorkflowDurationRule(r.Context(), store.CreateWorkflowDurationRuleInput{
+		ID:                  ruleID,
+		WorkflowCode:        workflowCode,
+		OutputType:          outputType,
+		DurationSeconds:     payload.DurationSeconds,
+		SegmentSeconds:      segmentSeconds,
+		SpecialPriceCredits: payload.SpecialPriceCredits,
+		IsEnabled:           isEnabled,
+		SortOrder:           sortOrder,
+		Description:         trimmedStringPtr(valueOrEmpty(payload.Description)),
+	})
+	if err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	admin := httpcontext.CurrentAdmin(r.Context())
+	recordAdminAuditLog(h.app, r.Context(), store.CreateAdminAuditLogInput{
+		AdminUserID:  auditStringPtr(admin.ID),
+		AdminEmail:   auditStringPtr(admin.Email),
+		AdminName:    auditStringPtr(admin.Name),
+		ResourceType: "workflow_duration_rule",
+		ResourceID:   &item.ID,
+		Action:       "create",
+		Title:        "创建视文模式时长策略",
+		Source:       "admin_console",
+		Status:       "success",
+		Message:      auditStringPtr(item.OutputType),
+		Payload: mustJSONBytes(map[string]any{
+			"workflowCode":        item.WorkflowCode,
+			"durationSeconds":     item.DurationSeconds,
+			"segmentSeconds":      item.SegmentSeconds,
+			"specialPriceCredits": item.SpecialPriceCredits,
+			"isEnabled":           item.IsEnabled,
+		}),
+	})
+
+	render.JSON(w, http.StatusCreated, item)
+}
+
+func (h *AdminFinanceHandler) UpdateWorkflowDurationRule(w http.ResponseWriter, r *http.Request) {
+	ruleID := strings.TrimSpace(chi.URLParam(r, "ruleId"))
+	if ruleID == "" {
+		render.Error(w, http.StatusBadRequest, "ruleId is required")
+		return
+	}
+
+	var payload updateWorkflowDurationRuleRequest
+	raw, err := decodeAdminFinanceRequest(r, &payload)
+	if err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	input := store.UpdateWorkflowDurationRuleInput{
+		WorkflowCode:    payload.WorkflowCode,
+		OutputType:      payload.OutputType,
+		DurationSeconds: payload.DurationSeconds,
+		SegmentSeconds:  payload.SegmentSeconds,
+		IsEnabled:       payload.IsEnabled,
+		SortOrder:       payload.SortOrder,
+	}
+	if financeFieldTouched(raw, "specialPriceCredits") {
+		input.SpecialPriceCreditsTouched = true
+		input.SpecialPriceCredits = payload.SpecialPriceCredits
+	}
+	if financeFieldTouched(raw, "description") {
+		input.DescriptionTouched = true
+		input.Description = trimmedStringPtr(valueOrEmpty(payload.Description))
+	}
+
+	item, err := h.app.Store.UpdateWorkflowDurationRule(r.Context(), ruleID, input)
+	if err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if item == nil {
+		render.Error(w, http.StatusNotFound, "Workflow duration rule not found")
+		return
+	}
+
+	admin := httpcontext.CurrentAdmin(r.Context())
+	recordAdminAuditLog(h.app, r.Context(), store.CreateAdminAuditLogInput{
+		AdminUserID:  auditStringPtr(admin.ID),
+		AdminEmail:   auditStringPtr(admin.Email),
+		AdminName:    auditStringPtr(admin.Name),
+		ResourceType: "workflow_duration_rule",
+		ResourceID:   &item.ID,
+		Action:       "update",
+		Title:        "更新视文模式时长策略",
+		Source:       "admin_console",
+		Status:       "success",
+		Message:      auditStringPtr(item.OutputType),
+		Payload: mustJSONBytes(map[string]any{
+			"workflowCode":        item.WorkflowCode,
+			"durationSeconds":     item.DurationSeconds,
+			"segmentSeconds":      item.SegmentSeconds,
+			"specialPriceCredits": item.SpecialPriceCredits,
+			"isEnabled":           item.IsEnabled,
 		}),
 	})
 

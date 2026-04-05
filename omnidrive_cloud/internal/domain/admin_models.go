@@ -78,6 +78,7 @@ type AdminUserActionState struct {
 	CanUpdate     bool `json:"canUpdate"`
 	CanDeactivate bool `json:"canDeactivate"`
 	CanActivate   bool `json:"canActivate"`
+	CanDelete     bool `json:"canDelete"`
 }
 
 type AdminUserRow struct {

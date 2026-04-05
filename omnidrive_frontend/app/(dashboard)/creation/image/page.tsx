@@ -613,10 +613,14 @@ export default function ImageCreationPage() {
         },
       };
       const job = await createAIJob(payload);
+      queryClient.setQueryData<AIJob>(["aiJob", job.id], job);
+      queryClient.setQueryData<AIJob[]>(["aiJobs", "image"], (previous = []) =>
+        sortJobsByUpdatedAt([job, ...previous.filter((item) => item.id !== job.id)]),
+      );
       setCurrentJobId(job.id);
       setSelectedJobId(job.id);
       setPreviewIndex(0);
-      await refetchImageJobs();
+      void queryClient.invalidateQueries({ queryKey: ["aiJobs", "image"] });
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "图片生成请求失败");
     } finally {

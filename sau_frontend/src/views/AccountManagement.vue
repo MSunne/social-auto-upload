@@ -83,11 +83,14 @@
     <el-dialog v-model="showAddDialog" title="添加账号" width="480px" destroy-on-close :close-on-click-modal="!loginState.started" :close-on-press-escape="!loginState.started" :show-close="!loginState.started">
       <el-form label-width="80px">
         <el-form-item label="平台">
-          <el-select v-model="newAccount.platform" placeholder="选择平台" style="width: 100%" :disabled="loginState.started">
-            <el-option label="抖音" value="douyin" />
-            <el-option label="快手" value="kuaishou" />
-            <el-option label="视频号" value="shipinhao" />
-            <el-option label="小红书" value="xiaohongshu" />
+          <el-select v-model="newAccount.platformType" placeholder="选择平台" style="width: 100%" :disabled="loginState.started">
+            <el-option
+              v-for="platform in accountStore.loginPlatforms"
+              :key="platform.platformType"
+              :label="platform.disabledReason ? `${platform.label}（${platform.disabledReason}）` : platform.label"
+              :value="platform.platformType"
+              :disabled="!platform.loginEnabled"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="账号名">
@@ -104,7 +107,7 @@
 
       <template #footer>
         <el-button @click="showAddDialog = false" :disabled="loginState.started">取消</el-button>
-        <el-button type="primary" @click="startLogin" :loading="loginState.started" :disabled="!newAccount.platform || !newAccount.name">
+        <el-button type="primary" @click="startLogin" :loading="loginState.started" :disabled="!newAccount.platformType || !newAccount.name">
           {{ loginState.started ? '登录中…' : '扫码登录' }}
         </el-button>
       </template>
@@ -126,7 +129,7 @@ const syncing = ref(false)
 const searchQuery = ref('')
 const showAddDialog = ref(false)
 
-const newAccount = ref({ platform: '', name: '' })
+const newAccount = ref({ platformType: null, name: '' })
 const loginState = ref({ started: false, messages: [] })
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5409'
@@ -139,6 +142,15 @@ const filteredAccounts = computed(() => {
 })
 
 const platformTagType = (p) => ({ '抖音': 'danger', '快手': 'success', '视频号': 'warning', '小红书': '' }[p] || 'info')
+
+const fetchPlatforms = async () => {
+  try {
+    const res = await accountApi.getPlatforms()
+    if (res?.data) accountStore.setPlatforms(res.data)
+  } catch {
+    ElMessage.error('获取平台能力失败')
+  }
+}
 
 const fetchAccounts = async () => {
   loading.value = true
@@ -199,10 +211,14 @@ const forceSync = async () => {
 }
 
 const startLogin = () => {
-  const platformTypeMap = { 'xiaohongshu': 1, 'shipinhao': 2, 'douyin': 3, 'kuaishou': 4 }
-  const platformType = platformTypeMap[newAccount.value.platform]
+  const platformType = Number(newAccount.value.platformType)
   if (!platformType) {
     ElMessage.error('无效的平台类型')
+    return
+  }
+  const capability = accountStore.getPlatformCapability(platformType)
+  if (capability && !capability.loginEnabled) {
+    ElMessage.error(capability.disabledReason || '当前平台登录暂未开放')
     return
   }
 
@@ -232,8 +248,10 @@ const startLogin = () => {
 }
 
 
-
-onMounted(fetchAccounts)
+onMounted(async () => {
+  await fetchPlatforms()
+  await fetchAccounts()
+})
 </script>
 
 <style lang="scss" scoped>

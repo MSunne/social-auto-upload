@@ -418,94 +418,65 @@ func cloneMap(input map[string]any) map[string]any {
 }
 
 func (p *APIYIProvider) GenerateImage(ctx context.Context, req ImageRequest) (*ImageResult, error) {
-	parts := make([]map[string]any, 0, len(req.ReferenceImages)+1)
-	for _, media := range req.ReferenceImages {
-		payload, err := p.mediaToGeminiPart(ctx, media)
-		if err != nil {
-			return nil, err
-		}
-		parts = append(parts, payload)
-	}
-	parts = append(parts, map[string]any{"text": req.Prompt})
-
-	payload := map[string]any{
-		"contents": []map[string]any{
-			{"parts": parts},
-		},
-		"generationConfig": buildGeminiImageGenerationConfig(req),
-	}
-	data, err := json.Marshal(payload)
+	body, err := p.generateGeminiContent(ctx, req.BaseURL, req.APIKey, req.Model, "", req.Prompt, req.ReferenceImages, buildGeminiImageGenerationConfig(req))
 	if err != nil {
 		return nil, err
 	}
-
-	path := fmt.Sprintf("/v1beta/models/%s:generateContent", url.PathEscape(req.Model))
-	body, err := p.doJSON(ctx, req.BaseURL, req.APIKey, http.MethodPost, path, data, true)
+	parsed, err := parseGeminiGenerateContentResponse(body)
 	if err != nil {
 		return nil, err
 	}
-
-	var response struct {
-		Candidates []struct {
-			Content struct {
-				Parts []struct {
-					Text       string `json:"text"`
-					InlineData *struct {
-						MIMEType string `json:"mimeType"`
-						Data     string `json:"data"`
-					} `json:"inlineData"`
-					InlineDataAlt *struct {
-						MIMEType string `json:"mime_type"`
-						Data     string `json:"data"`
-					} `json:"inline_data"`
-				} `json:"parts"`
-			} `json:"content"`
-		} `json:"candidates"`
-	}
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, err
-	}
-
-	result := &ImageResult{Images: []BinaryArtifact{}, RawResponse: body}
-	for _, candidate := range response.Candidates {
-		for index, part := range candidate.Content.Parts {
-			if strings.TrimSpace(part.Text) != "" {
-				result.Text = strings.TrimSpace(part.Text)
-			}
-			inlineData := part.InlineData
-			if inlineData == nil && part.InlineDataAlt != nil {
-				inlineData = &struct {
-					MIMEType string `json:"mimeType"`
-					Data     string `json:"data"`
-				}{
-					MIMEType: part.InlineDataAlt.MIMEType,
-					Data:     part.InlineDataAlt.Data,
-				}
-			}
-			if inlineData == nil || strings.TrimSpace(inlineData.Data) == "" {
-				continue
-			}
-			data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(inlineData.Data))
-			if err != nil {
-				return nil, err
-			}
-			mimeType := strings.TrimSpace(inlineData.MIMEType)
-			if mimeType == "" {
-				mimeType = "image/png"
-			}
-			fileName := fmt.Sprintf("image-%d%s", index+1, extensionForMIME(mimeType, ".png"))
-			result.Images = append(result.Images, BinaryArtifact{
-				FileName:  fileName,
-				MIMEType:  mimeType,
-				Data:      data,
-				SizeBytes: int64(len(data)),
-			})
-		}
+	result := &ImageResult{
+		Images:      parsed.Images,
+		Text:        parsed.Text,
+		RawResponse: body,
 	}
 	if len(result.Images) == 0 {
 		return nil, fmt.Errorf("image response did not contain image data")
 	}
 	return result, nil
+}
+
+func (p *APIYIProvider) GenerateStoryboardPackage(ctx context.Context, req StoryboardPackageRequest) (*StoryboardPackageResult, error) {
+	body, err := p.generateGeminiContent(
+		ctx,
+		req.BaseURL,
+		req.APIKey,
+		req.Model,
+		req.SystemPrompt,
+		req.Prompt,
+		req.ReferenceImages,
+		buildGeminiStoryboardGenerationConfig(req),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	parsed, err := parseGeminiGenerateContentResponse(body)
+	if err != nil {
+		return nil, err
+	}
+	if len(parsed.Images) == 0 {
+		return nil, fmt.Errorf("storyboard package response did not contain cover image data")
+	}
+
+	generationPrompt, publishIntro, responseMode := parseStoryboardOptimizationResponse(parsed.Text, strings.TrimSpace(req.Prompt), "")
+	if strings.TrimSpace(generationPrompt) == "" {
+		return nil, fmt.Errorf("storyboard package response did not contain generation prompt")
+	}
+
+	return &StoryboardPackageResult{
+		Cover:            parsed.Images[0],
+		GenerationPrompt: strings.TrimSpace(generationPrompt),
+		PublishIntro:     strings.TrimSpace(publishIntro),
+		Text:             strings.TrimSpace(parsed.Text),
+		RawResponse:      body,
+		Metadata: map[string]any{
+			"responseMode": responseMode,
+			"imageCount":   len(parsed.Images),
+			"textCount":    len(parsed.TextParts),
+		},
+	}, nil
 }
 
 func (p *APIYIProvider) SubmitVideo(ctx context.Context, req VideoRequest) (*VideoSubmission, error) {
@@ -800,6 +771,38 @@ func (p *APIYIProvider) doVideoRequest(ctx context.Context, model string, baseUR
 	return nil, fmt.Errorf("provider video request failed")
 }
 
+func (p *APIYIProvider) generateGeminiContent(ctx context.Context, baseURL string, apiKey string, model string, systemPrompt string, prompt string, referenceImages []MediaInput, generationConfig map[string]any) ([]byte, error) {
+	parts := make([]map[string]any, 0, len(referenceImages)+1)
+	for _, media := range referenceImages {
+		payload, err := p.mediaToGeminiPart(ctx, media)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, payload)
+	}
+	parts = append(parts, map[string]any{"text": prompt})
+
+	payload := map[string]any{
+		"contents": []map[string]any{
+			{"parts": parts},
+		},
+		"generationConfig": generationConfig,
+	}
+	if strings.TrimSpace(systemPrompt) != "" {
+		payload["system_instruction"] = map[string]any{
+			"parts": []map[string]any{{"text": strings.TrimSpace(systemPrompt)}},
+		}
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	path := fmt.Sprintf("/v1beta/models/%s:generateContent", url.PathEscape(model))
+	return p.doJSON(ctx, baseURL, apiKey, http.MethodPost, path, data, true)
+}
+
 func (p *APIYIProvider) resolveBaseURL(override string) string {
 	if trimmed := strings.TrimRight(strings.TrimSpace(override), "/"); trimmed != "" {
 		return trimmed
@@ -1014,6 +1017,95 @@ func buildGeminiImageGenerationConfig(req ImageRequest) map[string]any {
 		config["imageConfig"] = imageConfig
 	}
 	return config
+}
+
+func buildGeminiStoryboardGenerationConfig(req StoryboardPackageRequest) map[string]any {
+	config := map[string]any{
+		"responseModalities": []string{"TEXT", "IMAGE"},
+	}
+
+	imageConfig := map[string]any{}
+	if aspectRatio := normalizeAspectRatio(req.AspectRatio); aspectRatio != "" {
+		imageConfig["aspectRatio"] = aspectRatio
+	}
+	if imageSize := normalizeGeminiImageSize(req.Resolution); imageSize != "" {
+		imageConfig["imageSize"] = imageSize
+	}
+	if len(imageConfig) > 0 {
+		config["imageConfig"] = imageConfig
+	}
+	return config
+}
+
+type geminiGeneratedContent struct {
+	Text      string
+	TextParts []string
+	Images    []BinaryArtifact
+}
+
+func parseGeminiGenerateContentResponse(body []byte) (*geminiGeneratedContent, error) {
+	var response struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text       string `json:"text"`
+					InlineData *struct {
+						MIMEType string `json:"mimeType"`
+						Data     string `json:"data"`
+					} `json:"inlineData"`
+					InlineDataAlt *struct {
+						MIMEType string `json:"mime_type"`
+						Data     string `json:"data"`
+					} `json:"inline_data"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, err
+	}
+
+	result := &geminiGeneratedContent{
+		TextParts: make([]string, 0),
+		Images:    make([]BinaryArtifact, 0),
+	}
+	for _, candidate := range response.Candidates {
+		for index, part := range candidate.Content.Parts {
+			if text := strings.TrimSpace(part.Text); text != "" {
+				result.TextParts = append(result.TextParts, text)
+			}
+			inlineData := part.InlineData
+			if inlineData == nil && part.InlineDataAlt != nil {
+				inlineData = &struct {
+					MIMEType string `json:"mimeType"`
+					Data     string `json:"data"`
+				}{
+					MIMEType: part.InlineDataAlt.MIMEType,
+					Data:     part.InlineDataAlt.Data,
+				}
+			}
+			if inlineData == nil || strings.TrimSpace(inlineData.Data) == "" {
+				continue
+			}
+			data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(inlineData.Data))
+			if err != nil {
+				return nil, err
+			}
+			mimeType := strings.TrimSpace(inlineData.MIMEType)
+			if mimeType == "" {
+				mimeType = "image/png"
+			}
+			fileName := fmt.Sprintf("image-%d%s", index+1, extensionForMIME(mimeType, ".png"))
+			result.Images = append(result.Images, BinaryArtifact{
+				FileName:  fileName,
+				MIMEType:  mimeType,
+				Data:      data,
+				SizeBytes: int64(len(data)),
+			})
+		}
+	}
+	result.Text = strings.TrimSpace(strings.Join(result.TextParts, "\n"))
+	return result, nil
 }
 
 func normalizeGeminiImageSize(value string) string {

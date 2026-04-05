@@ -310,11 +310,12 @@ def _ensure_playwright_browser_executable_path(browser_name="chromium"):
 
 
 def resolve_browser_executable_path(*, headless=False):
+    system_browser_path = _resolve_system_browser_executable_path()
     bundled_browser_path = resolve_playwright_browser_executable_path()
-    if bundled_browser_path:
-        return bundled_browser_path
 
-    return _resolve_system_browser_executable_path()
+    if headless:
+        return bundled_browser_path or system_browser_path
+    return system_browser_path or bundled_browser_path
 
 
 def resolve_playwright_browser_dir():

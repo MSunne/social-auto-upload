@@ -58,7 +58,7 @@ function stageGroup(stageKey: string) {
   if (stageKey === "waiting_recharge") {
     return "waiting_recharge";
   }
-  if (stageKey === "storyboarding" || stageKey === "generating" || stageKey === "output_ready" || stageKey === "imported") {
+  if (stageKey === "covering" || stageKey === "storyboarding" || stageKey === "generating" || stageKey === "output_ready" || stageKey === "imported") {
     return "generating";
   }
   if (stageKey === "publishing" || stageKey === "needs_verify" || stageKey === "cancel_requested") {

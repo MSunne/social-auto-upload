@@ -106,13 +106,32 @@ func defaultAdminSystemSettings(cfg config.Config) effectiveAdminSystemSettings 
 		DefaultImageModel:         strings.TrimSpace(cfg.DefaultImageModel),
 		DefaultVideoModel:         strings.TrimSpace(cfg.DefaultVideoModel),
 		VideoCoverPrompt:          strings.TrimSpace(ai.DefaultSkillVideoCoverPromptTemplate),
-		StoryboardPrompt:          "",
-		StoryboardModel:           strings.TrimSpace(cfg.DefaultChatModel),
+		StoryboardPrompt:          strings.TrimSpace(ai.DefaultVideoStoryboardSystemPrompt),
+		StoryboardModel:           strings.TrimSpace(ai.DefaultVideoStoryboardModelName),
 		StoryboardReferences:      []byte("[]"),
 		ImageStoryboardPrompt:     "",
 		ImageStoryboardModel:      strings.TrimSpace(cfg.DefaultChatModel),
 		ImageStoryboardReferences: []byte("[]"),
 	}
+}
+
+func storyboardModelTouched(raw map[string]json.RawMessage) bool {
+	return nestedFieldTouched(raw, "storyboardModel")
+}
+
+func validateStoryboardPackageModel(ctx context.Context, app *appstate.App, modelName string) error {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" || app == nil || app.Store == nil {
+		return nil
+	}
+	model, err := app.Store.GetAIModelByName(ctx, modelName)
+	if err != nil {
+		return err
+	}
+	if model == nil || !ai.SupportsStoryboardPackageModel(model) {
+		return renderableError("storyboardModel must reference an enabled chat model that supports image inputs")
+	}
+	return nil
 }
 
 func normalizeAdminPaymentChannels(channels []string) ([]string, error) {
@@ -631,10 +650,16 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if strings.TrimSpace(settings.StoryboardModel) == "" {
-		settings.StoryboardModel = settings.DefaultChatModel
+		settings.StoryboardModel = strings.TrimSpace(ai.DefaultVideoStoryboardModelName)
 	}
 	if strings.TrimSpace(settings.ImageStoryboardModel) == "" {
 		settings.ImageStoryboardModel = settings.DefaultChatModel
+	}
+	if storyboardModelTouched(raw) {
+		if err := validateStoryboardPackageModel(r.Context(), h.app, settings.StoryboardModel); err != nil {
+			render.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	if strings.TrimSpace(settings.SMSRegistration.Provider) == "" {
 		settings.SMSRegistration.Provider = "aliyun_dypnsapi"

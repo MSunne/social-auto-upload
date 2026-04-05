@@ -2,7 +2,12 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const bootstrapSQL = `
@@ -163,6 +168,8 @@ CREATE TABLE IF NOT EXISTS devices (
     default_chat_model TEXT,
     default_image_model TEXT,
     default_video_model TEXT,
+    platform_capabilities JSONB,
+    platform_capabilities_revision TEXT,
     is_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     runtime_payload JSONB,
     last_seen_at TIMESTAMPTZ,
@@ -245,6 +252,7 @@ CREATE TABLE IF NOT EXISTS product_skills (
     description TEXT NOT NULL,
     output_type TEXT NOT NULL,
     model_name TEXT NOT NULL,
+    fixed_duration_seconds INT,
     prompt_template TEXT,
     storyboard_prompt_template TEXT,
     publish_prompt_template TEXT,
@@ -466,8 +474,11 @@ ALTER TABLE phone_verification_codes ADD COLUMN IF NOT EXISTS verification_code_
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_chat_model TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_image_model TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_video_model TEXT;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS platform_capabilities JSONB;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS platform_capabilities_revision TEXT;
 ALTER TABLE device_activation_configs ADD COLUMN IF NOT EXISTS activation_code_value TEXT;
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS device_id TEXT REFERENCES devices(id) ON DELETE SET NULL;
+ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS fixed_duration_seconds INT;
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS cover_prompt_template TEXT;
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS storyboard_prompt_template TEXT;
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS publish_prompt_template TEXT;
@@ -688,6 +699,70 @@ CREATE TABLE IF NOT EXISTS billing_pricing_rules (
     is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS workflow_duration_rules (
+    id TEXT PRIMARY KEY,
+    workflow_code TEXT NOT NULL,
+    output_type TEXT NOT NULL,
+    duration_seconds INT NOT NULL,
+    segment_seconds INT NOT NULL DEFAULT 8,
+    special_price_credits BIGINT,
+    is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    sort_order INT NOT NULL DEFAULT 0,
+    description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(workflow_code, output_type, duration_seconds)
+);
+
+CREATE TABLE IF NOT EXISTS ai_billing_sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source_type TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    workflow_code TEXT NOT NULL,
+    output_type TEXT NOT NULL,
+    duration_seconds INT NOT NULL,
+    segment_seconds INT NOT NULL DEFAULT 8,
+    special_rule_id TEXT REFERENCES workflow_duration_rules(id) ON DELETE SET NULL,
+    special_price_credits BIGINT,
+    planned_credits BIGINT NOT NULL DEFAULT 0,
+    billed_credits BIGINT NOT NULL DEFAULT 0,
+    refunded_credits BIGINT NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'precharged',
+    message TEXT,
+    payload JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(source_type, source_id)
+);
+
+CREATE TABLE IF NOT EXISTS ai_billing_items (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES ai_billing_sessions(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source_type TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    item_key TEXT NOT NULL,
+    item_type TEXT NOT NULL,
+    label TEXT NOT NULL,
+    model_name TEXT,
+    meter_code TEXT,
+    quantity BIGINT NOT NULL DEFAULT 1,
+    unit TEXT NOT NULL DEFAULT 'call',
+    unit_price_credits BIGINT NOT NULL DEFAULT 0,
+    planned_credits BIGINT NOT NULL DEFAULT 0,
+    billed_credits BIGINT NOT NULL DEFAULT 0,
+    refunded_credits BIGINT NOT NULL DEFAULT 0,
+    sort_order INT NOT NULL DEFAULT 0,
+    is_visible BOOLEAN NOT NULL DEFAULT TRUE,
+    status TEXT NOT NULL DEFAULT 'precharged',
+    wallet_ledger_id TEXT,
+    payload JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(session_id, item_key)
 );
 
 CREATE TABLE IF NOT EXISTS billing_wallets (
@@ -1164,6 +1239,10 @@ CREATE INDEX IF NOT EXISTS idx_ai_job_publish_links_job_id ON ai_job_publish_lin
 CREATE INDEX IF NOT EXISTS idx_billing_package_entitlements_package_id ON billing_package_entitlements(package_id);
 CREATE INDEX IF NOT EXISTS idx_billing_pricing_rules_meter_code ON billing_pricing_rules(meter_code);
 CREATE INDEX IF NOT EXISTS idx_billing_pricing_rules_model_name ON billing_pricing_rules(model_name);
+CREATE INDEX IF NOT EXISTS idx_workflow_duration_rules_lookup ON workflow_duration_rules(workflow_code, output_type, is_enabled, sort_order, duration_seconds);
+CREATE INDEX IF NOT EXISTS idx_ai_billing_sessions_user_created_at ON ai_billing_sessions(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_billing_sessions_source ON ai_billing_sessions(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_ai_billing_items_session_sort ON ai_billing_items(session_id, sort_order, created_at);
 CREATE INDEX IF NOT EXISTS idx_billing_wallets_user_id ON billing_wallets(user_id);
 CREATE INDEX IF NOT EXISTS idx_billing_wallet_lots_user_id ON billing_wallet_lots(user_id);
 CREATE INDEX IF NOT EXISTS idx_billing_wallet_lots_recharge_order_id ON billing_wallet_lots(recharge_order_id);
@@ -1318,11 +1397,116 @@ VALUES
         TRUE
     )
 ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO workflow_duration_rules (
+    id, workflow_code, output_type, duration_seconds, segment_seconds, special_price_credits, is_enabled, sort_order, description
+)
+VALUES
+    ('workflow-duration-video-text-8s', 'video_text', '视文模式', 8, 8, NULL, TRUE, 10, '视文模式默认 8 秒时长，未配置任务特价时按实际步骤计费'),
+    ('workflow-duration-video-text-32s', 'video_text', '视文模式', 32, 8, NULL, TRUE, 20, '视文模式 32 秒时长，默认按 4 段执行，可在后台补充特价'),
+    ('workflow-duration-video-text-64s', 'video_text', '视文模式', 64, 8, NULL, TRUE, 30, '视文模式 64 秒时长，默认按 8 段执行，可在后台补充特价')
+ON CONFLICT (id) DO NOTHING;
 `
 
 func (db *Database) EnsureSchema(ctx context.Context) error {
-	if _, err := db.Pool.Exec(ctx, bootstrapSQL); err != nil {
-		return fmt.Errorf("ensure schema: %w", err)
+	statements := splitSQLStatements(bootstrapSQL)
+	for _, statement := range statements {
+		if _, err := db.Pool.Exec(ctx, statement); err != nil {
+			if shouldIgnoreSchemaError(statement, err) {
+				db.schemaLogger().Warn(
+					"ignoring non-blocking schema statement error",
+					"statement", summarizeSQLStatement(statement),
+					"error", err,
+				)
+				continue
+			}
+			return fmt.Errorf("ensure schema statement %q: %w", summarizeSQLStatement(statement), err)
+		}
 	}
 	return nil
+}
+
+func (db *Database) schemaLogger() *slog.Logger {
+	if db != nil && db.Logger != nil {
+		return db.Logger
+	}
+	return slog.Default()
+}
+
+func splitSQLStatements(raw string) []string {
+	statements := make([]string, 0)
+	var builder strings.Builder
+	inSingleQuote := false
+	inDoubleQuote := false
+
+	for index := 0; index < len(raw); index++ {
+		ch := raw[index]
+
+		switch ch {
+		case '\'':
+			builder.WriteByte(ch)
+			if inDoubleQuote {
+				continue
+			}
+			if inSingleQuote && index+1 < len(raw) && raw[index+1] == '\'' {
+				builder.WriteByte(raw[index+1])
+				index++
+				continue
+			}
+			inSingleQuote = !inSingleQuote
+		case '"':
+			builder.WriteByte(ch)
+			if inSingleQuote {
+				continue
+			}
+			inDoubleQuote = !inDoubleQuote
+		case ';':
+			if inSingleQuote || inDoubleQuote {
+				builder.WriteByte(ch)
+				continue
+			}
+			statement := strings.TrimSpace(builder.String())
+			if statement != "" {
+				statements = append(statements, statement)
+			}
+			builder.Reset()
+		default:
+			builder.WriteByte(ch)
+		}
+	}
+
+	if statement := strings.TrimSpace(builder.String()); statement != "" {
+		statements = append(statements, statement)
+	}
+
+	return statements
+}
+
+func shouldIgnoreSchemaError(statement string, err error) bool {
+	statement = strings.ToUpper(strings.TrimSpace(statement))
+	if !strings.HasPrefix(statement, "ALTER TABLE") &&
+		!strings.HasPrefix(statement, "ALTER INDEX") &&
+		!strings.HasPrefix(statement, "CREATE INDEX") {
+		return false
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Code == "42501" {
+			return true
+		}
+	}
+
+	errorText := strings.ToLower(err.Error())
+	return strings.Contains(errorText, "must be owner of table") ||
+		strings.Contains(errorText, "must be owner of relation") ||
+		strings.Contains(errorText, "permission denied")
+}
+
+func summarizeSQLStatement(statement string) string {
+	compact := strings.Join(strings.Fields(statement), " ")
+	if len(compact) <= 120 {
+		return compact
+	}
+	return compact[:117] + "..."
 }

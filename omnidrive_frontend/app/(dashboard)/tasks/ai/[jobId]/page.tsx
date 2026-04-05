@@ -17,7 +17,7 @@ import {
 import { PageHeader, StatusBadge } from "@/components/ui/common";
 import { getModelDisplayName } from "@/lib/model-display";
 import { getAIJobWorkspace, listDevices } from "@/lib/services";
-import type { AIJobArtifact, AIJobWorkspace, Device } from "@/lib/types";
+import type { AIBillingItem, AIJobArtifact, AIJobWorkspace, Device } from "@/lib/types";
 import { buildAIJobTitle, formatDateTime, resolveAIJobStage } from "@/lib/workflow";
 
 function sortByLatest<T extends { updatedAt?: string | null; createdAt?: string | null }>(items: T[]) {
@@ -53,6 +53,52 @@ function prettyJSON(value: unknown) {
   } catch {
     return String(value);
   }
+}
+
+function formatCredits(value?: number | null) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "0 积分";
+  }
+  return `${value.toLocaleString("zh-CN")} 积分`;
+}
+
+type BillingDisplayItem = {
+  key: string;
+  label: string;
+  detail?: string;
+  billedCredits: number;
+  refundedCredits: number;
+  status: string;
+};
+
+function buildBillingDisplayItems(workspace: AIJobWorkspace): BillingDisplayItem[] {
+  const session = workspace.billingSession;
+  const items = Array.isArray(workspace.billingItems) ? workspace.billingItems : [];
+  if (!session) {
+    return [];
+  }
+  if (typeof session.specialPriceCredits === "number" && session.specialPriceCredits > 0) {
+    return [
+      {
+        key: "special-price",
+        label: `视文模式 ${session.durationSeconds} 秒任务特价`,
+        detail: `按成功片段结算，失败片段自动退款`,
+        billedCredits: session.billedCredits || 0,
+        refundedCredits: session.refundedCredits || 0,
+        status: session.status,
+      },
+    ];
+  }
+  return items
+    .filter((item) => item.isVisible)
+    .map((item: AIBillingItem) => ({
+      key: item.id,
+      label: item.label,
+      detail: item.modelAlias || item.modelName || item.itemType,
+      billedCredits: item.billedCredits || 0,
+      refundedCredits: item.refundedCredits || 0,
+      status: item.status,
+    }));
 }
 
 type LocalMaterialItem = {
@@ -239,8 +285,14 @@ export default function AIJobDetailPage() {
 
   const deviceName =
     !job.deviceId ? "云端执行" : devices.find((item) => item.id === job.deviceId)?.name || job.deviceId;
-  const artifacts = sortByLatest(workspace.artifacts || []);
+  const artifacts = sortByLatest(
+    (workspace.artifacts || []).filter(
+      (artifact) => artifact.artifactType !== "video_segment" && artifact.artifactType !== "video_frame",
+    ),
+  );
   const publishTasks = sortByLatest(workspace.publishTasks || []);
+  const billingSession = workspace.billingSession;
+  const billingItems = buildBillingDisplayItems(workspace);
   const stage = resolveAIJobStage(job);
   const inputPayload = asRecord(job.inputPayload);
   const localMaterials = extractLocalMaterials(inputPayload);
@@ -378,6 +430,55 @@ export default function AIJobDetailPage() {
               <DetailField label="requestedRun" value={requestedRun ? formatDateTime(requestedRun) : "—"} />
               <DetailField label="执行时间" value={executionTime ? formatDateTime(executionTime) : "—"} />
               <DetailField label="结果时间" value={resultTime ? formatDateTime(resultTime) : "—"} />
+            </div>
+          </motion.div>
+
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="glass-card overflow-hidden">
+            <div className="border-b border-border/50 bg-surface-hover/30 p-5">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+                <Cpu className="h-4 w-4 text-amber-300" />
+                任务计费
+              </h3>
+            </div>
+            <div className="space-y-4 p-5">
+              {billingSession ? (
+                <>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <DetailField label="计划扣费" value={formatCredits(billingSession.plannedCredits)} />
+                    <DetailField label="实际扣费" value={formatCredits(billingSession.billedCredits)} />
+                    <DetailField label="已退款" value={formatCredits(billingSession.refundedCredits)} />
+                  </div>
+                  <div className="space-y-3">
+                    {billingItems.map((item) => (
+                        <div key={item.key} className="rounded-2xl border border-border bg-surface px-4 py-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold text-text-primary">{item.label}</p>
+                              <p className="mt-1 text-xs text-text-secondary">{item.detail || "任务级计费项"}</p>
+                            </div>
+                          </div>
+                        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-text-secondary">
+                          <span>扣费：<span className="font-medium text-text-primary">{formatCredits(item.billedCredits)}</span></span>
+                          {item.refundedCredits > 0 ? (
+                            <span>退款：<span className="font-medium text-success">{formatCredits(item.refundedCredits)}</span></span>
+                          ) : null}
+                          <StatusBadge status={item.status} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {billingSession.message ? (
+                    <div className="rounded-xl border border-border bg-surface-hover/40 px-4 py-3 text-sm leading-6 text-text-secondary">
+                      {billingSession.message}
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <div className="flex items-center gap-2 rounded-xl border border-dashed border-border py-8 text-center text-text-muted justify-center">
+                  <Cpu className="h-5 w-5" />
+                  <span className="text-sm">当前任务还没有新的聚合计费会话。</span>
+                </div>
+              )}
             </div>
           </motion.div>
 

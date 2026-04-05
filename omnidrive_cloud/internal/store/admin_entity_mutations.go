@@ -85,6 +85,63 @@ func (s *Store) UpdateAdminUserTarget(ctx context.Context, userID string, input 
 	return s.GetAdminUserByID(ctx, userID)
 }
 
+func (s *Store) DeleteAdminUserCascade(ctx context.Context, userID string) (bool, int64, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, 0, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	trimmedUserID := strings.TrimSpace(userID)
+	if trimmedUserID == "" {
+		return false, 0, nil
+	}
+
+	var exists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)
+	`, trimmedUserID).Scan(&exists); err != nil {
+		return false, 0, err
+	}
+	if !exists {
+		return false, 0, nil
+	}
+
+	var ownedDeviceCount int64
+	if err := tx.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM devices
+		WHERE owner_user_id = $1
+	`, trimmedUserID).Scan(&ownedDeviceCount); err != nil {
+		return false, 0, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM devices
+		WHERE owner_user_id = $1
+	`, trimmedUserID); err != nil {
+		return false, 0, err
+	}
+
+	commandTag, err := tx.Exec(ctx, `
+		DELETE FROM users
+		WHERE id = $1
+	`, trimmedUserID)
+	if err != nil {
+		return false, 0, err
+	}
+	if commandTag.RowsAffected() == 0 {
+		return false, 0, nil
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, 0, err
+	}
+	return true, ownedDeviceCount, nil
+}
+
 func (s *Store) UpdateAdminDeviceTarget(ctx context.Context, deviceID string, input UpdateAdminDeviceTargetInput) (*domain.AdminDeviceRow, error) {
 	var nameValue any
 	if input.Name != nil {

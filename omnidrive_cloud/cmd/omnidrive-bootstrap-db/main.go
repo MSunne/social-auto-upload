@@ -2,16 +2,21 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/url"
 	"path"
 	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"omnidrive_cloud/internal/config"
+	"omnidrive_cloud/internal/database"
+	"omnidrive_cloud/internal/logging"
 )
 
 func main() {
@@ -19,6 +24,9 @@ func main() {
 	if cfg.DatabaseDSN == "" {
 		log.Fatal("OMNIDRIVE_DATABASE_DSN is required")
 	}
+
+	logger := logging.New(cfg)
+	slog.SetDefault(logger)
 
 	targetURL, err := url.Parse(cfg.DatabaseDSN)
 	if err != nil {
@@ -38,25 +46,46 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	conn, err := pgx.Connect(ctx, adminURL.String())
-	if err != nil {
-		log.Fatalf("connect postgres admin db: %v", err)
-	}
-	defer conn.Close(ctx)
-
-	var exists bool
-	if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)`, targetDBName).Scan(&exists); err != nil {
-		log.Fatalf("check database exists: %v", err)
-	}
-
-	if exists {
+	targetConn, err := pgx.Connect(ctx, cfg.DatabaseDSN)
+	targetExists := err == nil
+	if targetExists {
+		targetConn.Close(ctx)
 		fmt.Printf("database %q already exists\n", targetDBName)
-		return
+	} else {
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "3D000" {
+			log.Fatalf("connect target database: %v", err)
+		}
+
+		conn, adminErr := pgx.Connect(ctx, adminURL.String())
+		if adminErr != nil {
+			log.Fatalf("connect postgres admin db: %v", adminErr)
+		}
+		defer conn.Close(ctx)
+
+		var exists bool
+		if queryErr := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)`, targetDBName).Scan(&exists); queryErr != nil {
+			log.Fatalf("check database exists: %v", queryErr)
+		}
+		if !exists {
+			if _, execErr := conn.Exec(ctx, fmt.Sprintf(`CREATE DATABASE "%s"`, targetDBName)); execErr != nil {
+				log.Fatalf("create database: %v", execErr)
+			}
+			fmt.Printf("database %q created\n", targetDBName)
+		} else {
+			fmt.Printf("database %q already exists\n", targetDBName)
+		}
 	}
 
-	if _, err := conn.Exec(ctx, fmt.Sprintf(`CREATE DATABASE "%s"`, targetDBName)); err != nil {
-		log.Fatalf("create database: %v", err)
-	}
+	cfg.AutoCreateSchema = true
+	schemaCtx, schemaCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer schemaCancel()
 
-	fmt.Printf("database %q created\n", targetDBName)
+	db, err := database.New(schemaCtx, cfg, logger)
+	if err != nil {
+		log.Fatalf("ensure schema: %v", err)
+	}
+	defer db.Close()
+
+	fmt.Printf("schema ensured for %q\n", targetDBName)
 }

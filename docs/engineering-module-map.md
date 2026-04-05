@@ -4,6 +4,14 @@
 > 理解优先级：`AlTask.md` 末尾的手写“逻辑调整（工程级）”优先级最高。  
 > 当前原则：如果产品蓝图与代码现状冲突，先记录冲突，不先改代码。
 
+## 代码的后端大模型文档
+API文档地址：https://docs.apiyi.com/
+OpenAI格式文档地址：https://docs.apiyi.com/api-capabilities/openai-sdk
+gemini格式地址：https://docs.apiyi.com/api-capabilities/gemini-native-format
+Veo视频官方文档：https://docs.apiyi.com/api-capabilities/veo/overview
+Nano Banana图片官方文档：https://docs.apiyi.com/api-capabilities/nano-banana-image
+Nano Banana图片编辑官方文档：https://docs.apiyi.com/api-capabilities/nano-banana-image-edit
+
 ## 0. 一句话结论
 
 这个仓库不是一个单体项目，而是一组围绕同一业务协作的子工程：

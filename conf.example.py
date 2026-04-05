@@ -20,7 +20,7 @@ CLOUD_DEVICE_CODE = ""
 # production OmniDrive agent bridge
 OMNIDRIVE_AGENT_ENABLED = False
 OMNIDRIVE_BASE_URL = ""  # for example: https://omnidrive.example.com
-OMNIDRIVE_AGENT_KEY = "change-me"
+OMNIDRIVE_AGENT_KEY = ""  # keep empty for factory/master images so each device generates its own agentKey
 OMNIDRIVE_AGENT_POLL_INTERVAL = 5
 OMNIDRIVE_AGENT_HEARTBEAT_INTERVAL = 30
 OMNIDRIVE_ACCOUNT_SYNC_INTERVAL = 60

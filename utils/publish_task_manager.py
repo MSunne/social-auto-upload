@@ -10,23 +10,21 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from conf import BASE_DIR
+from myUtils.auth import check_cookie_detail
 from uploader.douyin_uploader.main import DouYinVideo
 from uploader.ks_uploader.main import KSVideo
 from uploader.tencent_uploader.main import TencentVideo
-from utils.account_storage import account_storage_exists
+from utils.account_storage import account_storage_exists, update_account_runtime_status
 from utils.constant import TencentZoneTypes
 from utils.files_times import generate_schedule_time_next_day
 from utils.log import log_throttled, task_logger
 from utils.materials import resolve_material_reference
+from utils.platform_capabilities import (
+    PLATFORM_LABELS,
+    ensure_platform_capability_schema,
+    ensure_platform_operation_enabled,
+)
 from utils.publish_verification import PublishManualVerificationRequired
-
-
-PLATFORM_LABELS = {
-    1: "小红书",
-    2: "视频号",
-    3: "抖音",
-    4: "快手",
-}
 
 FINISHED_STATUSES = {
     "success",
@@ -120,6 +118,7 @@ class PublishTaskManager:
     def init_db(self):
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
+            ensure_platform_capability_schema(db_path=self.db_path, conn=conn)
             cursor = conn.cursor()
             cursor.execute(
                 '''
@@ -395,9 +394,8 @@ class PublishTaskManager:
 
     def _build_task_specs(self, data, source="local_api"):
         platform_type = int(data.get("type"))
-        platform_name = PLATFORM_LABELS.get(platform_type)
-        if not platform_name:
-            raise ValueError(f"不支持的平台类型: {platform_type}")
+        capability = ensure_platform_operation_enabled(platform_type, "publish", db_path=self.db_path)
+        platform_name = capability["label"]
 
         title = str(data.get("title") or "").strip()
         if not title:
@@ -639,18 +637,27 @@ class PublishTaskManager:
 
                 account_lock = self._get_account_lock(account_file_path)
                 with account_lock:
-                    account_status, account_msg = self._check_account_status(account_file_path)
-                    if account_status != 1:
+                    account_check = self._check_account_status(account_file_path)
+                    if not account_check.get("ok"):
+                        task_status = str(account_check.get("taskStatus") or "failed").strip() or "failed"
+                        account_msg = str(account_check.get("message") or "").strip() or "账号健康检查失败"
+                        task_message = (
+                            f"账号 Cookie 已失效，请在平台重新验证: {account_msg}"
+                            if task_status == "needs_verify"
+                            else account_msg
+                        )
                         self._update_task(
                             task["taskUuid"],
-                            status="needs_verify",
-                            message=f"账号 Cookie 已失效，请在平台重新验证: {account_msg}",
+                            status=task_status,
+                            message=task_message,
                             finished=True,
                         )
-                        task_logger.warning(
-                            "publish worker aborted task due to invalid account status task_uuid={} account_file={} msg={}",
+                        log_fn = task_logger.warning if task_status == "needs_verify" else task_logger.error
+                        log_fn(
+                            "publish worker aborted task due to account preflight failure task_uuid={} account_file={} status={} msg={}",
                             task.get("taskUuid"),
                             account_file_path,
+                            task_status,
                             account_msg,
                         )
                         continue
@@ -756,15 +763,65 @@ class PublishTaskManager:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT status, lastValidationMessage FROM user_info WHERE filePath = ?",
+                    "SELECT id, type, filePath FROM user_info WHERE filePath = ?",
                     (account_file_path,),
                 )
                 row = cursor.fetchone()
-                if row:
-                    return int(row["status"] or 0), str(row["lastValidationMessage"] or "本地 cookie 当前不可用")
-        except Exception:
-            pass
-        return 1, ""
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                return {"ok": True, "taskStatus": None, "message": ""}
+            return {
+                "ok": False,
+                "taskStatus": "failed",
+                "message": f"账号健康检查失败: {exc}",
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "taskStatus": "failed",
+                "message": f"账号健康检查失败: {exc}",
+            }
+
+        if not row:
+            return {"ok": True, "taskStatus": None, "message": ""}
+
+        try:
+            result = asyncio.run(check_cookie_detail(int(row["type"]), row["filePath"], headless=True))
+        except Exception as exc:
+            return {
+                "ok": False,
+                "taskStatus": "failed",
+                "message": f"账号健康检查失败: {exc}",
+            }
+
+        is_valid = bool(result.get("ok"))
+        state = str(result.get("state") or "").strip()
+        message = str(result.get("message") or "").strip() or "本地 cookie 当前不可用"
+        task_status = None
+        if not is_valid:
+            if state in {"login_required", "verification_required", "unexpected_page", "missing_storage"}:
+                task_status = "needs_verify"
+            else:
+                task_status = "failed"
+
+        try:
+            update_account_runtime_status(
+                row["id"],
+                1 if is_valid else 0,
+                None if is_valid else message,
+                db_path=self.db_path,
+            )
+        except Exception as exc:
+            task_logger.warning(
+                "publish task account runtime status sync skipped account_id={} file_path={} error={}",
+                row["id"],
+                row["filePath"],
+                exc,
+            )
+
+        if is_valid:
+            return {"ok": True, "taskStatus": None, "message": ""}
+        return {"ok": False, "taskStatus": task_status, "message": message}
 
     def _run_task(self, task):
         payload = task["payload"] or {}
@@ -829,9 +886,10 @@ class PublishTaskManager:
 
     def _execute_payload(self, payload):
         platform_type = int(payload["platformType"])
+        capability = ensure_platform_operation_enabled(platform_type, "publish", db_path=self.db_path)
         title = payload["title"]
         file_path = self._resolve_payload_file_path(payload)
-        platform_name = PLATFORM_LABELS.get(platform_type) or str(payload.get("platformName") or platform_type)
+        platform_name = capability["label"]
         resolved_account_file_path, resolved_account_name, _ = self._resolve_account_binding(
             platform_type,
             platform_name,

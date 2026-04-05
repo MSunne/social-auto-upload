@@ -8,7 +8,7 @@ SAU_LOG_LEVEL = "INFO"
 
 OMNIDRIVE_AGENT_ENABLED = True
 OMNIDRIVE_BASE_URL = "https://omnidrive.example.com"
-OMNIDRIVE_AGENT_KEY = ""
+OMNIDRIVE_AGENT_KEY = ""  # Keep empty for factory images so each device auto-generates its own agentKey.
 OMNIDRIVE_AGENT_POLL_INTERVAL = 5
 OMNIDRIVE_AGENT_HEARTBEAT_INTERVAL = 30
 OMNIDRIVE_ACCOUNT_SYNC_INTERVAL = 60
@@ -33,5 +33,5 @@ OMNIBULL_CORS_ALLOW_CREDENTIALS = False
 OMNIBULL_CORS_MAX_AGE = 86400
 
 OMNIBULL_MATERIAL_ROOTS = {
-    "localWorkspace": "/data/omnibull/workspace",
+    "localWorkspace": "/persistent/omnibull/workspace",
 }

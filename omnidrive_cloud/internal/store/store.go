@@ -303,6 +303,7 @@ type CreateSkillInput struct {
 	Description              string
 	OutputType               string
 	ModelName                string
+	FixedDurationSeconds     *int
 	PromptTemplate           *string
 	StoryboardPromptTemplate *string
 	PublishPromptTemplate    *string
@@ -378,6 +379,8 @@ type UpdateSkillInput struct {
 	Description              *string
 	OutputType               *string
 	ModelName                *string
+	FixedDurationSeconds     *int
+	FixedDurationTouched     bool
 	PromptTemplate           *string
 	StoryboardPromptTemplate *string
 	PublishPromptTemplate    *string
@@ -398,6 +401,75 @@ type UpdateSkillInput struct {
 	LastRunAt                *time.Time
 	LastRunTouched           bool
 	IsEnabled                *bool
+}
+
+type CreateWorkflowDurationRuleInput struct {
+	ID                  string
+	WorkflowCode        string
+	OutputType          string
+	DurationSeconds     int
+	SegmentSeconds      int
+	SpecialPriceCredits *int64
+	IsEnabled           bool
+	SortOrder           int
+	Description         *string
+}
+
+type UpdateWorkflowDurationRuleInput struct {
+	WorkflowCode               *string
+	OutputType                 *string
+	DurationSeconds            *int
+	SegmentSeconds             *int
+	SpecialPriceCredits        *int64
+	SpecialPriceCreditsTouched bool
+	IsEnabled                  *bool
+	SortOrder                  *int
+	Description                *string
+	DescriptionTouched         bool
+}
+
+type CreateAIBillingSessionInput struct {
+	ID                  string
+	UserID              string
+	SourceType          string
+	SourceID            string
+	WorkflowCode        string
+	OutputType          string
+	DurationSeconds     int
+	SegmentSeconds      int
+	SpecialRuleID       *string
+	SpecialPriceCredits *int64
+	PlannedCredits      int64
+	BilledCredits       int64
+	RefundedCredits     int64
+	Status              string
+	Message             *string
+	Payload             []byte
+}
+
+type CreateAIBillingItemInput struct {
+	ID               string
+	SessionID        string
+	UserID           string
+	SourceType       string
+	SourceID         string
+	ItemKey          string
+	ItemType         string
+	Label            string
+	ModelName        *string
+	ModelAlias       *string
+	MeterCode        *string
+	Quantity         int64
+	Unit             string
+	UnitPriceCredits int64
+	PlannedCredits   int64
+	BilledCredits    int64
+	RefundedCredits  int64
+	SortOrder        int
+	IsVisible        bool
+	Status           string
+	WalletLedgerID   *string
+	Payload          []byte
 }
 
 type CreatePublishTaskInput struct {

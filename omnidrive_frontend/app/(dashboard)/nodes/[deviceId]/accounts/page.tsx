@@ -45,6 +45,8 @@ const PLATFORMS = [
   { key: "Bilibili", color: "text-sky-400", bg: "bg-sky-500/10" },
 ];
 
+const LOCAL_REAUTH_ACCOUNT_STATUSES = new Set(["inactive", "invalid"]);
+
 function getErrorMessage(error: unknown, fallback: string): string {
   if (typeof error === "object" && error !== null && "message" in error) {
     const message = String(
@@ -66,6 +68,14 @@ function asDisplayText(value: unknown, fallback = "-") {
     return String(value);
   }
   return fallback;
+}
+
+function requiresLocalReauthStatus(status: unknown) {
+  return LOCAL_REAUTH_ACCOUNT_STATUSES.has(
+    String(status || "")
+      .trim()
+      .toLowerCase(),
+  );
 }
 
 function getAccountDeleteUsage(account: Account | null) {
@@ -97,11 +107,15 @@ export default function DeviceAccountsPage({
   const { data: device } = useQuery<Device>({
     queryKey: ["device", deviceId],
     queryFn: () => getDevice(deviceId),
+    refetchInterval: 60000,
+    refetchIntervalInBackground: true,
   });
 
   const { data: accounts = [] } = useQuery<Account[]>({
     queryKey: ["accounts", deviceId],
     queryFn: () => listAccounts(deviceId),
+    refetchInterval: 60000,
+    refetchIntervalInBackground: true,
   });
 
   const { data: skills = [] } = useQuery<Skill[]>({
@@ -112,6 +126,8 @@ export default function DeviceAccountsPage({
   const { data: tasks = [] } = useQuery<Task[]>({
     queryKey: ["tasks"],
     queryFn: () => listTasks(),
+    refetchInterval: 60000,
+    refetchIntervalInBackground: true,
   });
 
   /* Platform filter */
@@ -130,8 +146,15 @@ export default function DeviceAccountsPage({
 
   const handleSync = async () => {
     setIsSyncing(true);
-    await queryClient.invalidateQueries({ queryKey: ["accounts", deviceId] });
-    setTimeout(() => setIsSyncing(false), 600);
+    try {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["accounts", deviceId] }),
+        queryClient.invalidateQueries({ queryKey: ["device", deviceId] }),
+        queryClient.invalidateQueries({ queryKey: ["tasks"] }),
+      ]);
+    } finally {
+      setTimeout(() => setIsSyncing(false), 600);
+    }
   };
 
   const deleteTarget = useMemo(
@@ -407,7 +430,7 @@ export default function DeviceAccountsPage({
                   const platformCfg = PLATFORMS.find(
                     (p) => p.key === acc.platform,
                   );
-                  const needsAttention = acc.status !== "active";
+                  const needsAttention = requiresLocalReauthStatus(acc.status);
                   return (
                     <motion.tr
                       key={acc.id}

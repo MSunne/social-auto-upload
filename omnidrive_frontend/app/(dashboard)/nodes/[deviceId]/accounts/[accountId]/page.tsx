@@ -120,6 +120,14 @@ function normalizeGenerationLeadMinutes(value?: number | null) {
   return Math.min(24 * 60, Math.round(numeric));
 }
 
+function isNotFoundError(error: unknown) {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+  const response = (error as { response?: { status?: number } }).response;
+  return response?.status === 404;
+}
+
 function inferGenerationLeadMinutes(
   publishAt?: string | null,
   generateAt?: string | null,
@@ -333,15 +341,23 @@ export default function AccountTaskPage({
     queryFn: () => getDevice(deviceId),
   });
 
-  const { data: workspace, isLoading: workspaceLoading } =
+  const {
+    data: workspace,
+    isLoading: workspaceLoading,
+    error: workspaceError,
+  } =
     useQuery<PlatformAccountWorkspace>({
       queryKey: ["accountWorkspace", accountId],
       queryFn: () => getAccountWorkspace(accountId),
+      refetchInterval: 60000,
+      refetchIntervalInBackground: true,
     });
 
   const { data: tasks = [], isLoading: tasksLoading } = useQuery<Task[]>({
     queryKey: ["tasks", "account", accountId],
     queryFn: () => listTasks({ deviceId, accountId, limit: 100 }),
+    refetchInterval: 60000,
+    refetchIntervalInBackground: true,
   });
 
   const { data: skillRuns = [], isLoading: aiLoading } = useQuery<AIJob[]>({
@@ -353,6 +369,8 @@ export default function AccountTaskPage({
         limit: 100,
         excludeSource: "omnidrive_chat",
       }),
+    refetchInterval: 60000,
+    refetchIntervalInBackground: true,
   });
 
   const { data: skills = [] } = useQuery<Skill[]>({
@@ -552,7 +570,8 @@ export default function AccountTaskPage({
       });
   }, [skillMap, skillRuns]);
 
-  const account = workspace?.account;
+  const accountMissing = isNotFoundError(workspaceError);
+  const account = accountMissing ? null : workspace?.account;
   const enabledSkills = useMemo(
     () => skills.filter((item) => item.isEnabled),
     [skills],
@@ -582,6 +601,16 @@ export default function AccountTaskPage({
     await deleteSkillRunMutation.mutateAsync(job);
   };
 
+  if (accountMissing) {
+    return (
+      <EmptyState
+        icon={<UserRound className="h-6 w-6" />}
+        title="账号不存在"
+        description="这个 OmniBull 账号可能已经解绑，或者你当前没有访问权限。"
+      />
+    );
+  }
+
   if (workspaceLoading || tasksLoading || aiLoading) {
     return (
       <div className="flex h-72 items-center justify-center">
@@ -592,7 +621,6 @@ export default function AccountTaskPage({
       </div>
     );
   }
-
   if (!account) {
     return (
       <EmptyState

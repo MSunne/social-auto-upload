@@ -150,6 +150,7 @@ func BuildSkillAIJobPayload(
 		"skillDescription":      skill.Description,
 		"publishPromptTemplate": publishPromptTemplate,
 		"publishIntroEnabled":   skill.PublishIntroEnabled,
+		"storyboardEnabled":     skill.StoryboardEnabled,
 		"skillTags":             topics,
 		"runAt":                 generateAt.UTC().Format(time.RFC3339),
 		"publishAt":             publishAt.UTC().Format(time.RFC3339),
@@ -172,6 +173,25 @@ func BuildSkillAIJobPayload(
 		}
 		if videoOptions.DurationSeconds != nil && *videoOptions.DurationSeconds > 0 {
 			payload["durationSeconds"] = *videoOptions.DurationSeconds
+		}
+		if isVideoTextSkillOutput(skill.OutputType) && skill.FixedDurationSeconds != nil && *skill.FixedDurationSeconds > 0 {
+			rule, ruleErr := app.Store.FindEnabledWorkflowDurationRule(ctx, "video_text", "视文模式", *skill.FixedDurationSeconds)
+			if ruleErr != nil {
+				return nil, ruleErr
+			}
+			if rule == nil {
+				return nil, fmt.Errorf("skill fixed duration is not enabled in workflow duration rules")
+			}
+			payload["fixedDurationSeconds"] = *skill.FixedDurationSeconds
+			payload["durationSeconds"] = *skill.FixedDurationSeconds
+			payload["workflowPricing"] = map[string]any{
+				"workflowCode":        "video_text",
+				"outputType":          "视文模式",
+				"ruleId":              rule.ID,
+				"durationSeconds":     rule.DurationSeconds,
+				"segmentSeconds":      rule.SegmentSeconds,
+				"specialPriceCredits": rule.SpecialPriceCredits,
+			}
 		}
 	}
 
@@ -236,6 +256,15 @@ func normalizeSkillTopics(topics []string) []string {
 		normalized = append(normalized, topic)
 	}
 	return normalized
+}
+
+func isVideoTextSkillOutput(outputType string) bool {
+	switch strings.TrimSpace(outputType) {
+	case "video", "video_text", "视文模式":
+		return true
+	default:
+		return false
+	}
 }
 
 func loadSkillStoryboardConfig(ctx context.Context, app *appstate.App, skill domain.ProductSkill, jobType string) (string, string, []map[string]any, error) {
@@ -327,6 +356,9 @@ func resolveSkillVideoGenerationOptions(skill domain.ProductSkill, model *domain
 	resolution := firstStringValueFromMaps(maps, "resolution", "videoSize", "size")
 	aspectRatio := firstStringValueFromMaps(maps, "aspectRatio", "ratio")
 	durationSeconds, _ := firstIntValueFromMaps(maps, "durationSeconds", "duration")
+	if skill.FixedDurationSeconds != nil && *skill.FixedDurationSeconds > 0 {
+		durationSeconds = *skill.FixedDurationSeconds
+	}
 
 	if strings.TrimSpace(resolution) == "" && model != nil {
 		resolution = firstSupportedSkillVideoResolution(model.VideoSupportedResolutions)
