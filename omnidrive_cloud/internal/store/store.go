@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -65,6 +67,25 @@ func onlineWindowForRuntimePayload(runtimePayload []byte) time.Duration {
 		return maxOnlineWindow
 	}
 	return window
+}
+
+func deviceOnlineSQLPredicate(tableAlias string) string {
+	qualified := strings.TrimSpace(tableAlias)
+	if qualified == "" {
+		qualified = "devices"
+	}
+	intervalValue := fmt.Sprintf(
+		"COALESCE(%[1]s.runtime_payload->>'heartbeatIntervalSeconds', %[1]s.runtime_payload->>'heartbeatInterval', '')",
+		qualified,
+	)
+	return fmt.Sprintf(
+		`(%[1]s.last_seen_at IS NOT NULL AND %[1]s.last_seen_at >= NOW() - make_interval(secs => LEAST(%[2]d, GREATEST(%[3]d, CASE WHEN %[4]s ~ '^[0-9]+$' AND (%[4]s)::INT > 0 THEN (%[4]s)::INT * 4 ELSE %[5]d END))))`,
+		qualified,
+		int(maxOnlineWindow/time.Second),
+		int(minOnlineWindow/time.Second),
+		intervalValue,
+		int(onlineWindow/time.Second),
+	)
 }
 
 func stringPtr(value string) *string {

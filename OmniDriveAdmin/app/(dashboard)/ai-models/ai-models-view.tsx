@@ -250,7 +250,7 @@ export function AIModelsView() {
                           {model.baseUrl || "未配置 Base URL"}
                         </div>
                         <div className="text-xs text-[var(--color-text-secondary)]">
-                          {model.apiKey ? "专用 Key 已配置" : "使用系统默认 Key"}
+                          {model.apiKey ? "专用 Key 已配置" : "未配置专用 Key"}
                         </div>
                       </div>
                     </td>

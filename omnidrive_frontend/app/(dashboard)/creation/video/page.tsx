@@ -702,13 +702,13 @@ function mergeVideoJobs(items: AIJob[]) {
 function sortJobsByTime(items: AIJob[]) {
   return [...items].sort((left, right) => {
     const timeDiff =
-      getJobTimelineTimestamp(left) - getJobTimelineTimestamp(right);
+      getJobTimelineTimestamp(right) - getJobTimelineTimestamp(left);
     if (timeDiff !== 0) {
       return timeDiff;
     }
     return (
-      new Date(left.updatedAt || 0).getTime() -
-      new Date(right.updatedAt || 0).getTime()
+      new Date(right.updatedAt || 0).getTime() -
+      new Date(left.updatedAt || 0).getTime()
     );
   });
 }
@@ -746,7 +746,7 @@ function buildVideoProgress(job?: AIJob | null) {
       value: normalizeVideoProgress(stage.key, actualProgress),
       label: stage.label,
       tone: "progress" as ProgressTone,
-      hint: stage.description || "正在生成视频首帧封面。",
+      hint: stage.description || "任务正在准备提交视频生成。",
     };
   }
   if (stage.key === "storyboarding") {
@@ -754,7 +754,7 @@ function buildVideoProgress(job?: AIJob | null) {
       value: normalizeVideoProgress(stage.key, actualProgress),
       label: stage.label,
       tone: "progress" as ProgressTone,
-      hint: stage.description || "正在一次性生成封面和新的视频脚本。",
+      hint: stage.description || "任务正在准备提交视频生成。",
     };
   }
   if (stage.key === "generating") {
@@ -883,7 +883,6 @@ export default function VideoCreationPage() {
   const [selectedModel, setSelectedModel] = useState("");
   const [selectedDuration, setSelectedDuration] = useState("");
   const [selectedResolution, setSelectedResolution] = useState("");
-  const [storyboardEnabled, setStoryboardEnabled] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [referenceFrames, setReferenceFrames] = useState<ReferenceFrame[]>([]);
@@ -973,9 +972,7 @@ export default function VideoCreationPage() {
       queryFn: () =>
         listAIJobs({
           jobType: "video",
-          source: VIDEO_CREATION_SOURCE,
           payloadMode: "summary",
-          limit: 50,
         }),
       refetchInterval: currentJobId ? 4000 : false,
       refetchIntervalInBackground: true,
@@ -1243,7 +1240,7 @@ export default function VideoCreationPage() {
         source: VIDEO_CREATION_SOURCE,
         inputPayload: {
           prompt: prompt.trim(),
-          storyboardEnabled,
+          disableVideoPreprocess: true,
           aspectRatio: selectedResolutionOption.aspectRatio,
           resolution: selectedResolutionOption.resolution,
           durationSeconds: selectedDurationOption.seconds,
@@ -1263,7 +1260,7 @@ export default function VideoCreationPage() {
       setSelectedJobId(job.id);
       setPreviewIndex(0);
       writeStoredVideoCurrentJobId(job.id);
-      void queryClient.invalidateQueries({ queryKey: ["aiJobs", "video"] });
+      void queryClient.invalidateQueries({ queryKey: ["aiJobs"] });
     } catch (error) {
       setSubmitError(
         error instanceof Error ? error.message : "视频生成请求失败",
@@ -1540,52 +1537,19 @@ export default function VideoCreationPage() {
           </div>
 
           <div className="rounded-xl border border-border/60 bg-surface px-3 py-3">
-            <button
-              type="button"
-              onClick={() => setStoryboardEnabled((current) => !current)}
-              className={cn(
-                "flex w-full items-start justify-between gap-3 text-left transition-colors",
-                storyboardEnabled
-                  ? "text-text-primary"
-                  : "text-text-secondary hover:text-text-primary",
-              )}
-            >
-              <div className="space-y-1">
-                <div className="flex items-center gap-2 text-sm font-semibold">
-                  <Wand2 className="h-4 w-4 text-accent" />
-                  分镜优化
-                </div>
-                <p className="text-xs leading-5 text-text-muted">
-                  {storyboardEnabled
-                    ? "启用后会用管理员分镜规则一次性产出首帧封面和新视频脚本，再进入视频生成。"
-                    : "关闭后仍会先生成新封面首帧，但视频继续沿用你当前输入的业务提示词。"}
-                </p>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+                <Wand2 className="h-4 w-4 text-accent" />
+                直提视频生成
               </div>
-              <span
-                className={cn(
-                  "mt-0.5 inline-flex min-w-[64px] items-center justify-center rounded-full border px-2.5 py-1 text-[11px] font-medium",
-                  storyboardEnabled
-                    ? "border-accent/40 bg-accent/10 text-accent"
-                    : "border-border bg-surface-hover text-text-muted",
-                )}
-              >
-                {storyboardEnabled ? (
-                  <span className="inline-flex items-center gap-1">
-                    <Check className="h-3.5 w-3.5" />
-                    已开启
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1">
-                    <X className="h-3.5 w-3.5" />
-                    已关闭
-                  </span>
-                )}
-              </span>
-            </button>
+              <p className="text-xs leading-5 text-text-muted">
+                这个页面会把你当前输入的 prompt 和参考图直接提交给视频模型，不再额外生成封面首帧，也不再套管理员分镜脚本。
+              </p>
+            </div>
             <div className="mt-3 flex items-start gap-2 rounded-lg border border-border/40 bg-background/50 px-2.5 py-2 text-[11px] text-text-muted">
               <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan" />
               <span>
-                业务 prompt 始终来自当前输入内容。管理员配置只作为分镜优化规则，不会替代你的任务说明。
+                你上传多少张参考图，就会按当前模型允许的数量原样提交多少张；超过 8 秒的视频仍然只保留分段尾帧续接。
               </span>
             </div>
           </div>

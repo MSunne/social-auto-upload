@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useBulkActionDevices, useDevices, useUnbindDevice, useUpdateDeviceActivation } from "@/lib/hooks/useDevices";
-import type { AdminDeviceRow } from "@/lib/types";
+import type { AdminDeviceRow, DeviceRuntimePayload } from "@/lib/types";
 import { PageHeader } from "@/components/ui/common";
 import {
   Search,
@@ -26,6 +26,70 @@ const formatLastSeen = (ts?: string) => {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs} 小时前`;
   return `${Math.floor(hrs / 24)} 天前`;
+};
+
+const formatDateTime = (ts?: string | null) => {
+  if (!ts) return "—";
+  const value = new Date(ts);
+  if (Number.isNaN(value.getTime())) return "—";
+  return value.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+};
+
+const summarizeBridgeError = (value?: string | null) => {
+  const normalized = String(value || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  if (normalized.length <= 88) return normalized;
+  return `${normalized.slice(0, 85)}...`;
+};
+
+const getBridgeHealth = (deviceStatus: string, isEnabled: boolean, runtimePayload?: DeviceRuntimePayload) => {
+  if (!isEnabled) {
+    return null;
+  }
+  if (
+    !runtimePayload ||
+    (runtimePayload.cloudReachable === undefined &&
+      runtimePayload.lastError === undefined &&
+      runtimePayload.lastLoginPollAt === undefined)
+  ) {
+    return {
+      label: "未上报桥接健康",
+      className: "text-[var(--color-text-secondary)] border-[var(--color-border)] bg-[var(--color-bg-secondary)]",
+    };
+  }
+  if (runtimePayload.cloudReachable === false) {
+    return {
+      label: "云桥异常",
+      className: "text-red-400 border-red-500/30 bg-red-500/10",
+      detail: summarizeBridgeError(runtimePayload.lastError) || "无法连接 OmniDrive API",
+      retryAt: runtimePayload.cloudRetryAt || undefined,
+    };
+  }
+  if (runtimePayload.lastError) {
+    return {
+      label: "桥接告警",
+      className: "text-amber-400 border-amber-500/30 bg-amber-500/10",
+      detail: summarizeBridgeError(runtimePayload.lastError),
+    };
+  }
+  if (deviceStatus === "online") {
+    return {
+      label: "云桥正常",
+      className: "text-emerald-400 border-emerald-500/30 bg-emerald-500/10",
+      detail: runtimePayload.lastLoginPollAt ? `登录轮询 ${formatLastSeen(runtimePayload.lastLoginPollAt)}` : undefined,
+    };
+  }
+  return {
+    label: "等待设备恢复",
+    className: "text-[var(--color-text-secondary)] border-[var(--color-border)] bg-[var(--color-bg-secondary)]",
+  };
 };
 
 const formatActivationStatus = (row: AdminDeviceRow) => {
@@ -296,7 +360,7 @@ export function DevicesView() {
                 </th>
                 <th className="px-4 py-4 font-medium">设备信息</th>
                 <th className="px-4 py-4 font-medium">归属用户</th>
-                <th className="px-4 py-4 font-medium">状态</th>
+                <th className="px-4 py-4 font-medium">状态 / 云桥</th>
                 <th className="px-4 py-4 font-medium">激活配置</th>
                 <th className="px-4 py-4 font-medium">账号 / 任务负载</th>
                 <th className="px-4 py-4 font-medium">IP 地址</th>
@@ -329,6 +393,7 @@ export function DevicesView() {
               )}
               {data?.items.map((row) => {
                 const activationMeta = formatActivationStatus(row);
+                const bridgeHealth = getBridgeHealth(row.device.status, row.device.isEnabled, row.device.runtimePayload);
                 return (
                   <tr
                     key={row.device.id}
@@ -379,7 +444,28 @@ export function DevicesView() {
                         <span className="text-xs text-[var(--color-text-secondary)]">— 未绑定</span>
                       )}
                     </td>
-                    <td className="px-4 py-4">{getStatusIndicator(row.device.status, row.device.isEnabled)}</td>
+                    <td className="px-4 py-4">
+                      <div className="space-y-1.5">
+                        {getStatusIndicator(row.device.status, row.device.isEnabled)}
+                        {bridgeHealth && (
+                          <>
+                            <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${bridgeHealth.className}`}>
+                              {bridgeHealth.label}
+                            </span>
+                            {bridgeHealth.detail && (
+                              <div className="max-w-xs text-xs text-[var(--color-text-secondary)]">
+                                {bridgeHealth.detail}
+                              </div>
+                            )}
+                            {bridgeHealth.retryAt && (
+                              <div className="text-xs text-[var(--color-text-secondary)]">
+                                下次重试: {formatDateTime(bridgeHealth.retryAt)}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-4 py-4">
                       <div className="space-y-1">
                         <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${activationMeta.className}`}>
@@ -397,9 +483,18 @@ export function DevicesView() {
                       <div className="text-sm">
                         {row.device.load.activeAccountCount}/{row.device.load.accountCount} 账号
                       </div>
-                      <div className="mt-0.5 flex gap-2 text-xs text-[var(--color-text-secondary)]">
+                      <div className="mt-0.5 flex flex-wrap gap-2 text-xs text-[var(--color-text-secondary)]">
                         <span className="text-amber-400">{row.device.load.runningTaskCount} 运行</span>
                         <span>{row.device.load.pendingTaskCount} 等待</span>
+                        {row.device.load.activeLoginSessionCount > 0 && (
+                          <span className="text-sky-400">{row.device.load.activeLoginSessionCount} 登录中</span>
+                        )}
+                        {row.device.load.verificationLoginSessionCount > 0 && (
+                          <span className="text-fuchsia-400">{row.device.load.verificationLoginSessionCount} 验证中</span>
+                        )}
+                        {row.device.load.leasedAiJobCount > 0 && (
+                          <span>{row.device.load.leasedAiJobCount} AI 租约</span>
+                        )}
                         {row.device.load.failedTaskCount > 0 && (
                           <span className="text-red-400">{row.device.load.failedTaskCount} 失败</span>
                         )}
@@ -410,7 +505,8 @@ export function DevicesView() {
                       <div className="mt-0.5">内网: {row.device.localIp || "—"}</div>
                     </td>
                     <td className="px-4 py-4 text-xs text-[var(--color-text-secondary)]">
-                      {formatLastSeen(row.device.lastSeenAt)}
+                      <div>{formatLastSeen(row.device.lastSeenAt)}</div>
+                      <div className="mt-0.5">{formatDateTime(row.device.lastSeenAt)}</div>
                     </td>
                     <td className="px-4 py-4">
                       <div className="flex flex-col items-start gap-2">

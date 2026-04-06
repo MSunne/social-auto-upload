@@ -6,7 +6,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertTriangle,
   Download,
-  Filter,
   History,
   Play,
   Search,
@@ -14,7 +13,6 @@ import {
   X,
   Eye,
   CalendarDays,
-  Clock,
   Box,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -24,7 +22,7 @@ import {
   formatDateTime,
   resolveAIJobStage,
 } from "@/lib/workflow";
-import { getAIJobArtifacts, listAIJobs } from "@/lib/services";
+import { getAIJob, getAIJobArtifacts, listAIJobs } from "@/lib/services";
 import type { AIJob, AIJobArtifact } from "@/lib/types";
 
 // --- START SHARED VIDEO LOGIC ---
@@ -101,6 +99,26 @@ function buildVideoPreviewSource(url?: string | null) {
   const trimmed = (url || "").trim();
   if (!trimmed) return "";
   return trimmed.includes("#") ? trimmed : `${trimmed}#t=0.1`;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function getString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function resolvePromptDetails(job?: AIJob | null) {
+  const inputPayload = asRecord(job?.inputPayload);
+  const outputPayload = asRecord(job?.outputPayload);
+  const storyboardPayload = asRecord(outputPayload?.storyboard);
+  return {
+    originalPrompt: getString(inputPayload?.prompt) || getString(job?.prompt),
+    optimizedPrompt: getString(storyboardPayload?.optimizedPrompt),
+  };
 }
 
 function VideoPreviewSurface({
@@ -233,13 +251,11 @@ export default function VideoHistoryPage() {
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
 
   const { data: rawJobs = [], isLoading } = useQuery({
-    queryKey: ["aiJobs", { jobType: "video", source: "omnidrive_cloud" }],
+    queryKey: ["aiJobs", { jobType: "video", history: "all-sources" }],
     queryFn: () =>
       listAIJobs({
         jobType: "video",
-        source: "omnidrive_cloud",
         payloadMode: "summary",
-        limit: 100,
       }),
     refetchInterval: (query) => {
       const active = query.state.data?.some((job) => !isTerminalJob(job));
@@ -262,11 +278,11 @@ export default function VideoHistoryPage() {
 
       return true;
     }).sort((left, right) => {
-      const timeDiff = getJobTimelineTime(left) - getJobTimelineTime(right);
+      const timeDiff = getJobTimelineTime(right) - getJobTimelineTime(left);
       if (timeDiff !== 0) {
         return timeDiff;
       }
-      return new Date(left.updatedAt || 0).getTime() - new Date(right.updatedAt || 0).getTime();
+      return new Date(right.updatedAt || 0).getTime() - new Date(left.updatedAt || 0).getTime();
     });
   }, [rawJobs, filter, searchQuery]);
 
@@ -274,11 +290,23 @@ export default function VideoHistoryPage() {
     return rawJobs.find((j) => j.id === selectedJobId) || null;
   }, [rawJobs, selectedJobId]);
 
-  const selectedPayloadPreview = getPrimaryPreviewFromJob(selectedJob);
+  const { data: selectedJobDetail } = useQuery<AIJob>({
+    queryKey: ["aiJobDetail", selectedJobId],
+    queryFn: () => getAIJob(selectedJobId!),
+    enabled: !!selectedJobId,
+    staleTime: 10_000,
+  });
+
+  const selectedJobView = selectedJobDetail || selectedJob;
+  const selectedPromptDetails = useMemo(
+    () => resolvePromptDetails(selectedJobView),
+    [selectedJobView],
+  );
+  const selectedPayloadPreview = getPrimaryPreviewFromJob(selectedJobView);
   const { data: selectedArtifacts } = useQuery<AIJobArtifact[]>({
     queryKey: ["aiJobArtifacts", selectedJobId],
     queryFn: () => getAIJobArtifacts(selectedJobId!),
-    enabled: !!selectedJobId && isTerminalJob(selectedJob) && isSuccessJob(selectedJob),
+    enabled: !!selectedJobId && isTerminalJob(selectedJobView) && isSuccessJob(selectedJobView),
   });
 
   const selectedPreviewItems = useMemo(() => {
@@ -429,7 +457,7 @@ export default function VideoHistoryPage() {
 
       {/* Detail Modal */}
       <AnimatePresence>
-        {selectedJob && (
+        {selectedJobView && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
             <motion.div
               initial={{ opacity: 0 }}
@@ -475,19 +503,19 @@ export default function VideoHistoryPage() {
                             <span
                               className={cn(
                                 "flex h-2 w-2 rounded-full",
-                                isSuccessJob(selectedJob)
+                                isSuccessJob(selectedJobView)
                                   ? "bg-success pulse-online"
-                                  : isTerminalJob(selectedJob)
+                                  : isTerminalJob(selectedJobView)
                                   ? "bg-danger"
                                   : "bg-warning",
                               )}
                             />
                             <span className="text-xs font-semibold text-white drop-shadow-md">
-                              {resolveAIJobStage(selectedJob).label}
+                              {resolveAIJobStage(selectedJobView).label}
                             </span>
                           </div>
                         </>
-                      ) : isTerminalJob(selectedJob) && !isSuccessJob(selectedJob) ? (
+                      ) : isTerminalJob(selectedJobView) && !isSuccessJob(selectedJobView) ? (
                         <div className="flex h-full w-full flex-col items-center justify-center gap-3 text-danger">
                           <AlertTriangle className="h-10 w-10" />
                           <span className="text-sm font-medium" style={{ color: "#ff3b5c" }}>生成失败，暂无视频</span>
@@ -523,32 +551,53 @@ export default function VideoHistoryPage() {
                         <h4 className="flex items-center gap-2 mb-1 text-sm font-extrabold uppercase drop-shadow-sm" style={{ color: "rgba(255, 255, 255, 0.95)" }}>
                           <Box className="h-4 w-4" style={{ color: "#d084ff" }} /> 提示词
                         </h4>
-                        <p className="text-base font-semibold leading-relaxed break-all drop-shadow-sm" style={{ color: "#ffffff" }}>
-                          {buildAIJobTitle(selectedJob) || "生成视频的提示词为空"}
-                        </p>
+                        <div className="space-y-4">
+                          {selectedPromptDetails.optimizedPrompt &&
+                          selectedPromptDetails.optimizedPrompt !== selectedPromptDetails.originalPrompt ? (
+                            <div className="space-y-2">
+                              <div className="text-xs font-semibold uppercase tracking-wide text-accent">
+                                最终提交提示词
+                              </div>
+                              <p className="whitespace-pre-wrap break-words text-sm leading-7 drop-shadow-sm" style={{ color: "#ffffff" }}>
+                                {selectedPromptDetails.optimizedPrompt}
+                              </p>
+                            </div>
+                          ) : null}
+                          <div className="space-y-2">
+                            <div className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+                              {selectedPromptDetails.optimizedPrompt &&
+                              selectedPromptDetails.optimizedPrompt !== selectedPromptDetails.originalPrompt
+                                ? "原始提示词"
+                                : "完整提示词"}
+                            </div>
+                            <p className="whitespace-pre-wrap break-words text-sm leading-7 drop-shadow-sm" style={{ color: "#ffffff" }}>
+                              {selectedPromptDetails.originalPrompt || "生成视频的提示词为空"}
+                            </p>
+                          </div>
+                        </div>
                       </div>
 
                     <div className="grid grid-cols-2 gap-4 lg:grid-cols-1">
                       <div className="flex flex-col gap-1.5 rounded-xl border p-4 shadow-lg" style={{ backgroundColor: "rgba(30, 30, 50, 0.95)", borderColor: "rgba(255, 255, 255, 0.3)", transform: "translateZ(0)" }}>
                         <span className="text-xs font-extrabold uppercase drop-shadow-sm" style={{ color: "#00f5d4" }}>模型引擎</span>
-                        <span className="text-base font-bold drop-shadow-sm" style={{ color: "#ffffff" }}>{getModelDisplayName(selectedJob)}</span>
+                        <span className="text-base font-bold drop-shadow-sm" style={{ color: "#ffffff" }}>{getModelDisplayName(selectedJobView)}</span>
                       </div>
                       <div className="flex flex-col gap-1.5 rounded-xl border p-4 shadow-lg" style={{ backgroundColor: "rgba(30, 30, 50, 0.95)", borderColor: "rgba(255, 255, 255, 0.3)", transform: "translateZ(0)" }}>
                         <span className="text-xs font-extrabold uppercase drop-shadow-sm" style={{ color: "rgba(255, 255, 255, 0.9)" }}>创建时间</span>
-                        <span className="text-sm font-bold flex items-center drop-shadow-sm" style={{ color: "#ffffff" }}>{formatDateTime(selectedJob.createdAt)}</span>
+                        <span className="text-sm font-bold flex items-center drop-shadow-sm" style={{ color: "#ffffff" }}>{formatDateTime(selectedJobView.createdAt)}</span>
                       </div>
                       <div className="flex flex-col gap-1.5 rounded-xl border p-4 shadow-lg" style={{ backgroundColor: "rgba(30, 30, 50, 0.95)", borderColor: "rgba(255, 255, 255, 0.3)", transform: "translateZ(0)" }}>
                         <span className="text-xs font-extrabold uppercase drop-shadow-sm" style={{ color: "rgba(255, 255, 255, 0.9)" }}>更新时间</span>
-                        <span className="text-sm font-bold flex items-center drop-shadow-sm" style={{ color: "#ffffff" }}>{formatDateTime(selectedJob.updatedAt)}</span>
+                        <span className="text-sm font-bold flex items-center drop-shadow-sm" style={{ color: "#ffffff" }}>{formatDateTime(selectedJobView.updatedAt)}</span>
                       </div>
                     </div>
 
-                    {selectedJob.message && (
+                    {selectedJobView.message && (
                       <div className="mt-2 rounded-xl border p-4 shadow-md" style={{ backgroundColor: "rgba(255, 59, 92, 0.15)", borderColor: "rgba(255, 59, 92, 0.4)", transform: "translateZ(0)" }}>
                         <h4 className="mb-1.5 text-xs font-extrabold uppercase flex items-center gap-1.5 drop-shadow-sm" style={{ color: "#ff3b5c" }}>
                           <AlertTriangle className="h-3.5 w-3.5" /> 系统消息
                         </h4>
-                        <p className="text-sm font-semibold leading-relaxed drop-shadow-sm" style={{ color: "#ffa5b5" }}>{selectedJob.message}</p>
+                        <p className="text-sm font-semibold leading-relaxed drop-shadow-sm" style={{ color: "#ffa5b5" }}>{selectedJobView.message}</p>
                       </div>
                     )}
                   </div>

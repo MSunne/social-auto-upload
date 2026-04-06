@@ -15,6 +15,25 @@ interface SupportRechargeDrawerProps {
   onClose: () => void;
 }
 
+function formatShortId(value: string) {
+  return value.length > 12 ? `${value.slice(0, 8)}...${value.slice(-4)}` : value;
+}
+
+function formatContactChannel(value?: string) {
+  switch (value) {
+    case "wechat":
+      return "微信";
+    case "qq":
+      return "QQ";
+    case "phone":
+      return "电话";
+    case "email":
+      return "邮箱";
+    default:
+      return value || "";
+  }
+}
+
 export function SupportRechargeDrawer({ orderId, onClose }: SupportRechargeDrawerProps) {
   const { data, isLoading, error } = useSupportRechargeDetail(orderId);
   const creditMutation = useCreditSupportRecharge();
@@ -24,6 +43,12 @@ export function SupportRechargeDrawer({ orderId, onClose }: SupportRechargeDrawe
   const [rejectReason, setRejectReason] = useState("");
   const [creditNote, setCreditNote] = useState("");
   const [isRejecting, setIsRejecting] = useState(false);
+  const userName = data?.user.name.trim() || "未命名用户";
+  const userEmail = data?.user.email.trim() || "";
+  const contactParts = [
+    formatContactChannel(data?.submission.contactChannel),
+    data?.submission.contactHandle?.trim() || "",
+  ].filter(Boolean);
 
   if (!orderId) return null;
 
@@ -106,8 +131,19 @@ export function SupportRechargeDrawer({ orderId, onClose }: SupportRechargeDrawe
                     <p className="font-mono text-xs break-all">{data.record.orderNo}</p>
                   </div>
                   <div>
-                    <p className="text-[var(--color-text-secondary)] mb-1">用户邮箱</p>
-                    <p className="break-all">{data.user.email}</p>
+                    <p className="text-[var(--color-text-secondary)] mb-1">用户信息</p>
+                    <div className="space-y-1">
+                      <p className="font-medium text-[var(--color-text-primary)]">{userName}</p>
+                      <p className="break-all text-sm text-[var(--color-text-secondary)]">
+                        {userEmail || "邮箱未绑定"}
+                      </p>
+                      <p
+                        className="font-mono text-xs text-[var(--color-text-secondary)]/80"
+                        title={data.user.id}
+                      >
+                        UID {formatShortId(data.user.id)}
+                      </p>
+                    </div>
                   </div>
                   <div>
                     <p className="text-[var(--color-text-secondary)] mb-1">请求金额 (人民币)</p>
@@ -131,6 +167,12 @@ export function SupportRechargeDrawer({ orderId, onClose }: SupportRechargeDrawe
                         <p className="text-[var(--color-text-secondary)] mb-1">充值激活码</p>
                         <p className="font-mono text-xs break-all">{data.record.orderNo}</p>
                       </div>
+                      {contactParts.length > 0 ? (
+                        <div>
+                          <p className="text-[var(--color-text-secondary)] mb-1">客户联系信息</p>
+                          <p className="break-all text-sm text-[var(--color-text-primary)]">{contactParts.join(" / ")}</p>
+                        </div>
+                      ) : null}
                       {data.submission.paymentReference && (
                         <div>
                           <p className="text-[var(--color-text-secondary)] mb-1">客户提供充值码</p>

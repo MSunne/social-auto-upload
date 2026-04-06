@@ -141,8 +141,10 @@ const filteredAccounts = computed(() => {
   return accountStore.accounts.filter(a => a.name?.toLowerCase().includes(q) || a.platform?.toLowerCase().includes(q))
 })
 
+// Map platform names to Element Plus tag colors so the table stays readable at a glance.
 const platformTagType = (p) => ({ '抖音': 'danger', '快手': 'success', '视频号': 'warning', '小红书': '' }[p] || 'info')
 
+// Load cloud-synced platform capabilities before users try to start a login flow.
 const fetchPlatforms = async () => {
   try {
     const res = await accountApi.getPlatforms()
@@ -152,6 +154,7 @@ const fetchPlatforms = async () => {
   }
 }
 
+// Refresh the account list from the backend and keep the local Pinia cache in sync.
 const fetchAccounts = async () => {
   loading.value = true
   try {
@@ -161,6 +164,7 @@ const fetchAccounts = async () => {
   loading.value = false
 }
 
+// Trigger per-account cookie validation so operators can quickly spot accounts that need re-login.
 const validateOne = async (id) => {
   const acc = accountStore.accounts.find(a => a.id === id)
   if (acc) acc._validating = true
@@ -176,6 +180,7 @@ const validateOne = async (id) => {
   if (acc) acc._validating = false
 }
 
+// Run the backend's batch validator when the operator wants a full-account health sweep.
 const batchValidate = async () => {
   validating.value = true
   try {
@@ -186,6 +191,7 @@ const batchValidate = async () => {
   validating.value = false
 }
 
+// Delete the selected account record after explicit confirmation and then refresh the table.
 const deleteAccount = async (id) => {
   await ElMessageBox.confirm('确定删除该账号？', '确认', { type: 'warning' })
   try {
@@ -195,6 +201,7 @@ const deleteAccount = async (id) => {
   } catch { ElMessage.error('删除失败') }
 }
 
+// Ask the local backend to push the latest account state to OmniDrive without blocking the UI.
 const forceSync = async () => {
   syncing.value = true
   try {
@@ -210,6 +217,7 @@ const forceSync = async () => {
   syncing.value = false
 }
 
+// Open the backend SSE login flow and append all status messages so operators can debug login progress.
 const startLogin = () => {
   const platformType = Number(newAccount.value.platformType)
   if (!platformType) {

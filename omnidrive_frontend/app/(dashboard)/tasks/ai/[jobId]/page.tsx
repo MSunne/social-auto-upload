@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -169,6 +170,10 @@ function extractLocalMaterials(inputPayload?: Record<string, unknown> | null): L
   if (Array.isArray(referenceImages)) {
     appendItems(referenceImages, "参考图");
   }
+  const referenceMedia = inputPayload.referenceMedia;
+  if (Array.isArray(referenceMedia)) {
+    appendItems(referenceMedia, "参考媒体");
+  }
   const attachments = inputPayload.attachments;
   if (Array.isArray(attachments)) {
     appendItems(attachments, "附件");
@@ -247,6 +252,44 @@ function DetailField({
   );
 }
 
+function ExpandableTextField({
+  label,
+  value,
+}: {
+  label: string;
+  value?: string | null;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const text = value && value.trim() ? value.trim() : "";
+  const canExpand = text.length > 180 || text.includes("\n");
+
+  return (
+    <div className="rounded-xl border border-border bg-surface px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[11px] uppercase tracking-wider text-text-muted">{label}</p>
+        {canExpand ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((current) => !current)}
+            className="text-xs font-medium text-accent transition-colors hover:text-accent-glow"
+          >
+            {expanded ? "收起" : "展开全文"}
+          </button>
+        ) : null}
+      </div>
+      <div
+        className={
+          expanded
+            ? "mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-text-primary"
+            : "mt-2 max-h-24 overflow-hidden whitespace-pre-wrap break-words text-sm leading-6 text-text-primary"
+        }
+      >
+        {text || "—"}
+      </div>
+    </div>
+  );
+}
+
 export default function AIJobDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -295,12 +338,16 @@ export default function AIJobDetailPage() {
   const billingItems = buildBillingDisplayItems(workspace);
   const stage = resolveAIJobStage(job);
   const inputPayload = asRecord(job.inputPayload);
+  const outputPayload = asRecord(job.outputPayload);
+  const storyboardPayload = asRecord(outputPayload?.storyboard);
   const localMaterials = extractLocalMaterials(inputPayload);
   const linkedTask = publishTasks[0];
   const skillName = workspace.skill?.name || getString(inputPayload?.skillName) || "—";
   const platform = linkedTask?.platform || getString(inputPayload?.platform) || "—";
   const title = getString(inputPayload?.title) || buildAIJobTitle(job);
   const accountName = linkedTask?.accountName || getString(inputPayload?.accountName) || "—";
+  const originalPrompt = getString(inputPayload?.prompt) || getString(job.prompt);
+  const optimizedPrompt = getString(storyboardPayload?.optimizedPrompt);
   const requestedRun = getString(inputPayload?.publishAt) || job.runAt || null;
   const executionTime = workspace.bridge?.startedAt || null;
   const resultTime = job.finishedAt || workspace.bridge?.finishedAt || null;
@@ -422,14 +469,20 @@ export default function AIJobDetailPage() {
                 任务参数
               </h3>
             </div>
-            <div className="grid grid-cols-1 gap-3 p-5 md:grid-cols-2">
-              <DetailField label="skillName" value={skillName} />
-              <DetailField label="platform" value={platform} />
-              <DetailField label="title" value={title} />
-              <DetailField label="accountName" value={accountName} />
-              <DetailField label="requestedRun" value={requestedRun ? formatDateTime(requestedRun) : "—"} />
-              <DetailField label="执行时间" value={executionTime ? formatDateTime(executionTime) : "—"} />
-              <DetailField label="结果时间" value={resultTime ? formatDateTime(resultTime) : "—"} />
+            <div className="space-y-3 p-5">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <DetailField label="skillName" value={skillName} />
+                <DetailField label="platform" value={platform} />
+                <DetailField label="title" value={title} />
+                <DetailField label="accountName" value={accountName} />
+                <DetailField label="requestedRun" value={requestedRun ? formatDateTime(requestedRun) : "—"} />
+                <DetailField label="执行时间" value={executionTime ? formatDateTime(executionTime) : "—"} />
+                <DetailField label="结果时间" value={resultTime ? formatDateTime(resultTime) : "—"} />
+              </div>
+              <ExpandableTextField label="任务提示词" value={originalPrompt} />
+              {optimizedPrompt && optimizedPrompt !== originalPrompt ? (
+                <ExpandableTextField label="最终提交提示词" value={optimizedPrompt} />
+              ) : null}
             </div>
           </motion.div>
 

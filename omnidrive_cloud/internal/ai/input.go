@@ -72,14 +72,17 @@ func BuildVideoRequest(job *domain.AIJob) (VideoRequest, error) {
 		return VideoRequest{}, fmt.Errorf("video job requires prompt")
 	}
 
-	references := collectMediaInputs(payload)
+	referenceMedia := collectVideoReferenceMedia(payload)
+	referenceImages := filterMediaInputsByKind(referenceMedia, "image")
 	aspectRatio := normalizeAspectRatio(stringValueFromMap(payload, "aspectRatio", "ratio"))
-	model := normalizeVideoModel(strings.TrimSpace(job.ModelName), aspectRatio, len(references) > 0)
+	model := normalizeVideoModel(strings.TrimSpace(job.ModelName), aspectRatio, len(referenceImages) > 0)
 
 	return VideoRequest{
+		Vendor:          strings.TrimSpace(stringValueFromMap(payload, "vendor")),
 		Model:           model,
-		Prompt:          mergeMediaPrompt(prompt, payload),
-		ReferenceImages: references,
+		Prompt:          prompt,
+		ReferenceMedia:  referenceMedia,
+		ReferenceImages: referenceImages,
 		AspectRatio:     aspectRatio,
 		Resolution:      normalizeResolution(stringValueFromMap(payload, "resolution", "size", "videoSize")),
 		DurationSeconds: intPtrFromMap(payload, "durationSeconds", "duration"),
@@ -126,13 +129,45 @@ func parseChatMessages(payload map[string]any) ([]ChatMessage, error) {
 }
 
 func collectMediaInputs(payload map[string]any) []MediaInput {
-	keys := []string{
+	return collectMediaInputsForKeys(payload, []string{
 		"referenceImages",
 		"images",
 		"imageUrls",
 		"inputReferences",
 		"sourceImages",
+	})
+}
+
+func collectVideoReferenceMedia(payload map[string]any) []MediaInput {
+	result := collectMediaInputsForKeys(payload, []string{
+		"referenceMedia",
+		"referenceImages",
+		"images",
+		"imageUrls",
+		"inputReferences",
+		"sourceImages",
+		"referenceVideos",
+		"videoReferences",
+		"videos",
+		"videoUrls",
+		"sourceVideos",
+	})
+	if len(result) > 0 {
+		return result
 	}
+
+	firstFrame := payload["firstFrame"]
+	lastFrame := payload["lastFrame"]
+	if media, ok := parseMediaInput(firstFrame, "first"); ok {
+		result = append(result, media)
+	}
+	if media, ok := parseMediaInput(lastFrame, "last"); ok {
+		result = append(result, media)
+	}
+	return result
+}
+
+func collectMediaInputsForKeys(payload map[string]any, keys []string) []MediaInput {
 	result := make([]MediaInput, 0)
 	for _, key := range keys {
 		raw, ok := payload[key]
@@ -154,15 +189,6 @@ func collectMediaInputs(payload map[string]any) []MediaInput {
 		if len(result) > 0 {
 			return result
 		}
-	}
-
-	firstFrame := payload["firstFrame"]
-	lastFrame := payload["lastFrame"]
-	if media, ok := parseMediaInput(firstFrame, "first"); ok {
-		result = append(result, media)
-	}
-	if media, ok := parseMediaInput(lastFrame, "last"); ok {
-		result = append(result, media)
 	}
 	return result
 }
@@ -198,6 +224,7 @@ func parseMediaInput(raw any, fallbackRole string) (MediaInput, bool) {
 				return MediaInput{}, false
 			}
 			media.MIMEType = mimeType
+			media.Kind = detectMediaKind(mimeType, "")
 			media.Data = data
 			media.FileName = defaultMediaFileName(mimeType, fallbackRole)
 			return media, true
@@ -205,9 +232,11 @@ func parseMediaInput(raw any, fallbackRole string) (MediaInput, bool) {
 		media.URL = text
 		media.FileName = filepath.Base(text)
 		media.MIMEType = mime.TypeByExtension(filepath.Ext(media.FileName))
+		media.Kind = detectMediaKind(media.MIMEType, media.FileName)
 		return media, true
 	case map[string]any:
 		media := MediaInput{
+			Kind:     strings.TrimSpace(stringValueFromMap(typed, "kind", "mediaKind", "type")),
 			URL:      strings.TrimSpace(stringValueFromMap(typed, "url", "publicUrl", "fileUrl")),
 			Base64:   strings.TrimSpace(stringValueFromMap(typed, "base64", "data")),
 			MIMEType: strings.TrimSpace(stringValueFromMap(typed, "mimeType", "contentType")),
@@ -233,12 +262,56 @@ func parseMediaInput(raw any, fallbackRole string) (MediaInput, bool) {
 		if media.MIMEType == "" && media.FileName != "" {
 			media.MIMEType = mime.TypeByExtension(filepath.Ext(media.FileName))
 		}
+		media.Kind = normalizeMediaKind(media.Kind, media.MIMEType, media.FileName)
 		if media.URL == "" && len(media.Data) == 0 {
 			return MediaInput{}, false
 		}
 		return media, true
 	default:
 		return MediaInput{}, false
+	}
+}
+
+func filterMediaInputsByKind(items []MediaInput, kind string) []MediaInput {
+	if len(items) == 0 {
+		return nil
+	}
+	result := make([]MediaInput, 0, len(items))
+	for _, item := range items {
+		if normalizeMediaKind(item.Kind, item.MIMEType, item.FileName) != kind {
+			continue
+		}
+		copyItem := item
+		copyItem.Kind = kind
+		result = append(result, copyItem)
+	}
+	return result
+}
+
+func normalizeMediaKind(value string, mimeType string, fileName string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "image", "video":
+		return strings.TrimSpace(strings.ToLower(value))
+	default:
+		return detectMediaKind(mimeType, fileName)
+	}
+}
+
+func detectMediaKind(mimeType string, fileName string) string {
+	lowerMIME := strings.TrimSpace(strings.ToLower(mimeType))
+	switch {
+	case strings.HasPrefix(lowerMIME, "video/"):
+		return "video"
+	case strings.HasPrefix(lowerMIME, "image/"):
+		return "image"
+	}
+
+	lowerName := strings.ToLower(strings.TrimSpace(fileName))
+	switch filepath.Ext(lowerName) {
+	case ".mp4", ".mov", ".avi", ".m4v", ".webm", ".mkv":
+		return "video"
+	default:
+		return "image"
 	}
 }
 

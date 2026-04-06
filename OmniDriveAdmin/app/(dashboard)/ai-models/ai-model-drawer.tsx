@@ -423,13 +423,13 @@ function AIModelDrawerContent({
                 onChange={(e) =>
                   setForm((f) => ({ ...f, apiKey: e.target.value }))
                 }
-                placeholder="留空则使用系统默认固定 key"
+                placeholder="如该 vendor 已配置默认凭证可留空，否则建议填写"
                 autoComplete="off"
                 className="w-full px-3 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm focus:outline-none focus:border-[var(--color-accent)] font-mono"
               />
               <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
-                为当前模型单独指定调用 key。留空时会回退到系统默认 key。
-                {!isCreate && " 编辑时清空后保存，也会回退到系统默认 key。"}
+                为当前模型单独指定调用 key。只有该 vendor 已配置默认凭证时才建议留空。
+                {!isCreate && " 编辑时清空后保存，会按当前 vendor 的默认凭证规则重新解析。"}
               </p>
             </div>
             {form.billingMode !== "per_token" && (
@@ -592,6 +592,7 @@ function AIModelDrawerContent({
             />
             <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
               用英文逗号分隔，可填写扩展名或 MIME 类型，例如 <code>.pdf</code>、<code>.docx</code>、<code>image/*</code>。
+              视频模型如需在技能页开放参考视频，请显式填写 <code>video/*</code>；Seedance 建议至少配置 <code>image/*, video/*</code>。
             </p>
           </div>
 
@@ -603,7 +604,7 @@ function AIModelDrawerContent({
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm text-[var(--color-text-secondary)] mb-1.5">
-                    支持参考图数量
+                    支持参考媒体数量
                   </label>
                   <input
                     type="number"

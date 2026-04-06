@@ -122,6 +122,7 @@ const quickActions = [
 const VIDEO_EXTS = ['.mp4', '.avi', '.mov', '.wmv', '.flv', '.mkv', '.webm']
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
 
+// Classify filenames so the dashboard can summarize mixed media at a glance.
 const getFileTypeLabel = (filename) => {
   const lower = filename.toLowerCase()
   if (VIDEO_EXTS.some((e) => lower.endsWith(e))) return '视频'
@@ -129,11 +130,13 @@ const getFileTypeLabel = (filename) => {
   return '其他'
 }
 
+// Map file kinds to tag colors used in the recent-material list.
 const getFileTypeColor = (filename) => {
   const label = getFileTypeLabel(filename)
   return { '视频': 'success', '图片': 'warning', '其他': 'info' }[label] || 'info'
 }
 
+// Refresh the three dashboard data sources together so cards and tables stay in sync.
 const fetchData = async () => {
   loading.value = true
   const results = await Promise.allSettled([

@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -96,6 +97,25 @@ func TestBuildMediaAutoRetryPayloadResetsVideoExecutionState(t *testing.T) {
 	}
 }
 
+func TestShouldResumeRemoteVideoPolling(t *testing.T) {
+	job := &domain.AIJob{
+		JobType: "video",
+		OutputPayload: mustJSON(map[string]any{
+			"video": map[string]any{
+				"id":     "task_123",
+				"status": "running",
+			},
+		}),
+	}
+
+	if !shouldResumeRemoteVideoPolling(job, errors.New("provider request failed with status 503")) {
+		t.Fatalf("expected transient video error with remote task id to continue polling")
+	}
+	if shouldResumeRemoteVideoPolling(job, errors.New("OutputAudioRisk 错误码：2045")) {
+		t.Fatalf("expected permanent provider error to stop polling")
+	}
+}
+
 func TestBuildVideoOutputPayloadPreservesExecutionState(t *testing.T) {
 	job := &domain.AIJob{
 		JobType:   "video",
@@ -124,5 +144,55 @@ func TestBuildVideoOutputPayloadPreservesExecutionState(t *testing.T) {
 	videoPayload, _ := payload["video"].(map[string]any)
 	if got := videoPayload["id"]; got != "video_123" {
 		t.Fatalf("expected remote video id to be preserved, got %#v", got)
+	}
+}
+
+func TestVideoPreprocessEnabled(t *testing.T) {
+	if !videoPreprocessEnabled(nil) {
+		t.Fatalf("expected preprocess enabled by default")
+	}
+	if !videoPreprocessEnabled(map[string]any{"disableVideoPreprocess": false}) {
+		t.Fatalf("expected explicit false to keep preprocess enabled")
+	}
+	if videoPreprocessEnabled(map[string]any{"disableVideoPreprocess": true}) {
+		t.Fatalf("expected explicit true to disable preprocess")
+	}
+}
+
+func TestPrepareVideoGenerationInputsSkipsPreprocessWhenDisabled(t *testing.T) {
+	w := &Worker{}
+	job := &domain.AIJob{
+		InputPayload: mustJSONBytes(map[string]any{
+			"disableVideoPreprocess": true,
+			"storyboardEnabled":      true,
+		}),
+	}
+	req := &VideoRequest{
+		Prompt: "keep original prompt",
+		ReferenceImages: []MediaInput{
+			{FileName: "ref-1.png", MIMEType: "image/png"},
+			{FileName: "ref-2.png", MIMEType: "image/png"},
+		},
+	}
+	state := &videoExecutionState{}
+
+	storyboardPayload, err := w.prepareVideoGenerationInputs(context.Background(), job, "", req, state)
+	if err != nil {
+		t.Fatalf("prepareVideoGenerationInputs returned error: %v", err)
+	}
+	if storyboardPayload != nil {
+		t.Fatalf("expected no preprocess payload, got %#v", storyboardPayload)
+	}
+	if got := len(req.ReferenceImages); got != 2 {
+		t.Fatalf("expected original reference images to remain unchanged, got %d", got)
+	}
+	if state.FinalPrompt != "" {
+		t.Fatalf("expected final prompt to remain unchanged, got %q", state.FinalPrompt)
+	}
+	if len(state.ReferenceFrames) > 0 {
+		t.Fatalf("expected no generated reference frames, got %#v", state.ReferenceFrames)
+	}
+	if len(state.Storyboard) > 0 || len(state.FrameRedesign) > 0 {
+		t.Fatalf("expected no preprocess state, got storyboard=%#v redesign=%#v", state.Storyboard, state.FrameRedesign)
 	}
 }

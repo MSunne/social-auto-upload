@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -112,19 +113,23 @@ func BuildSkillAIJobPayload(
 		return nil, err
 	}
 
-	referenceImages := make([]map[string]any, 0)
+	referenceMediaAssets := collectOrderedSkillReferenceMediaAssets(assets, skill.ReferencePayload)
+	referenceMedia := make([]map[string]any, 0, len(referenceMediaAssets))
+	referenceImages := make([]map[string]any, 0, len(referenceMediaAssets))
 	referenceTexts := make([]map[string]any, 0)
-	for _, asset := range assets {
-		if isSkillReferenceImage(asset) {
-			referenceImages = append(referenceImages, map[string]any{
-				"publicUrl": optionalStringValue(asset.PublicURL),
-				"url":       optionalStringValue(asset.PublicURL),
-				"fileName":  asset.FileName,
-				"mimeType":  optionalStringValue(asset.MimeType),
-				"role":      "reference",
-			})
-			continue
+	imageCount := 0
+	videoCount := 0
+	for _, asset := range referenceMediaAssets {
+		media := buildSkillReferenceMedia(asset)
+		referenceMedia = append(referenceMedia, media)
+		if strings.EqualFold(fmt.Sprintf("%v", media["kind"]), "video") {
+			videoCount++
+		} else {
+			imageCount++
+			referenceImages = append(referenceImages, media)
 		}
+	}
+	for _, asset := range assets {
 		if !isSkillReferenceText(asset) {
 			continue
 		}
@@ -154,6 +159,7 @@ func BuildSkillAIJobPayload(
 		"skillTags":             topics,
 		"runAt":                 generateAt.UTC().Format(time.RFC3339),
 		"publishAt":             publishAt.UTC().Format(time.RFC3339),
+		"referenceMedia":        referenceMedia,
 		"referenceImages":       referenceImages,
 		"referenceTexts":        referenceTexts,
 		"storyboardConfig": map[string]any{
@@ -195,9 +201,11 @@ func BuildSkillAIJobPayload(
 		}
 	}
 
-	if len(referenceImages) > 0 || len(referenceTexts) > 0 {
+	if len(referenceMedia) > 0 || len(referenceTexts) > 0 {
 		payload["referenceSummary"] = map[string]any{
+			"mediaCount": len(referenceMedia),
 			"imageCount": len(referenceImages),
+			"videoCount": videoCount,
 			"textCount":  len(referenceTexts),
 		}
 	}
@@ -313,12 +321,114 @@ func readSkillAssetText(ctx context.Context, app *appstate.App, asset domain.Pro
 	return strings.TrimSpace(string(data))
 }
 
+func collectOrderedSkillReferenceMediaAssets(assets []domain.ProductSkillAsset, referencePayload []byte) []domain.ProductSkillAsset {
+	if len(assets) == 0 {
+		return nil
+	}
+	orderIndex := make(map[string]int)
+	for index, assetID := range decodeSkillReferenceMediaOrder(referencePayload) {
+		trimmed := strings.TrimSpace(assetID)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := orderIndex[trimmed]; exists {
+			continue
+		}
+		orderIndex[trimmed] = index
+	}
+	items := make([]domain.ProductSkillAsset, 0, len(assets))
+	for _, asset := range assets {
+		if isSkillReferenceImage(asset) || isSkillReferenceVideo(asset) {
+			items = append(items, asset)
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		leftOrder, leftHas := orderIndex[items[i].ID]
+		rightOrder, rightHas := orderIndex[items[j].ID]
+		switch {
+		case leftHas && rightHas:
+			return leftOrder < rightOrder
+		case leftHas:
+			return true
+		case rightHas:
+			return false
+		default:
+			if !items[i].CreatedAt.Equal(items[j].CreatedAt) {
+				return items[i].CreatedAt.Before(items[j].CreatedAt)
+			}
+			return strings.TrimSpace(items[i].ID) < strings.TrimSpace(items[j].ID)
+		}
+	})
+	return items
+}
+
+func decodeSkillReferenceMediaOrder(raw []byte) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil
+	}
+	values, ok := payload["referenceMediaOrder"]
+	if !ok {
+		return nil
+	}
+	return normalizeReferenceMediaOrderValues(values)
+}
+
+func normalizeReferenceMediaOrderValues(value any) []string {
+	rawValues, ok := value.([]any)
+	if !ok {
+		return []string{}
+	}
+	result := make([]string, 0, len(rawValues))
+	seen := make(map[string]struct{}, len(rawValues))
+	for _, item := range rawValues {
+		trimmed := strings.TrimSpace(fmt.Sprintf("%v", item))
+		if trimmed == "" || trimmed == "<nil>" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return result
+}
+
+func buildSkillReferenceMedia(asset domain.ProductSkillAsset) map[string]any {
+	kind := "image"
+	if isSkillReferenceVideo(asset) {
+		kind = "video"
+	}
+	return map[string]any{
+		"id":        asset.ID,
+		"kind":      kind,
+		"assetType": asset.AssetType,
+		"publicUrl": optionalStringValue(asset.PublicURL),
+		"url":       optionalStringValue(asset.PublicURL),
+		"fileName":  asset.FileName,
+		"mimeType":  optionalStringValue(asset.MimeType),
+		"role":      "reference",
+	}
+}
+
 func isSkillReferenceImage(asset domain.ProductSkillAsset) bool {
 	if asset.MimeType != nil && strings.HasPrefix(strings.ToLower(strings.TrimSpace(*asset.MimeType)), "image/") {
 		return true
 	}
 	value := strings.ToLower(strings.TrimSpace(asset.AssetType))
 	return strings.Contains(value, "image") || strings.Contains(value, "cover")
+}
+
+func isSkillReferenceVideo(asset domain.ProductSkillAsset) bool {
+	if asset.MimeType != nil && strings.HasPrefix(strings.ToLower(strings.TrimSpace(*asset.MimeType)), "video/") {
+		return true
+	}
+	value := strings.ToLower(strings.TrimSpace(asset.AssetType))
+	return strings.Contains(value, "video")
 }
 
 func isSkillReferenceText(asset domain.ProductSkillAsset) bool {
@@ -329,7 +439,7 @@ func isSkillReferenceText(asset domain.ProductSkillAsset) bool {
 		}
 	}
 	value := strings.ToLower(strings.TrimSpace(asset.AssetType))
-	return strings.Contains(value, "text") || strings.Contains(value, "prompt") || strings.Contains(value, "reference")
+	return strings.Contains(value, "text") || strings.Contains(value, "prompt")
 }
 
 func optionalStringValue(value *string) string {

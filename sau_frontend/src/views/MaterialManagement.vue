@@ -126,9 +126,13 @@ const authHeaders = computed(() => ({ Authorization: `Bearer ${localStorage.getI
 
 const VIDEO_EXTS = ['.mp4', '.avi', '.mov', '.wmv', '.flv', '.mkv', '.webm']
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
+// Detect video files by extension because the material list mixes stored media types.
 const isVideo = (f) => VIDEO_EXTS.some(e => f?.toLowerCase().endsWith(e))
+// Detect image files so preview mode and labels stay consistent with the backend catalog.
 const isImage = (f) => IMAGE_EXTS.some(e => f?.toLowerCase().endsWith(e))
+// Render a human-readable type label for each card/table row.
 const getTypeLabel = (f) => isVideo(f) ? '视频' : isImage(f) ? '图片' : '其他'
+// Match file kinds to tag colors for quick visual scanning in the material browser.
 const getTypeColor = (f) => isVideo(f) ? 'success' : isImage(f) ? 'warning' : 'info'
 
 const filteredMaterials = computed(() => {
@@ -137,6 +141,7 @@ const filteredMaterials = computed(() => {
   return appStore.materials.filter(m => m.filename?.toLowerCase().includes(q))
 })
 
+// Pull the latest material records into the shared store before users browse or pick assets.
 const fetchMaterials = async () => {
   loading.value = true
   try {
@@ -146,6 +151,7 @@ const fetchMaterials = async () => {
   loading.value = false
 }
 
+// Remove a material from both storage and the UI list after the user confirms the action.
 const deleteFile = async (id) => {
   await ElMessageBox.confirm('确定删除该素材？', '确认', { type: 'warning' })
   try {
@@ -155,12 +161,14 @@ const deleteFile = async (id) => {
   } catch { ElMessage.error('删除失败') }
 }
 
+// Open the preview dialog and derive a preview URL from the backend filename convention.
 const previewFile = (item) => {
   previewItem.value = item
   previewSrc.value = materialApi.getPreviewUrl(item.filename)
   showPreview.value = true
 }
 
+// Refresh the material list only after the backend reports a successful upload.
 const onUploadSuccess = (res) => {
   if (res.code === 200) {
     ElMessage.success('上传成功')

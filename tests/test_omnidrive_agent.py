@@ -195,6 +195,13 @@ class OmniDriveBridgeTests(unittest.TestCase):
 
     def test_heartbeat_includes_device_fingerprint(self):
         bridge = self.make_bridge()
+        bridge._update_state(
+            running=True,
+            cloudReachable=False,
+            cloudRetryAt="2026-04-06T10:46:21+08:00",
+            lastError="404 Client Error: Not Found",
+            lastLoginPollAt="2026-04-06T10:46:16+08:00",
+        )
         request_calls = []
 
         def fake_request(method, path, *, params=None, payload=None):
@@ -211,6 +218,11 @@ class OmniDriveBridgeTests(unittest.TestCase):
         self.assertEqual(path, "/api/v1/agent/heartbeat")
         self.assertEqual(payload["deviceFingerprint"], "fingerprint-1")
         self.assertEqual(payload["runtimePayload"]["deviceFingerprint"], "fingerprint-1")
+        self.assertTrue(payload["runtimePayload"]["bridgeRunning"])
+        self.assertFalse(payload["runtimePayload"]["cloudReachable"])
+        self.assertEqual(payload["runtimePayload"]["cloudRetryAt"], "2026-04-06T10:46:21+08:00")
+        self.assertEqual(payload["runtimePayload"]["lastError"], "404 Client Error: Not Found")
+        self.assertEqual(payload["runtimePayload"]["lastLoginPollAt"], "2026-04-06T10:46:16+08:00")
 
     def test_request_waits_when_loopback_omnidrive_api_is_unavailable(self):
         bridge = self.make_bridge()

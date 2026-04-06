@@ -220,6 +220,35 @@ func TestSubmitVideoPassesConfiguredSoraDurationThrough(t *testing.T) {
 	}
 }
 
+func TestSubmitVideoRejectsReferenceVideos(t *testing.T) {
+	provider, err := NewAPIYIProvider(config.Config{
+		APIYIBaseURL: "https://example.com",
+		APIYIApiKey:  "sk-default",
+	})
+	if err != nil {
+		t.Fatalf("NewAPIYIProvider returned error: %v", err)
+	}
+
+	_, err = provider.SubmitVideo(context.Background(), VideoRequest{
+		Model:   "veo-3.1-fast",
+		BaseURL: "https://example.com",
+		APIKey:  "sk-test",
+		Prompt:  "生成视频",
+		ReferenceMedia: []MediaInput{{
+			Kind:     "video",
+			FileName: "reference.mp4",
+			MIMEType: "video/mp4",
+			Data:     []byte("video"),
+		}},
+	})
+	if err == nil {
+		t.Fatalf("expected error when passing reference video to apiyi provider")
+	}
+	if !strings.Contains(err.Error(), "参考视频") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestSubmitVideoResizesSoraReferenceImageToRequestedSize(t *testing.T) {
 	var capturedWidth int
 	var capturedHeight int

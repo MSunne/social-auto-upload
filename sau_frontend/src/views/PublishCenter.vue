@@ -560,6 +560,7 @@ const defaultTabInit = {
 }
 
 // helper to create a fresh deep-copied tab from defaultTabInit
+// Clone the tab template so every tab keeps its own reactive arrays and flags.
 const makeNewTab = () => {
   // prefer structuredClone when available (newer browsers/node), fallback to JSON
   try {
@@ -582,6 +583,7 @@ const currentTab = ref(null)
 // 获取账号状态管理
 const accountStore = useAccountStore()
 
+// Keep the selected platform on an enabled option whenever capabilities change.
 const ensureTabPlatformSelection = (tab) => {
   const capability = accountStore.getPlatformCapability(tab.selectedPlatform)
   if (capability && capability.publishEnabled) return
@@ -608,6 +610,7 @@ const recommendedTopics = [
 ]
 
 // 添加新tab
+// Create an isolated publish form so operators can prepare multiple tasks in parallel.
 const addTab = () => {
   tabCounter++
   const newTab = makeNewTab()
@@ -619,6 +622,7 @@ const addTab = () => {
 }
 
 // 删除tab
+// Remove a publish form and fall back to the first tab if the active one disappears.
 const removeTab = (tabName) => {
   const index = tabs.findIndex(tab => tab.name === tabName)
   if (index > -1) {
@@ -631,6 +635,7 @@ const removeTab = (tabName) => {
 }
 
 // 处理文件上传成功
+// Normalize backend upload responses into the local file model used by the publish form.
 const handleUploadSuccess = (response, file, tab) => {
   if (response.code === 200) {
     // 获取文件路径
@@ -663,11 +668,13 @@ const handleUploadSuccess = (response, file, tab) => {
 }
 
 // 处理文件上传失败
+// Surface upload errors through a single toast so users know the file never entered the queue.
 const handleUploadError = (error) => {
   ElMessage.error('文件上传失败')
 }
 
 // 删除已上传文件
+// Remove a selected media file from the current tab without touching the server-side file.
 const removeFile = (tab, index) => {
   // 从文件列表中删除
   tab.fileList.splice(index, 1)
@@ -683,12 +690,14 @@ const removeFile = (tab, index) => {
 
 // 话题相关方法
 // 打开添加话题弹窗
+// Store the current tab before opening the topic modal so tag edits apply to the right form.
 const openTopicDialog = (tab) => {
   currentTab.value = tab
   topicDialogVisible.value = true
 }
 
 // 添加自定义话题
+// Append a custom topic only when it is non-empty and not already selected.
 const addCustomTopic = () => {
   if (!customTopic.value.trim()) {
     ElMessage.warning('请输入话题内容')
@@ -704,6 +713,7 @@ const addCustomTopic = () => {
 }
 
 // 切换推荐话题
+// Toggle recommended topics in place to support fast multi-select editing.
 const toggleRecommendedTopic = (topic) => {
   if (!currentTab.value) return
   
@@ -716,11 +726,13 @@ const toggleRecommendedTopic = (topic) => {
 }
 
 // 删除话题
+// Remove a single topic chip from the tab-level topic list.
 const removeTopic = (tab, index) => {
   tab.selectedTopics.splice(index, 1)
 }
 
 // 确认添加话题
+// Close the topic dialog and clear modal-only state after the selection is finalized.
 const confirmTopicSelection = () => {
   topicDialogVisible.value = false
   customTopic.value = ''
@@ -730,6 +742,7 @@ const confirmTopicSelection = () => {
 
 // 账号选择相关方法
 // 打开账号选择弹窗
+// Prime the temporary selection buffer before opening the account chooser dialog.
 const openAccountDialog = (tab) => {
   currentTab.value = tab
   tempSelectedAccounts.value = [...tab.selectedAccounts]
@@ -737,6 +750,7 @@ const openAccountDialog = (tab) => {
 }
 
 // 确认账号选择
+// Persist the dialog selection back into the active publish tab.
 const confirmAccountSelection = () => {
   if (currentTab.value) {
     currentTab.value.selectedAccounts = [...tempSelectedAccounts.value]
@@ -747,22 +761,26 @@ const confirmAccountSelection = () => {
 }
 
 // 删除选中的账号
+// Remove one chosen account from the tab without reopening the selection dialog.
 const removeAccount = (tab, index) => {
   tab.selectedAccounts.splice(index, 1)
 }
 
 // 获取账号显示名称
+// Resolve account ids back to display names for the selected-account tag list.
 const getAccountDisplayName = (accountId) => {
   const account = accountStore.accounts.find(acc => acc.id === accountId)
   return account ? account.name : accountId
 }
 
 // 取消发布
+// Keep the cancel button lightweight because the form has not enqueued anything yet.
 const cancelPublish = (tab) => {
   ElMessage.info('已取消发布')
 }
 
 // 确认发布
+// Validate the form and enqueue a publish request using the backend payload contract.
 const confirmPublish = async (tab) => {
   // 防止重复点击
   if (tab.publishing) {
@@ -846,6 +864,7 @@ const confirmPublish = async (tab) => {
   }
 }
 
+// Refresh publish-capable platform metadata so disabled channels are blocked in the UI.
 const fetchPlatformCapabilities = async () => {
   try {
     const res = await accountApi.getPlatforms()
@@ -858,6 +877,7 @@ const fetchPlatformCapabilities = async () => {
   }
 }
 
+// Lazily load account options once so tab-level selectors can reuse the shared store.
 const fetchAccountsIfNeeded = async () => {
   if (accountStore.accounts.length > 0) return
   try {
@@ -869,18 +889,21 @@ const fetchAccountsIfNeeded = async () => {
 }
 
 // 显示上传选项
+// Remember which tab is uploading before showing the local/material source chooser.
 const showUploadOptions = (tab) => {
   currentUploadTab.value = tab
   uploadOptionsVisible.value = true
 }
 
 // 选择本地上传
+// Switch from the source chooser to the native upload dialog.
 const selectLocalUpload = () => {
   uploadOptionsVisible.value = false
   localUploadVisible.value = true
 }
 
 // 选择素材库
+// Load the material catalog on demand before opening the shared material picker.
 const selectMaterialLibrary = async () => {
   uploadOptionsVisible.value = false
   
@@ -911,6 +934,7 @@ onMounted(async () => {
 })
 
 // 确认素材选择
+// Copy selected material records into the current tab while avoiding duplicate file paths.
 const confirmMaterialSelection = () => {
   if (selectedMaterials.value.length === 0) {
     ElMessage.warning('请选择至少一个素材')
@@ -960,12 +984,14 @@ const publishResults = ref([])
 const isCancelled = ref(false)
 
 // 取消批量发布
+// Mark the batch loop as cancelled so remaining tabs are skipped gracefully.
 const cancelBatchPublish = () => {
   isCancelled.value = true
   ElMessage.info('正在取消发布...')
 }
 
 // 批量发布方法
+// Publish each tab sequentially so progress, errors, and cancellation stay easy to reason about.
 const batchPublish = async () => {
   if (batchPublishing.value) return
   

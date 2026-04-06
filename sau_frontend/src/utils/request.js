@@ -68,22 +68,27 @@ request.interceptors.response.use(
 
 // ── Wrapped http helpers ──
 export const http = {
+  // Wrap query params in the shape expected by the shared axios instance.
   get(url, params) {
     return request.get(url, { params })
   },
 
+  // Keep POST calls consistent so business code only cares about payloads.
   post(url, data, config = {}) {
     return request.post(url, data, config)
   },
 
+  // Forward PUT updates without repeating axios config boilerplate.
   put(url, data, config = {}) {
     return request.put(url, data, config)
   },
 
+  // Normalize delete requests to the backend's query-param style.
   delete(url, params) {
     return request.delete(url, { params })
   },
 
+  // Use a longer timeout for file uploads and expose native progress callbacks.
   upload(url, formData, onUploadProgress) {
     return request.post(url, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -95,11 +100,13 @@ export const http = {
 
 // ── SSE helper ──
 export function createSSE(path, onMessage, onError) {
+  // Build the absolute SSE endpoint so login/status streams work outside router contexts.
   const url = `${API_BASE}${path}`
   const source = new EventSource(url)
 
   source.onmessage = (event) => {
     try {
+      // Prefer parsed JSON payloads, but preserve plain-text events for legacy endpoints.
       const data = JSON.parse(event.data)
       onMessage(data)
     } catch {
@@ -108,6 +115,7 @@ export function createSSE(path, onMessage, onError) {
   }
 
   source.onerror = (err) => {
+    // Close broken streams eagerly to avoid duplicate retries from stale EventSource instances.
     if (onError) onError(err)
     source.close()
   }

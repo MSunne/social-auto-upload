@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ArrowDown,
+  ArrowUp,
   Check,
   Cpu,
   FileText,
@@ -12,6 +14,7 @@ import {
   Sparkles,
   Trash2,
   Upload,
+  Video,
   Wand2,
   X,
 } from "lucide-react";
@@ -27,6 +30,7 @@ import {
 } from "@/lib/services";
 import type { AIModel, Skill, SkillAsset, SkillEditorDefaults } from "@/lib/types";
 import { getModelDisplayName } from "@/lib/model-display";
+import { buildFileAccept, resolveSupportedFileTypes } from "@/lib/ai-file-types";
 import { cn } from "@/lib/utils";
 import {
   getModelReferenceLimit,
@@ -57,7 +61,7 @@ type SkillFormState = {
   isEnabled: boolean;
 };
 
-type UploadAssetType = "reference_image" | "reference_text";
+type UploadAssetType = "reference_image" | "reference_video" | "reference_text";
 
 type UploadingAsset = {
   id: string;
@@ -151,6 +155,104 @@ function isTextAsset(asset: SkillAsset) {
   return mimeType.startsWith("text/") || asset.assetType.includes("text");
 }
 
+function isVideoAsset(asset: SkillAsset) {
+  return (asset.mimeType || "").startsWith("video/") || asset.assetType.includes("video");
+}
+
+function isMediaAsset(asset: SkillAsset) {
+  return isImageAsset(asset) || isVideoAsset(asset);
+}
+
+function hasSupportedFilePrefix(values: string[], prefix: string) {
+  return values.some((value) => value === `${prefix}*` || value.startsWith(prefix));
+}
+
+function buildAcceptByPrefix(values: string[], prefix: string) {
+  return buildFileAccept(values.filter((value) => value === `${prefix}*` || value.startsWith(prefix)));
+}
+
+function normalizeReferenceMediaOrder(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as string[];
+  }
+  const seen = new Set<string>();
+  const result: string[] = [];
+  value.forEach((item) => {
+    if (typeof item !== "string") {
+      return;
+    }
+    const trimmed = item.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      return;
+    }
+    seen.add(trimmed);
+    result.push(trimmed);
+  });
+  return result;
+}
+
+function mergeReferenceMediaOrder(order: string[], assets: SkillAsset[]) {
+  const seen = new Set<string>();
+  const assetIds = new Set(assets.map((asset) => asset.id));
+  const merged: string[] = [];
+  order.forEach((id) => {
+    if (!assetIds.has(id) || seen.has(id)) {
+      return;
+    }
+    seen.add(id);
+    merged.push(id);
+  });
+  assets.forEach((asset) => {
+    if (seen.has(asset.id)) {
+      return;
+    }
+    seen.add(asset.id);
+    merged.push(asset.id);
+  });
+  return merged;
+}
+
+function sortMediaAssetsByOrder(assets: SkillAsset[], order: string[]) {
+  const mergedOrder = mergeReferenceMediaOrder(order, assets);
+  const orderIndex = new Map(mergedOrder.map((id, index) => [id, index]));
+  return [...assets].sort((left, right) => {
+    const leftIndex = orderIndex.get(left.id);
+    const rightIndex = orderIndex.get(right.id);
+    if (typeof leftIndex === "number" && typeof rightIndex === "number" && leftIndex !== rightIndex) {
+      return leftIndex - rightIndex;
+    }
+    return new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+  });
+}
+
+function buildReferencePayload(
+  basePayload: Record<string, unknown> | null | undefined,
+  referenceMediaOrder: string[],
+) {
+  const nextPayload: Record<string, unknown> = {
+    ...(basePayload || {}),
+  };
+  if (referenceMediaOrder.length > 0) {
+    nextPayload.referenceMediaOrder = referenceMediaOrder;
+  } else {
+    delete nextPayload.referenceMediaOrder;
+  }
+  return Object.keys(nextPayload).length > 0 ? nextPayload : null;
+}
+
+function describeSupportedMediaTypes(supportsImages: boolean, supportsVideos: boolean) {
+  if (supportsImages && supportsVideos) {
+    return "图片 / 视频";
+  }
+  if (supportsVideos) {
+    return "仅视频";
+  }
+  if (supportsImages) {
+    return "仅图片";
+  }
+  return "不支持";
+}
+
 function getSkillBillingAmount(model?: AIModel | null) {
   const amount = typeof model?.billingAmount === "number" ? model.billingAmount : model?.rawRate;
   if (typeof amount !== "number" || Number.isNaN(amount)) {
@@ -183,6 +285,7 @@ export function SkillEditorModal({
   const [draftSkillId, setDraftSkillId] = useState<string | null>(null);
   const [draftNeedsCleanup, setDraftNeedsCleanup] = useState(false);
   const [uploadingAssets, setUploadingAssets] = useState<UploadingAsset[]>([]);
+  const [referenceMediaOrder, setReferenceMediaOrder] = useState<string[]>([]);
   const [coverPromptWarningOpen, setCoverPromptWarningOpen] = useState(false);
   const [coverPromptUnlockCountdown, setCoverPromptUnlockCountdown] = useState(0);
   const [coverPromptUnlocked, setCoverPromptUnlocked] = useState(false);
@@ -225,18 +328,42 @@ export function SkillEditorModal({
     [form.outputType],
   );
 
-  const imageAssets = useMemo(() => assets.filter(isImageAsset), [assets]);
+  const mediaAssets = useMemo(() => assets.filter(isMediaAsset), [assets]);
+  const imageAssets = useMemo(() => mediaAssets.filter(isImageAsset), [mediaAssets]);
+  const videoAssets = useMemo(() => mediaAssets.filter(isVideoAsset), [mediaAssets]);
   const textAssets = useMemo(() => assets.filter(isTextAsset), [assets]);
   const uploadingImages = useMemo(
     () => uploadingAssets.filter((item) => item.assetType === "reference_image"),
+    [uploadingAssets],
+  );
+  const uploadingVideos = useMemo(
+    () => uploadingAssets.filter((item) => item.assetType === "reference_video"),
+    [uploadingAssets],
+  );
+  const uploadingMedia = useMemo(
+    () => uploadingAssets.filter((item) => item.assetType !== "reference_text"),
     [uploadingAssets],
   );
   const uploadingTexts = useMemo(
     () => uploadingAssets.filter((item) => item.assetType === "reference_text"),
     [uploadingAssets],
   );
-  const imageLimit = getModelReferenceLimit(form.outputType, selectedModel ?? undefined);
+  const orderedMediaAssets = useMemo(
+    () => sortMediaAssetsByOrder(mediaAssets, referenceMediaOrder),
+    [mediaAssets, referenceMediaOrder],
+  );
+  const supportedFileTypes = useMemo(
+    () => resolveSupportedFileTypes(selectedModel ?? undefined),
+    [selectedModel],
+  );
+  const supportsReferenceImages = hasSupportedFilePrefix(supportedFileTypes, "image/");
+  const supportsReferenceVideos = hasSupportedFilePrefix(supportedFileTypes, "video/");
+  const imageAccept = buildAcceptByPrefix(supportedFileTypes, "image/");
+  const videoAccept = buildAcceptByPrefix(supportedFileTypes, "video/");
+  const mediaLimit = getModelReferenceLimit(form.outputType, selectedModel ?? undefined);
   const totalImageCount = imageAssets.length + uploadingImages.length;
+  const totalVideoCount = videoAssets.length + uploadingVideos.length;
+  const totalMediaCount = orderedMediaAssets.length + uploadingMedia.length;
   const totalTextCount = textAssets.length + uploadingTexts.length;
 
   useEffect(() => {
@@ -247,6 +374,7 @@ export function SkillEditorModal({
     setDraftSkillId(null);
     setDraftNeedsCleanup(false);
     setUploadingAssets([]);
+    setReferenceMediaOrder(normalizeReferenceMediaOrder(skill?.referencePayload?.referenceMediaOrder));
     setCoverPromptWarningOpen(false);
     setCoverPromptUnlockCountdown(0);
     setCoverPromptUnlocked(false);
@@ -272,6 +400,19 @@ export function SkillEditorModal({
       };
     });
   }, [isOpen, coverPromptDefault]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    setReferenceMediaOrder((current) => {
+      const next = mergeReferenceMediaOrder(current, mediaAssets);
+      if (next.length === current.length && next.every((item, index) => item === current[index])) {
+        return current;
+      }
+      return next;
+    });
+  }, [isOpen, mediaAssets]);
 
   useEffect(() => {
     if (!isOpen || !isVideoTextOutput(form.outputType) || form.fixedDurationSeconds || videoTextDurationOptions.length === 0) {
@@ -322,6 +463,7 @@ export function SkillEditorModal({
       .split(/[\n,，#\s]+/)
       .map((item) => item.trim())
       .filter(Boolean),
+    referencePayload: buildReferencePayload(skill?.referencePayload, referenceMediaOrder),
     storyboardEnabled: form.storyboardEnabled,
     isEnabled: form.isEnabled,
   });
@@ -469,22 +611,62 @@ export function SkillEditorModal({
     }));
   };
 
+  const moveMediaAsset = (assetId: string, direction: -1 | 1) => {
+    setReferenceMediaOrder((current) => {
+      const next = mergeReferenceMediaOrder(current, mediaAssets);
+      const index = next.findIndex((item) => item === assetId);
+      const swapIndex = index + direction;
+      if (index < 0 || swapIndex < 0 || swapIndex >= next.length) {
+        return current;
+      }
+      const reordered = [...next];
+      [reordered[index], reordered[swapIndex]] = [reordered[swapIndex], reordered[index]];
+      return reordered;
+    });
+  };
+
   const handleImageSelection = (fileList: FileList | null) => {
     const nextFiles = Array.from(fileList || []);
     if (nextFiles.length === 0) {
       return;
     }
+    if (!supportsReferenceImages) {
+      window.alert("当前模型不支持参考图片，请先切换到支持图片参考的模型。");
+      return;
+    }
     const remaining =
-      imageLimit > 0 ? Math.max(0, imageLimit - totalImageCount) : Number.MAX_SAFE_INTEGER;
+      mediaLimit > 0 ? Math.max(0, mediaLimit - totalMediaCount) : Number.MAX_SAFE_INTEGER;
     if (remaining <= 0) {
-      window.alert(`当前模型最多支持 ${imageLimit} 张参考图，请先删除部分图片。`);
+      window.alert(`当前模型最多支持 ${mediaLimit} 个参考媒体，请先删除部分素材。`);
       return;
     }
     const accepted = nextFiles.slice(0, remaining);
     if (accepted.length < nextFiles.length) {
-      window.alert(`当前模型最多支持 ${imageLimit} 张参考图，已仅保留前 ${accepted.length} 张。`);
+      window.alert(`当前模型最多支持 ${mediaLimit} 个参考媒体，已仅保留前 ${accepted.length} 个。`);
     }
     void uploadFiles(accepted, "reference_image");
+  };
+
+  const handleVideoSelection = (fileList: FileList | null) => {
+    const nextFiles = Array.from(fileList || []);
+    if (nextFiles.length === 0) {
+      return;
+    }
+    if (!supportsReferenceVideos) {
+      window.alert("当前模型不支持参考视频，请先切换到支持视频参考的模型。");
+      return;
+    }
+    const remaining =
+      mediaLimit > 0 ? Math.max(0, mediaLimit - totalMediaCount) : Number.MAX_SAFE_INTEGER;
+    if (remaining <= 0) {
+      window.alert(`当前模型最多支持 ${mediaLimit} 个参考媒体，请先删除部分素材。`);
+      return;
+    }
+    const accepted = nextFiles.slice(0, remaining);
+    if (accepted.length < nextFiles.length) {
+      window.alert(`当前模型最多支持 ${mediaLimit} 个参考媒体，已仅保留前 ${accepted.length} 个。`);
+    }
+    void uploadFiles(accepted, "reference_video");
   };
 
   const handleTextSelection = (fileList: FileList | null) => {
@@ -834,6 +1016,9 @@ export function SkillEditorModal({
                         {availableModels.map((model) => {
                           const selected = model.modelName === form.modelName;
                           const modelLimit = getModelReferenceLimit(form.outputType, model);
+                          const modelFileTypes = resolveSupportedFileTypes(model);
+                          const modelSupportsImages = hasSupportedFilePrefix(modelFileTypes, "image/");
+                          const modelSupportsVideos = hasSupportedFilePrefix(modelFileTypes, "video/");
                           return (
                             <button
                               key={model.id}
@@ -860,7 +1045,7 @@ export function SkillEditorModal({
                                 </div>
                                 <SelectionBadge selected={selected} />
                               </div>
-                              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                              <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                                 <MetricBlock
                                   label="单次扣费"
                                   value={formatSkillBillingAmount(model)}
@@ -870,8 +1055,12 @@ export function SkillEditorModal({
                                   value={model.billingMode || "待配置"}
                                 />
                                 <MetricBlock
-                                  label="参考图"
-                                  value={modelLimit > 0 ? `最多 ${modelLimit} 张` : "不限或未声明"}
+                                  label="参考媒体"
+                                  value={describeSupportedMediaTypes(modelSupportsImages, modelSupportsVideos)}
+                                />
+                                <MetricBlock
+                                  label="媒体上限"
+                                  value={modelLimit > 0 ? `最多 ${modelLimit} 个` : "不限或未声明"}
                                 />
                               </div>
                             </button>
@@ -884,62 +1073,112 @@ export function SkillEditorModal({
 
                   <SectionCard
                     title="参考素材"
-                    description="图片约束画面风格，文本约束结构和卖点。"
+                    description="图片和视频共用一条有序参考链，文本继续补充结构、卖点和限制条件。"
                   >
                     <div className="grid gap-4 lg:grid-cols-2">
                       <UploadCard
-                        title="参考图片"
+                        title="参考媒体"
                         hint={
-                          imageLimit > 0
-                            ? `当前模型最多支持 ${imageLimit} 张参考图，已准备 ${totalImageCount} 张。`
-                            : `当前模型未声明参考图上限，已准备 ${totalImageCount} 张。`
+                          !selectedModel
+                            ? "先选择最终模型，系统才知道你可以上传图片、视频还是两者都支持。"
+                            : mediaLimit > 0
+                              ? `当前模型支持 ${describeSupportedMediaTypes(supportsReferenceImages, supportsReferenceVideos)}，最多 ${mediaLimit} 个参考媒体，已准备 ${totalMediaCount} 个。`
+                              : `当前模型支持 ${describeSupportedMediaTypes(supportsReferenceImages, supportsReferenceVideos)}，已准备 ${totalMediaCount} 个参考媒体。`
                         }
-                        icon={<ImageIcon className="h-5 w-5 text-cyan" />}
+                        icon={<Video className="h-5 w-5 text-cyan" />}
                       >
-                        <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-cyan/30 bg-cyan/10 px-4 py-5 text-center transition-all hover:border-cyan/50 hover:bg-cyan/14">
-                          <div>
-                            <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan/15 text-cyan">
-                              <Upload className="h-5 w-5" />
-                            </div>
-                            <p className="mt-3 text-sm font-semibold text-white">上传图片</p>
-                            <p className="mt-1 text-xs text-text-secondary">支持多张，选中后立即上传到云端。</p>
-                          </div>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            multiple
-                            className="hidden"
-                            onChange={(event) => {
-                              handleImageSelection(event.target.files);
-                              event.target.value = "";
-                            }}
-                          />
-                        </label>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          {supportsReferenceImages ? (
+                            <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-cyan/30 bg-cyan/10 px-4 py-5 text-center transition-all hover:border-cyan/50 hover:bg-cyan/14">
+                              <div>
+                                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan/15 text-cyan">
+                                  <Upload className="h-5 w-5" />
+                                </div>
+                                <p className="mt-3 text-sm font-semibold text-white">上传参考图片</p>
+                                <p className="mt-1 text-xs text-text-secondary">支持多张，选中后立即上传到云端。</p>
+                              </div>
+                              <input
+                                type="file"
+                                accept={imageAccept || "image/*"}
+                                multiple
+                                className="hidden"
+                                onChange={(event) => {
+                                  handleImageSelection(event.target.files);
+                                  event.target.value = "";
+                                }}
+                              />
+                            </label>
+                          ) : (
+                            <DisabledUploadState label="当前模型不支持参考图片" />
+                          )}
+
+                          {supportsReferenceVideos ? (
+                            <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-cyan/30 bg-cyan/10 px-4 py-5 text-center transition-all hover:border-cyan/50 hover:bg-cyan/14">
+                              <div>
+                                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan/15 text-cyan">
+                                  <Upload className="h-5 w-5" />
+                                </div>
+                                <p className="mt-3 text-sm font-semibold text-white">上传参考视频</p>
+                                <p className="mt-1 text-xs text-text-secondary">仅支持当前模型允许的视频格式，顺序会原样保留。</p>
+                              </div>
+                              <input
+                                type="file"
+                                accept={videoAccept || "video/*"}
+                                multiple
+                                className="hidden"
+                                onChange={(event) => {
+                                  handleVideoSelection(event.target.files);
+                                  event.target.value = "";
+                                }}
+                              />
+                            </label>
+                          ) : (
+                            <DisabledUploadState label="当前模型不支持参考视频" />
+                          )}
+                        </div>
 
                         <div className="mt-4 space-y-3">
-                          {assetsLoading ? <InlineLoading label="正在读取图片素材..." /> : null}
-                          {imageAssets.map((asset) => (
+                          {assetsLoading ? <InlineLoading label="正在读取参考媒体..." /> : null}
+                          {orderedMediaAssets.map((asset, index) => (
                             <AssetRow
                               key={asset.id}
                               asset={asset}
-                              icon={<ImageIcon className="h-4 w-4 text-cyan" />}
+                              icon={
+                                isVideoAsset(asset) ? (
+                                  <Video className="h-4 w-4 text-cyan" />
+                                ) : (
+                                  <ImageIcon className="h-4 w-4 text-cyan" />
+                                )
+                              }
+                              sequence={index + 1}
                               deleting={deleteAssetMutation.isPending}
+                              moveUpDisabled={index === 0}
+                              moveDownDisabled={index === orderedMediaAssets.length - 1}
+                              onMoveUp={() => moveMediaAsset(asset.id, -1)}
+                              onMoveDown={() => moveMediaAsset(asset.id, 1)}
                               onDelete={() => deleteAssetMutation.mutate(asset)}
                             />
                           ))}
-                          {uploadingImages.map((item) => (
+                          {uploadingMedia.map((item, index) => (
                             <PendingRow
                               key={item.id}
                               label={item.file.name}
-                              icon={<ImageIcon className="h-4 w-4 text-cyan" />}
+                              icon={
+                                item.assetType === "reference_video" ? (
+                                  <Video className="h-4 w-4 text-cyan" />
+                                ) : (
+                                  <ImageIcon className="h-4 w-4 text-cyan" />
+                                )
+                              }
                               file={item.file}
+                              sequence={orderedMediaAssets.length + index + 1}
                               helperText="正在上传到云端..."
                               onDelete={() => undefined}
                               hideDelete
                             />
                           ))}
-                          {!imageAssets.length && !uploadingImages.length ? (
-                            <EmptyUploadState label="还没有图片素材。" />
+                          {!orderedMediaAssets.length && !uploadingMedia.length ? (
+                            <EmptyUploadState label="还没有参考媒体。" />
                           ) : null}
                         </div>
                       </UploadCard>
@@ -1010,7 +1249,8 @@ export function SkillEditorModal({
                     <div className="grid gap-3">
                       <SummaryLine label="输出类型" value={selectedOutput.label} />
                       <SummaryLine label="最终模型" value={getModelDisplayName(selectedModel, "未选择")} />
-                      <SummaryLine label="参考素材" value={`${totalImageCount} 图 / ${totalTextCount} 文`} />
+                      <SummaryLine label="参考素材" value={`${totalMediaCount} 媒体 / ${totalTextCount} 文`} />
+                      <SummaryLine label="媒体构成" value={`${totalImageCount} 图 / ${totalVideoCount} 视频`} />
                     </div>
                     <div className="mt-4 space-y-3">
                       {flowSteps.map((step, index) => (
@@ -1338,57 +1578,110 @@ function EmptyUploadState({ label }: { label: string }) {
   );
 }
 
+function DisabledUploadState({ label }: { label: string }) {
+  return (
+    <div className="flex items-center justify-center rounded-[22px] border border-dashed border-white/10 bg-white/[0.03] px-4 py-5 text-center text-sm text-text-secondary">
+      {label}
+    </div>
+  );
+}
+
 function AssetRow({
   asset,
   icon,
+  sequence,
   deleting,
+  moveUpDisabled,
+  moveDownDisabled,
+  onMoveUp,
+  onMoveDown,
   onDelete,
 }: {
   asset: SkillAsset;
   icon: React.ReactNode;
+  sequence?: number;
   deleting: boolean;
+  moveUpDisabled?: boolean;
+  moveDownDisabled?: boolean;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
   onDelete: () => void;
 }) {
   const image = isImageAsset(asset);
+  const video = isVideoAsset(asset);
 
   return (
-    <div className="flex items-center justify-between rounded-[22px] border border-white/10 bg-white/[0.04] px-4 py-3">
-      <div className="flex min-w-0 items-center gap-3">
-        {image && asset.publicUrl ? (
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-black/30">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={asset.publicUrl} alt={asset.fileName} className="h-full w-full object-cover" />
-          </div>
-        ) : (
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/6">
-            {icon}
-          </div>
-        )}
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-white">{asset.fileName}</p>
-          <p className="mt-1 text-xs text-text-secondary">{asset.mimeType || asset.assetType}</p>
+    <div className="overflow-hidden rounded-[22px] border border-white/10 bg-white/[0.04]">
+      {asset.publicUrl && image ? (
+        <div className="overflow-hidden border-b border-white/10 bg-black/30">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={asset.publicUrl} alt={asset.fileName} className="h-40 w-full object-cover" />
         </div>
-      </div>
+      ) : null}
+      {asset.publicUrl && video ? (
+        <div className="overflow-hidden border-b border-white/10 bg-black/50">
+          <video src={asset.publicUrl} controls preload="metadata" className="h-40 w-full bg-black object-cover" />
+        </div>
+      ) : null}
+      <div className="flex items-start justify-between gap-3 px-4 py-3">
+        <div className="flex min-w-0 items-start gap-3">
+          {!asset.publicUrl || (!image && !video) || typeof sequence !== "number" ? (
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/6">
+              {icon}
+            </div>
+          ) : (
+            <div className="flex h-11 min-w-11 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/6 px-3 text-xs font-semibold text-white">
+              #{sequence}
+            </div>
+          )}
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              {!asset.publicUrl || (!image && !video) || typeof sequence !== "number" ? (
+                <MiniPill>#{sequence}</MiniPill>
+              ) : null}
+              <MiniPill>{video ? "视频" : image ? "图片" : "素材"}</MiniPill>
+            </div>
+            <p className="mt-2 truncate text-sm font-medium text-white">{asset.fileName}</p>
+            <p className="mt-1 text-xs text-text-secondary">{asset.mimeType || asset.assetType}</p>
+          </div>
+        </div>
 
-      <div className="flex items-center gap-2">
-        {asset.publicUrl ? (
-          <a
-            href={asset.publicUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="rounded-full border border-white/10 bg-white/6 px-3 py-1.5 text-xs text-text-secondary transition-all hover:border-cyan/40 hover:text-cyan"
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            disabled={moveUpDisabled}
+            onClick={onMoveUp}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-text-muted transition-all hover:border-white/20 hover:text-white disabled:opacity-40"
           >
-            预览
-          </a>
-        ) : null}
-        <button
-          type="button"
-          disabled={deleting}
-          onClick={onDelete}
-          className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-text-muted transition-all hover:border-danger hover:bg-danger/10 hover:text-danger disabled:opacity-50"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
+            <ArrowUp className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            disabled={moveDownDisabled}
+            onClick={onMoveDown}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-text-muted transition-all hover:border-white/20 hover:text-white disabled:opacity-40"
+          >
+            <ArrowDown className="h-4 w-4" />
+          </button>
+          {asset.publicUrl ? (
+            <a
+              href={asset.publicUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-full border border-white/10 bg-white/6 px-3 py-1.5 text-xs text-text-secondary transition-all hover:border-cyan/40 hover:text-cyan"
+            >
+              新窗预览
+            </a>
+          ) : null}
+          <button
+            type="button"
+            disabled={deleting}
+            onClick={onDelete}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-text-muted transition-all hover:border-danger hover:bg-danger/10 hover:text-danger disabled:opacity-50"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1398,6 +1691,7 @@ function PendingRow({
   label,
   icon,
   file,
+  sequence,
   helperText,
   hideDelete,
   onDelete,
@@ -1405,12 +1699,13 @@ function PendingRow({
   label: string;
   icon: React.ReactNode;
   file?: File;
+  sequence?: number;
   helperText?: string;
   hideDelete?: boolean;
   onDelete: () => void;
 }) {
   const preview = useMemo(() => {
-    if (!file || !file.type.startsWith("image/")) {
+    if (!file || (!file.type.startsWith("image/") && !file.type.startsWith("video/"))) {
       return null;
     }
     return URL.createObjectURL(file);
@@ -1425,37 +1720,53 @@ function PendingRow({
   }, [preview]);
 
   return (
-    <div className="flex items-center justify-between rounded-[22px] border border-dashed border-white/12 bg-white/[0.03] px-4 py-3">
-      <div className="flex min-w-0 items-center gap-3">
-        {preview ? (
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-black/30">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={preview} alt={label} className="h-full w-full object-cover" />
+    <div className="overflow-hidden rounded-[22px] border border-dashed border-white/12 bg-white/[0.03]">
+      {preview && file?.type.startsWith("image/") ? (
+        <div className="overflow-hidden border-b border-white/10 bg-black/30">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={preview} alt={label} className="h-40 w-full object-cover" />
+        </div>
+      ) : null}
+      {preview && file?.type.startsWith("video/") ? (
+        <div className="overflow-hidden border-b border-white/10 bg-black/50">
+          <video src={preview} controls preload="metadata" className="h-40 w-full bg-black object-cover" />
+        </div>
+      ) : null}
+      <div className="flex items-start justify-between gap-3 px-4 py-3">
+        <div className="flex min-w-0 items-start gap-3">
+          {!preview || typeof sequence !== "number" ? (
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/6">
+              {icon}
+            </div>
+          ) : (
+            <div className="flex h-11 min-w-11 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/6 px-3 text-xs font-semibold text-white">
+              #{sequence}
+            </div>
+          )}
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              {!preview || typeof sequence !== "number" ? null : <MiniPill>#{sequence}</MiniPill>}
+              <MiniPill>{file?.type.startsWith("video/") ? "视频" : file?.type.startsWith("image/") ? "图片" : "素材"}</MiniPill>
+            </div>
+            <p className="mt-2 truncate text-sm font-medium text-white">{label}</p>
+            <p className="mt-1 text-xs text-text-secondary">{helperText || "正在上传到云端..."}</p>
+          </div>
+        </div>
+
+        {hideDelete ? (
+          <div className="inline-flex h-10 min-w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-3 text-[11px] font-medium text-text-secondary">
+            上传中
           </div>
         ) : (
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/6">
-            {icon}
-          </div>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-text-muted transition-all hover:border-danger hover:bg-danger/10 hover:text-danger"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
         )}
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-white">{label}</p>
-          <p className="mt-1 text-xs text-text-secondary">{helperText || "正在上传到云端..."}</p>
-        </div>
       </div>
-
-      {hideDelete ? (
-        <div className="inline-flex h-10 min-w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-3 text-[11px] font-medium text-text-secondary">
-          上传中
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={onDelete}
-          className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-text-muted transition-all hover:border-danger hover:bg-danger/10 hover:text-danger"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
-      )}
     </div>
   );
 }

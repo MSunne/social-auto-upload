@@ -26,17 +26,21 @@ func (w *Worker) executeWorkflowVideo(
 	if err != nil {
 		return err
 	}
-	baseURL, apiKey, err := w.resolveModelRuntimeConfig(ctx, job.ModelName)
+	_, provider, providerName, baseURL, apiKey, err := w.resolveModelRuntime(ctx, job.ModelName)
 	if err != nil {
 		return err
 	}
 	req.BaseURL = baseURL
 	req.APIKey = apiKey
+	req.Vendor = providerName
 	req.Model = normalizeVideoModel(strings.TrimSpace(job.ModelName), req.AspectRatio, len(req.ReferenceImages) > 0)
 
 	state := parseVideoExecutionState(job.OutputPayload)
 	if strings.TrimSpace(state.BaseURL) == "" {
 		state.BaseURL = baseURL
+	}
+	if strings.TrimSpace(state.Provider) == "" {
+		state.Provider = providerName
 	}
 	if state.DurationSeconds <= 0 {
 		state.DurationSeconds = snapshot.DurationSeconds
@@ -73,7 +77,7 @@ func (w *Worker) executeWorkflowVideo(
 		var segmentArtifact *BinaryArtifact
 		var segmentErr error
 		for attempt := 1; attempt <= workflowSegmentRetryLimit; attempt++ {
-			segmentArtifact, leaseExpiresAt, segmentErr = w.executeWorkflowVideoSegment(ctx, job, leaseToken, leaseExpiresAt, &segmentReq, &state, apiKey, attempt)
+			segmentArtifact, leaseExpiresAt, segmentErr = w.executeWorkflowVideoSegment(ctx, provider, job, leaseToken, leaseExpiresAt, &segmentReq, &state, apiKey, attempt)
 			if segmentErr == nil {
 				break
 			}
@@ -130,7 +134,7 @@ func (w *Worker) executeWorkflowVideo(
 	if finalArtifactKey == "" {
 		finalArtifactKey = safeArtifactKey(finalArtifact.FileName, "video-final.mp4")
 	}
-	input, err := w.saveBinaryArtifact(ctx, job, "video", finalArtifactKey, "apiyi", *finalArtifact)
+	input, err := w.saveBinaryArtifact(ctx, job, "video", finalArtifactKey, providerName, *finalArtifact)
 	if err != nil {
 		return err
 	}
@@ -186,6 +190,7 @@ func (w *Worker) executeWorkflowVideo(
 
 func (w *Worker) executeWorkflowVideoSegment(
 	ctx context.Context,
+	provider Provider,
 	job *domain.AIJob,
 	leaseToken string,
 	leaseExpiresAt time.Time,
@@ -199,7 +204,7 @@ func (w *Worker) executeWorkflowVideoSegment(
 	}
 
 	if strings.TrimSpace(state.RemoteVideoID) == "" {
-		submission, err := w.provider.SubmitVideo(ctx, *req)
+		submission, err := provider.SubmitVideo(ctx, *req)
 		if err != nil {
 			if shouldRequeueVideoSubmissionError(err) {
 				return nil, leaseExpiresAt, buildTemporaryVideoRequeueError(job, *state, err)
@@ -233,7 +238,7 @@ func (w *Worker) executeWorkflowVideoSegment(
 			return nil, leaseExpiresAt, renewErr
 		}
 
-		status, err := w.provider.GetVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey)
+		status, err := provider.GetVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey)
 		if err != nil {
 			if isTransientVideoProviderExecutionError(err) {
 				return nil, leaseExpiresAt, buildTemporaryVideoRequeueError(job, *state, err)
@@ -253,7 +258,7 @@ func (w *Worker) executeWorkflowVideoSegment(
 
 		switch state.RemoteStatus {
 		case "completed":
-			artifact, err := w.downloadAndFinalizeVideoArtifact(ctx, job, *req, state, apiKey)
+			artifact, err := w.downloadAndFinalizeVideoArtifact(ctx, provider, job, *req, state, apiKey)
 			if err != nil {
 				if isTransientVideoProviderExecutionError(err) {
 					return nil, leaseExpiresAt, buildTemporaryVideoRequeueError(job, *state, err)
@@ -300,7 +305,7 @@ func (w *Worker) executeWorkflowVideoSegment(
 
 func (w *Worker) persistCompletedVideoSegment(ctx context.Context, job *domain.AIJob, state *videoExecutionState, segmentIndex int, durationSeconds int, artifact BinaryArtifact) error {
 	artifactKey := fmt.Sprintf("video-segment-%02d", segmentIndex)
-	input, err := w.saveBinaryArtifact(ctx, job, "video_segment", artifactKey, "apiyi", artifact)
+	input, err := w.saveBinaryArtifact(ctx, job, "video_segment", artifactKey, state.Provider, artifact)
 	if err != nil {
 		return err
 	}
@@ -316,7 +321,7 @@ func (w *Worker) persistCompletedVideoSegment(ctx context.Context, job *domain.A
 	if err != nil {
 		return err
 	}
-	frameMetadata, _, err := w.saveVideoReferenceFrame(ctx, job, lastFrameImage, fmt.Sprintf("segment-%02d-last", segmentIndex), fmt.Sprintf("video segment %d last frame", segmentIndex), job.ModelName)
+	frameMetadata, _, err := w.saveVideoReferenceFrame(ctx, job, lastFrameImage, fmt.Sprintf("segment-%02d-last", segmentIndex), fmt.Sprintf("video segment %d last frame", segmentIndex), state.Provider, job.ModelName)
 	if err != nil {
 		return err
 	}

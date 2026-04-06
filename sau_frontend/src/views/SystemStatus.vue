@@ -77,6 +77,7 @@ const agents = ref({ cloud: false, omnidrive: false })
 const taskStats = ref({})
 const materialRoots = ref([])
 
+// Aggregate device, agent, and task summaries so the status page loads in one round trip.
 const fetchAll = async () => {
   loading.value = true
   try {

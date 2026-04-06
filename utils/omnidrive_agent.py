@@ -2958,6 +2958,20 @@ class OmniDriveBridge:
         tasks = self.publish_task_manager.list_tasks(limit=500, sources=["omnidrive_agent"])
         return sum(1 for task in tasks if task.get("status") in {"pending", "scheduled", "running"})
 
+    def _build_runtime_bridge_snapshot(self):
+        with self._state_lock:
+            return {
+                "bridgeRunning": bool(self._state.get("running")),
+                "cloudReachable": self._state.get("cloudReachable"),
+                "cloudRetryAt": self._state.get("cloudRetryAt"),
+                "lastError": self._state.get("lastError"),
+                "lastHeartbeatAt": self._state.get("lastHeartbeatAt"),
+                "lastAccountSyncAt": self._state.get("lastAccountSyncAt"),
+                "lastPublishSyncAt": self._state.get("lastPublishSyncAt"),
+                "lastAIPollAt": self._state.get("lastAIPollAt"),
+                "lastLoginPollAt": self._state.get("lastLoginPollAt"),
+            }
+
     def _build_runtime_payload(self):
         task_counts = self.publish_task_manager.list_tasks(limit=500)
         by_status = {}
@@ -2984,6 +2998,7 @@ class OmniDriveBridge:
             "activeLoginSessionId": login_worker.get("sessionId") if login_worker else None,
             "activeLoginPlatform": login_worker.get("platform") if login_worker else None,
             "activeLoginAccountName": login_worker.get("accountName") if login_worker else None,
+            **self._build_runtime_bridge_snapshot(),
         }
 
     def _build_status_snapshot(self):

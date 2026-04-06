@@ -86,7 +86,9 @@ func BuildWorkflowBillingPlan(ctx context.Context, app *appstate.App, job *domai
 		}
 	} else {
 		sortOrder := 1
-		if videoStoryboardEnabled(payload) {
+		preprocessEnabled := videoPreprocessEnabled(payload)
+		storyboardEnabled := preprocessEnabled && videoStoryboardEnabled(payload)
+		if storyboardEnabled {
 			if storyboardModel, err := resolveWorkflowStoryboardBillingModel(ctx, app); err != nil {
 				return nil, err
 			} else if storyboardModel != nil {
@@ -125,23 +127,25 @@ func BuildWorkflowBillingPlan(ctx context.Context, app *appstate.App, job *domai
 				))
 				sortOrder++
 			}
-		} else if coverModel, err := resolveWorkflowCoverBillingModel(ctx, app); err != nil {
-			return nil, err
-		} else if coverModel != nil {
-			itemInputs = append(itemInputs, buildWorkflowBillingItem(
-				job,
-				workflowCoverFrameItemKey(),
-				workflowCoverFrameItemType,
-				"AI 首帧参考图生成",
-				coverModel,
-				sortOrder,
-				map[string]any{
-					"stage":           "cover_frame_generation",
-					"durationSeconds": snapshot.DurationSeconds,
-					"segmentCount":    plannedSegmentCount,
-				},
-			))
-			sortOrder++
+		} else if preprocessEnabled {
+			if coverModel, err := resolveWorkflowCoverBillingModel(ctx, app); err != nil {
+				return nil, err
+			} else if coverModel != nil {
+				itemInputs = append(itemInputs, buildWorkflowBillingItem(
+					job,
+					workflowCoverFrameItemKey(),
+					workflowCoverFrameItemType,
+					"AI 首帧参考图生成",
+					coverModel,
+					sortOrder,
+					map[string]any{
+						"stage":           "cover_frame_generation",
+						"durationSeconds": snapshot.DurationSeconds,
+						"segmentCount":    plannedSegmentCount,
+					},
+				))
+				sortOrder++
+			}
 		}
 
 		videoModel, err := app.Store.GetAIModelByName(ctx, strings.TrimSpace(job.ModelName))
@@ -162,7 +166,7 @@ func BuildWorkflowBillingPlan(ctx context.Context, app *appstate.App, job *domai
 					"segmentCount":      plannedSegmentCount,
 					"durationSeconds":   snapshot.DurationSeconds,
 					"segmentSeconds":    snapshot.SegmentSeconds,
-					"storyboardEnabled": videoStoryboardEnabled(payload),
+					"storyboardEnabled": storyboardEnabled,
 				},
 			))
 			sortOrder++

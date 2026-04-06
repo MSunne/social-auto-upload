@@ -150,6 +150,7 @@ OMNIDRIVE_OPENAI_LOCAL_TOOL_SYSTEM_GUARD = str(
 
 
 def parse_bool(value):
+    """Normalize environment/config values into a predictable boolean flag."""
     if isinstance(value, bool):
         return value
     if value is None:
@@ -160,6 +161,7 @@ def parse_bool(value):
 
 
 def parse_csv(value, default=None):
+    """Split comma-separated config values while preserving a fallback default list."""
     if value is None:
         return list(default or [])
     if isinstance(value, (list, tuple, set)):
@@ -170,6 +172,7 @@ def parse_csv(value, default=None):
 
 
 def _redact_for_log(value):
+    """Remove sensitive fields from structured payloads before they are written to logs."""
     sensitive_keys = {
         'password',
         'token',
@@ -194,6 +197,7 @@ def _redact_for_log(value):
 
 
 def _compact_log_value(value, limit=REQUEST_LOG_BODY_LIMIT):
+    """Serialize request/response payloads into a bounded log-friendly string."""
     if value in (None, '', [], {}):
         return None
     try:
@@ -210,6 +214,7 @@ def _compact_log_value(value, limit=REQUEST_LOG_BODY_LIMIT):
 
 
 def _request_log_interval(path):
+    """Return the sampling interval used to suppress noisy endpoints in request logs."""
     if path in NOISY_REQUEST_INTERVALS:
         return NOISY_REQUEST_INTERVALS[path]
     for prefix, interval in NOISY_REQUEST_PREFIX_INTERVALS.items():
@@ -219,6 +224,7 @@ def _request_log_interval(path):
 
 
 def _request_payload_summary():
+    """Build a compact request-body summary for logging non-idempotent API calls."""
     if request.method in {'GET', 'HEAD', 'OPTIONS'}:
         return None
 
@@ -2307,6 +2313,7 @@ def index():  # put application's code here
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
+    """Store a raw upload under videoFile for immediate local publish use."""
     if 'file' not in request.files:
         return jsonify({
             "code": 400,
@@ -2332,6 +2339,7 @@ def upload_file():
 
 @app.route('/getFile', methods=['GET'])
 def get_file():
+    """Serve a previously uploaded local media file by its stored filename."""
     # 获取 filename 参数
     filename = request.args.get('filename')
 
@@ -2351,6 +2359,7 @@ def get_file():
 
 @app.route('/uploadSave', methods=['POST'])
 def upload_save():
+    """Persist a material-library asset and record it in the local SQLite catalog."""
     if 'file' not in request.files:
         return jsonify({
             "code": 400,
@@ -2413,6 +2422,7 @@ def upload_save():
 
 @app.route('/getFiles', methods=['GET'])
 def get_all_files():
+    """Return all saved material records with a parsed UUID for frontend display."""
     try:
         # 使用 with 自动管理数据库连接
         with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
@@ -2485,6 +2495,7 @@ def getAccounts():
 
 @app.route("/api/platforms", methods=["GET"])
 def get_platforms():
+    """Expose publish/login capability switches after syncing them from OmniDrive."""
     try:
         platform_items = refresh_platform_capabilities_from_omnidrive()
         return jsonify({
@@ -2502,6 +2513,7 @@ def get_platforms():
 
 @app.route("/getValidAccounts",methods=['GET'])
 async def getValidAccounts():
+    """Validate every stored account cookie and return the refreshed row payloads."""
     with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
@@ -2523,6 +2535,7 @@ async def getValidAccounts():
 
 @app.route("/validateAccount", methods=['GET'])
 async def validateAccount():
+    """Re-check a single account's login state so the frontend can surface cookie health."""
     account_id = request.args.get('id')
 
     if not account_id or not account_id.isdigit():
@@ -2561,6 +2574,7 @@ async def validateAccount():
 
 @app.route('/deleteFile', methods=['GET'])
 def delete_file():
+    """Delete a material file from disk and remove its catalog row in one operation."""
     file_id = request.args.get('id')
 
     if not file_id or not file_id.isdigit():
@@ -2623,6 +2637,7 @@ def delete_file():
 
 @app.route('/deleteAccount', methods=['GET'])
 def delete_account():
+    """Delete a local account, clear cached storage state, and notify OmniDrive if available."""
     account_id = request.args.get('id')
 
     if not account_id or not account_id.isdigit():
@@ -2689,6 +2704,7 @@ def delete_account():
 # SSE 登录接口
 @app.route('/login')
 def login():
+    """Start the platform-specific login worker and stream progress back over SSE."""
     type = request.args.get('type')
     id = str(request.args.get('id') or '').strip()
 
@@ -3294,6 +3310,7 @@ def skill_publish_task_detail(task_uuid):
 
 @app.route('/postVideo', methods=['POST'])
 def postVideo():
+    """Validate a single publish request and enqueue it into the local publish manager."""
     data = request.get_json()
 
     if not data:
@@ -3383,6 +3400,7 @@ def updateUserinfo():
 
 @app.route('/postVideoBatch', methods=['POST'])
 def postVideoBatch():
+    """Validate and enqueue a batch of publish requests from the multi-tab frontend."""
     data_list = request.get_json()
 
     if not isinstance(data_list, list):
@@ -3412,6 +3430,7 @@ def postVideoBatch():
 
 @app.route('/publishTasks', methods=['GET'])
 def get_publish_tasks():
+    """List local publish tasks so operators can inspect queue state and outcomes."""
     ensure_publish_task_manager_started()
     status = request.args.get('status')
     limit = request.args.get('limit', 100)
@@ -3430,6 +3449,7 @@ def get_publish_tasks():
 
 @app.route('/publishTaskDetail', methods=['GET'])
 def get_publish_task_detail():
+    """Return one publish task by UUID for retry and diagnostics views."""
     ensure_publish_task_manager_started()
     task_uuid = request.args.get('id') or request.args.get('taskUuid')
     if not task_uuid:
@@ -3447,6 +3467,7 @@ def get_publish_task_detail():
 
 @app.route('/retryPublishTask', methods=['POST'])
 def retry_publish_task():
+    """Move an eligible failed/cancelled task back to pending for manual retry."""
     try:
         ensure_publish_task_manager_started()
         data = request.json or {}
@@ -3488,6 +3509,7 @@ def retry_publish_task():
 # Cookie文件上传API
 @app.route('/uploadCookie', methods=['POST'])
 def upload_cookie():
+    """Import a browser cookie snapshot into the selected local account record."""
     try:
         if 'file' not in request.files:
             return jsonify({
@@ -3550,6 +3572,7 @@ def upload_cookie():
 # Cookie文件下载API
 @app.route('/downloadCookie', methods=['GET'])
 def download_cookie():
+    """Export the stored cookie payload for a specific local account."""
     try:
         account_id = request.args.get('id')
         file_path = request.args.get('filePath')
@@ -3590,6 +3613,7 @@ def download_cookie():
 
 # 包装函数：在线程中运行异步函数
 def run_async_function(type,id,status_queue,command_queue=None):
+    """Run the platform login coroutine inside a worker thread and mirror status to SSE queues."""
     try:
         # First, attempt local fast-path validation if an existing cookie is present
         try:
@@ -3661,6 +3685,7 @@ if should_boot_background_services():
     ensure_openclaw_omnidrive_runtime_sync_started()
 # SSE 流生成器函数
 def sse_stream(status_queue):
+    """Convert queued login status messages into server-sent-event frames for the frontend."""
     while True:
         if not status_queue.empty():
             msg = status_queue.get()

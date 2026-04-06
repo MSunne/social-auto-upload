@@ -303,12 +303,12 @@ func (s *Store) GetAdminDashboardSummary(ctx context.Context) (*domain.AdminDash
 		ServerTime: time.Now().UTC(),
 	}
 
-	err := s.pool.QueryRow(ctx, `
+	err := s.pool.QueryRow(ctx, fmt.Sprintf(`
 		SELECT
 			COALESCE((SELECT COUNT(*) FROM users), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM users WHERE is_active = TRUE), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM devices), 0)::BIGINT,
-			COALESCE((SELECT COUNT(*) FROM devices WHERE last_seen_at IS NOT NULL AND last_seen_at >= NOW() - INTERVAL '45 seconds'), 0)::BIGINT,
+			COALESCE((SELECT COUNT(*) FROM devices WHERE %s), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM publish_tasks), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM publish_tasks WHERE status = 'failed'), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM publish_tasks WHERE status = 'needs_verify'), 0)::BIGINT,
@@ -326,7 +326,7 @@ func (s *Store) GetAdminDashboardSummary(ctx context.Context) (*domain.AdminDash
 			COALESCE((SELECT SUM(GREATEST(released_amount_cents - settled_amount_cents, 0)) FROM distribution_commission_items), 0)::BIGINT,
 			COALESCE((SELECT SUM(settled_amount_cents) FROM distribution_commission_items), 0)::BIGINT,
 			COALESCE((SELECT SUM(amount_cents) FROM withdrawal_requests WHERE status IN ('requested', 'approved')), 0)::BIGINT
-	`, paidRechargeStatuses()).Scan(
+	`, deviceOnlineSQLPredicate("devices")), paidRechargeStatuses()).Scan(
 		&summary.Metrics.UserCount,
 		&summary.Metrics.ActiveUserCount,
 		&summary.Metrics.DeviceCount,
@@ -490,9 +490,9 @@ func (s *Store) ListAdminDevices(ctx context.Context, filter AdminDeviceListFilt
 
 	switch strings.TrimSpace(filter.Status) {
 	case "online":
-		whereParts = append(whereParts, "devices.last_seen_at IS NOT NULL AND devices.last_seen_at >= NOW() - INTERVAL '45 seconds'")
+		whereParts = append(whereParts, deviceOnlineSQLPredicate("devices"))
 	case "offline":
-		whereParts = append(whereParts, "(devices.last_seen_at IS NULL OR devices.last_seen_at < NOW() - INTERVAL '45 seconds')")
+		whereParts = append(whereParts, "NOT "+deviceOnlineSQLPredicate("devices"))
 	}
 
 	whereClause := "WHERE " + strings.Join(whereParts, " AND ")

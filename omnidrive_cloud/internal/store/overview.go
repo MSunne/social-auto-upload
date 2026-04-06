@@ -11,10 +11,10 @@ import (
 func (s *Store) GetOverviewSummary(ctx context.Context, ownerUserID string) (*OverviewSummary, error) {
 	summary := &OverviewSummary{}
 
-	if err := s.pool.QueryRow(ctx, `
+	if err := s.pool.QueryRow(ctx, fmt.Sprintf(`
 		SELECT
 			COALESCE((SELECT COUNT(*) FROM devices WHERE owner_user_id = $1), 0)::BIGINT,
-			COALESCE((SELECT COUNT(*) FROM devices WHERE owner_user_id = $1 AND last_seen_at >= NOW() - INTERVAL '45 seconds'), 0)::BIGINT,
+			COALESCE((SELECT COUNT(*) FROM devices WHERE owner_user_id = $1 AND %s), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM platform_accounts pa INNER JOIN devices d ON d.id = pa.device_id WHERE d.owner_user_id = $1), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM device_material_roots mr INNER JOIN devices d ON d.id = mr.device_id WHERE d.owner_user_id = $1 AND mr.is_available = TRUE), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM device_material_entries me INNER JOIN devices d ON d.id = me.device_id WHERE d.owner_user_id = $1 AND me.is_available = TRUE), 0)::BIGINT,
@@ -30,7 +30,7 @@ func (s *Store) GetOverviewSummary(ctx context.Context, ownerUserID string) (*Ov
 			COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE owner_user_id = $1 AND status = 'running'), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE owner_user_id = $1 AND status = 'failed'), 0)::BIGINT,
 			COALESCE((SELECT balance_after FROM wallet_ledgers WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1), 0)::BIGINT
-	`, ownerUserID).Scan(
+	`, deviceOnlineSQLPredicate("devices")), ownerUserID).Scan(
 		&summary.DeviceCount,
 		&summary.OnlineDeviceCount,
 		&summary.AccountCount,

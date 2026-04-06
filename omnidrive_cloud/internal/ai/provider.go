@@ -48,6 +48,7 @@ type ChatStreamChunk struct {
 }
 
 type MediaInput struct {
+	Kind     string `json:"kind,omitempty"`
 	URL      string `json:"url,omitempty"`
 	Base64   string `json:"base64,omitempty"`
 	Data     []byte `json:"-"`
@@ -103,10 +104,12 @@ type StoryboardPackageResult struct {
 }
 
 type VideoRequest struct {
+	Vendor          string       `json:"vendor,omitempty"`
 	Model           string       `json:"model"`
 	BaseURL         string       `json:"baseUrl,omitempty"`
 	APIKey          string       `json:"apiKey,omitempty"`
 	Prompt          string       `json:"prompt"`
+	ReferenceMedia  []MediaInput `json:"referenceMedia,omitempty"`
 	ReferenceImages []MediaInput `json:"referenceImages,omitempty"`
 	AspectRatio     string       `json:"aspectRatio,omitempty"`
 	Resolution      string       `json:"resolution,omitempty"`

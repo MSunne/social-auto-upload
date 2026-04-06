@@ -236,6 +236,10 @@
 
 更详细的文档和说明，请查看：[social-auto-upload 官方文档](https://sap-doc.nasdaddy.com/)
 
+仓库内补充文档：
+
+- [Codex 高效开发 SOP](/Volumes/mud/project/github/social-auto-upload/docs/codex_development_sop.md)
+
 ## 🐾交流与支持
 
 [☕ Donate as u like](https://www.buymeacoffee.com/hysn2001m) - 如果您觉得这个项目对您有帮助，可以考虑赞助。

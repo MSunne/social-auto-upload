@@ -110,6 +110,7 @@ const activeTab = ref('ai')
 const aiTasks = ref([])
 const publishTasks = ref([])
 
+// Load both AI task mirrors and local publish tasks so the two queues can be inspected side by side.
 const fetchTasks = async () => {
   loading.value = true
   try {
@@ -125,6 +126,7 @@ const fetchTasks = async () => {
   loading.value = false
 }
 
+// Retry locally failed publish tasks and mark the current row as busy while the request is pending.
 const retryTask = async (row) => {
   row._retrying = true
   try {
@@ -142,6 +144,7 @@ const retryTask = async (row) => {
   }
 }
 
+// Translate backend task states to tag tones used throughout the task tables.
 const tagType = (status) => {
   switch (status) {
     case 'scheduled':
@@ -165,6 +168,7 @@ const tagType = (status) => {
   }
 }
 
+// Convert raw status codes into labels that operators can read without checking backend enums.
 const statusLabel = (status) => {
   switch (status) {
     case 'queued_cloud':
@@ -212,6 +216,7 @@ const TIME_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
 
 const LOCAL_DATETIME_RE = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?$/
 
+// Format timestamps from both local SQLite rows and cloud payloads into a consistent display string.
 const formatTime = (value, source = 'local') => {
   if (!value) return '-'
 
@@ -224,6 +229,7 @@ const formatTime = (value, source = 'local') => {
   return TIME_FORMATTER.format(parsed).replace(/\//g, '-')
 }
 
+// Parse naive local timestamps produced by the local backend without forcing a timezone conversion.
 const parseLocalDateTime = (value) => {
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? null : value
@@ -247,6 +253,7 @@ const parseLocalDateTime = (value) => {
   return Number.isNaN(parsed.getTime()) ? null : parsed
 }
 
+// Parse UTC-like timestamps from cloud task payloads while preserving the intended absolute time.
 const parseUtcDateTime = (value) => {
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? null : value

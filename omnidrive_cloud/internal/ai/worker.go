@@ -20,7 +20,7 @@ import (
 
 type Worker struct {
 	app               *appstate.App
-	provider          Provider
+	providers         map[string]Provider
 	pollInterval      time.Duration
 	videoPollInterval time.Duration
 	videoTimeout      time.Duration
@@ -70,7 +70,7 @@ func NewWorker(app *appstate.App) (*Worker, error) {
 	if app == nil {
 		return nil, fmt.Errorf("app is required")
 	}
-	provider, err := NewAPIYIProvider(app.Config)
+	providers, err := newProviders(app.Config)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func NewWorker(app *appstate.App) (*Worker, error) {
 
 	return &Worker{
 		app:               app,
-		provider:          provider,
+		providers:         providers,
 		pollInterval:      time.Duration(pollSeconds) * time.Second,
 		videoPollInterval: time.Duration(videoPollSeconds) * time.Second,
 		videoTimeout:      time.Duration(videoTimeoutSeconds) * time.Second,
@@ -303,6 +303,17 @@ func (w *Worker) processJob(ctx context.Context, job domain.AIJob) {
 		return
 	}
 
+	if shouldResumeRemoteVideoPolling(claimed, execErr) {
+		state := parseVideoExecutionState(claimed.OutputPayload)
+		message := "AI 视频服务暂时波动，继续后台回查云端结果"
+		if _, err := w.requeueJobWithBackoff(ctx, claimed.ID, leaseToken, message, buildVideoOutputPayload(claimed, state, nil), mediaFailureAutoRetryDelay); err != nil {
+			w.app.Logger.Error("ai worker failed to continue remote video polling after transient error", "job_id", claimed.ID, "error", err)
+			return
+		}
+		w.app.Logger.Warn("ai worker kept remote video job queued after transient error", "job_id", claimed.ID, "job_type", claimed.JobType, "remote_video_id", state.RemoteVideoID, "error", execErr)
+		return
+	}
+
 	message := buildAIExecutionFailureMessage(claimed.JobType, execErr)
 	if shouldAutoRetryMediaFailure(claimed, execErr) {
 		retryCount := mediaAutoRetryCountFromPayload(claimed.OutputPayload) + 1
@@ -352,19 +363,19 @@ func (w *Worker) executeChat(ctx context.Context, job *domain.AIJob, leaseToken 
 	if strings.TrimSpace(optimizedPrompt) != "" {
 		req.Messages = replaceLastUserMessage(req.Messages, optimizedPrompt)
 	}
-	baseURL, apiKey, err := w.resolveModelRuntimeConfig(ctx, job.ModelName)
+	_, provider, providerName, baseURL, apiKey, err := w.resolveModelRuntime(ctx, job.ModelName)
 	if err != nil {
 		return err
 	}
 	req.BaseURL = baseURL
 	req.APIKey = apiKey
-	result, err := w.provider.GenerateChat(ctx, req)
+	result, err := provider.GenerateChat(ctx, req)
 	if err != nil {
 		return err
 	}
 
 	artifactPayload := mustJSON(map[string]any{
-		"provider":     "apiyi",
+		"provider":     providerName,
 		"role":         result.Role,
 		"finishReason": result.FinishReason,
 		"usage":        result.Usage,
@@ -376,7 +387,7 @@ func (w *Worker) executeChat(ctx context.Context, job *domain.AIJob, leaseToken 
 		JobID:        job.ID,
 		ArtifactKey:  "response.txt",
 		ArtifactType: "text",
-		Source:       "apiyi",
+		Source:       providerName,
 		Title:        stringPtr("聊天回复"),
 		FileName:     &fileName,
 		MimeType:     &mimeType,
@@ -390,7 +401,7 @@ func (w *Worker) executeChat(ctx context.Context, job *domain.AIJob, leaseToken 
 	billing := w.applyUsageBilling(ctx, job, buildChatBillingInput(job, result))
 
 	outputPayload := mustJSON(map[string]any{
-		"provider":     "apiyi",
+		"provider":     providerName,
 		"kind":         "chat",
 		"model":        job.ModelName,
 		"text":         result.Text,
@@ -426,13 +437,13 @@ func (w *Worker) executeImage(ctx context.Context, job *domain.AIJob, leaseToken
 	if strings.TrimSpace(optimizedPrompt) != "" {
 		req.Prompt = optimizedPrompt
 	}
-	baseURL, apiKey, err := w.resolveModelRuntimeConfig(ctx, job.ModelName)
+	_, provider, providerName, baseURL, apiKey, err := w.resolveModelRuntime(ctx, job.ModelName)
 	if err != nil {
 		return err
 	}
 	req.BaseURL = baseURL
 	req.APIKey = apiKey
-	result, err := w.provider.GenerateImage(ctx, req)
+	result, err := provider.GenerateImage(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -443,7 +454,7 @@ func (w *Worker) executeImage(ctx context.Context, job *domain.AIJob, leaseToken
 		if artifactKey == "" {
 			artifactKey = fmt.Sprintf("image-%d%s", index+1, extensionForMIME(image.MIMEType, ".png"))
 		}
-		input, err := w.saveBinaryArtifact(ctx, job, "image", artifactKey, "apiyi", image)
+		input, err := w.saveBinaryArtifact(ctx, job, "image", artifactKey, providerName, image)
 		if err != nil {
 			return err
 		}
@@ -457,14 +468,14 @@ func (w *Worker) executeImage(ctx context.Context, job *domain.AIJob, leaseToken
 			JobID:        job.ID,
 			ArtifactKey:  "response.txt",
 			ArtifactType: "text",
-			Source:       "apiyi",
+			Source:       providerName,
 			Title:        stringPtr("图片生成说明"),
 			FileName:     &fileName,
 			MimeType:     &mimeType,
 			SizeBytes:    &sizeBytes,
 			TextContent:  stringPtr(result.Text),
 			Payload: mustJSON(map[string]any{
-				"provider": "apiyi",
+				"provider": providerName,
 				"kind":     "image",
 			}),
 		})
@@ -476,7 +487,7 @@ func (w *Worker) executeImage(ctx context.Context, job *domain.AIJob, leaseToken
 	}
 	billing := w.applyUsageBilling(ctx, job, buildImageBillingInput(job, len(result.Images)))
 	outputPayload := mustJSON(map[string]any{
-		"provider":    "apiyi",
+		"provider":    providerName,
 		"kind":        "image",
 		"model":       job.ModelName,
 		"text":        result.Text,
@@ -506,16 +517,20 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 	if err != nil {
 		return err
 	}
-	baseURL, apiKey, err := w.resolveModelRuntimeConfig(ctx, job.ModelName)
+	_, provider, providerName, baseURL, apiKey, err := w.resolveModelRuntime(ctx, job.ModelName)
 	if err != nil {
 		return err
 	}
 	req.BaseURL = baseURL
 	req.APIKey = apiKey
+	req.Vendor = providerName
 
 	state := parseVideoExecutionState(job.OutputPayload)
 	if strings.TrimSpace(state.BaseURL) == "" {
 		state.BaseURL = baseURL
+	}
+	if strings.TrimSpace(state.Provider) == "" {
+		state.Provider = providerName
 	}
 	storyboardPayload, err := w.prepareVideoGenerationInputs(ctx, job, leaseToken, &req, &state)
 	if err != nil {
@@ -528,7 +543,7 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 	}
 	req.Model = normalizeVideoModel(strings.TrimSpace(job.ModelName), req.AspectRatio, len(req.ReferenceImages) > 0)
 	if strings.TrimSpace(state.RemoteVideoID) == "" {
-		submission, err := w.provider.SubmitVideo(ctx, req)
+		submission, err := provider.SubmitVideo(ctx, req)
 		if err != nil {
 			if shouldRequeueVideoSubmissionError(err) {
 				return buildTemporaryVideoRequeueError(job, state, err)
@@ -545,6 +560,7 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 
 		message := "AI 视频任务已提交，等待生成完成"
 		runningPayload := buildVideoOutputPayload(job, state, nil)
+		job.OutputPayload = runningPayload
 		if _, err := w.syncRunningState(ctx, job, leaseToken, message, runningPayload); err != nil {
 			return err
 		}
@@ -562,7 +578,7 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 			return renewErr
 		}
 
-		status, err := w.provider.GetVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey)
+		status, err := provider.GetVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey)
 		if err != nil {
 			if isTransientVideoProviderExecutionError(err) {
 				return buildTemporaryVideoRequeueError(job, state, err)
@@ -582,7 +598,7 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 
 		switch state.RemoteStatus {
 		case "completed":
-			artifact, err := w.downloadAndFinalizeVideoArtifact(ctx, job, req, &state, apiKey)
+			artifact, err := w.downloadAndFinalizeVideoArtifact(ctx, provider, job, req, &state, apiKey)
 			if err != nil {
 				if isTransientVideoProviderExecutionError(err) {
 					return buildTemporaryVideoRequeueError(job, state, err)
@@ -593,7 +609,7 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 			if artifactKey == "" {
 				artifactKey = safeArtifactKey(artifact.FileName, "video.mp4")
 			}
-			input, err := w.saveBinaryArtifact(ctx, job, "video", artifactKey, "apiyi", *artifact)
+			input, err := w.saveBinaryArtifact(ctx, job, "video", artifactKey, providerName, *artifact)
 			if err != nil {
 				return err
 			}
@@ -603,10 +619,13 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 			}
 			billing := w.applyUsageBilling(ctx, job, buildVideoBillingInput(job))
 			outputPayload := buildVideoOutputPayload(job, state, artifacts)
+			job.OutputPayload = outputPayload
 			if len(storyboardPayload) > 0 {
 				outputPayload = mergeMetadataIntoPayload(outputPayload, "storyboard", storyboardPayload)
+				job.OutputPayload = outputPayload
 			}
 			outputPayload = mergeBillingIntoPayload(outputPayload, billing)
+			job.OutputPayload = outputPayload
 			message := buildCompletionMessage("AI 视频生成完成", billing)
 			if _, err := w.completeJob(ctx, job, leaseToken, message, outputPayload, billingCreditsPtr(billing)); err != nil {
 				return err
@@ -633,6 +652,7 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 			if time.Now().UTC().After(deadline) {
 				message := fmt.Sprintf("AI 视频生成超过 %s，继续后台回查云端结果", w.videoTimeout)
 				runningPayload := buildVideoOutputPayload(job, state, nil)
+				job.OutputPayload = runningPayload
 				return &requeueExecutionError{
 					Message:       message,
 					OutputPayload: runningPayload,
@@ -643,6 +663,7 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 				message = "AI 视频生成中: " + strings.TrimSpace(state.Message)
 			}
 			runningPayload := buildVideoOutputPayload(job, state, nil)
+			job.OutputPayload = runningPayload
 			if _, err := w.syncRunningState(ctx, job, leaseToken, message, runningPayload); err != nil {
 				return err
 			}
@@ -655,12 +676,12 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 	}
 }
 
-func (w *Worker) downloadAndFinalizeVideoArtifact(ctx context.Context, job *domain.AIJob, req VideoRequest, state *videoExecutionState, apiKey string) (*BinaryArtifact, error) {
+func (w *Worker) downloadAndFinalizeVideoArtifact(ctx context.Context, provider Provider, job *domain.AIJob, req VideoRequest, state *videoExecutionState, apiKey string) (*BinaryArtifact, error) {
 	var lastErr error
 
 	for attempt := 1; attempt <= videoArtifactFinalizeMaxAttempts; attempt++ {
 		if attempt > 1 {
-			latestStatus, statusErr := w.provider.GetVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey)
+			latestStatus, statusErr := provider.GetVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey)
 			if statusErr != nil {
 				w.app.Logger.Warn(
 					"ai worker failed to refresh completed video status before retry",
@@ -683,7 +704,7 @@ func (w *Worker) downloadAndFinalizeVideoArtifact(ctx context.Context, job *doma
 			}
 		}
 
-		artifact, err := w.provider.DownloadVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey, state.ContentURL)
+		artifact, err := provider.DownloadVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey, state.ContentURL)
 		if err == nil {
 			if strings.TrimSpace(artifact.FileName) == "" {
 				artifact.FileName = "video.mp4"
@@ -779,7 +800,7 @@ func (w *Worker) prepareStoryboardPrompt(ctx context.Context, job *domain.AIJob,
 		systemPrompt = defaultStoryboardSystemPrompt
 	}
 
-	baseURL, apiKey, err := w.resolveModelRuntimeConfig(ctx, modelName)
+	_, provider, _, baseURL, apiKey, err := w.resolveModelRuntime(ctx, modelName)
 	if err != nil {
 		return nil, originalPrompt, err
 	}
@@ -794,7 +815,7 @@ func (w *Worker) prepareStoryboardPrompt(ctx context.Context, job *domain.AIJob,
 		w.app.Logger.Warn("ai worker failed to sync storyboarding state", "job_id", job.ID, "error", err)
 	}
 
-	result, err := w.provider.GenerateChat(ctx, ChatRequest{
+	result, err := provider.GenerateChat(ctx, ChatRequest{
 		Model:   modelName,
 		BaseURL: baseURL,
 		APIKey:  apiKey,
@@ -1048,7 +1069,9 @@ func buildMediaAutoRetryPayload(job *domain.AIJob, failureMessage string, retryC
 	delete(payload, "progressPercent")
 	delete(payload, "failureCode")
 	delete(payload, "artifacts")
-	payload["provider"] = "apiyi"
+	if providerName := strings.TrimSpace(stringValue(payload["provider"])); providerName != "" {
+		payload["provider"] = providerName
+	}
 	payload["kind"] = strings.TrimSpace(strings.ToLower(job.JobType))
 	payload["model"] = job.ModelName
 	payload["execution"] = map[string]any{
@@ -1058,6 +1081,20 @@ func buildMediaAutoRetryPayload(job *domain.AIJob, failureMessage string, retryC
 		"lastFailureMessage": strings.TrimSpace(failureMessage),
 	}
 	return mustJSON(payload)
+}
+
+func shouldResumeRemoteVideoPolling(job *domain.AIJob, err error) bool {
+	if job == nil {
+		return false
+	}
+	if strings.TrimSpace(strings.ToLower(job.JobType)) != "video" {
+		return false
+	}
+	if !isTransientVideoProviderExecutionError(err) {
+		return false
+	}
+	state := parseVideoExecutionState(job.OutputPayload)
+	return strings.TrimSpace(state.RemoteVideoID) != ""
 }
 
 func shouldRequeueVideoSubmissionError(err error) bool {
@@ -1229,7 +1266,7 @@ func (w *Worker) saveBinaryArtifact(ctx context.Context, job *domain.AIJob, arti
 		PublicURL:    &object.PublicURL,
 		SizeBytes:    &object.SizeBytes,
 		Payload: mustJSON(map[string]any{
-			"provider": "apiyi",
+			"provider": source,
 			"metadata": artifact.Metadata,
 		}),
 	}, nil
@@ -1419,6 +1456,7 @@ func resultBillMessage(result *store.ApplyUsageBillingResult) *string {
 }
 
 type videoExecutionState struct {
+	Provider                  string
 	BaseURL                   string
 	RemoteVideoID             string
 	RemoteStatus              string
@@ -1456,7 +1494,12 @@ type videoCompletedSegment struct {
 
 func buildVideoOutputPayload(job *domain.AIJob, state videoExecutionState, artifacts []domain.AIJobArtifact) []byte {
 	payload := decodePayloadMap(job.OutputPayload)
+	providerName := strings.TrimSpace(state.Provider)
+	if providerName == "" {
+		providerName = strings.TrimSpace(stringValue(payload["provider"]))
+	}
 	videoPayload := map[string]any{
+		"provider":    providerName,
 		"baseUrl":     state.BaseURL,
 		"id":          state.RemoteVideoID,
 		"status":      state.RemoteStatus,
@@ -1466,7 +1509,9 @@ func buildVideoOutputPayload(job *domain.AIJob, state videoExecutionState, artif
 		"submittedAt": state.SubmittedAt.Format(time.RFC3339),
 		"updatedAt":   state.UpdatedAt.Format(time.RFC3339),
 	}
-	payload["provider"] = "apiyi"
+	if providerName != "" {
+		payload["provider"] = providerName
+	}
 	payload["kind"] = "video"
 	payload["model"] = job.ModelName
 	payload["baseUrl"] = state.BaseURL
@@ -1556,6 +1601,10 @@ func parseVideoExecutionState(raw []byte) videoExecutionState {
 		return state
 	}
 	videoPayload, _ := payload["video"].(map[string]any)
+	state.Provider = strings.TrimSpace(firstNonEmptyString(
+		stringValue(payload["provider"]),
+		stringValue(videoPayload["provider"]),
+	))
 	state.BaseURL = strings.TrimSpace(firstNonEmptyString(
 		stringValue(payload["baseUrl"]),
 		stringValue(videoPayload["baseUrl"]),
@@ -1611,15 +1660,28 @@ func parseVideoExecutionState(raw []byte) videoExecutionState {
 	return state
 }
 
-func (w *Worker) resolveModelRuntimeConfig(ctx context.Context, modelName string) (string, string, error) {
+func (w *Worker) resolveModelRuntime(ctx context.Context, modelName string) (*domain.AIModel, Provider, string, string, string, error) {
 	model, err := w.app.Store.GetAIModelByName(ctx, modelName)
+	if err != nil {
+		return nil, nil, "", "", "", err
+	}
+	if model == nil {
+		return nil, nil, "", "", "", fmt.Errorf("ai model not found: %s", modelName)
+	}
+	provider, err := resolveProviderForModel(w.providers, model)
+	if err != nil {
+		return nil, nil, "", "", "", err
+	}
+	vendor := providerSource(model)
+	baseURL, apiKey := ResolveModelRuntimeConfig(w.app.Config, model)
+	return model, provider, vendor, baseURL, apiKey, nil
+}
+
+func (w *Worker) resolveModelRuntimeConfig(ctx context.Context, modelName string) (string, string, error) {
+	_, _, _, baseURL, apiKey, err := w.resolveModelRuntime(ctx, modelName)
 	if err != nil {
 		return "", "", err
 	}
-	if model == nil {
-		return "", "", fmt.Errorf("ai model not found: %s", modelName)
-	}
-	baseURL, apiKey := ResolveModelRuntimeConfig(w.app.Config, model)
 	return baseURL, apiKey, nil
 }
 
@@ -1647,6 +1709,9 @@ func (w *Worker) prepareVideoGenerationInputs(ctx context.Context, job *domain.A
 	}
 
 	payload := decodePayloadMap(job.InputPayload)
+	if !videoPreprocessEnabled(payload) {
+		return nil, nil
+	}
 	if videoStoryboardEnabled(payload) {
 		storyboardPayload, err := w.prepareVideoStoryboardPackage(ctx, job, leaseToken, payload, req, state)
 		if err == nil {
@@ -1710,6 +1775,13 @@ func (w *Worker) prepareVideoGenerationInputs(ctx context.Context, job *domain.A
 	return nil, nil
 }
 
+func videoPreprocessEnabled(payload map[string]any) bool {
+	if raw, exists := payload["disableVideoPreprocess"]; exists {
+		return !boolValue(raw)
+	}
+	return true
+}
+
 func videoStoryboardEnabled(payload map[string]any) bool {
 	if raw, exists := payload["storyboardEnabled"]; exists {
 		return boolValue(raw)
@@ -1757,11 +1829,11 @@ func (w *Worker) prepareVideoStoryboardPackage(ctx context.Context, job *domain.
 		},
 	})
 
-	baseURL, apiKey, err := w.resolveModelRuntimeConfig(ctx, storyboardModel)
+	_, provider, providerName, baseURL, apiKey, err := w.resolveModelRuntime(ctx, storyboardModel)
 	if err != nil {
 		return nil, err
 	}
-	result, err := w.provider.GenerateStoryboardPackage(ctx, StoryboardPackageRequest{
+	result, err := provider.GenerateStoryboardPackage(ctx, StoryboardPackageRequest{
 		Model:           storyboardModel,
 		BaseURL:         baseURL,
 		APIKey:          apiKey,
@@ -1775,7 +1847,7 @@ func (w *Worker) prepareVideoStoryboardPackage(ctx context.Context, job *domain.
 		return nil, err
 	}
 
-	frameMetadata, framePayload, err := w.saveVideoReferenceFrame(ctx, job, result.Cover, "first", userPrompt, storyboardModel)
+	frameMetadata, framePayload, err := w.saveVideoReferenceFrame(ctx, job, result.Cover, "first", userPrompt, providerName, storyboardModel)
 	if err != nil {
 		return nil, err
 	}
@@ -1851,7 +1923,7 @@ func (w *Worker) prepareVideoCoverReferenceFrame(ctx context.Context, job *domai
 	if err != nil {
 		return nil, err
 	}
-	frameModelName, imageBaseURL, imageAPIKey, err := w.resolveVideoCoverModelRuntimeConfig(ctx)
+	frameModelName, imageProvider, imageProviderName, imageBaseURL, imageAPIKey, err := w.resolveVideoCoverModelRuntimeConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1859,7 +1931,7 @@ func (w *Worker) prepareVideoCoverReferenceFrame(ctx context.Context, job *domai
 	w.syncVideoRunningStage(ctx, job, leaseToken, *state, "covering", "AI 正在生成封面首帧", nil)
 
 	prompt := buildSkillVideoFramePrompt(coverPromptTemplate, job, payload, req.Prompt, referenceTexts, "first", len(sourceReferenceImages))
-	result, err := w.provider.GenerateImage(ctx, ImageRequest{
+	result, err := imageProvider.GenerateImage(ctx, ImageRequest{
 		Model:           frameModelName,
 		BaseURL:         imageBaseURL,
 		APIKey:          imageAPIKey,
@@ -1875,7 +1947,7 @@ func (w *Worker) prepareVideoCoverReferenceFrame(ctx context.Context, job *domai
 		return nil, fmt.Errorf("cover generation did not return any image")
 	}
 
-	frameMetadata, framePayload, err := w.saveVideoReferenceFrame(ctx, job, result.Images[0], "first", prompt, frameModelName)
+	frameMetadata, framePayload, err := w.saveVideoReferenceFrame(ctx, job, result.Images[0], "first", prompt, imageProviderName, frameModelName)
 	if err != nil {
 		return nil, err
 	}
@@ -1908,9 +1980,9 @@ func (w *Worker) syncVideoRunningStage(ctx context.Context, job *domain.AIJob, l
 	}
 }
 
-func (w *Worker) saveVideoReferenceFrame(ctx context.Context, job *domain.AIJob, image BinaryArtifact, role string, prompt string, modelName string) (map[string]any, map[string]any, error) {
+func (w *Worker) saveVideoReferenceFrame(ctx context.Context, job *domain.AIJob, image BinaryArtifact, role string, prompt string, source string, modelName string) (map[string]any, map[string]any, error) {
 	artifactKey := fmt.Sprintf("video-%s-frame%s", strings.TrimSpace(role), extensionForMIME(image.MIMEType, ".png"))
-	input, err := w.saveBinaryArtifact(ctx, job, "image", artifactKey, "apiyi", image)
+	input, err := w.saveBinaryArtifact(ctx, job, "image", artifactKey, source, image)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1989,26 +2061,25 @@ func (w *Worker) resolveVideoStoryboardConfig(ctx context.Context) (string, stri
 	return "", "", nil, fmt.Errorf("storyboard model is not configured or does not support cover+script generation")
 }
 
-func (w *Worker) resolveVideoCoverModelRuntimeConfig(ctx context.Context) (string, string, string, error) {
+func (w *Worker) resolveVideoCoverModelRuntimeConfig(ctx context.Context) (string, Provider, string, string, string, error) {
 	candidates := nonEmpty([]string{
 		strings.TrimSpace(DefaultVideoCoverModelName),
 		strings.TrimSpace(w.app.Config.DefaultImageModel),
 	})
 	for _, candidate := range candidates {
-		model, err := w.app.Store.GetAIModelByName(ctx, candidate)
+		model, provider, providerName, baseURL, apiKey, err := w.resolveModelRuntime(ctx, candidate)
 		if err != nil {
-			return "", "", "", err
+			return "", nil, "", "", "", err
 		}
 		if model == nil || !model.IsEnabled || strings.TrimSpace(model.Category) != "image" {
 			continue
 		}
-		baseURL, apiKey := ResolveModelRuntimeConfig(w.app.Config, model)
 		if strings.TrimSpace(baseURL) == "" {
 			continue
 		}
-		return candidate, baseURL, apiKey, nil
+		return candidate, provider, providerName, baseURL, apiKey, nil
 	}
-	return "", "", "", fmt.Errorf("video cover model is not configured")
+	return "", nil, "", "", "", fmt.Errorf("video cover model is not configured")
 }
 
 func buildVideoStoryboardFallbackPayload(job *domain.AIJob, originalPrompt string, err error) map[string]any {

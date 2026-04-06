@@ -91,6 +91,7 @@ const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const activeMenu = computed(() => route.path)
 const currentTitle = computed(() => route.meta.title || 'OmniBull')
 
+// Poll the local backend health endpoint so the shell can surface offline state quickly.
 const checkBackend = async () => {
   try {
     const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5409'

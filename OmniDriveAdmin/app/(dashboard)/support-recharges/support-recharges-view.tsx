@@ -7,6 +7,10 @@ import { PageHeader } from "@/components/ui/common";
 import { Search, Loader2 } from "lucide-react";
 import { SupportRechargeDrawer } from "./support-recharge-drawer";
 
+function formatShortId(value: string) {
+  return value.length > 12 ? `${value.slice(0, 8)}...${value.slice(-4)}` : value;
+}
+
 function SupportRechargeStatusBadge({ value }: { value: string }) {
   switch (value) {
     case "awaiting_submission":
@@ -32,11 +36,25 @@ function SupportRechargeTableRow({
   row: AdminSupportRechargeRow;
   onOpen: (orderId: string) => void;
 }) {
+  const userName = row.user.name.trim() || "未命名用户";
+  const userEmail = row.user.email.trim();
+
   return (
     <tr className="hover:bg-[var(--color-bg-secondary)]/50 transition-colors">
       <td className="px-6 py-4">
         <div className="font-mono text-xs">{row.orderNo}</div>
-        <div className="mt-1 text-xs text-[var(--color-text-secondary)]">{row.user.email}</div>
+        <div className="mt-2 space-y-1">
+          <div className="text-sm font-medium text-[var(--color-text-primary)]">{userName}</div>
+          <div className="text-xs text-[var(--color-text-secondary)]">
+            {userEmail || "邮箱未绑定"}
+          </div>
+          <div
+            className="font-mono text-[11px] text-[var(--color-text-secondary)]/80"
+            title={row.user.id}
+          >
+            UID {formatShortId(row.user.id)}
+          </div>
+        </div>
       </td>
       <td className="px-6 py-4 font-mono font-medium text-green-500">
         ¥ {(row.amountCents / 100).toFixed(2)}

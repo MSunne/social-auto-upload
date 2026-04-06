@@ -629,7 +629,19 @@ func (p *APIYIProvider) DownloadVideo(ctx context.Context, videoID string, model
 }
 
 func (p *APIYIProvider) buildVideoSubmissionBody(ctx context.Context, req VideoRequest) ([]byte, string, error) {
-	if isVeoVideoModel(req.Model) && len(req.ReferenceImages) == 0 {
+	referenceMedia := append([]MediaInput(nil), req.ReferenceMedia...)
+	if len(referenceMedia) == 0 {
+		referenceMedia = append(referenceMedia, req.ReferenceImages...)
+	}
+	if containsVideoReferenceMedia(referenceMedia) {
+		return nil, "", fmt.Errorf("当前模型不支持参考视频")
+	}
+
+	referenceImages := append([]MediaInput(nil), req.ReferenceImages...)
+	if len(referenceImages) == 0 {
+		referenceImages = filterVideoReferenceMedia(referenceMedia, "image")
+	}
+	if isVeoVideoModel(req.Model) && len(referenceImages) == 0 {
 		payload := map[string]any{
 			"model":  req.Model,
 			"prompt": req.Prompt,
@@ -658,7 +670,7 @@ func (p *APIYIProvider) buildVideoSubmissionBody(ctx context.Context, req VideoR
 		}
 	}
 
-	for _, media := range req.ReferenceImages {
+	for _, media := range referenceImages {
 		data, mimeType, fileName, err := p.resolveMediaInput(ctx, media)
 		if err != nil {
 			return nil, "", err

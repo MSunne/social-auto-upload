@@ -124,6 +124,78 @@ func TestBuildVideoRequestKeepsSoraModelNameFromBackendConfig(t *testing.T) {
 	}
 }
 
+func TestBuildVideoRequestPreservesOrderedReferenceMedia(t *testing.T) {
+	job := &domain.AIJob{
+		ModelName: "seedance-2.0",
+		Prompt:    stringPtrForTest("生成参考素材驱动的视频"),
+		InputPayload: mustJSONForTest(map[string]any{
+			"referenceMedia": []any{
+				map[string]any{
+					"kind":     "image",
+					"url":      "https://example.com/shot-1.png",
+					"fileName": "shot-1.png",
+					"mimeType": "image/png",
+				},
+				map[string]any{
+					"kind":     "video",
+					"url":      "https://example.com/ref.mp4",
+					"fileName": "ref.mp4",
+					"mimeType": "video/mp4",
+				},
+				map[string]any{
+					"kind":     "image",
+					"url":      "https://example.com/shot-2.png",
+					"fileName": "shot-2.png",
+					"mimeType": "image/png",
+				},
+			},
+			"durationSeconds": 8,
+		}),
+	}
+
+	req, err := BuildVideoRequest(job)
+	if err != nil {
+		t.Fatalf("BuildVideoRequest returned error: %v", err)
+	}
+	if len(req.ReferenceMedia) != 3 {
+		t.Fatalf("expected 3 reference media items, got %d", len(req.ReferenceMedia))
+	}
+	if req.ReferenceMedia[0].FileName != "shot-1.png" || req.ReferenceMedia[1].FileName != "ref.mp4" || req.ReferenceMedia[2].FileName != "shot-2.png" {
+		t.Fatalf("unexpected reference media order: %#v", req.ReferenceMedia)
+	}
+	if len(req.ReferenceImages) != 2 {
+		t.Fatalf("expected 2 compatibility reference images, got %d", len(req.ReferenceImages))
+	}
+	if req.ReferenceImages[0].FileName != "shot-1.png" || req.ReferenceImages[1].FileName != "shot-2.png" {
+		t.Fatalf("unexpected compatibility image order: %#v", req.ReferenceImages)
+	}
+}
+
+func TestBuildVideoRequestKeepsRawBusinessPromptWithoutAspectRatioOrResolutionLines(t *testing.T) {
+	job := &domain.AIJob{
+		ModelName: "seedance-2.0",
+		Prompt:    stringPtrForTest("图一是账号管理，图二是任务列表。介绍万象引擎。"),
+		InputPayload: mustJSONForTest(map[string]any{
+			"aspectRatio": "16:9",
+			"resolution":  "1280x720",
+		}),
+	}
+
+	req, err := BuildVideoRequest(job)
+	if err != nil {
+		t.Fatalf("BuildVideoRequest returned error: %v", err)
+	}
+	if req.Prompt != "图一是账号管理，图二是任务列表。介绍万象引擎。" {
+		t.Fatalf("unexpected video prompt %q", req.Prompt)
+	}
+	if req.AspectRatio != "16:9" {
+		t.Fatalf("expected aspect ratio 16:9, got %q", req.AspectRatio)
+	}
+	if req.Resolution != "1280x720" {
+		t.Fatalf("expected resolution 1280x720, got %q", req.Resolution)
+	}
+}
+
 func mustJSONForTest(value any) []byte {
 	data, err := json.Marshal(value)
 	if err != nil {
