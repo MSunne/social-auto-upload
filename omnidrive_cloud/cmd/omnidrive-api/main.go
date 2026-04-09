@@ -10,6 +10,7 @@ import (
 	"os"
 )
 
+// 组装API服务命令依赖并启动主流程，发生错误时直接退出进程。
 func main() {
 	cfg := config.Load()
 	logger := logging.New(cfg)

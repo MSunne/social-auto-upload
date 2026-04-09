@@ -20,6 +20,7 @@ type App struct {
 	Logger      *slog.Logger
 }
 
+// 创建应用状态容器，集中装配配置、数据库、令牌管理和对象存储依赖。
 func New(cfg config.Config, db *database.Database, storageService *storage.Service, logger *slog.Logger) *App {
 	if logger == nil {
 		logger = slog.Default()

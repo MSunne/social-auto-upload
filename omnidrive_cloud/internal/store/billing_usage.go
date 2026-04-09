@@ -123,6 +123,7 @@ type usageLedgerRefs struct {
 	quotaAccountIDs map[string][]string
 }
 
+// 处理预览用量计费相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) PreviewUsageBilling(ctx context.Context, input ApplyUsageBillingInput) (*ApplyUsageBillingResult, error) {
 	if strings.TrimSpace(input.UserID) == "" {
 		return nil, fmt.Errorf("user id is required")
@@ -200,6 +201,7 @@ func (s *Store) PreviewUsageBilling(ctx context.Context, input ApplyUsageBilling
 	return result, nil
 }
 
+// 处理预览用量计费Queue相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) PreviewUsageBillingQueue(ctx context.Context, inputs []ApplyUsageBillingInput) ([]UsageBillingQueuePreviewItem, error) {
 	if len(inputs) == 0 {
 		return []UsageBillingQueuePreviewItem{}, nil
@@ -278,6 +280,7 @@ func (s *Store) PreviewUsageBillingQueue(ctx context.Context, inputs []ApplyUsag
 	return previewUsageBillingQueueEvaluations(evaluations, walletBalance, quotaAccounts), nil
 }
 
+// 处理预览用量计费QueueEvaluations相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func previewUsageBillingQueueEvaluations(evaluations []usageBillingQueueEvaluation, walletBalance int64, quotaAccounts map[string][]*quotaAccountRecord) []UsageBillingQueuePreviewItem {
 	items := make([]UsageBillingQueuePreviewItem, 0, len(evaluations))
 	for _, evaluation := range evaluations {
@@ -324,6 +327,7 @@ func previewUsageBillingQueueEvaluations(evaluations []usageBillingQueueEvaluati
 	return items
 }
 
+// 根据预览计算clone额度账号，供存储层链路复用关键派生结果。
 func cloneQuotaAccountsForPreview(source map[string][]*quotaAccountRecord) map[string][]*quotaAccountRecord {
 	if len(source) == 0 {
 		return map[string][]*quotaAccountRecord{}
@@ -344,6 +348,7 @@ func cloneQuotaAccountsForPreview(source map[string][]*quotaAccountRecord) map[s
 	return cloned
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) ApplyUsageBilling(ctx context.Context, input ApplyUsageBillingInput) (*ApplyUsageBillingResult, error) {
 	if strings.TrimSpace(input.UserID) == "" {
 		return nil, fmt.Errorf("user id is required")
@@ -530,6 +535,7 @@ func (s *Store) ApplyUsageBilling(ctx context.Context, input ApplyUsageBillingIn
 	return result, nil
 }
 
+// 处理用量计费Summary来源事务相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func usageBillingSummaryBySourceTx(ctx context.Context, tx pgx.Tx, sourceType string, sourceID string) (*ApplyUsageBillingResult, error) {
 	var billedCount int64
 	var totalCredits int64
@@ -573,6 +579,7 @@ func usageBillingSummaryBySourceTx(ctx context.Context, tx pgx.Tx, sourceType st
 	}, nil
 }
 
+// 加载定价规则用量事务，供存储层继续处理当前业务状态。
 func loadPricingRulesForUsageTx(ctx context.Context, tx pgx.Tx, modelName string, jobType string) (map[string]pricingRuleRecord, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT id, meter_code, charge_mode, quota_meter_code, unit_size, wallet_debit_amount
@@ -620,6 +627,7 @@ func loadPricingRulesForUsageTx(ctx context.Context, tx pgx.Tx, modelName string
 	return result, nil
 }
 
+// 加载AI模型用量计费事务，供存储层继续处理当前业务状态。
 func loadAIModelForUsageBillingTx(ctx context.Context, tx pgx.Tx, modelName string) (*domain.AIModel, error) {
 	row := tx.QueryRow(ctx, `
 		SELECT `+aiModelSelectColumns+`
@@ -637,6 +645,7 @@ func loadAIModelForUsageBillingTx(ctx context.Context, tx pgx.Tx, modelName stri
 	return model, nil
 }
 
+// 构建回退定价规则用量，为存储层生成后续步骤所需的派生参数或载荷。
 func buildFallbackPricingRulesForUsage(model *domain.AIModel, jobType string) map[string]pricingRuleRecord {
 	if model == nil {
 		return nil
@@ -715,6 +724,7 @@ func buildFallbackPricingRulesForUsage(model *domain.AIModel, jobType string) ma
 	return nil
 }
 
+// 处理回退钱包DebitAmount相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func fallbackWalletDebitAmount(candidates ...*float64) int64 {
 	for _, candidate := range candidates {
 		if candidate == nil || *candidate <= 0 {
@@ -725,6 +735,7 @@ func fallbackWalletDebitAmount(candidates ...*float64) int64 {
 	return 0
 }
 
+// 确保钱包Lock事务已满足执行前提，必要时补齐缺失状态或配置。
 func ensureWalletAndLockTx(ctx context.Context, tx pgx.Tx, userID string) (int64, error) {
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO billing_wallets (user_id, credit_balance, frozen_credit_balance)
@@ -746,6 +757,7 @@ func ensureWalletAndLockTx(ctx context.Context, tx pgx.Tx, userID string) (int64
 	return balance, nil
 }
 
+// 加载额度账号用量事务，供存储层继续处理当前业务状态。
 func loadQuotaAccountsForUsageTx(ctx context.Context, tx pgx.Tx, userID string, meterCodes map[string]struct{}) (map[string][]*quotaAccountRecord, error) {
 	result := make(map[string][]*quotaAccountRecord)
 	if len(meterCodes) == 0 {
@@ -783,6 +795,7 @@ func loadQuotaAccountsForUsageTx(ctx context.Context, tx pgx.Tx, userID string, 
 	return result, rows.Err()
 }
 
+// 加载钱包Lots用量事务，供存储层继续处理当前业务状态。
 func loadWalletLotsForUsageTx(ctx context.Context, tx pgx.Tx, userID string) ([]*walletLotRecord, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT id, recharge_order_id, distribution_commission_item_id, remaining_credits, consumed_credits, release_unit_credits
@@ -809,6 +822,7 @@ func loadWalletLotsForUsageTx(ctx context.Context, tx pgx.Tx, userID string) ([]
 	return items, rows.Err()
 }
 
+// 处理plan用量Charge相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func planUsageCharge(metric ApplyUsageMetricInput, rule pricingRuleRecord, walletBalance int64, quotaAccounts map[string][]*quotaAccountRecord) (UsageBillingDetail, walletLedgerPlan, []quotaLedgerPlan, bool) {
 	quantity := metric.Quantity
 	if override := metricQuantityFromMetadata(metric.Metadata, rule.QuantityMetaKey); override > 0 {
@@ -911,6 +925,7 @@ func planUsageCharge(metric ApplyUsageMetricInput, rule pricingRuleRecord, walle
 	return detail, walletPlan, quotaPlans, true
 }
 
+// 应用额度台账Plan事务，把外部输入转换为当前链路的最终状态变更。
 func applyQuotaLedgerPlanTx(ctx context.Context, tx pgx.Tx, userID string, plan quotaLedgerPlan) (string, error) {
 	var remainingAfter int64
 	if err := tx.QueryRow(ctx, `
@@ -940,6 +955,7 @@ func applyQuotaLedgerPlanTx(ctx context.Context, tx pgx.Tx, userID string, plan 
 	return ledgerID, nil
 }
 
+// 应用钱包台账Plan事务，把外部输入转换为当前链路的最终状态变更。
 func applyWalletLedgerPlanTx(ctx context.Context, tx pgx.Tx, userID string, currentBalance int64, plan walletLedgerPlan, referenceType *string, referenceID *string) (string, int64, error) {
 	if plan.debitCredits <= 0 {
 		return "", currentBalance, nil
@@ -979,6 +995,7 @@ func applyWalletLedgerPlanTx(ctx context.Context, tx pgx.Tx, userID string, curr
 	return ledgerID, nextBalance, nil
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) applyWalletLotConsumptionsTx(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -1061,6 +1078,7 @@ func (s *Store) applyWalletLotConsumptionsTx(
 	return nil
 }
 
+// 处理insertBilled用量事件事务相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func insertBilledUsageEventsTx(ctx context.Context, tx pgx.Tx, input ApplyUsageBillingInput, details []UsageBillingDetail, refs usageLedgerRefs) error {
 	for _, detail := range details {
 		payload := map[string]any{
@@ -1102,6 +1120,7 @@ func insertBilledUsageEventsTx(ctx context.Context, tx pgx.Tx, input ApplyUsageB
 	return nil
 }
 
+// 处理insertFailed用量事件事务相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func insertFailedUsageEventsTx(ctx context.Context, tx pgx.Tx, input ApplyUsageBillingInput, details []UsageBillingDetail) error {
 	for _, detail := range details {
 		payload := map[string]any{
@@ -1131,6 +1150,7 @@ func insertFailedUsageEventsTx(ctx context.Context, tx pgx.Tx, input ApplyUsageB
 	return nil
 }
 
+// 处理ceilDiv相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func ceilDiv(value int64, divisor int64) int64 {
 	if divisor <= 0 {
 		return value
@@ -1138,6 +1158,7 @@ func ceilDiv(value int64, divisor int64) int64 {
 	return (value + divisor - 1) / divisor
 }
 
+// 处理minInt64相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func minInt64(a int64, b int64) int64 {
 	if a < b {
 		return a
@@ -1145,6 +1166,7 @@ func minInt64(a int64, b int64) int64 {
 	return b
 }
 
+// 处理absInt64相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func absInt64(value int64) int64 {
 	if value < 0 {
 		return -value
@@ -1152,6 +1174,7 @@ func absInt64(value int64) int64 {
 	return value
 }
 
+// 处理maxInt64相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func maxInt64(a int64, b int64) int64 {
 	if a > b {
 		return a
@@ -1159,6 +1182,7 @@ func maxInt64(a int64, b int64) int64 {
 	return b
 }
 
+// 处理mustJSON映射相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func mustJSONMap(value map[string]any) []byte {
 	if value == nil {
 		return nil
@@ -1170,6 +1194,7 @@ func mustJSONMap(value map[string]any) []byte {
 	return data
 }
 
+// 处理nullableString相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func nullableString(value string) *string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -1178,6 +1203,7 @@ func nullableString(value string) *string {
 	return &value
 }
 
+// 处理追加Meter参考相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func appendMeterReference(target map[string][]string, meterCode string, value string) {
 	meterCode = strings.TrimSpace(meterCode)
 	value = strings.TrimSpace(value)
@@ -1187,6 +1213,7 @@ func appendMeterReference(target map[string][]string, meterCode string, value st
 	target[meterCode] = append(target[meterCode], value)
 }
 
+// 处理首个StringPtr相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func firstStringPtr(values []string) *string {
 	for _, value := range values {
 		trimmed := strings.TrimSpace(value)
@@ -1197,6 +1224,7 @@ func firstStringPtr(values []string) *string {
 	return nil
 }
 
+// 处理metricMetadataMeter相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func metricMetadataByMeter(metrics []ApplyUsageMetricInput, meterCode string) any {
 	meterCode = strings.TrimSpace(meterCode)
 	for _, metric := range metrics {
@@ -1212,6 +1240,7 @@ func metricMetadataByMeter(metrics []ApplyUsageMetricInput, meterCode string) an
 	return nil
 }
 
+// 处理metricQuantityMetadata相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func metricQuantityFromMetadata(raw []byte, key string) int64 {
 	key = strings.TrimSpace(key)
 	if key == "" || len(raw) == 0 {
@@ -1225,6 +1254,7 @@ func metricQuantityFromMetadata(raw []byte, key string) int64 {
 	return usageQuantityValue(payload[key])
 }
 
+// 处理用量Quantity值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func usageQuantityValue(value any) int64 {
 	switch typed := value.(type) {
 	case int64:
@@ -1245,6 +1275,7 @@ func usageQuantityValue(value any) int64 {
 	return 0
 }
 
+// 根据用量计算supportsFailureRefund，供存储层链路复用关键派生结果。
 func supportsFailureRefundForUsage(rule pricingRuleRecord, meterCode string) bool {
 	meterCode = strings.TrimSpace(strings.ToLower(meterCode))
 	if meterCode == "" {

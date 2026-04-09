@@ -50,6 +50,8 @@ class BrowserHookTests(unittest.TestCase):
             options["executable_path"],
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         )
+        self.assertNotIn("--window-size=1600,1200", options["args"])
+        self.assertNotIn("--start-maximized", options["args"])
         install_mock.assert_not_called()
 
     def test_resolve_browser_executable_path_prefers_system_browser_for_headed_launch(self):

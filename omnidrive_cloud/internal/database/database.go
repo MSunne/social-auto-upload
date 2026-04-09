@@ -16,6 +16,7 @@ type Database struct {
 	Logger *slog.Logger
 }
 
+// 创建数据库相关实例，组装运行所需依赖并返回给上层流程复用。
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Database, error) {
 	if cfg.DatabaseDSN == "" {
 		return nil, fmt.Errorf("OMNIDRIVE_DATABASE_DSN is required")
@@ -45,6 +46,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Database
 	return db, nil
 }
 
+// 处理Close相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (db *Database) Close() {
 	if db != nil && db.Pool != nil {
 		db.Pool.Close()

@@ -264,6 +264,15 @@ wire_runtime_paths() {
 }
 
 
+normalize_persistent_permissions() {
+  log "normalizing ownership for mutable OmniBull state"
+  if [[ -d "${PERSISTENT_ROOT}" ]]; then
+    chown -R "${APP_USER}:${APP_GROUP}" "${PERSISTENT_ROOT}"
+    find "${PERSISTENT_ROOT}" -type d -exec chmod 0755 {} +
+  fi
+}
+
+
 write_conf_file() {
   log "writing production conf.py"
   cat > "${CONF_FILE}" <<EOF
@@ -528,6 +537,7 @@ main() {
   install_google_chrome
   ensure_directories
   wire_runtime_paths
+  normalize_persistent_permissions
   write_conf_file
   write_env_file
   create_python_venv

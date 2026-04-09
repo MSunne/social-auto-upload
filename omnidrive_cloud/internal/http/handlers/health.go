@@ -11,10 +11,12 @@ type HealthHandler struct {
 	app *appstate.App
 }
 
+// 创建HealthHandler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewHealthHandler(app *appstate.App) *HealthHandler {
 	return &HealthHandler{app: app}
 }
 
+// 处理HealthHealth接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *HealthHandler) Health(w http.ResponseWriter, r *http.Request) {
 	if err := h.app.Store.Ping(r.Context()); err != nil {
 		render.Error(w, http.StatusServiceUnavailable, "database unavailable")
@@ -28,6 +30,7 @@ func (h *HealthHandler) Health(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理Health就绪接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *HealthHandler) Ready(w http.ResponseWriter, _ *http.Request) {
 	render.JSON(w, http.StatusOK, map[string]any{
 		"status": "ready",

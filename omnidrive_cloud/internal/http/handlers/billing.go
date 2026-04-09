@@ -59,10 +59,12 @@ type billingActivityListResponse struct {
 	Filters    map[string]any                    `json:"filters,omitempty"`
 }
 
+// 创建计费Handler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewBillingHandler(app *appstate.App) *BillingHandler {
 	return &BillingHandler{app: app}
 }
 
+// 解析计费PageQuery，为计费提供结构化输入。
 func parseBillingPageQuery(r *http.Request) billingPageQuery {
 	page := 1
 	pageSize := 40
@@ -89,6 +91,7 @@ func parseBillingPageQuery(r *http.Request) billingPageQuery {
 	return billingPageQuery{Page: page, PageSize: pageSize}
 }
 
+// 构建计费Pagination，为计费生成后续步骤所需的派生参数或载荷。
 func buildBillingPagination(page int, pageSize int, total int64) domain.Pagination {
 	totalPages := 0
 	if total > 0 {
@@ -102,6 +105,7 @@ func buildBillingPagination(page int, pageSize int, total int64) domain.Paginati
 	}
 }
 
+// 规范化计费Channel，统一计费链路的输入格式和后续处理行为。
 func normalizeBillingChannel(value string) string {
 	channel := strings.TrimSpace(strings.ToLower(value))
 	switch channel {
@@ -114,6 +118,7 @@ func normalizeBillingChannel(value string) string {
 	}
 }
 
+// 处理套餐SupportsChannel相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func packageSupportsChannel(pkgChannels []string, channel string) bool {
 	for _, item := range pkgChannels {
 		if normalizeBillingChannel(item) == channel {
@@ -123,6 +128,7 @@ func packageSupportsChannel(pkgChannels []string, channel string) bool {
 	return false
 }
 
+// 解包可选字符串指针，统一存储层对空值字段的回写行为。
 func valueOrEmpty(value *string) string {
 	if value == nil {
 		return ""
@@ -130,6 +136,7 @@ func valueOrEmpty(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
+// 构建充值Blueprint，为计费生成后续步骤所需的派生参数或载荷。
 func buildRechargeBlueprint(channel string, orderNo string, pkgID string, amountCents int64) (string, *string, []byte, []byte, *time.Time, string) {
 	now := time.Now().UTC()
 	var (
@@ -201,6 +208,7 @@ func buildRechargeBlueprint(channel string, orderNo string, pkgID string, amount
 	return status, providerStatus, paymentPayload, customerServicePayload, expiresAt, transactionKind
 }
 
+// 构建人工支持载荷，为计费生成后续步骤所需的派生参数或载荷。
 func buildManualSupportPayload(settings effectiveAdminSystemSettings, orderNo string, pkgID string, amountCents int64, creditAmount int64, manualBonusCreditAmount int64) []byte {
 	submittedAt := time.Now().UTC().Format(time.RFC3339)
 	payload, _ := json.Marshal(map[string]any{
@@ -232,6 +240,7 @@ func buildManualSupportPayload(settings effectiveAdminSystemSettings, orderNo st
 	return payload
 }
 
+// 处理计费汇总接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *BillingHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	summary, err := h.app.Store.GetBillingSummaryByUser(r.Context(), user.ID)
@@ -242,6 +251,7 @@ func (h *BillingHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, summary)
 }
 
+// 处理计费分销Summary接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *BillingHandler) DistributionSummary(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	summary, err := h.app.Store.GetDistributionSummaryByPromoter(r.Context(), user.ID)
@@ -252,6 +262,7 @@ func (h *BillingHandler) DistributionSummary(w http.ResponseWriter, r *http.Requ
 	render.JSON(w, http.StatusOK, summary)
 }
 
+// 处理计费列表套餐接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *BillingHandler) ListPackages(w http.ResponseWriter, r *http.Request) {
 	items, err := h.app.Store.ListBillingPackages(r.Context())
 	if err != nil {
@@ -276,6 +287,7 @@ func (h *BillingHandler) ListPackages(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, filtered)
 }
 
+// 处理计费列表定价规则接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *BillingHandler) ListPricingRules(w http.ResponseWriter, r *http.Request) {
 	items, err := h.app.Store.ListBillingPricingRules(r.Context())
 	if err != nil {
@@ -285,6 +297,7 @@ func (h *BillingHandler) ListPricingRules(w http.ResponseWriter, r *http.Request
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理计费台账接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *BillingHandler) Ledger(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	items, err := h.app.Store.ListWalletLedgerByUser(r.Context(), user.ID)
@@ -295,6 +308,7 @@ func (h *BillingHandler) Ledger(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理计费列表Activities接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *BillingHandler) ListActivities(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	page := parseBillingPageQuery(r)
@@ -333,6 +347,7 @@ func (h *BillingHandler) ListActivities(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// 处理计费列表用量事件接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *BillingHandler) ListUsageEvents(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	limit := 50
@@ -358,6 +373,7 @@ func (h *BillingHandler) ListUsageEvents(w http.ResponseWriter, r *http.Request)
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理计费列表Commissions接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *BillingHandler) ListCommissions(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	limit := 50
@@ -378,6 +394,7 @@ func (h *BillingHandler) ListCommissions(w http.ResponseWriter, r *http.Request)
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理计费列表CommissionReleases接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *BillingHandler) ListCommissionReleases(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	commissionID := strings.TrimSpace(chi.URLParam(r, "commissionId"))
@@ -401,6 +418,7 @@ func (h *BillingHandler) ListCommissionReleases(w http.ResponseWriter, r *http.R
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理计费列表订单接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *BillingHandler) ListOrders(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	limit := 50
@@ -418,6 +436,7 @@ func (h *BillingHandler) ListOrders(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理计费列表提现接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *BillingHandler) ListWithdrawals(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	limit := 50
@@ -435,6 +454,7 @@ func (h *BillingHandler) ListWithdrawals(w http.ResponseWriter, r *http.Request)
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理计费详情提现接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *BillingHandler) DetailWithdrawal(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	withdrawalID := strings.TrimSpace(chi.URLParam(r, "withdrawalId"))
@@ -455,6 +475,7 @@ func (h *BillingHandler) DetailWithdrawal(w http.ResponseWriter, r *http.Request
 	render.JSON(w, http.StatusOK, item)
 }
 
+// 处理计费创建提现接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *BillingHandler) CreateWithdrawal(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 
@@ -502,6 +523,7 @@ func (h *BillingHandler) CreateWithdrawal(w http.ResponseWriter, r *http.Request
 	render.JSON(w, http.StatusCreated, item)
 }
 
+// 处理计费详情订单接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *BillingHandler) DetailOrder(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	orderID := strings.TrimSpace(chi.URLParam(r, "orderId"))
@@ -522,6 +544,7 @@ func (h *BillingHandler) DetailOrder(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, order)
 }
 
+// 处理计费列表订单事件接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *BillingHandler) ListOrderEvents(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	orderID := strings.TrimSpace(chi.URLParam(r, "orderId"))
@@ -538,6 +561,7 @@ func (h *BillingHandler) ListOrderEvents(w http.ResponseWriter, r *http.Request)
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理计费创建订单接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *BillingHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 
@@ -647,6 +671,7 @@ func (h *BillingHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusCreated, order)
 }
 
+// 处理计费Submit人工充值接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *BillingHandler) SubmitManualRecharge(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	orderID := strings.TrimSpace(chi.URLParam(r, "orderId"))

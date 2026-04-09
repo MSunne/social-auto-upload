@@ -405,14 +405,10 @@ def get_browser_options(headless=None, extra_args=None):
         "--disable-infobars",
         "--disable-dev-shm-usage",
         "--no-sandbox",
-        "--window-size=1600,1200",
     ]
 
     if not has_custom_lang:
         args.append("--lang=zh-CN")
-
-    if not actual_headless:
-        args.append("--start-maximized")
 
     args.extend(extra_args)
 

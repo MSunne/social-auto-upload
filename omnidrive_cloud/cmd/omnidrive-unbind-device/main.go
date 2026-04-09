@@ -13,6 +13,7 @@ import (
 	"omnidrive_cloud/internal/config"
 )
 
+// 组装设备解绑命令依赖并启动主流程，发生错误时直接退出进程。
 func main() {
 	var deviceCode string
 

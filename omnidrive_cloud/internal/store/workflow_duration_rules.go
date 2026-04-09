@@ -10,6 +10,7 @@ import (
 	"omnidrive_cloud/internal/domain"
 )
 
+// 处理扫描工作流时长规则相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanWorkflowDurationRule(scan scanFn) (*domain.WorkflowDurationRule, error) {
 	var item domain.WorkflowDurationRule
 	var specialPriceCredits *int64
@@ -34,6 +35,7 @@ func scanWorkflowDurationRule(scan scanFn) (*domain.WorkflowDurationRule, error)
 	return &item, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListWorkflowDurationRules(ctx context.Context) ([]domain.WorkflowDurationRule, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, workflow_code, output_type, duration_seconds, segment_seconds, special_price_credits,
@@ -57,6 +59,7 @@ func (s *Store) ListWorkflowDurationRules(ctx context.Context) ([]domain.Workflo
 	return items, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListEnabledWorkflowDurationRules(ctx context.Context, workflowCode string, outputType string) ([]domain.WorkflowDurationRule, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, workflow_code, output_type, duration_seconds, segment_seconds, special_price_credits,
@@ -83,6 +86,7 @@ func (s *Store) ListEnabledWorkflowDurationRules(ctx context.Context, workflowCo
 	return items, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetWorkflowDurationRuleByID(ctx context.Context, ruleID string) (*domain.WorkflowDurationRule, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, workflow_code, output_type, duration_seconds, segment_seconds, special_price_credits,
@@ -100,6 +104,7 @@ func (s *Store) GetWorkflowDurationRuleByID(ctx context.Context, ruleID string) 
 	return item, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) FindEnabledWorkflowDurationRule(ctx context.Context, workflowCode string, outputType string, durationSeconds int) (*domain.WorkflowDurationRule, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, workflow_code, output_type, duration_seconds, segment_seconds, special_price_credits,
@@ -121,6 +126,7 @@ func (s *Store) FindEnabledWorkflowDurationRule(ctx context.Context, workflowCod
 	return item, nil
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateWorkflowDurationRule(ctx context.Context, input CreateWorkflowDurationRuleInput) (*domain.WorkflowDurationRule, error) {
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO workflow_duration_rules (
@@ -135,6 +141,7 @@ func (s *Store) CreateWorkflowDurationRule(ctx context.Context, input CreateWork
 	return scanWorkflowDurationRule(row.Scan)
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpdateWorkflowDurationRule(ctx context.Context, ruleID string, input UpdateWorkflowDurationRuleInput) (*domain.WorkflowDurationRule, error) {
 	var specialPriceCredits any
 	if input.SpecialPriceCreditsTouched {

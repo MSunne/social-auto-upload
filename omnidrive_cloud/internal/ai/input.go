@@ -12,6 +12,7 @@ import (
 	"omnidrive_cloud/internal/domain"
 )
 
+// 构建对话请求，为AI输入生成后续步骤所需的派生参数或载荷。
 func BuildChatRequest(job *domain.AIJob) (ChatRequest, error) {
 	payload := decodePayloadMap(job.InputPayload)
 	messages, err := parseChatMessages(payload)
@@ -43,6 +44,7 @@ func BuildChatRequest(job *domain.AIJob) (ChatRequest, error) {
 	}, nil
 }
 
+// 构建图片请求，为AI输入生成后续步骤所需的派生参数或载荷。
 func BuildImageRequest(job *domain.AIJob) (ImageRequest, error) {
 	payload := decodePayloadMap(job.InputPayload)
 	prompt := strings.TrimSpace(stringValue(job.Prompt))
@@ -62,6 +64,7 @@ func BuildImageRequest(job *domain.AIJob) (ImageRequest, error) {
 	}, nil
 }
 
+// 构建视频请求，为AI输入生成后续步骤所需的派生参数或载荷。
 func BuildVideoRequest(job *domain.AIJob) (VideoRequest, error) {
 	payload := decodePayloadMap(job.InputPayload)
 	prompt := strings.TrimSpace(stringValue(job.Prompt))
@@ -89,6 +92,7 @@ func BuildVideoRequest(job *domain.AIJob) (VideoRequest, error) {
 	}, nil
 }
 
+// 处理解码载荷映射相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func decodePayloadMap(raw []byte) map[string]any {
 	if len(raw) == 0 {
 		return map[string]any{}
@@ -100,6 +104,7 @@ func decodePayloadMap(raw []byte) map[string]any {
 	return payload
 }
 
+// 解析对话Messages，为AI输入提供结构化输入。
 func parseChatMessages(payload map[string]any) ([]ChatMessage, error) {
 	raw, ok := payload["messages"]
 	if !ok {
@@ -128,6 +133,7 @@ func parseChatMessages(payload map[string]any) ([]ChatMessage, error) {
 	return result, nil
 }
 
+// 收集媒体输入，整合AI输入链路所需的候选输入。
 func collectMediaInputs(payload map[string]any) []MediaInput {
 	return collectMediaInputsForKeys(payload, []string{
 		"referenceImages",
@@ -138,6 +144,7 @@ func collectMediaInputs(payload map[string]any) []MediaInput {
 	})
 }
 
+// 收集视频参考媒体，整合AI输入链路所需的候选输入。
 func collectVideoReferenceMedia(payload map[string]any) []MediaInput {
 	result := collectMediaInputsForKeys(payload, []string{
 		"referenceMedia",
@@ -167,6 +174,7 @@ func collectVideoReferenceMedia(payload map[string]any) []MediaInput {
 	return result
 }
 
+// 收集媒体输入Keys，整合AI输入链路所需的候选输入。
 func collectMediaInputsForKeys(payload map[string]any, keys []string) []MediaInput {
 	result := make([]MediaInput, 0)
 	for _, key := range keys {
@@ -193,6 +201,7 @@ func collectMediaInputsForKeys(payload map[string]any, keys []string) []MediaInp
 	return result
 }
 
+// 规范化Items，统一AI输入链路的输入格式和后续处理行为。
 func normalizeToItems(value any) ([]any, bool) {
 	switch typed := value.(type) {
 	case []any:
@@ -208,6 +217,7 @@ func normalizeToItems(value any) ([]any, bool) {
 	}
 }
 
+// 解析媒体输入，为AI输入提供结构化输入。
 func parseMediaInput(raw any, fallbackRole string) (MediaInput, bool) {
 	switch typed := raw.(type) {
 	case nil:
@@ -272,6 +282,7 @@ func parseMediaInput(raw any, fallbackRole string) (MediaInput, bool) {
 	}
 }
 
+// 处理filter媒体输入Kind相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func filterMediaInputsByKind(items []MediaInput, kind string) []MediaInput {
 	if len(items) == 0 {
 		return nil
@@ -288,6 +299,7 @@ func filterMediaInputsByKind(items []MediaInput, kind string) []MediaInput {
 	return result
 }
 
+// 规范化媒体Kind，统一AI输入链路的输入格式和后续处理行为。
 func normalizeMediaKind(value string, mimeType string, fileName string) string {
 	switch strings.TrimSpace(strings.ToLower(value)) {
 	case "image", "video":
@@ -297,6 +309,7 @@ func normalizeMediaKind(value string, mimeType string, fileName string) string {
 	}
 }
 
+// 处理detect媒体Kind相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func detectMediaKind(mimeType string, fileName string) string {
 	lowerMIME := strings.TrimSpace(strings.ToLower(mimeType))
 	switch {
@@ -315,6 +328,7 @@ func detectMediaKind(mimeType string, fileName string) string {
 	}
 }
 
+// 合并媒体提示词，统一多来源数据后返回稳定结果。
 func mergeMediaPrompt(prompt string, payload map[string]any) string {
 	parts := []string{strings.TrimSpace(prompt)}
 	if ratio := normalizeAspectRatio(stringValueFromMap(payload, "aspectRatio", "ratio")); ratio != "" {
@@ -326,6 +340,7 @@ func mergeMediaPrompt(prompt string, payload map[string]any) string {
 	return strings.Join(nonEmpty(parts), "\n")
 }
 
+// 规范化视频模型，统一AI输入链路的输入格式和后续处理行为。
 func normalizeVideoModel(model string, aspectRatio string, hasReference bool) string {
 	result := strings.TrimSpace(model)
 	if result == "" {
@@ -356,6 +371,7 @@ func normalizeVideoModel(model string, aspectRatio string, hasReference bool) st
 	return result
 }
 
+// 规范化AspectRatio，统一AI输入链路的输入格式和后续处理行为。
 func normalizeAspectRatio(value string) string {
 	switch strings.TrimSpace(strings.ToLower(value)) {
 	case "9:16", "portrait", "vertical":
@@ -367,10 +383,12 @@ func normalizeAspectRatio(value string) string {
 	}
 }
 
+// 规范化Resolution，统一AI输入链路的输入格式和后续处理行为。
 func normalizeResolution(value string) string {
 	return strings.TrimSpace(value)
 }
 
+// 处理string值映射相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func stringValueFromMap(payload map[string]any, keys ...string) string {
 	for _, key := range keys {
 		if value, ok := payload[key]; ok {
@@ -382,6 +400,7 @@ func stringValueFromMap(payload map[string]any, keys ...string) string {
 	return ""
 }
 
+// 处理string值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func stringValue(value any) string {
 	switch typed := value.(type) {
 	case nil:
@@ -415,6 +434,7 @@ func stringValue(value any) string {
 	}
 }
 
+// 处理intPtr映射相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func intPtrFromMap(payload map[string]any, keys ...string) *int {
 	for _, key := range keys {
 		value, ok := payload[key]
@@ -447,6 +467,7 @@ func intPtrFromMap(payload map[string]any, keys ...string) *int {
 	return nil
 }
 
+// 处理floatPtr映射相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func floatPtrFromMap(payload map[string]any, keys ...string) *float64 {
 	for _, key := range keys {
 		value, ok := payload[key]
@@ -476,6 +497,7 @@ func floatPtrFromMap(payload map[string]any, keys ...string) *float64 {
 	return nil
 }
 
+// 处理默认媒体文件名称相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func defaultMediaFileName(mimeType string, role string) string {
 	ext := ".bin"
 	if exts, _ := mime.ExtensionsByType(mimeType); len(exts) > 0 {
@@ -488,6 +510,7 @@ func defaultMediaFileName(mimeType string, role string) string {
 	return base + ext
 }
 
+// 处理解码DataURL相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func decodeDataURL(value string) (string, []byte, error) {
 	prefix, encoded, found := strings.Cut(value, ",")
 	if !found {
@@ -507,6 +530,7 @@ func decodeDataURL(value string) (string, []byte, error) {
 	return mimeType, data, nil
 }
 
+// 处理non空值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func nonEmpty(items []string) []string {
 	result := make([]string, 0, len(items))
 	for _, item := range items {

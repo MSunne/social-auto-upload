@@ -8,6 +8,7 @@ import (
 	"omnidrive_cloud/internal/domain"
 )
 
+// 处理decorate技能同步StatesCurrentRevision相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func decorateSkillSyncStatesWithCurrentRevision(ctx context.Context, app *appstate.App, ownerUserID string, items []domain.DeviceSkillSyncState) ([]domain.DeviceSkillSyncState, error) {
 	results := make([]domain.DeviceSkillSyncState, 0, len(items))
 	for _, item := range items {

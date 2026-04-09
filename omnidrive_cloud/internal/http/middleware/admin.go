@@ -12,6 +12,7 @@ import (
 	"omnidrive_cloud/internal/http/render"
 )
 
+// 创建管理端中间件，在进入业务处理前完成身份校验和上下文注入。
 func RequireAdmin(app *appstate.App) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -51,6 +52,7 @@ func RequireAdmin(app *appstate.App) func(http.Handler) http.Handler {
 	}
 }
 
+// 创建管理端权限中间件，在进入业务处理前完成身份校验和上下文注入。
 func RequireAdminPermission(permission string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

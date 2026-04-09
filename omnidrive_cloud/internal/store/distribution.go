@@ -38,6 +38,20 @@ type AdminCommissionListFilter struct {
 	AdminPageFilter
 }
 
+type scannedAdminUserSummary struct {
+	ID    string
+	Email *string
+	Name  *string
+}
+
+func (u scannedAdminUserSummary) summary() domain.AdminUserSummary {
+	return domain.AdminUserSummary{
+		ID:    u.ID,
+		Email: valueOrEmpty(u.Email),
+		Name:  valueOrEmpty(u.Name),
+	}
+}
+
 type AdminSettlementListFilter struct {
 	Query  string
 	Status string
@@ -152,6 +166,7 @@ type distributionCommissionReleaseInput struct {
 	Metadata             []byte
 }
 
+// 加载额度Unit额度映射事务，供存储层继续处理当前业务状态。
 func loadQuotaUnitCreditMapTx(ctx context.Context, tx pgx.Tx, meterCodes map[string]struct{}) (map[string]int64, error) {
 	result := make(map[string]int64)
 	if len(meterCodes) == 0 {
@@ -197,6 +212,7 @@ func loadQuotaUnitCreditMapTx(ctx context.Context, tx pgx.Tx, meterCodes map[str
 	return result, rows.Err()
 }
 
+// 处理calculate分销Grant额度Entitlements相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func calculateDistributionGrantCreditsFromEntitlements(entitlements []domain.BillingPackageEntitlement, quotaUnitCredits map[string]int64) (int64, int64) {
 	var total int64
 	var walletGrantCredits int64
@@ -218,6 +234,7 @@ func calculateDistributionGrantCreditsFromEntitlements(entitlements []domain.Bil
 	return total, walletGrantCredits
 }
 
+// 根据充值订单事务计算分销GrantSnapshot，供存储层的状态判定和查询逻辑复用。
 func (s *Store) distributionGrantSnapshotForRechargeOrderTx(ctx context.Context, tx pgx.Tx, order *domain.RechargeOrder) (distributionGrantSnapshot, error) {
 	snapshot := distributionGrantSnapshot{
 		QuotaUnitCredits: make(map[string]int64),
@@ -270,6 +287,7 @@ func (s *Store) distributionGrantSnapshotForRechargeOrderTx(ctx context.Context,
 	return snapshot, nil
 }
 
+// 处理calculateCommissionRateBasisPoints相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func calculateCommissionRateBasisPoints(rate float64) (int, error) {
 	if rate <= 0 || rate > 1 {
 		return 0, ErrDistributionRuleInvalidRate
@@ -281,6 +299,7 @@ func calculateCommissionRateBasisPoints(rate float64) (int, error) {
 	return basisPoints, nil
 }
 
+// 处理basisPointsRate相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func basisPointsToRate(basisPoints int) float64 {
 	if basisPoints <= 0 {
 		return 0
@@ -288,6 +307,7 @@ func basisPointsToRate(basisPoints int) float64 {
 	return float64(basisPoints) / 10000
 }
 
+// 处理calculateCommissionAmountCents相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func calculateCommissionAmountCents(baseAmountCents int64, basisPoints int) int64 {
 	if baseAmountCents <= 0 || basisPoints <= 0 {
 		return 0
@@ -295,6 +315,7 @@ func calculateCommissionAmountCents(baseAmountCents int64, basisPoints int) int6
 	return (baseAmountCents*int64(basisPoints) + 5000) / 10000
 }
 
+// 处理deriveCommission状态相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func deriveCommissionStatus(releasedAmountCents int64, settledAmountCents int64, amountCents int64) string {
 	if amountCents > 0 && settledAmountCents >= amountCents {
 		return "settled"
@@ -305,6 +326,7 @@ func deriveCommissionStatus(releasedAmountCents int64, settledAmountCents int64,
 	return "pending_consume"
 }
 
+// 处理advanceCommission释放状态相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func advanceCommissionReleaseState(state commissionReleaseState, debitCredits int64, now time.Time) (commissionReleaseState, int64) {
 	if debitCredits <= 0 || state.TotalGrantedCredits <= 0 || state.ConsumedCredits >= state.TotalGrantedCredits {
 		return state, 0
@@ -330,6 +352,7 @@ func advanceCommissionReleaseState(state commissionReleaseState, debitCredits in
 	return state, consume
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminDistributionRelations(ctx context.Context, filter AdminDistributionRelationListFilter) ([]domain.AdminDistributionRelationRow, int64, domain.AdminDistributionRelationSummary, error) {
 	page, pageSize, offset := normalizeAdminPage(filter.Page, filter.PageSize)
 	_ = page
@@ -405,25 +428,30 @@ func (s *Store) ListAdminDistributionRelations(ctx context.Context, filter Admin
 	items := make([]domain.AdminDistributionRelationRow, 0)
 	for rows.Next() {
 		var item domain.AdminDistributionRelationRow
+		var promoter scannedAdminUserSummary
+		var invitee scannedAdminUserSummary
 		if scanErr := rows.Scan(
 			&item.ID,
-			&item.Promoter.ID,
-			&item.Promoter.Email,
-			&item.Promoter.Name,
-			&item.Invitee.ID,
-			&item.Invitee.Email,
-			&item.Invitee.Name,
+			&promoter.ID,
+			&promoter.Email,
+			&promoter.Name,
+			&invitee.ID,
+			&invitee.Email,
+			&invitee.Name,
 			&item.Status,
 			&item.CreatedAt,
 			&item.Notes,
 		); scanErr != nil {
 			return nil, 0, domain.AdminDistributionRelationSummary{}, scanErr
 		}
+		item.Promoter = promoter.summary()
+		item.Invitee = invitee.summary()
 		items = append(items, item)
 	}
 	return items, total, summary, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAdminDistributionRelationByID(ctx context.Context, relationID string) (*domain.AdminDistributionRelationRow, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
@@ -440,14 +468,16 @@ func (s *Store) GetAdminDistributionRelationByID(ctx context.Context, relationID
 	`, relationID)
 
 	var item domain.AdminDistributionRelationRow
+	var promoter scannedAdminUserSummary
+	var invitee scannedAdminUserSummary
 	if err := row.Scan(
 		&item.ID,
-		&item.Promoter.ID,
-		&item.Promoter.Email,
-		&item.Promoter.Name,
-		&item.Invitee.ID,
-		&item.Invitee.Email,
-		&item.Invitee.Name,
+		&promoter.ID,
+		&promoter.Email,
+		&promoter.Name,
+		&invitee.ID,
+		&invitee.Email,
+		&invitee.Name,
 		&item.Status,
 		&item.CreatedAt,
 		&item.Notes,
@@ -457,9 +487,12 @@ func (s *Store) GetAdminDistributionRelationByID(ctx context.Context, relationID
 		}
 		return nil, err
 	}
+	item.Promoter = promoter.summary()
+	item.Invitee = invitee.summary()
 	return &item, nil
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateDistributionRelation(ctx context.Context, input CreateDistributionRelationInput) (*domain.AdminDistributionRelationRow, error) {
 	promoterUserID := strings.TrimSpace(input.PromoterUserID)
 	inviteeUserID := strings.TrimSpace(input.InviteeUserID)
@@ -521,6 +554,7 @@ func (s *Store) CreateDistributionRelation(ctx context.Context, input CreateDist
 	return s.GetAdminDistributionRelationByID(ctx, relationID)
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpdateDistributionRelation(ctx context.Context, input UpdateDistributionRelationInput) (*domain.AdminDistributionRelationRow, error) {
 	relationID := strings.TrimSpace(input.RelationID)
 	status := strings.TrimSpace(input.Status)
@@ -550,6 +584,7 @@ func (s *Store) UpdateDistributionRelation(ctx context.Context, input UpdateDist
 	return s.GetAdminDistributionRelationByID(ctx, relationID)
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminDistributionRules(ctx context.Context) ([]domain.AdminDistributionRule, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT
@@ -614,6 +649,7 @@ func (s *Store) ListAdminDistributionRules(ctx context.Context) ([]domain.AdminD
 	return items, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAdminDistributionRuleByID(ctx context.Context, ruleID string) (*domain.AdminDistributionRule, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
@@ -671,6 +707,7 @@ func (s *Store) GetAdminDistributionRuleByID(ctx context.Context, ruleID string)
 	return &item, nil
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateDistributionRule(ctx context.Context, input CreateDistributionRuleInput) (*domain.AdminDistributionRule, error) {
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
@@ -718,6 +755,7 @@ func (s *Store) CreateDistributionRule(ctx context.Context, input CreateDistribu
 	return s.GetAdminDistributionRuleByID(ctx, ruleID)
 }
 
+// 获取分销ReferralInvitee用户ID事务，为当前链路返回后续处理所需的数据内容。
 func getDistributionReferralByInviteeUserIDTx(ctx context.Context, tx pgx.Tx, inviteeUserID string) (*distributionReferralRecord, error) {
 	row := tx.QueryRow(ctx, `
 		SELECT id, promoter_user_id, invitee_user_id, status, notes
@@ -736,6 +774,7 @@ func getDistributionReferralByInviteeUserIDTx(ctx context.Context, tx pgx.Tx, in
 	return &item, nil
 }
 
+// 处理扫描分销CommissionItem相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanDistributionCommissionItem(scan scanFn) (*distributionCommissionItemRecord, error) {
 	var item distributionCommissionItemRecord
 	if err := scan(
@@ -762,6 +801,7 @@ func scanDistributionCommissionItem(scan scanFn) (*distributionCommissionItemRec
 	return &item, nil
 }
 
+// 获取分销CommissionItem充值订单事务，为当前链路返回后续处理所需的数据内容。
 func getDistributionCommissionItemByRechargeOrderTx(ctx context.Context, tx pgx.Tx, rechargeOrderID string) (*distributionCommissionItemRecord, error) {
 	row := tx.QueryRow(ctx, `
 		SELECT
@@ -797,6 +837,7 @@ func getDistributionCommissionItemByRechargeOrderTx(ctx context.Context, tx pgx.
 	return item, nil
 }
 
+// 获取分销CommissionItemID事务，为当前链路返回后续处理所需的数据内容。
 func getDistributionCommissionItemByIDTx(ctx context.Context, tx pgx.Tx, commissionItemID string) (*distributionCommissionItemRecord, error) {
 	row := tx.QueryRow(ctx, `
 		SELECT
@@ -832,6 +873,7 @@ func getDistributionCommissionItemByIDTx(ctx context.Context, tx pgx.Tx, commiss
 	return item, nil
 }
 
+// 构建分销来源Snapshot事务，为存储层生成后续步骤所需的派生参数或载荷。
 func buildDistributionSourceSnapshotTx(ctx context.Context, tx pgx.Tx, sourceType string, sourceID string) ([]byte, error) {
 	trimmedType := strings.TrimSpace(sourceType)
 	trimmedID := strings.TrimSpace(sourceID)
@@ -934,6 +976,7 @@ func buildDistributionSourceSnapshotTx(ctx context.Context, tx pgx.Tx, sourceTyp
 	}), nil
 }
 
+// 处理时间Ptr值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func timePtrValue(value *time.Time) any {
 	if value == nil {
 		return nil
@@ -941,6 +984,7 @@ func timePtrValue(value *time.Time) any {
 	return value.UTC().Format(time.RFC3339)
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) applyDistributionCommissionReleaseTx(ctx context.Context, tx pgx.Tx, input distributionCommissionReleaseInput) error {
 	if strings.TrimSpace(input.CommissionItemID) == "" || input.ConsumedCreditsDelta <= 0 {
 		return nil
@@ -1001,6 +1045,7 @@ func (s *Store) applyDistributionCommissionReleaseTx(ctx context.Context, tx pgx
 	return nil
 }
 
+// 处理backfill分销GrantTracking事务相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) backfillDistributionGrantTrackingTx(ctx context.Context, tx pgx.Tx, inviteeUserID string) error {
 	if strings.TrimSpace(inviteeUserID) == "" {
 		return nil
@@ -1166,6 +1211,7 @@ func (s *Store) backfillDistributionGrantTrackingTx(ctx context.Context, tx pgx.
 	return nil
 }
 
+// 处理findApplicable分销规则事务相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func findApplicableDistributionRuleTx(ctx context.Context, tx pgx.Tx, promoterUserID string) (*distributionRuleRecord, error) {
 	row := tx.QueryRow(ctx, `
 		SELECT
@@ -1208,6 +1254,7 @@ func findApplicableDistributionRuleTx(ctx context.Context, tx pgx.Tx, promoterUs
 	return &item, nil
 }
 
+// 根据充值订单事务计算确保分销Commission，供存储层的状态判定和查询逻辑复用。
 func (s *Store) ensureDistributionCommissionForRechargeOrderTx(ctx context.Context, tx pgx.Tx, order *domain.RechargeOrder) (*distributionCommissionItemRecord, distributionGrantSnapshot, error) {
 	snapshot := distributionGrantSnapshot{QuotaUnitCredits: make(map[string]int64)}
 	if order == nil || strings.TrimSpace(order.UserID) == "" || strings.TrimSpace(order.ID) == "" {
@@ -1283,6 +1330,7 @@ func (s *Store) ensureDistributionCommissionForRechargeOrderTx(ctx context.Conte
 	return item, snapshot, nil
 }
 
+// 根据用量事务计算释放分销Commission，供存储层的状态判定和查询逻辑复用。
 func (s *Store) releaseDistributionCommissionForUsageTx(ctx context.Context, tx pgx.Tx, inviteeUserID string, sourceType string, sourceID string, debitedCredits int64) error {
 	if strings.TrimSpace(inviteeUserID) == "" || debitedCredits <= 0 {
 		return nil
@@ -1360,6 +1408,7 @@ func (s *Store) releaseDistributionCommissionForUsageTx(ctx context.Context, tx 
 	return nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminCommissions(ctx context.Context, filter AdminCommissionListFilter) ([]domain.AdminCommissionRow, int64, domain.AdminCommissionListSummary, error) {
 	page, pageSize, offset := normalizeAdminPage(filter.Page, filter.PageSize)
 	_ = page
@@ -1464,14 +1513,16 @@ func (s *Store) ListAdminCommissions(ctx context.Context, filter AdminCommission
 	for rows.Next() {
 		var item domain.AdminCommissionRow
 		var basisPoints int
+		var promoter scannedAdminUserSummary
+		var invitee scannedAdminUserSummary
 		if scanErr := rows.Scan(
 			&item.ID,
-			&item.Promoter.ID,
-			&item.Promoter.Email,
-			&item.Promoter.Name,
-			&item.Invitee.ID,
-			&item.Invitee.Email,
-			&item.Invitee.Name,
+			&promoter.ID,
+			&promoter.Email,
+			&promoter.Name,
+			&invitee.ID,
+			&invitee.Email,
+			&invitee.Name,
 			&item.Status,
 			&basisPoints,
 			&item.CommissionBaseAmountCents,
@@ -1489,12 +1540,15 @@ func (s *Store) ListAdminCommissions(ctx context.Context, filter AdminCommission
 		); scanErr != nil {
 			return nil, 0, domain.AdminCommissionListSummary{}, scanErr
 		}
+		item.Promoter = promoter.summary()
+		item.Invitee = invitee.summary()
 		item.CommissionRate = basisPointsToRate(basisPoints)
 		items = append(items, item)
 	}
 	return items, total, summary, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminCommissionReleaseEvents(ctx context.Context, commissionItemID string, limit int) ([]domain.CommissionReleaseEvent, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
@@ -1559,10 +1613,12 @@ func (s *Store) ListAdminCommissionReleaseEvents(ctx context.Context, commission
 	return items, rows.Err()
 }
 
+// 处理format分销SettlementBatchNo相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func formatDistributionSettlementBatchNo(now time.Time) string {
 	return fmt.Sprintf("SET-%s-%s", now.UTC().Format("20060102150405"), strings.ToUpper(uuid.NewString()[:6]))
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminSettlements(ctx context.Context, filter AdminSettlementListFilter) ([]domain.AdminSettlementRow, int64, domain.AdminSettlementListSummary, error) {
 	page, pageSize, offset := normalizeAdminPage(filter.Page, filter.PageSize)
 	_ = page
@@ -1678,6 +1734,7 @@ func (s *Store) ListAdminSettlements(ctx context.Context, filter AdminSettlement
 	return items, total, summary, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAdminSettlementByID(ctx context.Context, batchID string) (*domain.AdminSettlementRow, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
@@ -1723,6 +1780,7 @@ func (s *Store) GetAdminSettlementByID(ctx context.Context, batchID string) (*do
 	return &item, nil
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateDistributionSettlementBatch(ctx context.Context, input CreateDistributionSettlementInput) (*domain.AdminSettlementRow, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

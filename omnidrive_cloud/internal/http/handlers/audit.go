@@ -10,6 +10,7 @@ import (
 	"omnidrive_cloud/internal/store"
 )
 
+// 记录审计事件，把审计、账务或运行轨迹写入持久化存储。
 func recordAuditEvent(app *appstate.App, ctx context.Context, input store.CreateAuditEventInput) {
 	if app == nil || app.Store == nil {
 		return
@@ -37,6 +38,7 @@ func recordAuditEvent(app *appstate.App, ctx context.Context, input store.Create
 	)
 }
 
+// 记录管理端审计Log，把审计、账务或运行轨迹写入持久化存储。
 func recordAdminAuditLog(app *appstate.App, ctx context.Context, input store.CreateAdminAuditLogInput) {
 	if app == nil || app.Store == nil {
 		return
@@ -64,6 +66,7 @@ func recordAdminAuditLog(app *appstate.App, ctx context.Context, input store.Cre
 	)
 }
 
+// 将任意结构序列化为 JSON 字节，失败时直接 panic 以暴露调用方数据错误。
 func mustJSONBytes(payload any) []byte {
 	if payload == nil {
 		return nil
@@ -75,6 +78,7 @@ func mustJSONBytes(payload any) []byte {
 	return bytes
 }
 
+// 处理审计StringPtr相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func auditStringPtr(value string) *string {
 	if value == "" {
 		return nil
@@ -82,6 +86,7 @@ func auditStringPtr(value string) *string {
 	return &value
 }
 
+// 将非空字符串转换为指针，统一存储层对可选字符串字段的入参表达。
 func stringPtr(value string) *string {
 	return auditStringPtr(value)
 }

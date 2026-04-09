@@ -34,6 +34,7 @@ type AdminBillingActivityListFilter struct {
 	AdminPageFilter
 }
 
+// 处理扫描计费Activity相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanBillingActivity(scan scanFn) (*domain.BillingActivity, error) {
 	var item domain.BillingActivity
 	var resultAt *time.Time
@@ -119,6 +120,7 @@ func scanBillingActivity(scan scanFn) (*domain.BillingActivity, error) {
 	return &item, nil
 }
 
+// 处理追加计费ActivityFilters相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func appendBillingActivityFilters(
 	whereParts []string,
 	args []any,
@@ -196,6 +198,7 @@ func appendBillingActivityFilters(
 	return whereParts, args, argIndex
 }
 
+// 处理追加Equivalent状态Filter相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func appendEquivalentStatusFilter(whereParts []string, args []any, argIndex int, column string, status string) ([]string, []any, int) {
 	trimmed := strings.TrimSpace(status)
 	if trimmed == "" {
@@ -617,6 +620,7 @@ const billingActivitiesAdminBaseQuery = `
 	)
 `
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListBillingActivitiesByUser(ctx context.Context, userID string, filter BillingActivityListFilter) ([]domain.BillingActivity, int64, domain.BillingActivityListSummary, error) {
 	page, pageSize, offset := normalizeAdminPage(filter.Page, filter.PageSize)
 	_ = page
@@ -698,6 +702,7 @@ func (s *Store) ListBillingActivitiesByUser(ctx context.Context, userID string, 
 	return items, summary.TotalActivityCount, summary, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminBillingActivities(ctx context.Context, filter AdminBillingActivityListFilter) ([]domain.AdminBillingActivityRow, int64, domain.AdminBillingActivityListSummary, error) {
 	page, pageSize, offset := normalizeAdminPage(filter.Page, filter.PageSize)
 	_ = page

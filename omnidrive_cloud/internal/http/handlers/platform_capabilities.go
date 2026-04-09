@@ -9,6 +9,7 @@ import (
 
 const defaultPlatformCapabilitiesRevision = "beta-platform-capabilities-v1"
 
+// 处理strPtr相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func strPtr(value string) *string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -17,6 +18,7 @@ func strPtr(value string) *string {
 	return &trimmed
 }
 
+// 处理默认设备平台能力相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func defaultDevicePlatformCapabilities() []domain.PlatformCapability {
 	return []domain.PlatformCapability{
 		{
@@ -59,6 +61,7 @@ func defaultDevicePlatformCapabilities() []domain.PlatformCapability {
 	}
 }
 
+// 应用生效设备平台能力，把外部输入转换为当前链路的最终状态变更。
 func applyEffectiveDevicePlatformCapabilities(device *domain.Device) {
 	if device == nil {
 		return

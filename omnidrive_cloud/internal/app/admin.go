@@ -139,6 +139,7 @@ var systemAdminRoleCatalog = []store.UpsertAdminRoleInput{
 	},
 }
 
+// 确保管理端初始化已满足执行前提，必要时补齐缺失状态或配置。
 func (a *App) EnsureAdminBootstrap(ctx context.Context) error {
 	a.Logger.Debug("ensuring admin bootstrap")
 
@@ -218,6 +219,7 @@ func (a *App) EnsureAdminBootstrap(ctx context.Context) error {
 	return nil
 }
 
+// 解析管理端Identity，根据当前配置和上下文确定最终使用结果。
 func (a *App) ResolveAdminIdentity(ctx context.Context, subject string) (*domain.AdminIdentity, error) {
 	sessionID, ok := parseAdminSessionSubject(subject)
 	if !ok {
@@ -226,10 +228,12 @@ func (a *App) ResolveAdminIdentity(ctx context.Context, subject string) (*domain
 	return a.Store.GetAdminIdentityBySessionID(ctx, sessionID)
 }
 
+// 构建管理端会话Subject，为应用状态生成后续步骤所需的派生参数或载荷。
 func BuildAdminSessionSubject(sessionID string) string {
 	return adminSessionSubjectPrefix + sessionID
 }
 
+// 解析管理端会话Subject，为应用状态提供结构化输入。
 func parseAdminSessionSubject(subject string) (string, bool) {
 	if !strings.HasPrefix(subject, adminSessionSubjectPrefix) {
 		return "", false
@@ -241,6 +245,7 @@ func parseAdminSessionSubject(subject string) (string, bool) {
 	return sessionID, true
 }
 
+// 将非空字符串转换为指针，统一存储层对可选字符串字段的入参表达。
 func stringPtr(value string) *string {
 	if strings.TrimSpace(value) == "" {
 		return nil

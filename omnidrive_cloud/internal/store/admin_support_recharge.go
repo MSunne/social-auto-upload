@@ -11,6 +11,7 @@ import (
 	"omnidrive_cloud/internal/domain"
 )
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAdminOrderByID(ctx context.Context, orderID string) (*domain.AdminOrderRow, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
@@ -82,6 +83,7 @@ func (s *Store) GetAdminOrderByID(ctx context.Context, orderID string) (*domain.
 	return &item, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAdminOrderByOrderNo(ctx context.Context, orderNo string) (*domain.AdminOrderRow, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT

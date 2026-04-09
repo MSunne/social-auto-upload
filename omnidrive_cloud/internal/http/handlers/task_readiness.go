@@ -8,6 +8,7 @@ import (
 	"omnidrive_cloud/internal/domain"
 )
 
+// 处理追加Readiness签发相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func appendReadinessIssue(readiness *domain.PublishTaskReadiness, code string, message string) {
 	if strings.TrimSpace(code) != "" {
 		for _, existing := range readiness.IssueCodes {
@@ -30,6 +31,7 @@ appendMessage:
 	readiness.Issues = append(readiness.Issues, message)
 }
 
+// 处理发布任务ReadinessBlockingDimensions相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func publishTaskReadinessBlockingDimensions(readiness domain.PublishTaskReadiness) []string {
 	dimensions := make([]string, 0, 4)
 	if !readiness.DeviceReady {
@@ -47,6 +49,7 @@ func publishTaskReadinessBlockingDimensions(readiness domain.PublishTaskReadines
 	return dimensions
 }
 
+// 构建发布任务Readiness，为任务readiness生成后续步骤所需的派生参数或载荷。
 func buildPublishTaskReadiness(
 	ctx context.Context,
 	app *appstate.App,
@@ -164,6 +167,7 @@ func buildPublishTaskReadiness(
 	return readiness
 }
 
+// 处理发布任务ReadinessAllowsExecution相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func publishTaskReadinessAllowsExecution(readiness domain.PublishTaskReadiness) bool {
 	return readiness.DeviceReady &&
 		readiness.AccountReady &&

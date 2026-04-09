@@ -16,6 +16,7 @@ type QuotaExpiryScheduler struct {
 	pollInterval time.Duration
 }
 
+// 创建额度过期Scheduler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewQuotaExpiryScheduler(app *appstate.App) (*QuotaExpiryScheduler, error) {
 	if app == nil {
 		return nil, fmt.Errorf("app is required")
@@ -27,6 +28,7 @@ func NewQuotaExpiryScheduler(app *appstate.App) (*QuotaExpiryScheduler, error) {
 	}, nil
 }
 
+// 启动额度过期调度流程，持续处理后续轮询、调度或后台任务。
 func (s *QuotaExpiryScheduler) Start(parent context.Context) func() {
 	ctx, cancel := context.WithCancel(parent)
 	var wg sync.WaitGroup
@@ -46,6 +48,7 @@ func (s *QuotaExpiryScheduler) Start(parent context.Context) func() {
 	}
 }
 
+// 运行额度过期调度流程，按当前上下文驱动一次或持续的业务处理。
 func (s *QuotaExpiryScheduler) run(ctx context.Context) {
 	s.runOnce(ctx)
 
@@ -62,6 +65,7 @@ func (s *QuotaExpiryScheduler) run(ctx context.Context) {
 	}
 }
 
+// 执行一轮 AI 作业拉取与处理循环，供后台 worker 按固定节奏持续轮询。
 func (s *QuotaExpiryScheduler) runOnce(ctx context.Context) {
 	result, err := s.app.Store.ExpireDueQuotaAccounts(ctx, quotaExpirySchedulerBatchSize)
 	if err != nil {

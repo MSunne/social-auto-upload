@@ -12,6 +12,7 @@ import (
 	"omnidrive_cloud/internal/http/render"
 )
 
+// 创建用户鉴权中间件，在进入业务处理前校验访问令牌并把当前用户写入请求上下文。
 func RequireUser(app *appstate.App) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -51,6 +52,7 @@ func RequireUser(app *appstate.App) func(http.Handler) http.Handler {
 	}
 }
 
+// 记录认证失败日志，补充请求路径和请求 ID 方便排查鉴权问题。
 func logAuthFailure(logger *slog.Logger, r *http.Request, level slog.Level, message string, attrs ...any) {
 	if logger == nil {
 		return

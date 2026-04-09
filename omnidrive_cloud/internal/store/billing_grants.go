@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// 处理Grant钱包额度相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) GrantWalletCredits(ctx context.Context, input GrantWalletCreditsInput) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -24,6 +25,7 @@ func (s *Store) GrantWalletCredits(ctx context.Context, input GrantWalletCredits
 	return tx.Commit(ctx)
 }
 
+// 处理Grant额度相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) GrantQuota(ctx context.Context, input GrantQuotaInput) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -38,6 +40,7 @@ func (s *Store) GrantQuota(ctx context.Context, input GrantQuotaInput) error {
 	return tx.Commit(ctx)
 }
 
+// 处理grant钱包额度事务相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) grantWalletCreditsTx(ctx context.Context, tx pgx.Tx, input GrantWalletCreditsInput) (string, error) {
 	if strings.TrimSpace(input.UserID) == "" {
 		return "", fmt.Errorf("user id is required")
@@ -118,6 +121,7 @@ func (s *Store) grantWalletCreditsTx(ctx context.Context, tx pgx.Tx, input Grant
 	return ledgerID, nil
 }
 
+// 处理grant额度事务相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) grantQuotaTx(ctx context.Context, tx pgx.Tx, input GrantQuotaInput) error {
 	if strings.TrimSpace(input.UserID) == "" {
 		return fmt.Errorf("user id is required")
@@ -159,6 +163,7 @@ func (s *Store) grantQuotaTx(ctx context.Context, tx pgx.Tx, input GrantQuotaInp
 	return nil
 }
 
+// 处理时间PtrUTC相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func timePtrUTC(value time.Time) *time.Time {
 	if value.IsZero() {
 		return nil

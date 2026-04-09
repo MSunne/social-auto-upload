@@ -15,6 +15,7 @@ import (
 
 type scanFn func(dest ...any) error
 
+// 处理解码支付Channels相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func decodePaymentChannels(raw []byte, fallback string) []string {
 	if len(raw) > 0 {
 		var values []string
@@ -47,6 +48,7 @@ func decodePaymentChannels(raw []byte, fallback string) []string {
 	return items
 }
 
+// 处理扫描计费套餐相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanBillingPackage(scan scanFn) (*domain.BillingPackage, error) {
 	var item domain.BillingPackage
 	var paymentChannels []byte
@@ -86,6 +88,7 @@ func scanBillingPackage(scan scanFn) (*domain.BillingPackage, error) {
 	return &item, nil
 }
 
+// 处理扫描充值订单相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanRechargeOrder(scan scanFn) (*domain.RechargeOrder, error) {
 	var item domain.RechargeOrder
 	var packageID *string
@@ -139,6 +142,7 @@ func scanRechargeOrder(scan scanFn) (*domain.RechargeOrder, error) {
 	return &item, nil
 }
 
+// 处理扫描充值订单事件相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanRechargeOrderEvent(scan scanFn) (*domain.RechargeOrderEvent, error) {
 	var item domain.RechargeOrderEvent
 	var message *string
@@ -160,6 +164,7 @@ func scanRechargeOrderEvent(scan scanFn) (*domain.RechargeOrderEvent, error) {
 	return &item, nil
 }
 
+// 处理追加充值订单事件事务相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) appendRechargeOrderEventTx(ctx context.Context, tx pgx.Tx, eventID string, orderID string, userID string, eventType string, status string, message *string, payload []byte) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO recharge_order_events (
@@ -170,6 +175,7 @@ func (s *Store) appendRechargeOrderEventTx(ctx context.Context, tx pgx.Tx, event
 	return err
 }
 
+// 执行计费相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) loadPackageEntitlements(ctx context.Context, packageIDs []string) (map[string][]domain.BillingPackageEntitlement, error) {
 	if len(packageIDs) == 0 {
 		return map[string][]domain.BillingPackageEntitlement{}, nil
@@ -217,6 +223,7 @@ func (s *Store) loadPackageEntitlements(ctx context.Context, packageIDs []string
 	return result, rows.Err()
 }
 
+// 执行计费相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListBillingPackages(ctx context.Context) ([]domain.BillingPackage, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, name, package_type, channel, payment_channels, currency, price_cents, credit_amount,
@@ -254,6 +261,7 @@ func (s *Store) ListBillingPackages(ctx context.Context) ([]domain.BillingPackag
 	return items, nil
 }
 
+// 执行计费相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetBillingPackageByID(ctx context.Context, packageID string) (*domain.BillingPackage, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, name, package_type, channel, payment_channels, currency, price_cents, credit_amount,
@@ -278,6 +286,7 @@ func (s *Store) GetBillingPackageByID(ctx context.Context, packageID string) (*d
 	return item, nil
 }
 
+// 执行计费相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListBillingPricingRules(ctx context.Context) ([]domain.BillingPricingRule, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT r.id, r.name, r.meter_code, m.name, r.applies_to, r.model_name,
@@ -340,6 +349,7 @@ func (s *Store) ListBillingPricingRules(ctx context.Context) ([]domain.BillingPr
 	return items, rows.Err()
 }
 
+// 执行计费相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetBillingSummaryByUser(ctx context.Context, userID string) (*domain.BillingSummary, error) {
 	summary := &domain.BillingSummary{
 		QuotaBalances: []domain.BillingQuotaBalance{},
@@ -447,6 +457,7 @@ func (s *Store) GetBillingSummaryByUser(ctx context.Context, userID string) (*do
 	return summary, nil
 }
 
+// 应用充值告警，把外部输入转换为当前链路的最终状态变更。
 func applyRechargeAlert(summary *domain.BillingSummary, hasQuotaBalance bool, waitingRechargeCount int64, lastWaitingMessage *string, lastWaitingAt *time.Time) {
 	if summary == nil {
 		return
@@ -481,6 +492,7 @@ func applyRechargeAlert(summary *domain.BillingSummary, hasQuotaBalance bool, wa
 	}
 }
 
+// 执行计费相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListWalletLedgerByUser(ctx context.Context, userID string) ([]domain.WalletLedger, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, user_id, entry_type, amount_delta, balance_before, balance_after, meter_code, quantity, unit,
@@ -547,6 +559,7 @@ func (s *Store) ListWalletLedgerByUser(ctx context.Context, userID string) ([]do
 	return items, rows.Err()
 }
 
+// 执行计费相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListRechargeOrdersByUser(ctx context.Context, userID string, limit int) ([]domain.RechargeOrder, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
@@ -577,6 +590,7 @@ func (s *Store) ListRechargeOrdersByUser(ctx context.Context, userID string, lim
 	return items, rows.Err()
 }
 
+// 执行计费相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) getRechargeOrderByID(ctx context.Context, userID string, orderID string) (*domain.RechargeOrder, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, order_no, user_id, package_id, package_snapshot, channel, status, subject, body, currency,
@@ -597,10 +611,12 @@ func (s *Store) getRechargeOrderByID(ctx context.Context, userID string, orderID
 	return item, nil
 }
 
+// 执行计费相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetRechargeOrderByID(ctx context.Context, userID string, orderID string) (*domain.RechargeOrder, error) {
 	return s.getRechargeOrderByID(ctx, userID, orderID)
 }
 
+// 执行计费相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListRechargeOrderEvents(ctx context.Context, userID string, orderID string) ([]domain.RechargeOrderEvent, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT e.id, e.recharge_order_id, e.user_id, e.event_type, e.status, e.message, e.payload, e.created_at
@@ -626,6 +642,7 @@ func (s *Store) ListRechargeOrderEvents(ctx context.Context, userID string, orde
 	return items, rows.Err()
 }
 
+// 执行计费相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateRechargeOrder(ctx context.Context, input CreateRechargeOrderInput) (*domain.RechargeOrder, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -683,6 +700,7 @@ func (s *Store) CreateRechargeOrder(ctx context.Context, input CreateRechargeOrd
 	return order, nil
 }
 
+// 处理Submit人工充值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) SubmitManualRecharge(ctx context.Context, userID string, orderID string, input SubmitManualRechargeInput) (*domain.RechargeOrder, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

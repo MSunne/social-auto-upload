@@ -36,6 +36,7 @@ type workflowBillingPlan struct {
 	ItemInputs   []store.CreateAIBillingItemInput
 }
 
+// 构建工作流计费Plan，为AI作业生成后续步骤所需的派生参数或载荷。
 func BuildWorkflowBillingPlan(ctx context.Context, app *appstate.App, job *domain.AIJob) (*workflowBillingPlan, error) {
 	if app == nil || job == nil {
 		return nil, nil
@@ -209,6 +210,7 @@ func BuildWorkflowBillingPlan(ctx context.Context, app *appstate.App, job *domai
 	}, nil
 }
 
+// 处理预览工作流计费相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func PreviewWorkflowBilling(ctx context.Context, app *appstate.App, job *domain.AIJob) (*store.ApplyUsageBillingResult, error) {
 	plan, err := BuildWorkflowBillingPlan(ctx, app, job)
 	if err != nil || plan == nil {
@@ -223,6 +225,7 @@ func PreviewWorkflowBilling(ctx context.Context, app *appstate.App, job *domain.
 	return result, nil
 }
 
+// 确保工作流计费会话已满足执行前提，必要时补齐缺失状态或配置。
 func EnsureWorkflowBillingSession(ctx context.Context, app *appstate.App, job *domain.AIJob) (*domain.AIBillingSession, []domain.AIBillingItem, error) {
 	plan, err := BuildWorkflowBillingPlan(ctx, app, job)
 	if err != nil || plan == nil {
@@ -232,6 +235,7 @@ func EnsureWorkflowBillingSession(ctx context.Context, app *appstate.App, job *d
 	return app.Store.CreateOrRechargeAIBillingSession(ctx, plan.SessionInput, plan.ItemInputs, sourceSnapshot)
 }
 
+// 处理Finalize工作流计费会话相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func FinalizeWorkflowBillingSession(
 	ctx context.Context,
 	app *appstate.App,
@@ -246,6 +250,7 @@ func FinalizeWorkflowBillingSession(
 	return app.Store.FinalizeAIBillingSession(ctx, "ai_job", job.ID, successfulItemKeys, message, payload)
 }
 
+// 构建AI作业计费来源Snapshot，为AI作业生成后续步骤所需的派生参数或载荷。
 func buildAIJobBillingSourceSnapshot(job *domain.AIJob, plan *workflowBillingPlan) []byte {
 	if job == nil || plan == nil {
 		return mustJSONBytes(map[string]any{})
@@ -263,6 +268,7 @@ func buildAIJobBillingSourceSnapshot(job *domain.AIJob, plan *workflowBillingPla
 	})
 }
 
+// 处理工作流计费Plan用量Result相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func workflowBillingPlanToUsageResult(plan *workflowBillingPlan, creditBalance int64) *store.ApplyUsageBillingResult {
 	if plan == nil {
 		return nil
@@ -312,6 +318,7 @@ func workflowBillingPlanToUsageResult(plan *workflowBillingPlan, creditBalance i
 	}
 }
 
+// 处理工作流计费Result会话相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func WorkflowBillingResultFromSession(session *domain.AIBillingSession, items []domain.AIBillingItem) *store.ApplyUsageBillingResult {
 	if session == nil {
 		return nil
@@ -355,6 +362,7 @@ func WorkflowBillingResultFromSession(session *domain.AIBillingSession, items []
 	}
 }
 
+// 解析工作流定价Snapshot，为AI作业提供结构化输入。
 func parseWorkflowPricingSnapshot(job *domain.AIJob) *workflowPricingSnapshot {
 	if job == nil {
 		return nil
@@ -390,6 +398,7 @@ func parseWorkflowPricingSnapshot(job *domain.AIJob) *workflowPricingSnapshot {
 	return snapshot
 }
 
+// 构建工作流计费Item，为AI作业生成后续步骤所需的派生参数或载荷。
 func buildWorkflowBillingItem(
 	job *domain.AIJob,
 	itemKey string,
@@ -429,6 +438,7 @@ func buildWorkflowBillingItem(
 	}
 }
 
+// 解析工作流分镜计费模型，根据当前配置和上下文确定最终使用结果。
 func resolveWorkflowStoryboardBillingModel(ctx context.Context, app *appstate.App) (*domain.AIModel, error) {
 	if app == nil {
 		return nil, nil
@@ -460,6 +470,7 @@ func resolveWorkflowStoryboardBillingModel(ctx context.Context, app *appstate.Ap
 	return nil, nil
 }
 
+// 解析工作流封面计费模型，根据当前配置和上下文确定最终使用结果。
 func resolveWorkflowCoverBillingModel(ctx context.Context, app *appstate.App) (*domain.AIModel, error) {
 	if app == nil {
 		return nil, nil
@@ -480,6 +491,7 @@ func resolveWorkflowCoverBillingModel(ctx context.Context, app *appstate.App) (*
 	return nil, nil
 }
 
+// 根据模型计算计费额度，供AI作业链路复用关键派生结果。
 func billingCreditsForModel(model *domain.AIModel) int64 {
 	if model == nil {
 		return 0
@@ -493,6 +505,7 @@ func billingCreditsForModel(model *domain.AIModel) int64 {
 	return 0
 }
 
+// 处理planned视频分段数量相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func plannedVideoSegmentCount(durationSeconds int, segmentSeconds int) int {
 	if durationSeconds <= 0 {
 		return 0
@@ -503,6 +516,7 @@ func plannedVideoSegmentCount(durationSeconds int, segmentSeconds int) int {
 	return int(math.Ceil(float64(durationSeconds) / float64(segmentSeconds)))
 }
 
+// 处理distribute额度相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func distributeCredits(totalCredits int64, itemCount int) []int64 {
 	if itemCount <= 0 {
 		return nil
@@ -520,22 +534,27 @@ func distributeCredits(totalCredits int64, itemCount int) []int64 {
 	return result
 }
 
+// 处理工作流分镜包Item键相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func workflowStoryboardPackageItemKey() string {
 	return workflowStoryboardPackageItemType
 }
 
+// 处理工作流封面帧Item键相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func workflowCoverFrameItemKey() string {
 	return workflowCoverFrameItemType
 }
 
+// 处理工作流视频分段Item键相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func workflowVideoSegmentItemKey(index int) string {
 	return fmt.Sprintf("%s:%d", workflowVideoSegmentItemType, index)
 }
 
+// 处理工作流SpecialPrice分段Item键相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func workflowSpecialPriceSegmentItemKey(index int) string {
 	return fmt.Sprintf("%s:%d", workflowSpecialPriceItemType, index)
 }
 
+// 处理首个Non空值String值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func firstNonEmptyStringValue(values ...string) string {
 	for _, value := range values {
 		trimmed := strings.TrimSpace(value)
@@ -546,6 +565,7 @@ func firstNonEmptyStringValue(values ...string) string {
 	return ""
 }
 
+// 处理int64值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func int64Value(value any) (int64, bool) {
 	switch typed := value.(type) {
 	case int64:
@@ -565,6 +585,7 @@ func int64Value(value any) (int64, bool) {
 	}
 }
 
+// 处理值空值String相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func valueOrEmptyString(value *string) string {
 	if value == nil {
 		return ""
@@ -572,6 +593,7 @@ func valueOrEmptyString(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
+// 规范化裁剪StringPointer，统一AI作业链路的输入格式和后续处理行为。
 func normalizeTrimmedStringPointer(value string) *string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -580,6 +602,7 @@ func normalizeTrimmedStringPointer(value string) *string {
 	return &trimmed
 }
 
+// 处理maxInt64值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func maxInt64Value(a int64, b int64) int64 {
 	if a > b {
 		return a

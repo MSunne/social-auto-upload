@@ -23,6 +23,7 @@ type AgentHandler struct {
 	app *appstate.App
 }
 
+// 规范化Agent账号同步状态，统一Agent链路的输入格式和后续处理行为。
 func normalizeAgentAccountSyncStatus(value string) (status string, isDelete bool, ok bool) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "active":
@@ -36,6 +37,7 @@ func normalizeAgentAccountSyncStatus(value string) (status string, isDelete bool
 	}
 }
 
+// 处理请求BaseURL相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func requestBaseURL(r *http.Request) string {
 	if r == nil {
 		return ""
@@ -189,10 +191,12 @@ type agentAIJobDeliveryRequest struct {
 
 const deviceSessionTokenTTL = 60 * time.Minute
 
+// 创建AgentHandler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewAgentHandler(app *appstate.App) *AgentHandler {
 	return &AgentHandler{app: app}
 }
 
+// 处理Agent心跳接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	var payload heartbeatRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -247,6 +251,7 @@ func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理Agent设备会话签发接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) IssueDeviceSession(w http.ResponseWriter, r *http.Request) {
 	deviceCode := strings.TrimSpace(chi.URLParam(r, "deviceCode"))
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
@@ -317,6 +322,7 @@ func (h *AgentHandler) IssueDeviceSession(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// 处理Agent账号同步接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) SyncAccount(w http.ResponseWriter, r *http.Request) {
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
 	if agentKey == "" {
@@ -409,6 +415,7 @@ func (h *AgentHandler) SyncAccount(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, account)
 }
 
+// 处理Agent列表账号接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) ListAccounts(w http.ResponseWriter, r *http.Request) {
 	deviceCode := strings.TrimSpace(chi.URLParam(r, "deviceCode"))
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
@@ -446,6 +453,7 @@ func (h *AgentHandler) ListAccounts(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理Agent登录任务列表接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) ListLoginTasks(w http.ResponseWriter, r *http.Request) {
 	deviceCode := strings.TrimSpace(chi.URLParam(r, "deviceCode"))
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
@@ -480,6 +488,7 @@ func (h *AgentHandler) ListLoginTasks(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理Agent登录事件上报接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) PushLoginEvent(w http.ResponseWriter, r *http.Request) {
 	sessionID := strings.TrimSpace(chi.URLParam(r, "sessionId"))
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
@@ -554,6 +563,7 @@ func (h *AgentHandler) PushLoginEvent(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, updatedSession)
 }
 
+// 处理Agent登录动作列表接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) ListLoginActions(w http.ResponseWriter, r *http.Request) {
 	sessionID := strings.TrimSpace(chi.URLParam(r, "sessionId"))
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
@@ -590,6 +600,7 @@ func (h *AgentHandler) ListLoginActions(w http.ResponseWriter, r *http.Request) 
 	render.JSON(w, http.StatusOK, actions)
 }
 
+// 处理Agent发布任务列表接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) ListPublishTasks(w http.ResponseWriter, r *http.Request) {
 	deviceCode := strings.TrimSpace(chi.URLParam(r, "deviceCode"))
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
@@ -672,6 +683,7 @@ func (h *AgentHandler) ListPublishTasks(w http.ResponseWriter, r *http.Request) 
 	render.JSON(w, http.StatusOK, readyItems)
 }
 
+// 处理Agent技能列表接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) ListSkills(w http.ResponseWriter, r *http.Request) {
 	deviceCode := strings.TrimSpace(chi.URLParam(r, "deviceCode"))
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
@@ -818,6 +830,7 @@ func (h *AgentHandler) ListSkills(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理Agent技能退役确认接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) AckRetiredSkills(w http.ResponseWriter, r *http.Request) {
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
 	if agentKey == "" {
@@ -889,6 +902,7 @@ func (h *AgentHandler) AckRetiredSkills(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// 处理Agent账号退役确认接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) AckRetiredAccounts(w http.ResponseWriter, r *http.Request) {
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
 	if agentKey == "" {
@@ -953,6 +967,7 @@ func (h *AgentHandler) AckRetiredAccounts(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// 处理Agent技能状态同步接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) SyncSkillStates(w http.ResponseWriter, r *http.Request) {
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
 	if agentKey == "" {
@@ -1040,6 +1055,7 @@ func (h *AgentHandler) SyncSkillStates(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理AgentAI作业列表接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) ListAIJobs(w http.ResponseWriter, r *http.Request) {
 	deviceCode := strings.TrimSpace(chi.URLParam(r, "deviceCode"))
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
@@ -1103,6 +1119,7 @@ func (h *AgentHandler) ListAIJobs(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, result)
 }
 
+// 处理AgentAI作业同步接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) SyncAIJob(w http.ResponseWriter, r *http.Request) {
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
 	if agentKey == "" {
@@ -1281,6 +1298,7 @@ func (h *AgentHandler) SyncAIJob(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理AgentAI作业投递更新接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) UpdateAIJobDelivery(w http.ResponseWriter, r *http.Request) {
 	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
@@ -1361,6 +1379,7 @@ func (h *AgentHandler) UpdateAIJobDelivery(w http.ResponseWriter, r *http.Reques
 	render.JSON(w, http.StatusOK, job)
 }
 
+// 处理Agent发布任务打包数据接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) PublishTaskPackage(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
 	deviceCode := strings.TrimSpace(r.URL.Query().Get("deviceCode"))
@@ -1454,6 +1473,7 @@ func (h *AgentHandler) PublishTaskPackage(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// 处理Agent发布任务认领接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) ClaimPublishTask(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
@@ -1568,6 +1588,7 @@ func (h *AgentHandler) ClaimPublishTask(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// 处理Agent发布任务续租接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) RenewPublishTaskLease(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
@@ -1620,6 +1641,7 @@ func (h *AgentHandler) RenewPublishTaskLease(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+// 处理Agent发布任务释放接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) ReleasePublishTaskLease(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
@@ -1709,6 +1731,7 @@ func (h *AgentHandler) ReleasePublishTaskLease(w http.ResponseWriter, r *http.Re
 	render.JSON(w, http.StatusOK, task)
 }
 
+// 处理Agent发布任务同步接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) SyncPublishTask(w http.ResponseWriter, r *http.Request) {
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
 	if agentKey == "" {
@@ -1948,6 +1971,7 @@ func (h *AgentHandler) SyncPublishTask(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, task)
 }
 
+// 处理Agent准备Agent任务素材Refs接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) prepareAgentTaskMaterialRefs(ctx context.Context, device *domain.Device, taskID string, refs []taskMaterialRefRequest) ([]store.ReplacePublishTaskMaterialRefInput, error) {
 	if device == nil || device.OwnerUserID == nil || strings.TrimSpace(*device.OwnerUserID) == "" {
 		return []store.ReplacePublishTaskMaterialRefInput{}, nil
@@ -1983,6 +2007,7 @@ func (h *AgentHandler) prepareAgentTaskMaterialRefs(ctx context.Context, device 
 	return items, nil
 }
 
+// 处理Agent准备发布任务产物接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) preparePublishTaskArtifacts(ctx context.Context, taskID string, verificationPayload []byte, items []syncPublishTaskArtifactRequest) ([]store.UpsertPublishTaskArtifactInput, error) {
 	results := make([]store.UpsertPublishTaskArtifactInput, 0, len(items)+1)
 
@@ -2005,6 +2030,7 @@ func (h *AgentHandler) preparePublishTaskArtifacts(ctx context.Context, taskID s
 	return results, nil
 }
 
+// 处理Agent准备发布任务产物接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) preparePublishTaskArtifact(ctx context.Context, taskID string, item syncPublishTaskArtifactRequest) (*store.UpsertPublishTaskArtifactInput, error) {
 	artifactType := strings.TrimSpace(item.ArtifactType)
 	if artifactType == "" {
@@ -2080,6 +2106,7 @@ func (h *AgentHandler) preparePublishTaskArtifact(ctx context.Context, taskID st
 	}, nil
 }
 
+// 处理derive验证码产物相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func deriveVerificationArtifact(taskID string, verificationPayload []byte) (*store.UpsertPublishTaskArtifactInput, error) {
 	if len(verificationPayload) == 0 {
 		return nil, nil
@@ -2122,6 +2149,7 @@ func deriveVerificationArtifact(taskID string, verificationPayload []byte) (*sto
 	}, nil
 }
 
+// 处理发布任务事件Type状态相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func publishTaskEventTypeFromStatus(status string) string {
 	switch status {
 	case "cancel_requested":
@@ -2141,6 +2169,7 @@ func publishTaskEventTypeFromStatus(status string) string {
 	}
 }
 
+// 判断是否属于AllowedAgent发布任务Transition，供当前链路选择后续处理策略。
 func isAllowedAgentPublishTaskTransition(current string, next string) bool {
 	current = strings.TrimSpace(current)
 	next = strings.TrimSpace(next)
@@ -2167,6 +2196,7 @@ func isAllowedAgentPublishTaskTransition(current string, next string) bool {
 	}
 }
 
+// 处理Agent记录Recovered发布任务s接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) recordRecoveredPublishTasks(ctx context.Context, device *domain.Device) {
 	if device == nil {
 		return
@@ -2202,6 +2232,7 @@ func (h *AgentHandler) recordRecoveredPublishTasks(ctx context.Context, device *
 	}
 }
 
+// 规范化裁剪String，统一Agent链路的输入格式和后续处理行为。
 func normalizeTrimmedString(value *string) *string {
 	if value == nil {
 		return nil
@@ -2213,6 +2244,7 @@ func normalizeTrimmedString(value *string) *string {
 	return &trimmed
 }
 
+// 规范化裁剪StringPtr，统一Agent链路的输入格式和后续处理行为。
 func normalizeTrimmedStringPtr(value string) *string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -2221,6 +2253,7 @@ func normalizeTrimmedStringPtr(value string) *string {
 	return &trimmed
 }
 
+// 处理Agent构建AgentAI作业输入载荷接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) buildAgentAIJobInputPayload(payload syncAIJobRequest) ([]byte, error) {
 	result := map[string]any{
 		"origin":      "omnibull_local",
@@ -2248,6 +2281,7 @@ func (h *AgentHandler) buildAgentAIJobInputPayload(payload syncAIJobRequest) ([]
 	return json.Marshal(result)
 }
 
+// 处理Agentinspect发布任务Readiness接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) inspectPublishTaskReadiness(ctx context.Context, device *domain.Device, task *domain.PublishTask) (domain.PublishTaskReadiness, error) {
 	var account *domain.PlatformAccount
 	var err error
@@ -2275,6 +2309,7 @@ func (h *AgentHandler) inspectPublishTaskReadiness(ctx context.Context, device *
 	return buildPublishTaskReadiness(ctx, h.app, task, device, account, skill), nil
 }
 
+// 处理首个Non空值String相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func firstNonEmptyString(values ...*string) *string {
 	for _, value := range values {
 		if normalized := normalizeTrimmedString(value); normalized != nil {
@@ -2284,6 +2319,7 @@ func firstNonEmptyString(values ...*string) *string {
 	return nil
 }
 
+// 构建发布任务产物键，为Agent生成后续步骤所需的派生参数或载荷。
 func buildPublishTaskArtifactKey(raw string, artifactType string, fileName *string, title *string) string {
 	key := strings.TrimSpace(raw)
 	key = strings.ReplaceAll(key, " ", "-")
@@ -2302,6 +2338,7 @@ func buildPublishTaskArtifactKey(raw string, artifactType string, fileName *stri
 	return uuid.NewString()
 }
 
+// 处理string值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func stringValue(value *string) string {
 	if value == nil {
 		return ""
@@ -2309,10 +2346,12 @@ func stringValue(value *string) string {
 	return *value
 }
 
+// 处理agent键Matches相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func agentKeyMatches(device interface{ GetAgentKey() string }, provided string) bool {
 	return provided != "" && device.GetAgentKey() == provided
 }
 
+// 处理Agent准备验证码载荷接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) prepareVerificationPayload(ctx context.Context, folder string, entityID string, payload interface{}) ([]byte, error) {
 	payloadMap, ok := payload.(map[string]interface{})
 	if !ok {
@@ -2374,6 +2413,7 @@ func (h *AgentHandler) prepareVerificationPayload(ctx context.Context, folder st
 	return json.Marshal(payloadMap)
 }
 
+// 处理解码Base64载荷相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func decodeBase64Payload(raw string) ([]byte, string, error) {
 	raw = strings.TrimSpace(raw)
 	if strings.HasPrefix(raw, "data:") {
@@ -2405,6 +2445,7 @@ func decodeBase64Payload(raw string) ([]byte, string, error) {
 	return data, "image/png", nil
 }
 
+// 处理extension内容类型相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func extensionFromContentType(contentType string) string {
 	switch contentType {
 	case "image/jpeg":

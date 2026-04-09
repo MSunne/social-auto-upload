@@ -16,6 +16,7 @@ const (
 	standardizedVideoCRF        = 20
 )
 
+// 处理standardize视频产物相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func standardizeVideoArtifact(ctx context.Context, artifact BinaryArtifact, ffmpegPath string) (BinaryArtifact, error) {
 	inputBytes := artifact.Data
 	if len(inputBytes) == 0 {
@@ -86,6 +87,7 @@ func standardizeVideoArtifact(ctx context.Context, artifact BinaryArtifact, ffmp
 	}, nil
 }
 
+// 处理ffmpegBinary相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func ffmpegBinary(path string) string {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {
@@ -94,6 +96,7 @@ func ffmpegBinary(path string) string {
 	return trimmed
 }
 
+// 处理formatFFmpegExecution错误相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func formatFFmpegExecutionError(err error, output []byte, ffmpegPath string) string {
 	binary := ffmpegBinary(ffmpegPath)
 	message := strings.TrimSpace(string(output))
@@ -111,6 +114,7 @@ func formatFFmpegExecutionError(err error, output []byte, ffmpegPath string) str
 	return fmt.Sprintf("%s (binary=%s)", message, binary)
 }
 
+// 处理standardized视频文件名称相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func standardizedVideoFileName(fileName string) string {
 	cleaned := safeFileName(fileName)
 	if cleaned == "" {
@@ -124,6 +128,7 @@ func standardizedVideoFileName(fileName string) string {
 	return base + ".mp4"
 }
 
+// 处理standardized视频输出路径相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func standardizedVideoOutputPath(tempDir string, inputName string, outputFileName string) string {
 	outputPath := filepath.Join(tempDir, outputFileName)
 	if filepath.Clean(outputPath) != filepath.Clean(filepath.Join(tempDir, inputName)) {
@@ -138,6 +143,7 @@ func standardizedVideoOutputPath(tempDir string, inputName string, outputFileNam
 	return filepath.Join(tempDir, base+".standardized"+ext)
 }
 
+// 处理standardized视频Filter相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func standardizedVideoFilter() string {
 	return fmt.Sprintf(
 		"scale='max(2,trunc(iw*%.2f/2)*2)':'max(2,trunc(ih*%.2f/2)*2)',fps=%d",
@@ -147,6 +153,7 @@ func standardizedVideoFilter() string {
 	)
 }
 
+// 处理clone产物Metadata相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func cloneArtifactMetadata(metadata map[string]any) map[string]any {
 	if len(metadata) == 0 {
 		return map[string]any{}

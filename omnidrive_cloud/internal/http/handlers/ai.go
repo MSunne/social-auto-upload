@@ -129,6 +129,7 @@ var defaultChatSupportedFileTypes = []string{
 	".htm",
 }
 
+// 规范化视频分镜启用，统一AI作业链路的输入格式和后续处理行为。
 func normalizeVideoStoryboardEnabled(value any) bool {
 	switch typed := value.(type) {
 	case bool:
@@ -145,6 +146,7 @@ func normalizeVideoStoryboardEnabled(value any) bool {
 	}
 }
 
+// 规范化创建AI作业输入载荷，统一AI作业链路的输入格式和后续处理行为。
 func normalizeCreateAIJobInputPayload(jobType string, prompt *string, raw any) ([]byte, error) {
 	if raw == nil && strings.TrimSpace(jobType) != "video" {
 		return nil, nil
@@ -176,28 +178,36 @@ func normalizeCreateAIJobInputPayload(jobType string, prompt *string, raw any) (
 	return json.Marshal(payload)
 }
 
-func applySkillWorkflowPricingSnapshot(raw []byte, skill *domain.ProductSkill, rule *domain.WorkflowDurationRule) ([]byte, error) {
-	if skill == nil || rule == nil || skill.FixedDurationSeconds == nil || *skill.FixedDurationSeconds <= 0 {
+// 应用技能工作流定价Snapshot，把外部输入转换为当前链路的最终状态变更。
+func applySkillWorkflowPricingSnapshot(raw []byte, skill *domain.ProductSkill, config *skillFixedDurationConfig) ([]byte, error) {
+	if skill == nil || config == nil || skill.FixedDurationSeconds == nil || *skill.FixedDurationSeconds <= 0 {
 		return raw, nil
 	}
 	payload := decodeRawPayloadMap(raw)
 	payload["fixedDurationSeconds"] = *skill.FixedDurationSeconds
 	payload["durationSeconds"] = *skill.FixedDurationSeconds
-	payload["workflowPricing"] = map[string]any{
-		"workflowCode":        rule.WorkflowCode,
-		"outputType":          rule.OutputType,
-		"ruleId":              rule.ID,
-		"durationSeconds":     rule.DurationSeconds,
-		"segmentSeconds":      rule.SegmentSeconds,
-		"specialPriceCredits": rule.SpecialPriceCredits,
+	workflowPricing := map[string]any{
+		"workflowCode":    videoTextWorkflowCode,
+		"outputType":      workflowOutputTypeForSkill(skill.OutputType),
+		"durationSeconds": config.DurationSeconds,
+		"segmentSeconds":  config.SegmentSeconds,
 	}
+	if config.Rule != nil {
+		workflowPricing["workflowCode"] = config.Rule.WorkflowCode
+		workflowPricing["outputType"] = config.Rule.OutputType
+		workflowPricing["ruleId"] = config.Rule.ID
+		workflowPricing["specialPriceCredits"] = config.Rule.SpecialPriceCredits
+	}
+	payload["workflowPricing"] = workflowPricing
 	return json.Marshal(payload)
 }
 
+// 创建AIHandler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewAIHandler(app *appstate.App) *AIHandler {
 	return &AIHandler{app: app}
 }
 
+// 根据公开计算清洗AI模型，供AI作业链路复用关键派生结果。
 func sanitizeAIModelForPublic(model *domain.AIModel) *domain.AIModel {
 	if model == nil {
 		return nil
@@ -207,6 +217,7 @@ func sanitizeAIModelForPublic(model *domain.AIModel) *domain.AIModel {
 	return &sanitized
 }
 
+// 处理用量Int64值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func usageInt64FromValues(values ...any) int64 {
 	for _, value := range values {
 		switch typed := value.(type) {
@@ -235,6 +246,7 @@ func usageInt64FromValues(values ...any) int64 {
 	return 0
 }
 
+// 构建流式对话计费输入，为AI作业生成后续步骤所需的派生参数或载荷。
 func buildStreamChatBillingInput(job *domain.AIJob, result *aiclient.ChatResult) store.ApplyUsageBillingInput {
 	metrics := make([]store.ApplyUsageMetricInput, 0, 2)
 	usage := map[string]any{}
@@ -271,6 +283,7 @@ func buildStreamChatBillingInput(job *domain.AIJob, result *aiclient.ChatResult)
 	}
 }
 
+// 应用流式对话计费，把外部输入转换为当前链路的最终状态变更。
 func applyStreamChatBilling(app *appstate.App, ctx context.Context, job *domain.AIJob, result *aiclient.ChatResult) *store.ApplyUsageBillingResult {
 	if app == nil || app.Store == nil || job == nil {
 		return &store.ApplyUsageBillingResult{
@@ -360,6 +373,7 @@ func applyStreamChatBilling(app *appstate.App, ctx context.Context, job *domain.
 	return billingResult
 }
 
+// 处理计费Result载荷相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func billingResultToPayload(result *store.ApplyUsageBillingResult) map[string]any {
 	if result == nil {
 		return map[string]any{
@@ -375,6 +389,7 @@ func billingResultToPayload(result *store.ApplyUsageBillingResult) map[string]an
 	}
 }
 
+// 构建流式对话Completion消息，为AI作业生成后续步骤所需的派生参数或载荷。
 func buildStreamChatCompletionMessage(base string, billing *store.ApplyUsageBillingResult) string {
 	if billing == nil {
 		return base
@@ -395,6 +410,7 @@ func buildStreamChatCompletionMessage(base string, billing *store.ApplyUsageBill
 	}
 }
 
+// 处理计费Result额度Ptr相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func billingResultCreditsPtr(result *store.ApplyUsageBillingResult) *int64 {
 	if result == nil || result.BillStatus != "billed" {
 		return nil
@@ -403,6 +419,7 @@ func billingResultCreditsPtr(result *store.ApplyUsageBillingResult) *int64 {
 	return &credits
 }
 
+// 根据公开计算清洗AI模型列表，供AI作业链路复用关键派生结果。
 func sanitizeAIModelListForPublic(items []domain.AIModel) []domain.AIModel {
 	if len(items) == 0 {
 		return items
@@ -416,6 +433,7 @@ func sanitizeAIModelListForPublic(items []domain.AIModel) []domain.AIModel {
 	return sanitized
 }
 
+// 处理AI列表模型接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 	category := normalizeAIModelCategory(firstNonEmptyAdminValue(
 		r.URL.Query().Get("modelType"),
@@ -430,6 +448,7 @@ func (h *AIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, sanitizeAIModelListForPublic(items))
 }
 
+// 处理清洗开启AI模型ID相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func sanitizeOpenAIModelID(model *domain.AIModel) string {
 	if model == nil {
 		return ""
@@ -440,6 +459,7 @@ func sanitizeOpenAIModelID(model *domain.AIModel) string {
 	return strings.TrimSpace(model.ID)
 }
 
+// 开启AI模型AliasCandidates，为当前用户或设备准备可继续操作的上下文。
 func openAIModelAliasCandidates(value string) []string {
 	cleaned := strings.TrimSpace(value)
 	if cleaned == "" {
@@ -487,6 +507,7 @@ func openAIModelAliasCandidates(value string) []string {
 	return result
 }
 
+// 判断是否属于默认开启AI对话模型Alias，供当前链路选择后续处理策略。
 func isDefaultOpenAIChatModelAlias(model string) bool {
 	switch strings.ToLower(strings.TrimSpace(model)) {
 	case "default-chat", "default", "omnidrive-default-chat":
@@ -496,6 +517,7 @@ func isDefaultOpenAIChatModelAlias(model string) bool {
 	}
 }
 
+// 处理AI解析默认开启AI对话模型名称接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) resolveDefaultOpenAIChatModelName(ctx context.Context, ownerUserID string) (string, error) {
 	settings, err := loadEffectiveAdminSystemSettings(ctx, h.app)
 	if err != nil {
@@ -521,6 +543,7 @@ func (h *AIHandler) resolveDefaultOpenAIChatModelName(ctx context.Context, owner
 	return "", nil
 }
 
+// 处理AI解析开启AI对话模型接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) resolveOpenAIChatModel(ctx context.Context, ownerUserID string, requestedModel string) (*domain.AIModel, error) {
 	requested := strings.TrimSpace(requestedModel)
 	if requested == "" {
@@ -548,6 +571,7 @@ func (h *AIHandler) resolveOpenAIChatModel(ctx context.Context, ownerUserID stri
 	return nil, nil
 }
 
+// 开启AIString值，为当前用户或设备准备可继续操作的上下文。
 func openAIStringValue(value any) string {
 	if value == nil {
 		return ""
@@ -562,6 +586,7 @@ func openAIStringValue(value any) string {
 	}
 }
 
+// 开启AI解析Bool，为当前用户或设备准备可继续操作的上下文。
 func openAIParseBool(value any) bool {
 	switch typed := value.(type) {
 	case bool:
@@ -580,6 +605,7 @@ func openAIParseBool(value any) bool {
 	}
 }
 
+// 解析开启AI对话Endpoint，根据当前配置和上下文确定最终使用结果。
 func resolveOpenAIChatEndpoint(baseURL string) string {
 	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if trimmed == "" {
@@ -591,10 +617,12 @@ func resolveOpenAIChatEndpoint(baseURL string) string {
 	return trimmed + "/v1/chat/completions"
 }
 
+// 开启AIProxyUsesMaxCompletion令牌，为当前用户或设备准备可继续操作的上下文。
 func openAIProxyUsesMaxCompletionTokens(model string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-5")
 }
 
+// 规范化Positive开启AIInteger，统一AI作业链路的输入格式和后续处理行为。
 func normalizePositiveOpenAIInteger(value any) (int64, bool) {
 	switch typed := value.(type) {
 	case int:
@@ -621,6 +649,7 @@ func normalizePositiveOpenAIInteger(value any) (int64, bool) {
 	return 0, false
 }
 
+// 规范化开启AIProxy载荷，统一AI作业链路的输入格式和后续处理行为。
 func normalizeOpenAIProxyPayload(payload map[string]any, modelName string) {
 	if payload == nil {
 		return
@@ -673,6 +702,7 @@ func normalizeOpenAIProxyPayload(payload map[string]any, modelName string) {
 	}
 }
 
+// 处理copy开启AIProxyHeaders相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func copyOpenAIProxyHeaders(dst http.Header, src http.Header) {
 	for _, key := range []string{"Content-Type", "Cache-Control", "X-Request-Id"} {
 		if value := strings.TrimSpace(src.Get(key)); value != "" {
@@ -681,6 +711,7 @@ func copyOpenAIProxyHeaders(dst http.Header, src http.Header) {
 	}
 }
 
+// 处理流式开启AIProxy响应相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func streamOpenAIProxyResponse(w http.ResponseWriter, body io.Reader) error {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -706,6 +737,7 @@ func streamOpenAIProxyResponse(w http.ResponseWriter, body io.Reader) error {
 	}
 }
 
+// 处理AI开启AI模型接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) OpenAIModels(w http.ResponseWriter, r *http.Request) {
 	items, err := h.app.Store.ListAIModels(r.Context(), "chat")
 	if err != nil {
@@ -739,6 +771,7 @@ func (h *AIHandler) OpenAIModels(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理AI开启AI对话Completions接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) OpenAIChatCompletions(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	rawBody, err := io.ReadAll(r.Body)
@@ -835,6 +868,7 @@ func (h *AIHandler) OpenAIChatCompletions(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// 处理AI列表作业接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	limit := 0
@@ -864,6 +898,7 @@ func (h *AIHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理AI流式对话接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 
@@ -1227,6 +1262,7 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// 处理AI流式对话Persistence上下文接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) streamChatPersistenceContext(parent context.Context) (context.Context, context.CancelFunc) {
 	base := context.Background()
 	if parent != nil {
@@ -1235,6 +1271,7 @@ func (h *AIHandler) streamChatPersistenceContext(parent context.Context) (contex
 	return context.WithTimeout(base, streamChatPersistenceTimeout)
 }
 
+// 处理AIpersist流式对话Terminal更新接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) persistStreamChatTerminalUpdate(parent context.Context, jobID string, ownerUserID string, input store.UpdateAIJobInput) {
 	ctx, cancel := h.streamChatPersistenceContext(parent)
 	defer cancel()
@@ -1244,6 +1281,7 @@ func (h *AIHandler) persistStreamChatTerminalUpdate(parent context.Context, jobI
 	}
 }
 
+// 处理AI创建作业接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 
@@ -1341,16 +1379,12 @@ func (h *AIHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if skill != nil && payload.JobType == "video" && skill.FixedDurationSeconds != nil && *skill.FixedDurationSeconds > 0 {
-		rule, ruleErr := h.app.Store.FindEnabledWorkflowDurationRule(r.Context(), videoTextWorkflowCode, workflowOutputTypeForSkill(skill.OutputType), *skill.FixedDurationSeconds)
-		if ruleErr != nil {
-			render.Error(w, http.StatusInternalServerError, "Failed to resolve workflow duration rule")
+		durationConfig, durationErr := validateSkillFixedDuration(r.Context(), h.app, skill.OutputType, skill.ModelName, skill.FixedDurationSeconds)
+		if durationErr != nil {
+			render.Error(w, http.StatusConflict, durationErr.Error())
 			return
 		}
-		if rule == nil {
-			render.Error(w, http.StatusConflict, "Skill fixed duration is not enabled in workflow duration rules")
-			return
-		}
-		inputPayload, err = applySkillWorkflowPricingSnapshot(inputPayload, skill, rule)
+		inputPayload, err = applySkillWorkflowPricingSnapshot(inputPayload, skill, durationConfig)
 		if err != nil {
 			render.Error(w, http.StatusBadRequest, "inputPayload must be valid json")
 			return
@@ -1416,6 +1450,7 @@ func (h *AIHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusCreated, job)
 }
 
+// 处理writeSSE事件相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, event string, payload any) error {
 	if w == nil || flusher == nil {
 		return fmt.Errorf("streaming writer is unavailable")
@@ -1434,6 +1469,7 @@ func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, event string, pa
 	return nil
 }
 
+// 剥离对话附件Drafts中的包装内容，便于后续解析实际数据。
 func stripChatAttachmentDrafts(raw []byte) []byte {
 	if len(raw) == 0 {
 		return raw
@@ -1450,6 +1486,7 @@ func stripChatAttachmentDrafts(raw []byte) []byte {
 	return sanitized
 }
 
+// 处理AI准备流式对话载荷接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) prepareStreamChatPayload(ctx context.Context, ownerUserID string, jobID string, model *domain.AIModel, prompt *string, rawPayload []byte) ([]byte, []store.UpsertAIJobArtifactInput, []persistedChatAttachment, error) {
 	payload := map[string]any{}
 	if len(rawPayload) > 0 {
@@ -1511,6 +1548,7 @@ type preparedChatAttachment struct {
 	PromptParts   []map[string]any
 }
 
+// 处理AIpersist对话附件接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) persistChatAttachment(ctx context.Context, ownerUserID string, jobID string, model *domain.AIModel, messageIndex int, order int, draft chatAttachmentDraft) (*preparedChatAttachment, error) {
 	fileName := sanitizeUploadFilename(draft.FileName)
 	if fileName == "" {
@@ -1590,6 +1628,7 @@ func (h *AIHandler) persistChatAttachment(ctx context.Context, ownerUserID strin
 	}, nil
 }
 
+// 解析对话MessagesPersistence，为AI作业提供结构化输入。
 func parseChatMessagesForPersistence(payload map[string]any, prompt *string) ([]aiclient.ChatMessage, error) {
 	if payload == nil {
 		payload = map[string]any{}
@@ -1606,6 +1645,7 @@ func parseChatMessagesForPersistence(payload map[string]any, prompt *string) ([]
 	return rawMessages.Messages, nil
 }
 
+// 规范化对话消息内容，统一AI作业链路的输入格式和后续处理行为。
 func normalizeChatMessageContent(content any) ([]map[string]any, bool) {
 	switch typed := content.(type) {
 	case []any:
@@ -1628,6 +1668,7 @@ func normalizeChatMessageContent(content any) ([]map[string]any, bool) {
 	}
 }
 
+// 处理解码对话附件Drafts相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func decodeChatAttachmentDrafts(raw any) ([]chatAttachmentDraft, error) {
 	if raw == nil {
 		return nil, nil
@@ -1643,6 +1684,7 @@ func decodeChatAttachmentDrafts(raw any) ([]chatAttachmentDraft, error) {
 	return drafts, nil
 }
 
+// 处理解码对话附件Bytes相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func decodeChatAttachmentBytes(draft chatAttachmentDraft) ([]byte, string, error) {
 	if strings.TrimSpace(draft.DataURL) != "" {
 		return decodeBase64Payload(strings.TrimSpace(draft.DataURL))
@@ -1653,6 +1695,7 @@ func decodeChatAttachmentBytes(draft chatAttachmentDraft) ([]byte, string, error
 	return nil, "", fmt.Errorf("attachment %q is missing file data", strings.TrimSpace(draft.FileName))
 }
 
+// 规范化Supported文件Types，统一AI作业链路的输入格式和后续处理行为。
 func normalizeSupportedFileTypes(values []string) []string {
 	if len(values) == 0 {
 		return nil
@@ -1676,6 +1719,7 @@ func normalizeSupportedFileTypes(values []string) []string {
 	return items
 }
 
+// 解析模型Supported文件Types，根据当前配置和上下文确定最终使用结果。
 func resolveModelSupportedFileTypes(model *domain.AIModel) []string {
 	if model == nil {
 		return nil
@@ -1690,6 +1734,7 @@ func resolveModelSupportedFileTypes(model *domain.AIModel) []string {
 	return nil
 }
 
+// 处理matchesSupported文件Type相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func matchesSupportedFileType(fileName string, mimeType string, spec string) bool {
 	spec = strings.ToLower(strings.TrimSpace(spec))
 	if spec == "" {
@@ -1712,6 +1757,7 @@ func matchesSupportedFileType(fileName string, mimeType string, spec string) boo
 	}
 }
 
+// 处理校验对话附件文件Type相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func validateChatAttachmentFileType(model *domain.AIModel, fileName string, mimeType string) error {
 	supported := resolveModelSupportedFileTypes(model)
 	if len(supported) == 0 {
@@ -1725,6 +1771,7 @@ func validateChatAttachmentFileType(model *domain.AIModel, fileName string, mime
 	return fmt.Errorf("当前模型不支持文件 %s，允许类型：%s", fileName, strings.Join(supported, ", "))
 }
 
+// 处理校验对话输入载荷文件相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func validateChatInputPayloadFiles(model *domain.AIModel, rawPayload []byte) error {
 	if len(rawPayload) == 0 {
 		return nil
@@ -1762,6 +1809,7 @@ func validateChatInputPayloadFiles(model *domain.AIModel, rawPayload []byte) err
 	return nil
 }
 
+// 处理detect对话附件Kind相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func detectChatAttachmentKind(mimeType string, fileName string) string {
 	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
 	if strings.HasPrefix(mimeType, "image/") {
@@ -1778,6 +1826,7 @@ func detectChatAttachmentKind(mimeType string, fileName string) string {
 	}
 }
 
+// 构建对话附件提示词Parts，为AI作业生成后续步骤所需的派生参数或载荷。
 func buildChatAttachmentPromptParts(ref persistedChatAttachment) []map[string]any {
 	parts := make([]map[string]any, 0, 2)
 	switch ref.Kind {
@@ -1815,6 +1864,7 @@ func buildChatAttachmentPromptParts(ref persistedChatAttachment) []map[string]an
 	return parts
 }
 
+// 处理AI详情作业接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) DetailJob(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
@@ -1835,6 +1885,7 @@ func (h *AIHandler) DetailJob(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, job)
 }
 
+// 处理AI工作区作业接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) WorkspaceJob(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
@@ -1905,6 +1956,7 @@ func (h *AIHandler) WorkspaceJob(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理AI列表产物接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) ListArtifacts(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
@@ -1929,6 +1981,7 @@ func (h *AIHandler) ListArtifacts(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理AI上传产物接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) UploadArtifact(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
@@ -2047,6 +2100,7 @@ func (h *AIHandler) UploadArtifact(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusCreated, artifacts[0])
 }
 
+// 处理AI上传产物URL接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) uploadArtifactFromURL(w http.ResponseWriter, r *http.Request, ownerUserID string, jobID string) {
 	var payload uploadAIArtifactURLRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -2133,6 +2187,7 @@ func (h *AIHandler) uploadArtifactFromURL(w http.ResponseWriter, r *http.Request
 	render.JSON(w, http.StatusCreated, artifacts[0])
 }
 
+// 处理AI校验产物设备Binding接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) validateArtifactDeviceBinding(ctx context.Context, ownerUserID string, deviceID, rootName, relativePath *string) error {
 	if deviceID == nil {
 		return nil
@@ -2151,6 +2206,7 @@ func (h *AIHandler) validateArtifactDeviceBinding(ctx context.Context, ownerUser
 	return nil
 }
 
+// 处理AI渲染产物Binding错误接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) renderArtifactBindingError(w http.ResponseWriter, err error) {
 	switch {
 	case err == nil:
@@ -2166,6 +2222,7 @@ func (h *AIHandler) renderArtifactBindingError(w http.ResponseWriter, err error)
 	}
 }
 
+// 处理AI创建发布任务接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) CreatePublishTask(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
@@ -2420,6 +2477,7 @@ func (h *AIHandler) CreatePublishTask(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, task)
 }
 
+// 处理AI更新作业接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
@@ -2558,6 +2616,7 @@ func (h *AIHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, job)
 }
 
+// 处理AI取消作业接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) CancelJob(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
@@ -2605,6 +2664,7 @@ func (h *AIHandler) CancelJob(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, job)
 }
 
+// 处理AI重试作业接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) RetryJob(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
@@ -2661,6 +2721,7 @@ func (h *AIHandler) RetryJob(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, job)
 }
 
+// 处理AI强制释放作业接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) ForceReleaseJob(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
@@ -2690,6 +2751,7 @@ func (h *AIHandler) ForceReleaseJob(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, job)
 }
 
+// 处理AI解析Owned设备ID接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) resolveOwnedDeviceID(w http.ResponseWriter, r *http.Request, raw *string, ownerUserID string) (*string, bool) {
 	if raw == nil {
 		return nil, true
@@ -2710,6 +2772,7 @@ func (h *AIHandler) resolveOwnedDeviceID(w http.ResponseWriter, r *http.Request,
 	return &trimmed, true
 }
 
+// 解析可选RFC3339，为AI作业提供结构化输入。
 func parseOptionalRFC3339(w http.ResponseWriter, raw *string, fieldName string) (*time.Time, bool) {
 	if raw == nil || strings.TrimSpace(*raw) == "" {
 		return nil, true
@@ -2722,6 +2785,7 @@ func parseOptionalRFC3339(w http.ResponseWriter, raw *string, fieldName string) 
 	return &parsed, true
 }
 
+// 解析可选RFC3339Touched，为AI作业提供结构化输入。
 func parseOptionalRFC3339Touched(w http.ResponseWriter, raw *string, fieldName string) (*time.Time, bool, bool) {
 	if raw == nil {
 		return nil, false, true
@@ -2737,6 +2801,7 @@ func parseOptionalRFC3339Touched(w http.ResponseWriter, raw *string, fieldName s
 	return &parsed, true, true
 }
 
+// 处理filterAI产物Keys相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func filterAIArtifactsByKeys(items []domain.AIJobArtifact, requested []string) []domain.AIJobArtifact {
 	if len(requested) == 0 {
 		return items
@@ -2757,6 +2822,7 @@ func filterAIArtifactsByKeys(items []domain.AIJobArtifact, requested []string) [
 	return filtered
 }
 
+// 收集AI产物Keys，整合AI作业链路所需的候选输入。
 func collectAIArtifactKeys(items []domain.AIJobArtifact) []string {
 	keys := make([]string, 0, len(items))
 	for _, item := range items {
@@ -2765,6 +2831,7 @@ func collectAIArtifactKeys(items []domain.AIJobArtifact) []string {
 	return keys
 }
 
+// 构建发布任务TitleAI作业，为AI作业生成后续步骤所需的派生参数或载荷。
 func buildPublishTaskTitleFromAIJob(job *domain.AIJob, artifacts []domain.AIJobArtifact) string {
 	if job == nil {
 		return "AI 产物发布任务"
@@ -2778,6 +2845,7 @@ func buildPublishTaskTitleFromAIJob(job *domain.AIJob, artifacts []domain.AIJobA
 	return fmt.Sprintf("%s 生成内容发布", job.ModelName)
 }
 
+// 构建AI产物键，为AI作业生成后续步骤所需的派生参数或载荷。
 func buildAIArtifactKey(fileName string, artifactType string) string {
 	key := strings.TrimSpace(fileName)
 	key = strings.ReplaceAll(key, " ", "-")
@@ -2788,6 +2856,7 @@ func buildAIArtifactKey(fileName string, artifactType string) string {
 	return strings.Trim(strings.ReplaceAll(artifactType, " ", "-"), "-_/")
 }
 
+// 清理AI产物文件，释放当前链路不再需要的临时资源或旧数据。
 func cleanupAIArtifactFiles(app *appstate.App, ctx context.Context, items []domain.AIJobArtifact) {
 	if app == nil || app.Storage == nil {
 		return
@@ -2806,6 +2875,7 @@ func cleanupAIArtifactFiles(app *appstate.App, ctx context.Context, items []doma
 	}
 }
 
+// 规范化AI状态，统一AI作业链路的输入格式和后续处理行为。
 func normalizeAIStatus(value *string) *string {
 	if value == nil {
 		return nil
@@ -2817,6 +2887,7 @@ func normalizeAIStatus(value *string) *string {
 	return &trimmed
 }
 
+// 判断是否属于AllowedAI作业Transition，供当前链路选择后续处理策略。
 func isAllowedAIJobTransition(current string, next string) bool {
 	current = strings.TrimSpace(current)
 	next = strings.TrimSpace(next)
@@ -2843,6 +2914,7 @@ func isAllowedAIJobTransition(current string, next string) bool {
 	}
 }
 
+// 解析发布内容TextAI作业，根据当前配置和上下文确定最终使用结果。
 func resolvePublishContentTextFromAIJob(job *domain.AIJob) *string {
 	if job == nil {
 		return nil
@@ -2858,6 +2930,7 @@ func resolvePublishContentTextFromAIJob(job *domain.AIJob) *string {
 	return nil
 }
 
+// 提取Optimized发布内容Text，供AI作业后续关联和分支判断复用。
 func extractOptimizedPublishContentText(raw []byte) string {
 	outputPayload := decodeRawPayloadMap(raw)
 	storyboardPayload, _ := outputPayload["storyboard"].(map[string]any)
@@ -2868,6 +2941,7 @@ func extractOptimizedPublishContentText(raw []byte) string {
 	return readPayloadString(publishPayload, "contentText")
 }
 
+// 处理解码Raw载荷映射相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func decodeRawPayloadMap(raw []byte) map[string]any {
 	if len(raw) == 0 {
 		return map[string]any{}
@@ -2879,6 +2953,7 @@ func decodeRawPayloadMap(raw []byte) map[string]any {
 	return payload
 }
 
+// 读取载荷String，按当前存储模式返回后续流程需要的数据内容。
 func readPayloadString(payload map[string]any, keys ...string) string {
 	for _, key := range keys {
 		if payload == nil {
@@ -2896,6 +2971,7 @@ func readPayloadString(payload map[string]any, keys ...string) string {
 	return ""
 }
 
+// 计算AI作业动作，供AI作业复用派生状态和判定结果。
 func computeAIJobActions(job *domain.AIJob, artifactCount int) domain.AIJobActionState {
 	if job == nil {
 		return domain.AIJobActionState{}
@@ -2924,6 +3000,7 @@ func computeAIJobActions(job *domain.AIJob, artifactCount int) domain.AIJobActio
 	return state
 }
 
+// 构建AI作业桥接状态，为AI作业生成后续步骤所需的派生参数或载荷。
 func buildAIJobBridgeState(job *domain.AIJob, artifacts []domain.AIJobArtifact, publishTasks []domain.PublishTask) domain.AIJobBridgeState {
 	if job == nil {
 		return domain.AIJobBridgeState{}

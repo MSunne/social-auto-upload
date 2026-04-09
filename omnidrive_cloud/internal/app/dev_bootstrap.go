@@ -30,6 +30,7 @@ var developmentSeedUsers = []developmentSeedUser{
 	{ID: "demo-user-12", Email: "demo12@omnidrive.local", Name: "Demo User 12", InitialCredits: 9600},
 }
 
+// 确保Development种子用户已满足执行前提，必要时补齐缺失状态或配置。
 func (a *App) EnsureDevelopmentSeedUsers(ctx context.Context) error {
 	if !strings.EqualFold(strings.TrimSpace(a.Config.Environment), "development") {
 		return nil

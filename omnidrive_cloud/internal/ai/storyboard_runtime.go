@@ -12,6 +12,7 @@ const (
 	DefaultVideoCoverModelName         = "gemini-3-pro-image-preview"
 )
 
+// 处理Supports分镜包模型相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func SupportsStoryboardPackageModel(model *domain.AIModel) bool {
 	if model == nil || !model.IsEnabled {
 		return false
@@ -25,6 +26,7 @@ func SupportsStoryboardPackageModel(model *domain.AIModel) bool {
 	return strings.Contains(strings.ToLower(strings.TrimSpace(model.ModelName)), "gemini")
 }
 
+// 处理supports图片输入Types相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func supportsImageInputTypes(fileTypes []string) bool {
 	for _, item := range fileTypes {
 		normalized := strings.ToLower(strings.TrimSpace(item))

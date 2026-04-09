@@ -14,6 +14,7 @@ import (
 	"omnidrive_cloud/internal/domain"
 )
 
+// 处理扫描技能相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanSkill(row pgx.Row) (*domain.ProductSkill, error) {
 	var skill domain.ProductSkill
 	var deviceID *string
@@ -73,6 +74,7 @@ func scanSkill(row pgx.Row) (*domain.ProductSkill, error) {
 	return &skill, nil
 }
 
+// 处理扫描技能加载相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanSkillWithLoad(row pgx.Row) (*domain.ProductSkill, error) {
 	var skill domain.ProductSkill
 	var deviceID *string
@@ -159,6 +161,7 @@ const skillLoadColumns = `
 	COALESCE((SELECT COUNT(*) FROM ai_jobs aj WHERE aj.owner_user_id = product_skills.owner_user_id AND aj.skill_id = product_skills.id AND aj.status IN ('queued', 'running')), 0)::BIGINT AS active_ai_job_count
 `
 
+// 处理技能Query加载相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func skillQueryWithLoad(whereClause string) string {
 	return fmt.Sprintf(`
 		SELECT %s, %s
@@ -167,6 +170,7 @@ func skillQueryWithLoad(whereClause string) string {
 	`, skillSelectColumns, skillLoadColumns, whereClause)
 }
 
+// 构建生效技能Revision，为技能生成后续步骤所需的派生参数或载荷。
 func buildEffectiveSkillRevision(skillUpdatedAt time.Time, latestAssetUpdatedAt *time.Time, assetCount int64) string {
 	parts := []string{
 		skillUpdatedAt.UTC().Format(time.RFC3339Nano),
@@ -180,6 +184,7 @@ func buildEffectiveSkillRevision(skillUpdatedAt time.Time, latestAssetUpdatedAt 
 	return strings.Join(parts, "|")
 }
 
+// 处理裁剪StringPointer相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func trimmedStringPointer(value *string) *string {
 	if value == nil {
 		return nil
@@ -191,6 +196,7 @@ func trimmedStringPointer(value *string) *string {
 	return &trimmed
 }
 
+// 规范化技能主题，统一技能链路的输入格式和后续处理行为。
 func normalizeSkillTopics(topics []string) []string {
 	if len(topics) == 0 {
 		return []string{}
@@ -212,6 +218,7 @@ func normalizeSkillTopics(topics []string) []string {
 	return normalized
 }
 
+// 规范化技能主题JSON，统一技能链路的输入格式和后续处理行为。
 func normalizeSkillTopicsFromJSON(raw []byte) []string {
 	if len(raw) == 0 {
 		return []string{}
@@ -223,6 +230,7 @@ func normalizeSkillTopicsFromJSON(raw []byte) []string {
 	return normalizeSkillTopics(topics)
 }
 
+// 处理marshal技能主题相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func marshalSkillTopics(topics []string) []byte {
 	normalized := normalizeSkillTopics(topics)
 	if len(normalized) == 0 {
@@ -235,6 +243,7 @@ func marshalSkillTopics(topics []string) []byte {
 	return payload
 }
 
+// 执行技能相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListSkillsByOwner(ctx context.Context, ownerUserID string) ([]domain.ProductSkill, error) {
 	rows, err := s.pool.Query(ctx, skillQueryWithLoad(`
 		WHERE owner_user_id = $1
@@ -256,6 +265,7 @@ func (s *Store) ListSkillsByOwner(ctx context.Context, ownerUserID string) ([]do
 	return items, rows.Err()
 }
 
+// 执行技能相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListSkillsForScheduling(ctx context.Context, lookAhead time.Time, limit int) ([]domain.ProductSkill, error) {
 	query := skillQueryWithLoad(`
 		WHERE is_enabled = TRUE
@@ -287,6 +297,7 @@ func (s *Store) ListSkillsForScheduling(ctx context.Context, lookAhead time.Time
 	return items, rows.Err()
 }
 
+// 执行技能相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpdateSkillScheduleState(ctx context.Context, skillID string, nextRunAt *time.Time, lastRunAt *time.Time) (*domain.ProductSkill, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE product_skills
@@ -307,6 +318,7 @@ func (s *Store) UpdateSkillScheduleState(ctx context.Context, skillID string, ne
 	return skill, nil
 }
 
+// 执行技能相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListEnabledSkillsByOwner(ctx context.Context, ownerUserID string, since *time.Time, limit int) ([]domain.ProductSkill, error) {
 	query := skillQueryWithLoad(`
 		WHERE owner_user_id = $1
@@ -340,6 +352,7 @@ func (s *Store) ListEnabledSkillsByOwner(ctx context.Context, ownerUserID string
 	return items, rows.Err()
 }
 
+// 执行技能相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListSkillsForAgentSyncByOwner(ctx context.Context, ownerUserID string, since *time.Time, limit int) ([]domain.ProductSkill, error) {
 	query := skillQueryWithLoad(`
 		WHERE owner_user_id = $1
@@ -372,6 +385,7 @@ func (s *Store) ListSkillsForAgentSyncByOwner(ctx context.Context, ownerUserID s
 	return items, rows.Err()
 }
 
+// 执行技能相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetSkillRevision(ctx context.Context, skillID string, ownerUserID string) (string, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
@@ -399,6 +413,7 @@ func (s *Store) GetSkillRevision(ctx context.Context, skillID string, ownerUserI
 	return buildEffectiveSkillRevision(skillUpdatedAt, latestAssetUpdatedAt, assetCount), nil
 }
 
+// 执行技能相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListDeletedSkillEventsByOwner(ctx context.Context, ownerUserID string, since *time.Time, limit int) ([]domain.AgentRetiredSkillItem, error) {
 	query := `
 		SELECT resource_id, payload, message, created_at
@@ -461,6 +476,7 @@ func (s *Store) ListDeletedSkillEventsByOwner(ctx context.Context, ownerUserID s
 	return items, rows.Err()
 }
 
+// 执行技能相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateSkill(ctx context.Context, input CreateSkillInput) (*domain.ProductSkill, error) {
 	topicsPayload := marshalSkillTopics(input.Topics)
 	row := s.pool.QueryRow(ctx, `
@@ -476,6 +492,7 @@ func (s *Store) CreateSkill(ctx context.Context, input CreateSkillInput) (*domai
 	return scanSkill(row)
 }
 
+// 执行技能相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpdateSkill(ctx context.Context, skillID string, ownerUserID string, input UpdateSkillInput) (*domain.ProductSkill, error) {
 	topicsPayload := any(nil)
 	if input.TopicsTouched {
@@ -562,6 +579,7 @@ func (s *Store) UpdateSkill(ctx context.Context, skillID string, ownerUserID str
 	return skill, nil
 }
 
+// 执行技能相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetOwnedSkillByID(ctx context.Context, skillID string, ownerUserID string) (*domain.ProductSkill, error) {
 	row := s.pool.QueryRow(ctx, skillQueryWithLoad(`
 		WHERE id = $1 AND owner_user_id = $2
@@ -577,6 +595,7 @@ func (s *Store) GetOwnedSkillByID(ctx context.Context, skillID string, ownerUser
 	return skill, nil
 }
 
+// 执行技能相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListPublishTasksBySkill(ctx context.Context, ownerUserID string, skillID string, limit int) ([]domain.PublishTask, error) {
 	query := `
 		SELECT pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
@@ -611,6 +630,7 @@ func (s *Store) ListPublishTasksBySkill(ctx context.Context, ownerUserID string,
 	return items, rows.Err()
 }
 
+// 处理扫描技能资源相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanSkillAsset(row pgx.Row) (*domain.ProductSkillAsset, error) {
 	var asset domain.ProductSkillAsset
 	var mimeType *string
@@ -641,6 +661,7 @@ func scanSkillAsset(row pgx.Row) (*domain.ProductSkillAsset, error) {
 	return &asset, nil
 }
 
+// 处理扫描设备技能同步状态相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanDeviceSkillSyncState(row pgx.Row) (*domain.DeviceSkillSyncState, error) {
 	var item domain.DeviceSkillSyncState
 	var syncedRevision *string
@@ -668,6 +689,7 @@ func scanDeviceSkillSyncState(row pgx.Row) (*domain.DeviceSkillSyncState, error)
 	return &item, nil
 }
 
+// 处理扫描设备Retired技能Ack相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanDeviceRetiredSkillAck(row pgx.Row) (*domain.DeviceRetiredSkillAck, error) {
 	var item domain.DeviceRetiredSkillAck
 	var message *string
@@ -687,6 +709,7 @@ func scanDeviceRetiredSkillAck(row pgx.Row) (*domain.DeviceRetiredSkillAck, erro
 	return &item, nil
 }
 
+// 执行技能相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListSkillAssets(ctx context.Context, skillID string, ownerUserID string) ([]domain.ProductSkillAsset, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, skill_id, owner_user_id, asset_type, file_name, mime_type,
@@ -711,6 +734,7 @@ func (s *Store) ListSkillAssets(ctx context.Context, skillID string, ownerUserID
 	return items, rows.Err()
 }
 
+// 执行技能相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListSkillSyncStatesByDevice(ctx context.Context, ownerUserID string, deviceID string, limit int) ([]domain.DeviceSkillSyncState, error) {
 	query := `
 		SELECT dsss.id, dsss.device_id, dsss.skill_id, dsss.sync_status, dsss.synced_revision,
@@ -746,6 +770,7 @@ func (s *Store) ListSkillSyncStatesByDevice(ctx context.Context, ownerUserID str
 	return items, rows.Err()
 }
 
+// 执行技能相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListSkillSyncStatesBySkill(ctx context.Context, ownerUserID string, skillID string, limit int) ([]domain.DeviceSkillSyncState, error) {
 	query := `
 		SELECT dsss.id, dsss.device_id, dsss.skill_id, dsss.sync_status, dsss.synced_revision,
@@ -781,6 +806,7 @@ func (s *Store) ListSkillSyncStatesBySkill(ctx context.Context, ownerUserID stri
 	return items, rows.Err()
 }
 
+// 执行技能相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetDeviceSkillSyncState(ctx context.Context, deviceID string, skillID string) (*domain.DeviceSkillSyncState, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, device_id, skill_id, sync_status, synced_revision, asset_count, message,
@@ -799,6 +825,7 @@ func (s *Store) GetDeviceSkillSyncState(ctx context.Context, deviceID string, sk
 	return item, nil
 }
 
+// 执行技能相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListDeviceRetiredSkillAcks(ctx context.Context, deviceID string) ([]domain.DeviceRetiredSkillAck, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, device_id, skill_id, reason, message, last_acknowledged_at, created_at, updated_at
@@ -822,6 +849,7 @@ func (s *Store) ListDeviceRetiredSkillAcks(ctx context.Context, deviceID string)
 	return items, rows.Err()
 }
 
+// 执行技能相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpsertDeviceRetiredSkillAck(ctx context.Context, input UpsertDeviceRetiredSkillAckInput) (*domain.DeviceRetiredSkillAck, error) {
 	ackTime := time.Now().UTC()
 	if input.LastAcknowledgedAt != nil && !input.LastAcknowledgedAt.IsZero() {
@@ -843,6 +871,7 @@ func (s *Store) UpsertDeviceRetiredSkillAck(ctx context.Context, input UpsertDev
 	return scanDeviceRetiredSkillAck(row)
 }
 
+// 执行技能相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpsertDeviceSkillSyncState(ctx context.Context, input UpsertDeviceSkillSyncStateInput) (*domain.DeviceSkillSyncState, error) {
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO device_skill_sync_states (
@@ -863,6 +892,7 @@ func (s *Store) UpsertDeviceSkillSyncState(ctx context.Context, input UpsertDevi
 	return scanDeviceSkillSyncState(row)
 }
 
+// 执行技能相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateSkillAsset(ctx context.Context, input CreateSkillAssetInput) (*domain.ProductSkillAsset, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -900,6 +930,7 @@ func (s *Store) CreateSkillAsset(ctx context.Context, input CreateSkillAssetInpu
 	return asset, nil
 }
 
+// 执行技能相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) DeleteSkillAsset(ctx context.Context, skillID string, assetID string, ownerUserID string) (*domain.ProductSkillAsset, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -943,6 +974,7 @@ func (s *Store) DeleteSkillAsset(ctx context.Context, skillID string, assetID st
 	return asset, nil
 }
 
+// 执行技能相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetSkillUsageSummary(ctx context.Context, skillID string, ownerUserID string) (int64, int64, int64, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
@@ -974,6 +1006,7 @@ func (s *Store) GetSkillUsageSummary(ctx context.Context, skillID string, ownerU
 	return taskCount, accountCount, aiJobCount, nil
 }
 
+// 执行技能相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) DeleteSkill(ctx context.Context, skillID string, ownerUserID string) (bool, error) {
 	commandTag, err := s.pool.Exec(ctx, `
 		DELETE FROM product_skills

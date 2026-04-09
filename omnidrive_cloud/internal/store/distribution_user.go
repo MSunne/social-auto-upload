@@ -15,6 +15,7 @@ type CommissionListFilter struct {
 	Limit  int
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetDistributionSummaryByPromoter(ctx context.Context, promoterUserID string) (*domain.DistributionSummary, error) {
 	summary := &domain.DistributionSummary{}
 
@@ -91,6 +92,7 @@ func (s *Store) GetDistributionSummaryByPromoter(ctx context.Context, promoterUs
 	return summary, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) getApplicableDistributionRuleByPromoter(ctx context.Context, promoterUserID string) (*distributionRuleRecord, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
@@ -133,6 +135,7 @@ func (s *Store) getApplicableDistributionRuleByPromoter(ctx context.Context, pro
 	return &item, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListCommissionItemsByPromoter(ctx context.Context, promoterUserID string, filter CommissionListFilter) ([]domain.CommissionItem, error) {
 	limit := filter.Limit
 	if limit <= 0 || limit > 100 {
@@ -220,6 +223,7 @@ func (s *Store) ListCommissionItemsByPromoter(ctx context.Context, promoterUserI
 	return items, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListCommissionReleaseEventsByPromoter(ctx context.Context, promoterUserID string, commissionItemID string, limit int) ([]domain.CommissionReleaseEvent, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100

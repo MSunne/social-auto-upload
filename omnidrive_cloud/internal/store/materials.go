@@ -12,6 +12,7 @@ import (
 	"omnidrive_cloud/internal/domain"
 )
 
+// 处理扫描素材Root相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanMaterialRoot(row pgx.Row) (*domain.MaterialRoot, error) {
 	var item domain.MaterialRoot
 	if err := row.Scan(
@@ -30,6 +31,7 @@ func scanMaterialRoot(row pgx.Row) (*domain.MaterialRoot, error) {
 	return &item, nil
 }
 
+// 处理扫描素材Entry相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanMaterialEntry(row pgx.Row) (*domain.MaterialEntry, error) {
 	var item domain.MaterialEntry
 	var absolutePath *string
@@ -72,6 +74,7 @@ func scanMaterialEntry(row pgx.Row) (*domain.MaterialEntry, error) {
 	return &item, nil
 }
 
+// 执行素材相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListMaterialRootsByOwner(ctx context.Context, ownerUserID string, deviceID string) ([]domain.MaterialRoot, error) {
 	query := `
 		SELECT r.id, r.device_id, r.root_name, r.root_path, r.is_available, r.is_directory, r.last_synced_at, r.created_at, r.updated_at
@@ -103,6 +106,7 @@ func (s *Store) ListMaterialRootsByOwner(ctx context.Context, ownerUserID string
 	return items, rows.Err()
 }
 
+// 执行素材相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListMaterialEntriesByOwner(ctx context.Context, ownerUserID string, deviceID string, rootName string, parentPath string) ([]domain.MaterialEntry, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT e.id, e.device_id, e.root_name, e.root_path, e.relative_path, e.parent_path, e.name, e.kind,
@@ -133,6 +137,7 @@ func (s *Store) ListMaterialEntriesByOwner(ctx context.Context, ownerUserID stri
 	return items, rows.Err()
 }
 
+// 执行素材相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetMaterialRootByOwner(ctx context.Context, ownerUserID string, deviceID string, rootName string) (*domain.MaterialRoot, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT r.id, r.device_id, r.root_name, r.root_path, r.is_available, r.is_directory, r.last_synced_at, r.created_at, r.updated_at
@@ -153,6 +158,7 @@ func (s *Store) GetMaterialRootByOwner(ctx context.Context, ownerUserID string, 
 	return item, nil
 }
 
+// 执行素材相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetMaterialEntryByOwner(ctx context.Context, ownerUserID string, deviceID string, rootName string, relativePath string) (*domain.MaterialEntry, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT e.id, e.device_id, e.root_name, e.root_path, e.relative_path, e.parent_path, e.name, e.kind,
@@ -176,6 +182,7 @@ func (s *Store) GetMaterialEntryByOwner(ctx context.Context, ownerUserID string,
 	return item, nil
 }
 
+// 同步素材Roots，把当前上报或计算结果落到持久化状态中。
 func (s *Store) SyncMaterialRoots(ctx context.Context, deviceID string, roots []SyncMaterialRootInput) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -212,6 +219,7 @@ func (s *Store) SyncMaterialRoots(ctx context.Context, deviceID string, roots []
 	return tx.Commit(ctx)
 }
 
+// 同步素材Directory，把当前上报或计算结果落到持久化状态中。
 func (s *Store) SyncMaterialDirectory(ctx context.Context, deviceID string, rootName string, rootPath string, directoryPath string, directoryAbsolutePath *string, entries []SyncMaterialEntryInput) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -296,6 +304,7 @@ func (s *Store) SyncMaterialDirectory(ctx context.Context, deviceID string, root
 	return tx.Commit(ctx)
 }
 
+// 同步素材文件，把当前上报或计算结果落到持久化状态中。
 func (s *Store) SyncMaterialFile(ctx context.Context, input SyncMaterialEntryInput) (*domain.MaterialEntry, error) {
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO device_material_entries (
@@ -327,6 +336,7 @@ func (s *Store) SyncMaterialFile(ctx context.Context, input SyncMaterialEntryInp
 	return scanMaterialEntry(row)
 }
 
+// 规范化素材路径，统一素材链路的输入格式和后续处理行为。
 func normalizeMaterialPath(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" || value == "." || value == "/" {
@@ -337,6 +347,7 @@ func normalizeMaterialPath(value string) string {
 	return path.Clean(value)
 }
 
+// 规范化素材Parent，统一素材链路的输入格式和后续处理行为。
 func normalizeMaterialParent(relativePath string) string {
 	normalized := normalizeMaterialPath(relativePath)
 	if normalized == "" {

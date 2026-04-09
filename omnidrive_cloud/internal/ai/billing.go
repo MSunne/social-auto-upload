@@ -9,6 +9,7 @@ import (
 	"omnidrive_cloud/internal/store"
 )
 
+// 构建对话计费输入，为计费生成后续步骤所需的派生参数或载荷。
 func buildChatBillingInput(job *domain.AIJob, result *ChatResult) store.ApplyUsageBillingInput {
 	metrics := make([]store.ApplyUsageMetricInput, 0, 2)
 	usage := map[string]any{}
@@ -45,6 +46,7 @@ func buildChatBillingInput(job *domain.AIJob, result *ChatResult) store.ApplyUsa
 	}
 }
 
+// 构建图片计费输入，为计费生成后续步骤所需的派生参数或载荷。
 func buildImageBillingInput(job *domain.AIJob, imageCount int) store.ApplyUsageBillingInput {
 	metrics := []store.ApplyUsageMetricInput{}
 	if imageCount > 0 {
@@ -66,6 +68,7 @@ func buildImageBillingInput(job *domain.AIJob, imageCount int) store.ApplyUsageB
 	}
 }
 
+// 构建视频计费输入，为计费生成后续步骤所需的派生参数或载荷。
 func buildVideoBillingInput(job *domain.AIJob) store.ApplyUsageBillingInput {
 	payload := decodePayloadMap(job.InputPayload)
 	metadata := map[string]any{
@@ -90,6 +93,7 @@ func buildVideoBillingInput(job *domain.AIJob) store.ApplyUsageBillingInput {
 	}
 }
 
+// 构建Estimated用量计费输入，为计费生成后续步骤所需的派生参数或载荷。
 func BuildEstimatedUsageBillingInput(job *domain.AIJob) store.ApplyUsageBillingInput {
 	if job == nil {
 		return store.ApplyUsageBillingInput{}
@@ -116,6 +120,7 @@ func BuildEstimatedUsageBillingInput(job *domain.AIJob) store.ApplyUsageBillingI
 	}
 }
 
+// 构建用量计费Block消息，为计费生成后续步骤所需的派生参数或载荷。
 func BuildUsageBillingBlockMessage(result *store.ApplyUsageBillingResult) string {
 	if result == nil {
 		return "当前积分不足，任务开始前需要预扣费，请先充值后再试。"
@@ -135,6 +140,7 @@ func BuildUsageBillingBlockMessage(result *store.ApplyUsageBillingResult) string
 	}
 }
 
+// 处理用量Int64相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func usageInt64(values ...any) int64 {
 	for _, value := range values {
 		switch typed := value.(type) {
@@ -163,6 +169,7 @@ func usageInt64(values ...any) int64 {
 	return 0
 }
 
+// 将任意结构序列化为 JSON 字节，失败时直接 panic 以暴露调用方数据错误。
 func mustJSONBytes(value any) []byte {
 	if value == nil {
 		return nil

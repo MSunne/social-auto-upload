@@ -42,11 +42,16 @@ SUCCESS_URL_HINTS = {
     },
     3: {
         "hosts": ("creator.douyin.com",),
-        "paths": ("/creator-micro/content/upload", "/creator-micro/content/post/video", "/creator-micro/content/publish"),
+        "paths": (
+            "/creator-micro/content/upload",
+            "/creator-micro/content/post/video",
+            "/creator-micro/content/publish",
+            "/creator-micro/content/manage",
+        ),
     },
     4: {
         "hosts": ("cp.kuaishou.com",),
-        "paths": ("/article/publish/video",),
+        "paths": ("/article/publish/video", "/article/manage/video"),
     },
 }
 

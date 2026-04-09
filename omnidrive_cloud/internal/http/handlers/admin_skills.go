@@ -16,6 +16,7 @@ type AdminSkillHandler struct {
 	app *appstate.App
 }
 
+// 创建管理端技能Handler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewAdminSkillHandler(app *appstate.App) *AdminSkillHandler {
 	return &AdminSkillHandler{app: app}
 }
@@ -31,6 +32,7 @@ type adminUpdateSkillRequest struct {
 	IsEnabled                *bool    `json:"isEnabled"`
 }
 
+// 处理管理端技能技能列表接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminSkillHandler) ListSkills(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, err := h.app.Store.ListAdminSkills(r.Context(), store.AdminSkillListFilter{
@@ -53,6 +55,7 @@ func (h *AdminSkillHandler) ListSkills(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理管理端技能更新技能接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminSkillHandler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 	skillID := strings.TrimSpace(chi.URLParam(r, "skillId"))
 	if skillID == "" {

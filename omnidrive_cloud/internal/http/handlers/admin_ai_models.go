@@ -21,6 +21,7 @@ type AdminAIHandler struct {
 	app *appstate.App
 }
 
+// 创建管理端AIHandler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewAdminAIHandler(app *appstate.App) *AdminAIHandler {
 	return &AdminAIHandler{app: app}
 }
@@ -78,6 +79,7 @@ type adminUpdateAIModelRequest struct {
 	IsEnabled                 *bool            `json:"isEnabled"`
 }
 
+// 规范化AI模型Category，统一管理端AI模型链路的输入格式和后续处理行为。
 func normalizeAIModelCategory(category string) string {
 	switch strings.ToLower(strings.TrimSpace(category)) {
 	case "text":
@@ -89,6 +91,7 @@ func normalizeAIModelCategory(category string) string {
 	}
 }
 
+// 处理校验AI模型Category相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func validateAIModelCategory(category string) bool {
 	switch normalizeAIModelCategory(category) {
 	case "image", "video", "chat", "music":
@@ -98,6 +101,7 @@ func validateAIModelCategory(category string) bool {
 	}
 }
 
+// 规范化AI模型计费Mode，统一管理端AI模型链路的输入格式和后续处理行为。
 func normalizeAIModelBillingMode(category string, billingMode string) string {
 	switch strings.ToLower(strings.TrimSpace(billingMode)) {
 	case "per_call", "per_second", "per_token":
@@ -110,6 +114,7 @@ func normalizeAIModelBillingMode(category string, billingMode string) string {
 	}
 }
 
+// 处理校验AI模型计费Mode相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func validateAIModelBillingMode(billingMode string) bool {
 	switch strings.ToLower(strings.TrimSpace(billingMode)) {
 	case "per_call", "per_second", "per_token":
@@ -119,6 +124,7 @@ func validateAIModelBillingMode(billingMode string) bool {
 	}
 }
 
+// 规范化可选管理端Text，统一管理端AI模型链路的输入格式和后续处理行为。
 func normalizeOptionalAdminText(value *string) *string {
 	if value == nil {
 		return nil
@@ -130,6 +136,7 @@ func normalizeOptionalAdminText(value *string) *string {
 	return &trimmed
 }
 
+// 规范化管理端String列表，统一管理端AI模型链路的输入格式和后续处理行为。
 func normalizeAdminStringList(values []string) []string {
 	if len(values) == 0 {
 		return []string{}
@@ -150,6 +157,7 @@ func normalizeAdminStringList(values []string) []string {
 	return items
 }
 
+// 规范化管理端Supported文件Types，统一管理端AI模型链路的输入格式和后续处理行为。
 func normalizeAdminSupportedFileTypes(values []string) []string {
 	if len(values) == 0 {
 		return []string{}
@@ -173,6 +181,7 @@ func normalizeAdminSupportedFileTypes(values []string) []string {
 	return items
 }
 
+// 规范化管理端更新可选Text，统一管理端AI模型链路的输入格式和后续处理行为。
 func normalizeAdminUpdateOptionalText(value *string) *string {
 	if value == nil {
 		return nil
@@ -181,6 +190,7 @@ func normalizeAdminUpdateOptionalText(value *string) *string {
 	return &trimmed
 }
 
+// 规范化创建AI模型载荷，统一管理端AI模型链路的输入格式和后续处理行为。
 func normalizeCreateAIModelPayload(payload adminCreateAIModelRequest) (store.CreateAIModelInput, error) {
 	category := normalizeAIModelCategory(firstNonEmptyAdminValue(payload.ModelType, payload.Category))
 	if !validateAIModelCategory(category) {
@@ -247,6 +257,7 @@ func normalizeCreateAIModelPayload(payload adminCreateAIModelRequest) (store.Cre
 	return input, nil
 }
 
+// 规范化更新AI模型载荷，统一管理端AI模型链路的输入格式和后续处理行为。
 func normalizeUpdateAIModelPayload(payload adminUpdateAIModelRequest) (store.UpdateAIModelInput, error) {
 	if payload.ModelAlias != nil && strings.TrimSpace(valueOrEmpty(payload.ModelAlias)) == "" {
 		return store.UpdateAIModelInput{}, renderableError("modelAlias cannot be empty")
@@ -330,6 +341,7 @@ func normalizeUpdateAIModelPayload(payload adminUpdateAIModelRequest) (store.Upd
 	return input, nil
 }
 
+// 构建AI模型ID，为管理端AI模型生成后续步骤所需的派生参数或载荷。
 func buildAIModelID(vendor string, modelName string) string {
 	seed := strings.ToLower(strings.TrimSpace(vendor + "-" + modelName))
 	slug := strings.Trim(aiModelSlugSanitizer.ReplaceAllString(seed, "-"), "-")
@@ -339,6 +351,7 @@ func buildAIModelID(vendor string, modelName string) string {
 	return uuid.NewString()
 }
 
+// 处理管理端AI列表模型接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminAIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, err := h.app.Store.ListAdminAIModels(r.Context(), store.AdminAIModelListFilter{
@@ -364,6 +377,7 @@ func (h *AdminAIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理管理端AI详情模型接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminAIHandler) DetailModel(w http.ResponseWriter, r *http.Request) {
 	modelID := strings.TrimSpace(chi.URLParam(r, "modelId"))
 	if modelID == "" {
@@ -389,8 +403,10 @@ var errInvalidAIModelBillingMode = renderableError("billingMode must be one of: 
 
 type renderableError string
 
+// 返回renderable错误的可读错误消息，供日志记录和错误透传统一使用。
 func (e renderableError) Error() string { return string(e) }
 
+// 处理管理端AI创建模型接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminAIHandler) CreateModel(w http.ResponseWriter, r *http.Request) {
 	var payload adminCreateAIModelRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -434,6 +450,7 @@ func (h *AdminAIHandler) CreateModel(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusCreated, record)
 }
 
+// 处理管理端AI更新模型接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminAIHandler) UpdateModel(w http.ResponseWriter, r *http.Request) {
 	modelID := strings.TrimSpace(chi.URLParam(r, "modelId"))
 	if modelID == "" {
@@ -481,6 +498,7 @@ func (h *AdminAIHandler) UpdateModel(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, record)
 }
 
+// 处理管理端AI删除模型接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminAIHandler) DeleteModel(w http.ResponseWriter, r *http.Request) {
 	modelID := strings.TrimSpace(chi.URLParam(r, "modelId"))
 	if modelID == "" {

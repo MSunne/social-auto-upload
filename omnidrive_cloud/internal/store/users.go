@@ -20,6 +20,7 @@ const userSelectColumns = `
 	updated_at
 `
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateUser(ctx context.Context, input CreateUserInput) (*domain.User, error) {
 	var email any
 	if trimmed := strings.ToLower(strings.TrimSpace(input.Email)); trimmed != "" {
@@ -43,6 +44,7 @@ func (s *Store) CreateUser(ctx context.Context, input CreateUserInput) (*domain.
 	return &user, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (*UserWithPassword, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" {
@@ -74,6 +76,7 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (*UserWithPass
 	return &result, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetUserByPhone(ctx context.Context, phone string) (*UserWithPassword, error) {
 	phone = strings.TrimSpace(phone)
 	if phone == "" {
@@ -105,6 +108,7 @@ func (s *Store) GetUserByPhone(ctx context.Context, phone string) (*UserWithPass
 	return &result, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetUserByID(ctx context.Context, id string) (*domain.User, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT `+userSelectColumns+`

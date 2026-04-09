@@ -30,6 +30,7 @@ type bootstrapOptions struct {
 	videoModel    string
 }
 
+// 组装设备初始化命令依赖并启动主流程，发生错误时直接退出进程。
 func main() {
 	opts := parseFlags()
 
@@ -152,6 +153,7 @@ func main() {
 	fmt.Println(string(encoded))
 }
 
+// 解析Flags，为设备初始化命令提供结构化输入。
 func parseFlags() bootstrapOptions {
 	var opts bootstrapOptions
 	flag.StringVar(&opts.deviceCode, "device-code", "", "OmniBull device code (stable persisted code)")
@@ -191,6 +193,7 @@ func parseFlags() bootstrapOptions {
 	return opts
 }
 
+// 确保归属方用户已满足执行前提，必要时补齐缺失状态或配置。
 func ensureOwnerUser(ctx context.Context, repo *store.Store, passwords *security.TokenManager, opts bootstrapOptions) (*store.UserWithPassword, bool, error) {
 	existing, err := repo.GetUserByEmail(ctx, opts.ownerEmail)
 	if err != nil {
@@ -225,6 +228,7 @@ func ensureOwnerUser(ctx context.Context, repo *store.Store, passwords *security
 	return &store.UserWithPassword{User: *user, PasswordHash: passwordHash}, true, nil
 }
 
+// 加载生效Defaults，供设备初始化命令继续处理当前业务状态。
 func loadEffectiveDefaults(ctx context.Context, cfg config.Config, repo *store.Store) (string, string, string, error) {
 	chatModel := strings.TrimSpace(cfg.DefaultChatModel)
 	imageModel := strings.TrimSpace(cfg.DefaultImageModel)
@@ -249,6 +253,7 @@ func loadEffectiveDefaults(ctx context.Context, cfg config.Config, repo *store.S
 	return chatModel, imageModel, videoModel, nil
 }
 
+// 处理默认归属方名称相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func defaultOwnerName(email string) string {
 	name := strings.TrimSpace(email)
 	if index := strings.Index(name, "@"); index > 0 {
@@ -264,6 +269,7 @@ func defaultOwnerName(email string) string {
 	return name
 }
 
+// 将非空字符串转换为指针，统一存储层对可选字符串字段的入参表达。
 func stringPtr(value string) *string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -272,6 +278,7 @@ func stringPtr(value string) *string {
 	return &value
 }
 
+// 解包可选字符串指针，统一存储层对空值字段的回写行为。
 func valueOrEmpty(value *string) string {
 	if value == nil {
 		return ""

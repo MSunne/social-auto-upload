@@ -17,6 +17,7 @@ import (
 	"omnidrive_cloud/internal/workflow"
 )
 
+// 创建 HTTP 服务实例，初始化数据库、存储、应用状态以及后台调度器。
 func New(cfg config.Config, logger *slog.Logger) (*http.Server, func(), error) {
 	if logger == nil {
 		logger = slog.Default()
@@ -115,6 +116,7 @@ func New(cfg config.Config, logger *slog.Logger) (*http.Server, func(), error) {
 	return server, cleanup, nil
 }
 
+// 处理存储ModeHint相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func storageModeHint(cfg config.Config) string {
 	if strings.TrimSpace(cfg.S3Endpoint) != "" &&
 		strings.TrimSpace(cfg.S3Bucket) != "" &&

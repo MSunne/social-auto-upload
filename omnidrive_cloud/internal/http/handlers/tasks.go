@@ -108,10 +108,12 @@ type taskMaterialRefRequest struct {
 	Role *string `json:"role"`
 }
 
+// 创建任务处理器，绑定应用状态供路由层注册任务相关接口。
 func NewTaskHandler(app *appstate.App) *TaskHandler {
 	return &TaskHandler{app: app}
 }
 
+// 处理任务列表接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) List(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	limit := 0
@@ -138,6 +140,7 @@ func (h *TaskHandler) List(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理任务诊断接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) Diagnostics(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	limit := 0
@@ -223,6 +226,7 @@ func (h *TaskHandler) Diagnostics(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理任务批量修复接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) BulkRepair(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 
@@ -286,6 +290,7 @@ func (h *TaskHandler) BulkRepair(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理任务批量操作接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) BulkAction(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 
@@ -360,6 +365,7 @@ func (h *TaskHandler) BulkAction(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理任务创建接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 
@@ -526,6 +532,7 @@ func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusCreated, task)
 }
 
+// 处理任务详情接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) Detail(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
@@ -547,6 +554,7 @@ func (h *TaskHandler) Detail(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, task)
 }
 
+// 处理任务工作区接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
@@ -609,6 +617,7 @@ func (h *TaskHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理任务事件接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) Events(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
@@ -625,6 +634,7 @@ func (h *TaskHandler) Events(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理任务产物接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) Artifacts(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
@@ -641,6 +651,7 @@ func (h *TaskHandler) Artifacts(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理任务素材接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) Materials(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
@@ -657,6 +668,7 @@ func (h *TaskHandler) Materials(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理任务素材刷新接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) RefreshMaterials(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
@@ -690,6 +702,7 @@ func (h *TaskHandler) RefreshMaterials(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, result)
 }
 
+// 处理任务技能刷新接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) RefreshSkill(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
@@ -719,6 +732,7 @@ func (h *TaskHandler) RefreshSkill(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, result)
 }
 
+// 规范化BatchRepairOperations，统一任务链路的输入格式和后续处理行为。
 func normalizeBatchRepairOperations(input []string) []string {
 	seen := map[string]struct{}{}
 	items := make([]string, 0, len(input))
@@ -736,6 +750,7 @@ func normalizeBatchRepairOperations(input []string) []string {
 	return items
 }
 
+// 处理任务select任务Operation接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) selectTasksForOperation(ctx context.Context, ownerUserID string, payload publishTaskSelectionFilter) ([]domain.PublishTask, error) {
 	selected := make([]domain.PublishTask, 0)
 	seen := map[string]struct{}{}
@@ -830,6 +845,7 @@ func (h *TaskHandler) selectTasksForOperation(ctx context.Context, ownerUserID s
 	return filtered, nil
 }
 
+// 处理任务批量Repair任务接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) bulkRepairTask(ctx context.Context, ownerUserID string, task *domain.PublishTask, operations []string) (domain.PublishTaskBulkRepairItem, error) {
 	device, account, skill, err := loadPublishTaskContextForOwner(ctx, h.app, ownerUserID, task)
 	if err != nil {
@@ -893,6 +909,7 @@ func (h *TaskHandler) bulkRepairTask(ctx context.Context, ownerUserID string, ta
 	return item, nil
 }
 
+// 处理任务执行任务素材Refresh接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) executeTaskMaterialRefresh(ctx context.Context, ownerUserID string, task *domain.PublishTask, recordEvents bool) (*domain.PublishTaskMaterialRefreshResult, string, string, error) {
 	if task == nil {
 		return nil, "skipped", "任务不存在", nil
@@ -1000,6 +1017,7 @@ func (h *TaskHandler) executeTaskMaterialRefresh(ctx context.Context, ownerUserI
 	}, "success", "任务素材快照已刷新", nil
 }
 
+// 处理任务执行任务技能Refresh接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) executeTaskSkillRefresh(ctx context.Context, ownerUserID string, task *domain.PublishTask, recordEvents bool) (*domain.PublishTaskSkillRefreshResult, string, string, error) {
 	if task == nil {
 		return nil, "skipped", "任务不存在", nil
@@ -1082,6 +1100,7 @@ func (h *TaskHandler) executeTaskSkillRefresh(ctx context.Context, ownerUserID s
 	}, "success", "任务技能版本快照已刷新", nil
 }
 
+// 汇总批量RepairItems，供接口响应或后续统计逻辑直接复用。
 func summarizeBulkRepairItems(items []domain.PublishTaskBulkRepairItem) domain.PublishTaskBulkRepairSummary {
 	summary := domain.PublishTaskBulkRepairSummary{
 		ByStatus:    map[string]int64{},
@@ -1106,6 +1125,7 @@ func summarizeBulkRepairItems(items []domain.PublishTaskBulkRepairItem) domain.P
 	return summary
 }
 
+// 处理任务批量Act任务接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) bulkActOnTask(ctx context.Context, ownerUserID string, task *domain.PublishTask, payload batchActionTasksRequest) (domain.PublishTaskBulkActionItem, error) {
 	item := domain.PublishTaskBulkActionItem{
 		TaskBefore: *task,
@@ -1172,6 +1192,7 @@ func (h *TaskHandler) bulkActOnTask(ctx context.Context, ownerUserID string, tas
 	return item, nil
 }
 
+// 汇总批量动作Items，供接口响应或后续统计逻辑直接复用。
 func summarizeBulkActionItems(items []domain.PublishTaskBulkActionItem) domain.PublishTaskBulkActionSummary {
 	summary := domain.PublishTaskBulkActionSummary{
 		ByStatus: map[string]int64{},
@@ -1194,6 +1215,7 @@ func summarizeBulkActionItems(items []domain.PublishTaskBulkActionItem) domain.P
 	return summary
 }
 
+// 处理任务执行任务取消接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) executeTaskCancel(ctx context.Context, ownerUserID string, taskID string, existing *domain.PublishTask) (*domain.PublishTask, string, string, error) {
 	if existing != nil && !canCancelTask(existing.Status) {
 		return existing, "skipped", "任务当前状态不支持取消", nil
@@ -1226,6 +1248,7 @@ func (h *TaskHandler) executeTaskCancel(ctx context.Context, ownerUserID string,
 	return task, "success", trimmedStringValue(task.Message), nil
 }
 
+// 处理任务执行任务重试接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) executeTaskRetry(ctx context.Context, ownerUserID string, taskID string, existing *domain.PublishTask) (*domain.PublishTask, int64, string, string, error) {
 	if existing == nil {
 		return nil, 0, "skipped", "任务不存在", nil
@@ -1282,6 +1305,7 @@ func (h *TaskHandler) executeTaskRetry(ctx context.Context, ownerUserID string, 
 	return task, clearedArtifactCount, "success", trimmedStringValue(task.Message), nil
 }
 
+// 处理任务执行任务强制释放接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) executeTaskForceRelease(ctx context.Context, ownerUserID string, taskID string) (*domain.PublishTask, string, string, error) {
 	task, err := h.app.Store.ForceReleasePublishTaskLease(ctx, taskID, ownerUserID)
 	if err != nil {
@@ -1314,6 +1338,7 @@ func (h *TaskHandler) executeTaskForceRelease(ctx context.Context, ownerUserID s
 	return task, "success", trimmedStringValue(task.Message), nil
 }
 
+// 处理任务执行任务恢复接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) executeTaskResume(ctx context.Context, ownerUserID string, taskID string, message *string) (*domain.PublishTask, string, string, error) {
 	task, err := h.app.Store.ResumePublishTaskFromVerification(ctx, taskID, ownerUserID, message)
 	if err != nil {
@@ -1350,6 +1375,7 @@ func (h *TaskHandler) executeTaskResume(ctx context.Context, ownerUserID string,
 	return task, "success", trimmedStringValue(finalMessage), nil
 }
 
+// 处理任务执行任务人工解析接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) executeTaskManualResolve(ctx context.Context, ownerUserID string, taskID string, status string, message *string, textEvidence *string, payload any) (*domain.PublishTask, int64, string, string, error) {
 	task, err := h.app.Store.ResolvePublishTaskManually(ctx, taskID, ownerUserID, status, message)
 	if err != nil {
@@ -1420,6 +1446,7 @@ func (h *TaskHandler) executeTaskManualResolve(ctx context.Context, ownerUserID 
 	return task, artifactCount, "success", trimmedStringValue(finalMessage), nil
 }
 
+// 判断是否可以取消任务，供当前链路选择后续处理策略。
 func canCancelTask(status string) bool {
 	switch status {
 	case "pending", "running", "needs_verify":
@@ -1429,6 +1456,7 @@ func canCancelTask(status string) bool {
 	}
 }
 
+// 处理任务更新接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
@@ -1548,6 +1576,7 @@ func (h *TaskHandler) Update(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, task)
 }
 
+// 处理任务取消接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
@@ -1579,6 +1608,7 @@ func (h *TaskHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, task)
 }
 
+// 处理任务重试接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) Retry(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
@@ -1614,6 +1644,7 @@ func (h *TaskHandler) Retry(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, task)
 }
 
+// 处理任务强制释放接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) ForceRelease(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
@@ -1635,6 +1666,7 @@ func (h *TaskHandler) ForceRelease(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, task)
 }
 
+// 处理任务恢复接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) Resume(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
@@ -1663,6 +1695,7 @@ func (h *TaskHandler) Resume(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, task)
 }
 
+// 处理任务人工处置接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) ManualResolve(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
@@ -1697,6 +1730,7 @@ func (h *TaskHandler) ManualResolve(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, task)
 }
 
+// 处理任务删除接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
@@ -1735,6 +1769,7 @@ func (h *TaskHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
 
+// 处理任务准备任务素材Refs接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) prepareTaskMaterialRefs(ctx context.Context, ownerUserID string, taskID string, deviceID string, refs []taskMaterialRefRequest) ([]store.ReplacePublishTaskMaterialRefInput, error) {
 	items := make([]store.ReplacePublishTaskMaterialRefInput, 0, len(refs))
 	seen := make(map[string]struct{}, len(refs))
@@ -1770,6 +1805,7 @@ func (h *TaskHandler) prepareTaskMaterialRefs(ctx context.Context, ownerUserID s
 	return items, nil
 }
 
+// 构建发布任务素材Ref输入，为任务生成后续步骤所需的派生参数或载荷。
 func buildPublishTaskMaterialRefInput(taskID string, deviceID string, role string, entry *domain.MaterialEntry) store.ReplacePublishTaskMaterialRefInput {
 	return store.ReplacePublishTaskMaterialRefInput{
 		TaskID:       taskID,
@@ -1789,6 +1825,7 @@ func buildPublishTaskMaterialRefInput(taskID string, deviceID string, role strin
 	}
 }
 
+// 处理发布任务素材RefMatchesEntry相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func publishTaskMaterialRefMatchesEntry(ref domain.PublishTaskMaterialRef, entry *domain.MaterialEntry) bool {
 	if entry == nil {
 		return false
@@ -1806,6 +1843,7 @@ func publishTaskMaterialRefMatchesEntry(ref domain.PublishTaskMaterialRef, entry
 		trimmedStringValue(ref.PreviewText) == trimmedStringValue(entry.PreviewText)
 }
 
+// 读取并裁剪任意值中的字符串内容，供请求载荷解析逻辑复用。
 func trimmedStringValue(value *string) string {
 	if value == nil {
 		return ""
@@ -1813,6 +1851,7 @@ func trimmedStringValue(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
+// 读取并转换任意值中的整数内容，供请求载荷解析逻辑复用。
 func trimmedInt64Value(value *int64) int64 {
 	if value == nil {
 		return 0
@@ -1820,6 +1859,7 @@ func trimmedInt64Value(value *int64) int64 {
 	return *value
 }
 
+// 清理产物文件，释放当前链路不再需要的临时资源或旧数据。
 func cleanupArtifactFiles(app *appstate.App, ctx context.Context, artifacts []domain.PublishTaskArtifact) {
 	if app == nil || app.Storage == nil {
 		return
@@ -1838,6 +1878,7 @@ func cleanupArtifactFiles(app *appstate.App, ctx context.Context, artifacts []do
 	}
 }
 
+// 清理Replaced产物文件，释放当前链路不再需要的临时资源或旧数据。
 func cleanupReplacedArtifactFiles(app *appstate.App, ctx context.Context, previous []domain.PublishTaskArtifact, current []domain.PublishTaskArtifact) {
 	if app == nil || app.Storage == nil {
 		return
@@ -1869,6 +1910,7 @@ func cleanupReplacedArtifactFiles(app *appstate.App, ctx context.Context, previo
 	}
 }
 
+// 计算发布任务动作，供任务复用派生状态和判定结果。
 func computePublishTaskActions(task *domain.PublishTask, materialCount int) domain.PublishTaskActionState {
 	if task == nil {
 		return domain.PublishTaskActionState{}

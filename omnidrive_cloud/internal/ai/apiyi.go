@@ -38,6 +38,7 @@ type APIYIProvider struct {
 	httpClient *http.Client
 }
 
+// 创建APIYI供应方相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewAPIYIProvider(cfg config.Config) (*APIYIProvider, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.APIYIBaseURL), "/")
 	apiKey := strings.TrimSpace(cfg.APIYIApiKey)
@@ -54,6 +55,7 @@ func NewAPIYIProvider(cfg config.Config) (*APIYIProvider, error) {
 	}, nil
 }
 
+// 处理Generate对话相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *APIYIProvider) GenerateChat(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 	req, err := p.normalizeChatRequest(ctx, req)
 	if err != nil {
@@ -98,6 +100,7 @@ func (p *APIYIProvider) GenerateChat(ctx context.Context, req ChatRequest) (*Cha
 	}, nil
 }
 
+// 处理Generate对话流式相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *APIYIProvider) GenerateChatStream(ctx context.Context, req ChatRequest, onChunk func(ChatStreamChunk) error) (*ChatResult, error) {
 	req, err := p.normalizeChatRequest(ctx, req)
 	if err != nil {
@@ -264,6 +267,7 @@ func (p *APIYIProvider) GenerateChatStream(ctx context.Context, req ChatRequest,
 	return result, nil
 }
 
+// 构建对话载荷，为APIYI生成后续步骤所需的派生参数或载荷。
 func buildChatPayload(req ChatRequest, stream bool) map[string]any {
 	payload := map[string]any{
 		"model":    req.Model,
@@ -286,6 +290,7 @@ func buildChatPayload(req ChatRequest, stream bool) map[string]any {
 	return payload
 }
 
+// 规范化对话请求，统一APIYI链路的输入格式和后续处理行为。
 func (p *APIYIProvider) normalizeChatRequest(ctx context.Context, req ChatRequest) (ChatRequest, error) {
 	if !usesMaxCompletionTokens(req.Model) || len(req.Messages) == 0 {
 		return req, nil
@@ -304,6 +309,7 @@ func (p *APIYIProvider) normalizeChatRequest(ctx context.Context, req ChatReques
 	return normalized, nil
 }
 
+// 规范化对话消息内容，统一APIYI链路的输入格式和后续处理行为。
 func (p *APIYIProvider) normalizeChatMessageContent(ctx context.Context, content any) (any, error) {
 	switch typed := content.(type) {
 	case []map[string]any:
@@ -323,6 +329,7 @@ func (p *APIYIProvider) normalizeChatMessageContent(ctx context.Context, content
 	}
 }
 
+// 规范化Structured对话Parts，统一APIYI链路的输入格式和后续处理行为。
 func (p *APIYIProvider) normalizeStructuredChatParts(ctx context.Context, parts []map[string]any) ([]map[string]any, error) {
 	if len(parts) == 0 {
 		return parts, nil
@@ -365,6 +372,7 @@ func (p *APIYIProvider) normalizeStructuredChatParts(ctx context.Context, parts 
 	return normalized, nil
 }
 
+// 处理对话图片URLDataURL相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *APIYIProvider) chatImageURLToDataURL(ctx context.Context, sourceURL string) (string, error) {
 	sourceURL = strings.TrimSpace(sourceURL)
 	if sourceURL == "" {
@@ -400,12 +408,14 @@ func (p *APIYIProvider) chatImageURLToDataURL(ctx context.Context, sourceURL str
 	return fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(data)), nil
 }
 
+// 合并对话图片URL载荷，统一多来源数据后返回稳定结果。
 func mergeChatImageURLPayload(payload map[string]any, nextURL string) map[string]any {
 	cloned := cloneMap(payload)
 	cloned["url"] = nextURL
 	return cloned
 }
 
+// 处理clone映射相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func cloneMap(input map[string]any) map[string]any {
 	if len(input) == 0 {
 		return map[string]any{}
@@ -417,6 +427,7 @@ func cloneMap(input map[string]any) map[string]any {
 	return cloned
 }
 
+// 处理Generate图片相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *APIYIProvider) GenerateImage(ctx context.Context, req ImageRequest) (*ImageResult, error) {
 	body, err := p.generateGeminiContent(ctx, req.BaseURL, req.APIKey, req.Model, "", req.Prompt, req.ReferenceImages, buildGeminiImageGenerationConfig(req))
 	if err != nil {
@@ -437,6 +448,7 @@ func (p *APIYIProvider) GenerateImage(ctx context.Context, req ImageRequest) (*I
 	return result, nil
 }
 
+// 处理Generate分镜包相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *APIYIProvider) GenerateStoryboardPackage(ctx context.Context, req StoryboardPackageRequest) (*StoryboardPackageResult, error) {
 	body, err := p.generateGeminiContent(
 		ctx,
@@ -479,6 +491,7 @@ func (p *APIYIProvider) GenerateStoryboardPackage(ctx context.Context, req Story
 	}, nil
 }
 
+// 处理Submit视频相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *APIYIProvider) SubmitVideo(ctx context.Context, req VideoRequest) (*VideoSubmission, error) {
 	requestBody, contentType, err := p.buildVideoSubmissionBody(ctx, req)
 	if err != nil {
@@ -514,6 +527,7 @@ func (p *APIYIProvider) SubmitVideo(ctx context.Context, req VideoRequest) (*Vid
 	}, nil
 }
 
+// 获取视频，为当前链路返回后续处理所需的数据内容。
 func (p *APIYIProvider) GetVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string) (*VideoStatus, error) {
 	body, err := p.doVideoRequest(ctx, model, baseURL, apiKey, http.MethodGet, fmt.Sprintf("/v1/videos/%s", url.PathEscape(videoID)), nil, "")
 	if err != nil {
@@ -575,6 +589,7 @@ func (p *APIYIProvider) GetVideo(ctx context.Context, videoID string, model stri
 	return status, nil
 }
 
+// 下载视频，为后续处理步骤提供本地可用的数据副本。
 func (p *APIYIProvider) DownloadVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string, contentURL string) (*BinaryArtifact, error) {
 	if directURL := strings.TrimSpace(contentURL); directURL != "" {
 		return p.downloadBinary(ctx, directURL, fmt.Sprintf("%s.mp4", videoID), "video/mp4")
@@ -628,6 +643,7 @@ func (p *APIYIProvider) DownloadVideo(ctx context.Context, videoID string, model
 	}, nil
 }
 
+// 构建视频SubmissionBody，为APIYI生成后续步骤所需的派生参数或载荷。
 func (p *APIYIProvider) buildVideoSubmissionBody(ctx context.Context, req VideoRequest) ([]byte, string, error) {
 	referenceMedia := append([]MediaInput(nil), req.ReferenceMedia...)
 	if len(referenceMedia) == 0 {
@@ -699,6 +715,7 @@ func (p *APIYIProvider) buildVideoSubmissionBody(ctx context.Context, req VideoR
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
+// 处理doJSON相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *APIYIProvider) doJSON(ctx context.Context, baseURL string, apiKey string, method string, path string, data []byte, bearer bool) ([]byte, error) {
 	req, err := p.newRetryableRequest(ctx, method, p.resolveEndpointURL(baseURL, path), data, func(r *http.Request) {
 		resolvedAPIKey := p.resolveAPIKey(apiKey)
@@ -730,6 +747,7 @@ func (p *APIYIProvider) doJSON(ctx context.Context, baseURL string, apiKey strin
 	return body, nil
 }
 
+// 处理do视频请求相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *APIYIProvider) doVideoRequest(ctx context.Context, model string, baseURL string, apiKey string, method string, path string, body []byte, contentType string) ([]byte, error) {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
@@ -783,6 +801,7 @@ func (p *APIYIProvider) doVideoRequest(ctx context.Context, model string, baseUR
 	return nil, fmt.Errorf("provider video request failed")
 }
 
+// 处理generateGemini内容相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *APIYIProvider) generateGeminiContent(ctx context.Context, baseURL string, apiKey string, model string, systemPrompt string, prompt string, referenceImages []MediaInput, generationConfig map[string]any) ([]byte, error) {
 	parts := make([]map[string]any, 0, len(referenceImages)+1)
 	for _, media := range referenceImages {
@@ -815,6 +834,7 @@ func (p *APIYIProvider) generateGeminiContent(ctx context.Context, baseURL strin
 	return p.doJSON(ctx, baseURL, apiKey, http.MethodPost, path, data, true)
 }
 
+// 解析BaseURL，根据当前配置和上下文确定最终使用结果。
 func (p *APIYIProvider) resolveBaseURL(override string) string {
 	if trimmed := strings.TrimRight(strings.TrimSpace(override), "/"); trimmed != "" {
 		return trimmed
@@ -822,6 +842,7 @@ func (p *APIYIProvider) resolveBaseURL(override string) string {
 	return p.baseURL
 }
 
+// 解析EndpointURL，根据当前配置和上下文确定最终使用结果。
 func (p *APIYIProvider) resolveEndpointURL(override string, endpointPath string) string {
 	baseURL := p.resolveBaseURL(override)
 	endpointPath = "/" + strings.Trim(strings.TrimSpace(endpointPath), "/")
@@ -852,6 +873,7 @@ func (p *APIYIProvider) resolveEndpointURL(override string, endpointPath string)
 	return strings.TrimRight(parsedURL.String(), "/")
 }
 
+// 解析API键，根据当前配置和上下文确定最终使用结果。
 func (p *APIYIProvider) resolveAPIKey(override string) string {
 	if trimmed := strings.TrimSpace(override); trimmed != "" {
 		return trimmed
@@ -859,6 +881,7 @@ func (p *APIYIProvider) resolveAPIKey(override string) string {
 	return p.apiKey
 }
 
+// 解析视频Authorization，根据当前配置和上下文确定最终使用结果。
 func (p *APIYIProvider) resolveVideoAuthorization(model string, override string) string {
 	apiKey := p.resolveAPIKey(override)
 	if isSoraVideoModel(model) {
@@ -867,6 +890,7 @@ func (p *APIYIProvider) resolveVideoAuthorization(model string, override string)
 	return apiKey
 }
 
+// 处理媒体GeminiPart相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *APIYIProvider) mediaToGeminiPart(ctx context.Context, media MediaInput) (map[string]any, error) {
 	data, mimeType, _, err := p.resolveMediaInput(ctx, media)
 	if err != nil {
@@ -883,6 +907,7 @@ func (p *APIYIProvider) mediaToGeminiPart(ctx context.Context, media MediaInput)
 	}, nil
 }
 
+// 解析媒体输入，根据当前配置和上下文确定最终使用结果。
 func (p *APIYIProvider) resolveMediaInput(ctx context.Context, media MediaInput) ([]byte, string, string, error) {
 	if len(media.Data) > 0 {
 		mimeType := strings.TrimSpace(media.MIMEType)
@@ -916,6 +941,7 @@ func (p *APIYIProvider) resolveMediaInput(ctx context.Context, media MediaInput)
 	return nil, "", "", fmt.Errorf("media input must contain url or data")
 }
 
+// 下载Binary，为后续处理步骤提供本地可用的数据副本。
 func (p *APIYIProvider) downloadBinary(ctx context.Context, rawURL string, fallbackName string, fallbackMime string) (*BinaryArtifact, error) {
 	req, err := p.newRetryableRequest(ctx, http.MethodGet, rawURL, nil, nil)
 	if err != nil {
@@ -955,6 +981,7 @@ func (p *APIYIProvider) downloadBinary(ctx context.Context, rawURL string, fallb
 	}, nil
 }
 
+// 确保HTTP状态已满足执行前提，必要时补齐缺失状态或配置。
 func ensureHTTPStatus(resp *http.Response, body []byte) error {
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
@@ -978,6 +1005,7 @@ func ensureHTTPStatus(resp *http.Response, body []byte) error {
 	return fmt.Errorf("provider request failed with status %d", resp.StatusCode)
 }
 
+// 判断是否属于LMRootGemini提示词Rewrite错误消息，供当前链路选择后续处理策略。
 func isLMRootGeminiPromptRewriteErrorMessage(message string) bool {
 	lower := strings.ToLower(strings.TrimSpace(message))
 	if lower == "" {
@@ -992,6 +1020,7 @@ func isLMRootGeminiPromptRewriteErrorMessage(message string) bool {
 			strings.Contains(lower, "failed to parse json"))
 }
 
+// 判断是否属于Retryable供应方状态错误，供当前链路选择后续处理策略。
 func isRetryableProviderStatusError(statusCode int, body []byte) bool {
 	if statusCode == http.StatusTooManyRequests || statusCode >= http.StatusInternalServerError {
 		return true
@@ -999,6 +1028,7 @@ func isRetryableProviderStatusError(statusCode int, body []byte) bool {
 	return isLMRootGeminiPromptRewriteErrorMessage(string(body))
 }
 
+// 创建APIYIHTTP客户端相关实例，组装运行所需依赖并返回给上层流程复用。
 func newAPIYIHTTPClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ForceAttemptHTTP2 = true
@@ -1013,6 +1043,7 @@ func newAPIYIHTTPClient() *http.Client {
 	}
 }
 
+// 构建Gemini图片生成配置，为APIYI生成后续步骤所需的派生参数或载荷。
 func buildGeminiImageGenerationConfig(req ImageRequest) map[string]any {
 	config := map[string]any{
 		"responseModalities": []string{"IMAGE"},
@@ -1031,6 +1062,7 @@ func buildGeminiImageGenerationConfig(req ImageRequest) map[string]any {
 	return config
 }
 
+// 构建Gemini分镜生成配置，为APIYI生成后续步骤所需的派生参数或载荷。
 func buildGeminiStoryboardGenerationConfig(req StoryboardPackageRequest) map[string]any {
 	config := map[string]any{
 		"responseModalities": []string{"TEXT", "IMAGE"},
@@ -1055,6 +1087,7 @@ type geminiGeneratedContent struct {
 	Images    []BinaryArtifact
 }
 
+// 解析GeminiGenerate内容响应，为APIYI提供结构化输入。
 func parseGeminiGenerateContentResponse(body []byte) (*geminiGeneratedContent, error) {
 	var response struct {
 		Candidates []struct {
@@ -1120,6 +1153,7 @@ func parseGeminiGenerateContentResponse(body []byte) (*geminiGeneratedContent, e
 	return result, nil
 }
 
+// 规范化Gemini图片Size，统一APIYI链路的输入格式和后续处理行为。
 func normalizeGeminiImageSize(value string) string {
 	trimmed := strings.TrimSpace(strings.ToUpper(value))
 	switch trimmed {
@@ -1145,6 +1179,7 @@ func normalizeGeminiImageSize(value string) string {
 	}
 }
 
+// 规范化Sora视频Seconds，统一APIYI链路的输入格式和后续处理行为。
 func normalizeSoraVideoSeconds(durationSeconds *int) string {
 	if durationSeconds == nil || *durationSeconds <= 0 {
 		return ""
@@ -1152,6 +1187,7 @@ func normalizeSoraVideoSeconds(durationSeconds *int) string {
 	return fmt.Sprintf("%d", *durationSeconds)
 }
 
+// 规范化Sora视频Size，统一APIYI链路的输入格式和后续处理行为。
 func normalizeSoraVideoSize(resolution string, aspectRatio string) string {
 	if width, height, ok := parseResolutionDimensions(resolution); ok {
 		return fmt.Sprintf("%dx%d", width, height)
@@ -1166,6 +1202,7 @@ func normalizeSoraVideoSize(resolution string, aspectRatio string) string {
 	}
 }
 
+// 解析ResolutionDimensions，为APIYI提供结构化输入。
 func parseResolutionDimensions(value string) (int, int, bool) {
 	var width, height int
 	if _, err := fmt.Sscanf(strings.TrimSpace(strings.ToLower(value)), "%dx%d", &width, &height); err != nil {
@@ -1177,19 +1214,23 @@ func parseResolutionDimensions(value string) (int, int, bool) {
 	return width, height, true
 }
 
+// 判断是否属于Sora视频模型，供当前链路选择后续处理策略。
 func isSoraVideoModel(model string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "sora-")
 }
 
+// 判断是否属于Veo视频模型，供当前链路选择后续处理策略。
 func isVeoVideoModel(model string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "veo-")
 }
 
+// 处理usesMaxCompletion令牌相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func usesMaxCompletionTokens(model string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(model))
 	return strings.HasPrefix(normalized, "gpt-5")
 }
 
+// 判断是否应当Include对话Temperature，供当前链路选择后续处理策略。
 func shouldIncludeChatTemperature(model string, value float64) bool {
 	if usesMaxCompletionTokens(model) {
 		return value == 1
@@ -1197,6 +1238,7 @@ func shouldIncludeChatTemperature(model string, value float64) bool {
 	return true
 }
 
+// 处理清洗Endpoint路径相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func sanitizeEndpointPath(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" || value == "/" {
@@ -1205,6 +1247,7 @@ func sanitizeEndpointPath(value string) string {
 	return "/" + strings.Trim(strings.ReplaceAll(value, "//", "/"), "/")
 }
 
+// 合并EndpointPaths，统一多来源数据后返回稳定结果。
 func mergeEndpointPaths(basePath string, endpointPath string) string {
 	basePath = sanitizeEndpointPath(basePath)
 	endpointPath = sanitizeEndpointPath(endpointPath)
@@ -1227,6 +1270,7 @@ func mergeEndpointPaths(basePath string, endpointPath string) string {
 	return ""
 }
 
+// 处理首个NonZeroInt64相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func firstNonZeroInt64(values ...int64) int64 {
 	for _, value := range values {
 		if value > 0 {
@@ -1236,6 +1280,7 @@ func firstNonZeroInt64(values ...int64) int64 {
 	return 0
 }
 
+// 处理首个NonNilInt相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func firstNonNilInt(values ...*int) *int {
 	for _, value := range values {
 		if value != nil {
@@ -1245,6 +1290,7 @@ func firstNonNilInt(values ...*int) *int {
 	return nil
 }
 
+// 规范化Percent值，统一APIYI链路的输入格式和后续处理行为。
 func normalizePercentValue(value any) *int {
 	switch typed := value.(type) {
 	case nil:
@@ -1280,6 +1326,7 @@ func normalizePercentValue(value any) *int {
 	}
 }
 
+// 处理clampPercent值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func clampPercentValue(value float64) *int {
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return nil
@@ -1297,6 +1344,7 @@ func clampPercentValue(value float64) *int {
 	return &rounded
 }
 
+// 提取ProgressPercent值，供APIYI后续关联和分支判断复用。
 func extractProgressPercentValue(value any, depth int) *int {
 	if value == nil || depth > 4 {
 		return nil
@@ -1334,6 +1382,7 @@ func extractProgressPercentValue(value any, depth int) *int {
 	return nil
 }
 
+// 创建Retryable请求相关实例，组装运行所需依赖并返回给上层流程复用。
 func (p *APIYIProvider) newRetryableRequest(ctx context.Context, method string, targetURL string, body []byte, applyHeaders func(*http.Request)) (*http.Request, error) {
 	var reader io.Reader
 	if len(body) > 0 {
@@ -1349,6 +1398,7 @@ func (p *APIYIProvider) newRetryableRequest(ctx context.Context, method string, 
 	return req, nil
 }
 
+// 处理do请求相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *APIYIProvider) doRequest(req *http.Request) (*http.Response, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request is required")
@@ -1387,6 +1437,7 @@ func (p *APIYIProvider) doRequest(req *http.Request) (*http.Response, error) {
 	return nil, lastErr
 }
 
+// 处理cloneHTTP请求相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func cloneHTTPRequest(req *http.Request, body []byte) (*http.Request, error) {
 	cloned := req.Clone(req.Context())
 	if len(body) > 0 {
@@ -1403,6 +1454,7 @@ func cloneHTTPRequest(req *http.Request, body []byte) (*http.Request, error) {
 	return cloned, nil
 }
 
+// 判断是否属于Retryable供应方错误，供当前链路选择后续处理策略。
 func isRetryableProviderError(err error) bool {
 	if err == nil {
 		return false
@@ -1430,6 +1482,7 @@ func isRetryableProviderError(err error) bool {
 	}
 }
 
+// 提取Text，供APIYI后续关联和分支判断复用。
 func extractText(content any) string {
 	switch typed := content.(type) {
 	case string:
@@ -1475,6 +1528,7 @@ func extractDeltaText(content any) string {
 	}
 }
 
+// 提取TextObject，供APIYI后续关联和分支判断复用。
 func extractTextFromObject(payload map[string]any) string {
 	if len(payload) == 0 {
 		return ""
@@ -1489,6 +1543,7 @@ func extractTextFromObject(payload map[string]any) string {
 	return ""
 }
 
+// 提取DeltaTextObject，供APIYI后续关联和分支判断复用。
 func extractDeltaTextFromObject(payload map[string]any) string {
 	if len(payload) == 0 {
 		return ""
@@ -1503,6 +1558,7 @@ func extractDeltaTextFromObject(payload map[string]any) string {
 	return ""
 }
 
+// 规范化远端视频状态，统一APIYI链路的输入格式和后续处理行为。
 func normalizeRemoteVideoStatus(value string) string {
 	switch strings.TrimSpace(strings.ToLower(value)) {
 	case "completed", "succeeded", "success", "ready":
@@ -1518,6 +1574,7 @@ func normalizeRemoteVideoStatus(value string) string {
 	}
 }
 
+// 准备Sora参考图片，补齐执行前依赖的上下文、输入和默认值。
 func prepareSoraReferenceImage(data []byte, mimeType string, fileName string, targetWidth int, targetHeight int) ([]byte, string, string, error) {
 	if len(data) == 0 {
 		return nil, "", "", fmt.Errorf("sora reference image is empty")
@@ -1556,6 +1613,7 @@ func prepareSoraReferenceImage(data []byte, mimeType string, fileName string, ta
 	return encoded, resolvedMime, resolvedName, nil
 }
 
+// 处理resize图片Fill相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func resizeImageToFill(src image.Image, targetWidth int, targetHeight int) image.Image {
 	if src == nil || targetWidth <= 0 || targetHeight <= 0 {
 		return src
@@ -1591,6 +1649,7 @@ func resizeImageToFill(src image.Image, targetWidth int, targetHeight int) image
 	return dst
 }
 
+// 处理encodeSora参考图片相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func encodeSoraReferenceImage(img image.Image, mimeType string, fileName string) ([]byte, string, string, error) {
 	resolvedMime := canonicalSoraImageMimeType(mimeType)
 	if resolvedMime == "" {
@@ -1613,6 +1672,7 @@ func encodeSoraReferenceImage(img image.Image, mimeType string, fileName string)
 	return buffer.Bytes(), resolvedMime, ensureMediaFileName(fileName, resolvedMime), nil
 }
 
+// 判断是否属于SoraCompatible图片MimeType，供当前链路选择后续处理策略。
 func isSoraCompatibleImageMimeType(value string) bool {
 	switch canonicalSoraImageMimeType(value) {
 	case "image/png", "image/jpeg":
@@ -1622,6 +1682,7 @@ func isSoraCompatibleImageMimeType(value string) bool {
 	}
 }
 
+// 判断是否可以onicalSora图片MimeType，供当前链路选择后续处理策略。
 func canonicalSoraImageMimeType(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "image/png":
@@ -1633,6 +1694,7 @@ func canonicalSoraImageMimeType(value string) string {
 	}
 }
 
+// 确保媒体文件名称已满足执行前提，必要时补齐缺失状态或配置。
 func ensureMediaFileName(fileName string, mimeType string) string {
 	fileName = strings.TrimSpace(fileName)
 	extension := extensionForMIME(mimeType, ".bin")
@@ -1646,6 +1708,7 @@ func ensureMediaFileName(fileName string, mimeType string) string {
 	return base + extension
 }
 
+// 处理文件名称响应相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func fileNameFromResponse(contentDisposition string, fallback string) string {
 	contentDisposition = strings.TrimSpace(contentDisposition)
 	if contentDisposition == "" {
@@ -1661,6 +1724,7 @@ func fileNameFromResponse(contentDisposition string, fallback string) string {
 	return fallback
 }
 
+// 根据MIME计算extension，供APIYI链路复用关键派生结果。
 func extensionForMIME(mimeType string, fallback string) string {
 	if mimeType == "" {
 		return fallback
@@ -1671,6 +1735,7 @@ func extensionForMIME(mimeType string, fallback string) string {
 	return fallback
 }
 
+// 处理首个Non空值String相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func firstNonEmptyString(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {

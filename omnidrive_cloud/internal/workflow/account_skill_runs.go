@@ -32,6 +32,7 @@ type PreparedAccountSkillRun struct {
 	PublishAt    time.Time
 }
 
+// 规范化账号技能发布时间，统一账号技能定时任务链路的输入格式和后续处理行为。
 func NormalizeAccountSkillTimeOfDay(raw string) (string, error) {
 	value := strings.TrimSpace(raw)
 	if value == "" {
@@ -47,6 +48,7 @@ func NormalizeAccountSkillTimeOfDay(raw string) (string, error) {
 	return "", fmt.Errorf("timeOfDay must be HH:MM or HH:MM:SS")
 }
 
+// 计算下一次账号技能发布时间，供账号技能定时任务链路统一发布时间或调度判定结果。
 func NextAccountSkillPublishAt(timeOfDay string, timezone string, now time.Time) (time.Time, error) {
 	normalized, err := NormalizeAccountSkillTimeOfDay(timeOfDay)
 	if err != nil {
@@ -74,6 +76,7 @@ func NextAccountSkillPublishAt(timeOfDay string, timezone string, now time.Time)
 	return next.UTC(), nil
 }
 
+// 规范化账号技能生成提前分钟数，统一账号技能定时任务链路的输入格式和后续处理行为。
 func NormalizeAccountSkillGenerationLeadMinutes(raw int) int {
 	if raw < 0 {
 		return 0
@@ -84,10 +87,12 @@ func NormalizeAccountSkillGenerationLeadMinutes(raw int) int {
 	return raw
 }
 
+// 计算计划中的账号技能生成时间，供账号技能定时任务链路复用派生的时间结果。
 func ScheduledAccountSkillGenerationTime(publishAt time.Time, generationLeadMinutes int) time.Time {
 	return publishAt.UTC().Add(-time.Duration(NormalizeAccountSkillGenerationLeadMinutes(generationLeadMinutes)) * time.Minute)
 }
 
+// 解析账号技能调度配置，为账号技能定时任务提供结构化输入。
 func ParseAccountSkillScheduleConfig(raw []byte) (*AccountSkillScheduleConfig, bool) {
 	if len(raw) == 0 {
 		return nil, false
@@ -120,6 +125,7 @@ func ParseAccountSkillScheduleConfig(raw []byte) (*AccountSkillScheduleConfig, b
 	}, true
 }
 
+// 提取账号技能目标账号ID，供账号技能定时任务后续关联和分支判断复用。
 func ExtractAccountSkillTargetAccountID(raw []byte) string {
 	if len(raw) == 0 {
 		return ""
@@ -147,6 +153,7 @@ func ExtractAccountSkillTargetAccountID(raw []byte) string {
 	return strings.TrimSpace(accountID)
 }
 
+// 准备账号技能运行，补齐执行前依赖的上下文、输入和默认值。
 func PrepareAccountSkillRun(
 	ctx context.Context,
 	app *appstate.App,
@@ -220,6 +227,7 @@ func PrepareAccountSkillRun(
 	}, nil
 }
 
+// 构建默认账号技能调度键，为账号技能定时任务生成后续步骤所需的派生参数或载荷。
 func BuildDefaultAccountSkillScheduleKey(skillID string, accountID string, config AccountSkillScheduleConfig) string {
 	seed := strings.Join([]string{
 		"account-skill-schedule",
@@ -233,6 +241,7 @@ func BuildDefaultAccountSkillScheduleKey(skillID string, accountID string, confi
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(seed)).String()
 }
 
+// 应用账号技能调度配置，把外部输入转换为当前链路的最终状态变更。
 func applyAccountSkillScheduleConfig(raw []byte, config AccountSkillScheduleConfig) ([]byte, error) {
 	payload := make(map[string]any)
 	if len(raw) > 0 {
@@ -250,6 +259,7 @@ func applyAccountSkillScheduleConfig(raw []byte, config AccountSkillScheduleConf
 	return json.Marshal(payload)
 }
 
+// 从 JSON 反序列化结果中提取整数值，兼容不同数字类型的输入。
 func numericJSONInt(value any) (int, bool) {
 	switch typed := value.(type) {
 	case float64:
@@ -267,6 +277,7 @@ func numericJSONInt(value any) (int, bool) {
 	}
 }
 
+// 推断账号技能生成提前分钟数载荷，在输入缺省时补齐账号技能定时任务链路需要的派生值。
 func inferAccountSkillGenerationLeadMinutesFromPayload(payload map[string]any) int {
 	publishAtRaw, _ := payload["publishAt"].(string)
 	runAtRaw, _ := payload["runAt"].(string)
@@ -287,6 +298,7 @@ func inferAccountSkillGenerationLeadMinutesFromPayload(payload map[string]any) i
 	return NormalizeAccountSkillGenerationLeadMinutes(int(publishAt.Sub(runAt).Minutes()))
 }
 
+// 解析账号技能调度使用的时区位置，统一发布时间计算基准。
 func resolveAccountSkillScheduleLocation(timezone string) *time.Location {
 	trimmed := strings.TrimSpace(timezone)
 	if trimmed == "" || strings.EqualFold(trimmed, "local") {

@@ -12,6 +12,7 @@ const (
 	ProviderAliyunDysmsapi = "aliyun_dysmsapi"
 )
 
+// 规范化供应方，统一供应方链路的输入格式和后续处理行为。
 func NormalizeProvider(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", "aliyun", ProviderAliyunDypnsapi, "aliyun-dypnsapi":
@@ -23,6 +24,7 @@ func NormalizeProvider(value string) string {
 	}
 }
 
+// 解析供应方，根据当前配置和上下文确定最终使用结果。
 func ResolveProvider(provider string, templateCode string) string {
 	normalized := NormalizeProvider(provider)
 	if normalized == "" {
@@ -34,10 +36,12 @@ func ResolveProvider(provider string, templateCode string) string {
 	return normalized
 }
 
+// 处理Uses本地编码验证码相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func UsesLocalCodeVerification(provider string) bool {
 	return ResolveProvider(provider, "") == ProviderAliyunDysmsapi
 }
 
+// 构建TemplateParam，为供应方生成后续步骤所需的派生参数或载荷。
 func BuildTemplateParam(template string, verificationCode string) string {
 	normalized := normalizeTemplateParam(template)
 	if strings.TrimSpace(verificationCode) == "" {
@@ -57,6 +61,7 @@ func BuildTemplateParam(template string, verificationCode string) string {
 	return strings.ReplaceAll(normalized, "##code##", strings.TrimSpace(verificationCode))
 }
 
+// 处理Generate验证码编码相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func GenerateVerificationCode(length int) (string, error) {
 	if length < 4 || length > 8 {
 		length = 6
@@ -72,6 +77,7 @@ func GenerateVerificationCode(length int) (string, error) {
 	return string(buffer), nil
 }
 
+// 发送Registration编码，把当前业务消息下发到外部通道。
 func SendRegistrationCode(cfg RegistrationConfig, phone string, countryCode string, outID string, verificationCode string) (*SendCodeResult, error) {
 	switch ResolveProvider(cfg.Provider, cfg.TemplateCode) {
 	case ProviderAliyunDysmsapi:
@@ -86,6 +92,7 @@ func SendRegistrationCode(cfg RegistrationConfig, phone string, countryCode stri
 	}
 }
 
+// 发送Template短信，把当前业务消息下发到外部通道。
 func SendTemplateSMS(cfg RegistrationConfig, phone string, outID string, signName string, templateCode string, templateParam string) (*SendCodeResult, error) {
 	normalizedProvider := ResolveProvider(cfg.Provider, templateCode)
 	switch normalizedProvider {
@@ -99,6 +106,7 @@ func SendTemplateSMS(cfg RegistrationConfig, phone string, outID string, signNam
 	}
 }
 
+// 处理VerifyRegistration编码相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func VerifyRegistrationCode(cfg RegistrationConfig, phone string, countryCode string, code string, outID string) (*VerifyCodeResult, error) {
 	switch ResolveProvider(cfg.Provider, cfg.TemplateCode) {
 	case ProviderAliyunDypnsapi:
@@ -116,6 +124,7 @@ func VerifyRegistrationCode(cfg RegistrationConfig, phone string, countryCode st
 	}
 }
 
+// 处理供应方Unknown相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func providerOrUnknown(provider string) string {
 	trimmed := strings.TrimSpace(provider)
 	if trimmed == "" {

@@ -22,6 +22,7 @@ var (
 	ErrWalletAdjustmentInsufficientBalance = errors.New("wallet balance insufficient for debit adjustment")
 )
 
+// 处理扫描支付Transaction相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanPaymentTransaction(scan scanFn) (*domain.PaymentTransaction, error) {
 	var item domain.PaymentTransaction
 	var providerTransactionID *string
@@ -60,6 +61,7 @@ func scanPaymentTransaction(scan scanFn) (*domain.PaymentTransaction, error) {
 	return &item, nil
 }
 
+// 处理扫描钱包Adjustment请求相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanWalletAdjustmentRequest(scan scanFn) (*domain.WalletAdjustmentRequest, error) {
 	var item domain.WalletAdjustmentRequest
 	var note *string
@@ -112,6 +114,7 @@ func scanWalletAdjustmentRequest(scan scanFn) (*domain.WalletAdjustmentRequest, 
 	return &item, nil
 }
 
+// 处理trim可选String相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func trimOptionalString(value *string) *string {
 	if value == nil {
 		return nil
@@ -123,6 +126,7 @@ func trimOptionalString(value *string) *string {
 	return &trimmed
 }
 
+// 规范化套餐支付Channels，统一存储层链路的输入格式和后续处理行为。
 func normalizePackagePaymentChannels(channels []string, allowDefault bool) ([]string, error) {
 	if len(channels) == 0 {
 		if allowDefault {
@@ -156,6 +160,7 @@ func normalizePackagePaymentChannels(channels []string, allowDefault bool) ([]st
 	return items, nil
 }
 
+// 构建套餐Entitlement输入Domain，为存储层生成后续步骤所需的派生参数或载荷。
 func buildPackageEntitlementInputsFromDomain(items []domain.BillingPackageEntitlement) []BillingPackageEntitlementInput {
 	result := make([]BillingPackageEntitlementInput, 0, len(items))
 	for _, item := range items {
@@ -170,6 +175,7 @@ func buildPackageEntitlementInputsFromDomain(items []domain.BillingPackageEntitl
 	return result
 }
 
+// 规范化套餐Entitlements，统一存储层链路的输入格式和后续处理行为。
 func normalizePackageEntitlements(packageID string, creditAmount int64, manualBonusCreditAmount int64, raw []BillingPackageEntitlementInput) ([]BillingPackageEntitlementInput, error) {
 	if creditAmount < 0 {
 		return nil, fmt.Errorf("credit amount must be greater than or equal to 0")
@@ -234,6 +240,7 @@ func normalizePackageEntitlements(packageID string, creditAmount int64, manualBo
 	return items, nil
 }
 
+// 同步计费套餐Entitlements事务，把当前上报或计算结果落到持久化状态中。
 func syncBillingPackageEntitlementsTx(ctx context.Context, tx pgx.Tx, packageID string, entitlements []BillingPackageEntitlementInput) error {
 	if _, err := tx.Exec(ctx, `
 		DELETE FROM billing_package_entitlements
@@ -256,6 +263,7 @@ func syncBillingPackageEntitlementsTx(ctx context.Context, tx pgx.Tx, packageID 
 	return nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminBillingPackages(ctx context.Context) ([]domain.BillingPackage, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, name, package_type, channel, payment_channels, currency, price_cents, credit_amount,
@@ -292,6 +300,7 @@ func (s *Store) ListAdminBillingPackages(ctx context.Context) ([]domain.BillingP
 	return items, nil
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateBillingPackage(ctx context.Context, input CreateBillingPackageInput) (*domain.BillingPackage, error) {
 	packageID := strings.TrimSpace(input.ID)
 	if packageID == "" {
@@ -356,6 +365,7 @@ func (s *Store) CreateBillingPackage(ctx context.Context, input CreateBillingPac
 	return s.GetBillingPackageByID(ctx, packageID)
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpdateBillingPackage(ctx context.Context, packageID string, input UpdateBillingPackageInput) (*domain.BillingPackage, error) {
 	current, err := s.GetBillingPackageByID(ctx, packageID)
 	if err != nil {
@@ -497,6 +507,7 @@ func (s *Store) UpdateBillingPackage(ctx context.Context, packageID string, inpu
 	return s.GetBillingPackageByID(ctx, packageID)
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListPaymentTransactionsByRechargeOrderID(ctx context.Context, orderID string) ([]domain.PaymentTransaction, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, recharge_order_id, user_id, channel, transaction_kind, out_trade_no, provider_transaction_id,
@@ -521,6 +532,7 @@ func (s *Store) ListPaymentTransactionsByRechargeOrderID(ctx context.Context, or
 	return items, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetPaymentTransactionByID(ctx context.Context, transactionID string) (*domain.PaymentTransaction, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, recharge_order_id, user_id, channel, transaction_kind, out_trade_no, provider_transaction_id,
@@ -539,6 +551,7 @@ func (s *Store) GetPaymentTransactionByID(ctx context.Context, transactionID str
 	return item, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListWalletLedgersByRechargeOrderID(ctx context.Context, orderID string) ([]domain.WalletLedger, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, user_id, entry_type, amount_delta, balance_before, balance_after, meter_code, quantity, unit,
@@ -604,6 +617,7 @@ func (s *Store) ListWalletLedgersByRechargeOrderID(ctx context.Context, orderID 
 	return items, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAdminWalletLedgerByID(ctx context.Context, ledgerID string) (*domain.AdminWalletLedgerRow, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
@@ -669,6 +683,7 @@ func (s *Store) GetAdminWalletLedgerByID(ctx context.Context, ledgerID string) (
 	return &item, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetWalletAdjustmentRequestByID(ctx context.Context, adjustmentID string) (*domain.WalletAdjustmentRequest, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, user_id, entry_type, amount_delta, reason, note, status, reference_type, reference_id,
@@ -688,6 +703,7 @@ func (s *Store) GetWalletAdjustmentRequestByID(ctx context.Context, adjustmentID
 	return item, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetWalletAdjustmentRequestByLedgerID(ctx context.Context, ledgerID string) (*domain.WalletAdjustmentRequest, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, user_id, entry_type, amount_delta, reason, note, status, reference_type, reference_id,
@@ -709,6 +725,7 @@ func (s *Store) GetWalletAdjustmentRequestByLedgerID(ctx context.Context, ledger
 	return item, nil
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateWalletAdjustment(ctx context.Context, input CreateWalletAdjustmentInput) (*domain.WalletAdjustmentRequest, error) {
 	if strings.TrimSpace(input.UserID) == "" {
 		return nil, fmt.Errorf("user id is required")

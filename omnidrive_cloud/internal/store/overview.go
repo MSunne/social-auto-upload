@@ -8,6 +8,7 @@ import (
 	"omnidrive_cloud/internal/domain"
 )
 
+// 执行概览相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetOverviewSummary(ctx context.Context, ownerUserID string) (*OverviewSummary, error) {
 	summary := &OverviewSummary{}
 
@@ -30,7 +31,7 @@ func (s *Store) GetOverviewSummary(ctx context.Context, ownerUserID string) (*Ov
 			COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE owner_user_id = $1 AND status = 'running'), 0)::BIGINT,
 			COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE owner_user_id = $1 AND status = 'failed'), 0)::BIGINT,
 			COALESCE((SELECT balance_after FROM wallet_ledgers WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1), 0)::BIGINT
-	`, deviceOnlineSQLPredicate("devices")), ownerUserID).Scan(
+	`, deviceHealthyOnlineSQLPredicate("devices")), ownerUserID).Scan(
 		&summary.DeviceCount,
 		&summary.OnlineDeviceCount,
 		&summary.AccountCount,
@@ -66,6 +67,7 @@ func (s *Store) GetOverviewSummary(ctx context.Context, ownerUserID string) (*Ov
 	return summary, nil
 }
 
+// 执行概览相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListHistoryByOwner(ctx context.Context, ownerUserID string, filter ListHistoryFilter) ([]domain.HistoryItem, error) {
 	query := `
 		SELECT id, kind, title, status, source, message, created_at, updated_at, finished_at

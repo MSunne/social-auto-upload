@@ -16,18 +16,37 @@
         <div class="agent-card glass-card">
           <div class="agent-header">
             <span class="agent-name">CloudAgent</span>
-            <span class="agent-dot" :class="agents.cloud ? 'online' : 'offline'"></span>
+            <span class="agent-dot" :class="agents.cloud.running ? 'online' : 'offline'"></span>
           </div>
-          <div class="agent-status">{{ agents.cloud ? '已连接' : '未连接' }}</div>
+          <div class="agent-status">{{ agents.cloud.running ? '线程运行中' : '线程未运行' }}</div>
+          <div v-if="agents.cloud.lastHeartbeatAt" class="agent-meta">
+            最近心跳：{{ agents.cloud.lastHeartbeatAt }}
+          </div>
+          <div v-if="agents.cloud.lastError" class="agent-error">
+            {{ agents.cloud.lastError }}
+          </div>
         </div>
       </el-col>
       <el-col :span="12">
         <div class="agent-card glass-card">
           <div class="agent-header">
             <span class="agent-name">OmniDrive Agent</span>
-            <span class="agent-dot" :class="agents.omnidrive ? 'online' : 'offline'"></span>
+            <span class="agent-dot" :class="agents.omnidrive.running ? 'online' : 'offline'"></span>
           </div>
-          <div class="agent-status">{{ agents.omnidrive ? '已连接' : '未连接' }}</div>
+          <div class="agent-status">{{ agents.omnidrive.running ? '线程运行中' : '线程未运行' }}</div>
+          <div class="agent-meta">云桥状态：{{ formatBridgeStatus(agents.omnidrive.bridgeStatus) }}</div>
+          <div v-if="agents.omnidrive.lastHeartbeatAt" class="agent-meta">
+            最近心跳：{{ agents.omnidrive.lastHeartbeatAt }}
+          </div>
+          <div v-if="agents.omnidrive.bridgeLastSuccessAt" class="agent-meta">
+            最近恢复：{{ formatDateTime(agents.omnidrive.bridgeLastSuccessAt) }}
+          </div>
+          <div v-if="agents.omnidrive.cloudRetryAt" class="agent-meta">
+            下次重试：{{ formatDateTime(agents.omnidrive.cloudRetryAt) }}
+          </div>
+          <div v-if="agents.omnidrive.bridgeLastError" class="agent-error">
+            {{ agents.omnidrive.bridgeLastError }}
+          </div>
         </div>
       </el-col>
     </el-row>
@@ -73,9 +92,33 @@ import { ElMessage } from 'element-plus'
 
 const loading = ref(false)
 const deviceInfo = ref([])
-const agents = ref({ cloud: false, omnidrive: false })
+const agents = ref({
+  cloud: { running: false, lastHeartbeatAt: '', lastError: '' },
+  omnidrive: {
+    running: false,
+    bridgeStatus: 'unknown',
+    bridgeLastError: '',
+    bridgeLastSuccessAt: '',
+    cloudRetryAt: '',
+    lastHeartbeatAt: '',
+  },
+})
 const taskStats = ref({})
 const materialRoots = ref([])
+
+const formatBridgeStatus = (status) => {
+  if (status === 'healthy') return '正常'
+  if (status === 'degraded') return '异常'
+  if (status === 'offline') return '等待恢复'
+  return '未知'
+}
+
+const formatDateTime = (value) => {
+  if (!value) return '-'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return parsed.toLocaleString('zh-CN', { hour12: false })
+}
 
 // Aggregate device, agent, and task summaries so the status page loads in one round trip.
 const fetchAll = async () => {
@@ -102,10 +145,23 @@ const fetchAll = async () => {
 
     // Agents
     if (results[1].status === 'fulfilled') {
-      agents.value.cloud = results[1].value?.data?.connected ?? false
+      const agent = results[1].value?.data?.agent || {}
+      agents.value.cloud = {
+        running: Boolean(agent.running),
+        lastHeartbeatAt: agent.lastHeartbeatAt || '',
+        lastError: agent.lastError || '',
+      }
     }
     if (results[2].status === 'fulfilled') {
-      agents.value.omnidrive = results[2].value?.data?.connected ?? false
+      const agent = results[2].value?.data?.agent || {}
+      agents.value.omnidrive = {
+        running: Boolean(agent.running),
+        bridgeStatus: agent.bridgeStatus || 'unknown',
+        bridgeLastError: agent.bridgeLastError || agent.lastError || '',
+        bridgeLastSuccessAt: agent.bridgeLastSuccessAt || '',
+        cloudRetryAt: agent.cloudRetryAt || '',
+        lastHeartbeatAt: agent.lastHeartbeatAt || '',
+      }
     }
 
     // Tasks
@@ -200,6 +256,19 @@ onMounted(fetchAll)
   .agent-status {
     font-size: 13px;
     color: $text-secondary;
+  }
+
+  .agent-meta {
+    margin-top: 6px;
+    font-size: 12px;
+    color: $text-muted;
+  }
+
+  .agent-error {
+    margin-top: 8px;
+    font-size: 12px;
+    color: $danger-color;
+    word-break: break-word;
   }
 }
 

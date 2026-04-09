@@ -13,6 +13,7 @@ import (
 	"omnidrive_cloud/internal/domain"
 )
 
+// 处理扫描平台账号相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanPlatformAccount(row pgx.Row) (*domain.PlatformAccount, error) {
 	var account domain.PlatformAccount
 	var lastMessage *string
@@ -37,6 +38,7 @@ func scanPlatformAccount(row pgx.Row) (*domain.PlatformAccount, error) {
 	return &account, nil
 }
 
+// 处理扫描平台账号加载相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanPlatformAccountWithLoad(row pgx.Row) (*domain.PlatformAccount, error) {
 	var account domain.PlatformAccount
 	var lastMessage *string
@@ -85,6 +87,7 @@ const platformAccountLoadColumns = `
 	COALESCE((SELECT COUNT(*) FROM login_sessions ls WHERE ls.device_id = pa.device_id AND ls.platform = pa.platform AND ls.account_name = pa.account_name AND ls.status = 'verification_required'), 0)::BIGINT AS verification_login_session_count
 `
 
+// 处理平台账号Query加载相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func platformAccountQueryWithLoad(whereClause string) string {
 	return fmt.Sprintf(`
 		SELECT %s, %s
@@ -94,6 +97,7 @@ func platformAccountQueryWithLoad(whereClause string) string {
 	`, platformAccountSelectColumns, platformAccountLoadColumns, whereClause)
 }
 
+// 执行账号相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAccountsByOwner(ctx context.Context, ownerUserID string, deviceID string) ([]domain.PlatformAccount, error) {
 	query := platformAccountQueryWithLoad(`WHERE d.owner_user_id = $1`)
 	args := []any{ownerUserID}
@@ -120,6 +124,7 @@ func (s *Store) ListAccountsByOwner(ctx context.Context, ownerUserID string, dev
 	return items, rows.Err()
 }
 
+// 执行账号相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetOwnedAccountByID(ctx context.Context, accountID string, ownerUserID string) (*domain.PlatformAccount, error) {
 	row := s.pool.QueryRow(ctx, platformAccountQueryWithLoad(`
 		WHERE pa.id = $1 AND d.owner_user_id = $2
@@ -135,6 +140,7 @@ func (s *Store) GetOwnedAccountByID(ctx context.Context, accountID string, owner
 	return account, nil
 }
 
+// 执行账号相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAccountByDeviceTarget(ctx context.Context, deviceID string, platform string, accountName string) (*domain.PlatformAccount, error) {
 	row := s.pool.QueryRow(ctx, platformAccountQueryWithLoad(`
 		WHERE pa.device_id = $1 AND pa.platform = $2 AND pa.account_name = $3
@@ -150,6 +156,7 @@ func (s *Store) GetAccountByDeviceTarget(ctx context.Context, deviceID string, p
 	return account, nil
 }
 
+// 执行账号相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListPublishTasksByAccountTarget(ctx context.Context, ownerUserID string, deviceID string, platform string, accountName string, limit int) ([]domain.PublishTask, error) {
 	query := `
 		SELECT pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
@@ -187,6 +194,7 @@ func (s *Store) ListPublishTasksByAccountTarget(ctx context.Context, ownerUserID
 	return items, rows.Err()
 }
 
+// 判断是否属于平台账号同步阻塞，供当前链路选择后续处理策略。
 func (s *Store) isPlatformAccountSyncBlocked(ctx context.Context, deviceID string, platform string, accountName string) (bool, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT EXISTS(
@@ -205,6 +213,7 @@ func (s *Store) isPlatformAccountSyncBlocked(ctx context.Context, deviceID strin
 	return blocked, nil
 }
 
+// 处理clear平台账号同步Block相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) clearPlatformAccountSyncBlock(ctx context.Context, deviceID string, platform string, accountName string) error {
 	_, err := s.pool.Exec(ctx, `
 		DELETE FROM platform_account_tombstones
@@ -215,6 +224,7 @@ func (s *Store) clearPlatformAccountSyncBlock(ctx context.Context, deviceID stri
 	return err
 }
 
+// 执行账号相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) DeleteOwnedAccount(ctx context.Context, accountID string, ownerUserID string) (bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -262,6 +272,7 @@ func (s *Store) DeleteOwnedAccount(ctx context.Context, accountID string, ownerU
 	return true, nil
 }
 
+// 执行账号相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) DeletePlatformAccountByTarget(ctx context.Context, deviceID string, platform string, accountName string) (bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -283,6 +294,7 @@ func (s *Store) DeletePlatformAccountByTarget(ctx context.Context, deviceID stri
 	return true, nil
 }
 
+// 执行账号相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) deletePlatformAccountTargetTx(ctx context.Context, tx pgx.Tx, deviceID string, platform string, accountName string) (bool, error) {
 	var deletedCount int64
 
@@ -322,6 +334,7 @@ func (s *Store) deletePlatformAccountTargetTx(ctx context.Context, tx pgx.Tx, de
 	return deletedCount > 0, nil
 }
 
+// 执行账号相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListRetiredPlatformAccountsByDevice(ctx context.Context, deviceID string) ([]domain.AgentRetiredAccountItem, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT platform, account_name, updated_at
@@ -346,6 +359,7 @@ func (s *Store) ListRetiredPlatformAccountsByDevice(ctx context.Context, deviceI
 	return items, rows.Err()
 }
 
+// 处理AckRetired平台账号设备相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) AckRetiredPlatformAccountsByDevice(ctx context.Context, deviceID string, items []domain.AgentRetiredAccountItem) (int64, error) {
 	if strings.TrimSpace(deviceID) == "" || len(items) == 0 {
 		return 0, nil
@@ -389,6 +403,7 @@ func (s *Store) AckRetiredPlatformAccountsByDevice(ctx context.Context, deviceID
 	return acked, nil
 }
 
+// 执行账号相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAccountUsageSummary(ctx context.Context, accountID string, ownerUserID string) (int64, int64, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
@@ -426,6 +441,7 @@ func (s *Store) GetAccountUsageSummary(ctx context.Context, accountID string, ow
 	return taskCount, activeLoginSessionCount, nil
 }
 
+// 处理扫描登录会话相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanLoginSession(row pgx.Row) (*domain.LoginSession, error) {
 	var session domain.LoginSession
 	var qrData *string
@@ -454,6 +470,7 @@ func scanLoginSession(row pgx.Row) (*domain.LoginSession, error) {
 	return &session, nil
 }
 
+// 执行账号相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateLoginSession(ctx context.Context, input CreateLoginSessionInput) (*domain.LoginSession, error) {
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO login_sessions (id, device_id, user_id, platform, account_name, status, message)
@@ -465,6 +482,7 @@ func (s *Store) CreateLoginSession(ctx context.Context, input CreateLoginSession
 	return scanLoginSession(row)
 }
 
+// 执行账号相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetLoginSessionByID(ctx context.Context, sessionID string) (*domain.LoginSession, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, device_id, user_id, platform, account_name, status, qr_data,
@@ -483,6 +501,7 @@ func (s *Store) GetLoginSessionByID(ctx context.Context, sessionID string) (*dom
 	return session, nil
 }
 
+// 执行账号相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetOwnedLoginSession(ctx context.Context, sessionID string, ownerUserID string) (*domain.LoginSession, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT ls.id, ls.device_id, ls.user_id, ls.platform, ls.account_name, ls.status, ls.qr_data,
@@ -502,6 +521,7 @@ func (s *Store) GetOwnedLoginSession(ctx context.Context, sessionID string, owne
 	return session, nil
 }
 
+// 执行账号相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListActiveLoginSessionsByOwner(ctx context.Context, ownerUserID string, deviceID string, limit int) ([]domain.LoginSession, error) {
 	query := `
 		SELECT ls.id, ls.device_id, ls.user_id, ls.platform, ls.account_name, ls.status, ls.qr_data,
@@ -553,6 +573,7 @@ func (s *Store) ListActiveLoginSessionsByOwner(ctx context.Context, ownerUserID 
 	return items, rows.Err()
 }
 
+// 执行账号相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListLoginSessionsByAccountTarget(ctx context.Context, ownerUserID string, deviceID string, platform string, accountName string, limit int) ([]domain.LoginSession, error) {
 	query := `
 		SELECT ls.id, ls.device_id, ls.user_id, ls.platform, ls.account_name, ls.status, ls.qr_data,
@@ -589,6 +610,7 @@ func (s *Store) ListLoginSessionsByAccountTarget(ctx context.Context, ownerUserI
 	return items, rows.Err()
 }
 
+// 执行账号相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListPendingLoginTasksByDevice(ctx context.Context, deviceID string) ([]domain.LoginSession, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, device_id, user_id, platform, account_name, status, qr_data,
@@ -613,6 +635,7 @@ func (s *Store) ListPendingLoginTasksByDevice(ctx context.Context, deviceID stri
 	return items, rows.Err()
 }
 
+// 执行账号相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpdateLoginSessionEvent(ctx context.Context, sessionID string, input LoginEventInput) (*domain.LoginSession, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE login_sessions
@@ -636,6 +659,7 @@ func (s *Store) UpdateLoginSessionEvent(ctx context.Context, sessionID string, i
 	return session, nil
 }
 
+// 处理Touch登录会话相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) TouchLoginSession(ctx context.Context, sessionID string) (*domain.LoginSession, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE login_sessions
@@ -655,6 +679,7 @@ func (s *Store) TouchLoginSession(ctx context.Context, sessionID string) (*domai
 	return session, nil
 }
 
+// 执行账号相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpsertPlatformAccountFromLogin(ctx context.Context, session *domain.LoginSession) error {
 	if session.Status != "success" && session.Status != "active" {
 		return nil
@@ -678,6 +703,7 @@ func (s *Store) UpsertPlatformAccountFromLogin(ctx context.Context, session *dom
 	return err
 }
 
+// 执行账号相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpsertPlatformAccount(ctx context.Context, deviceID string, platform string, accountName string, status string, lastMessage *string, lastAuthenticatedAt *time.Time) (*domain.PlatformAccount, error) {
 	blocked, err := s.isPlatformAccountSyncBlocked(ctx, deviceID, platform, accountName)
 	if err != nil {
@@ -711,6 +737,7 @@ func (s *Store) UpsertPlatformAccount(ctx context.Context, deviceID string, plat
 	return account, nil
 }
 
+// 处理扫描Login动作相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanLoginAction(row pgx.Row) (*domain.LoginSessionAction, error) {
 	var action domain.LoginSessionAction
 	var payload []byte
@@ -733,6 +760,7 @@ func scanLoginAction(row pgx.Row) (*domain.LoginSessionAction, error) {
 	return &action, nil
 }
 
+// 执行账号相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateLoginAction(ctx context.Context, input CreateLoginActionInput) (*domain.LoginSessionAction, error) {
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO login_session_actions (id, session_id, action_type, payload, status)
@@ -743,6 +771,7 @@ func (s *Store) CreateLoginAction(ctx context.Context, input CreateLoginActionIn
 	return scanLoginAction(row)
 }
 
+// 处理ConsumePendingLogin动作相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) ConsumePendingLoginActions(ctx context.Context, sessionID string) ([]domain.LoginSessionAction, error) {
 	rows, err := s.pool.Query(ctx, `
 		UPDATE login_session_actions

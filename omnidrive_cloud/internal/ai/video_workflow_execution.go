@@ -15,6 +15,7 @@ import (
 
 const workflowSegmentRetryLimit = 2
 
+// 处理 AI 作业执行中的执行工作流视频流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) executeWorkflowVideo(
 	ctx context.Context,
 	job *domain.AIJob,
@@ -73,6 +74,7 @@ func (w *Worker) executeWorkflowVideo(
 		segmentSeconds := state.SegmentSeconds
 		segmentReq.DurationSeconds = intPointer(segmentSeconds)
 		segmentReq.ReferenceImages = buildWorkflowSegmentReferenceImages(req.ReferenceImages, state)
+		segmentReq.Prompt = buildWorkflowSegmentPrompt(req.Prompt, state, segmentIndex, state.PlannedSegments)
 
 		var segmentArtifact *BinaryArtifact
 		var segmentErr error
@@ -188,6 +190,7 @@ func (w *Worker) executeWorkflowVideo(
 	return nil
 }
 
+// 处理 AI 作业执行中的执行工作流视频分段流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) executeWorkflowVideoSegment(
 	ctx context.Context,
 	provider Provider,
@@ -303,6 +306,7 @@ func (w *Worker) executeWorkflowVideoSegment(
 	}
 }
 
+// 为 AI 作业执行提供persist已完成视频分段辅助能力，统一处理输入、状态和产物细节。
 func (w *Worker) persistCompletedVideoSegment(ctx context.Context, job *domain.AIJob, state *videoExecutionState, segmentIndex int, durationSeconds int, artifact BinaryArtifact) error {
 	artifactKey := fmt.Sprintf("video-segment-%02d", segmentIndex)
 	input, err := w.saveBinaryArtifact(ctx, job, "video_segment", artifactKey, state.Provider, artifact)
@@ -340,6 +344,7 @@ func (w *Worker) persistCompletedVideoSegment(ctx context.Context, job *domain.A
 	return nil
 }
 
+// 为 AI 作业执行提供构建工作流Final视频产物辅助能力，统一处理输入、状态和产物细节。
 func (w *Worker) buildWorkflowFinalVideoArtifact(ctx context.Context, state *videoExecutionState) (*BinaryArtifact, error) {
 	if state == nil || len(state.CompletedSegments) == 0 {
 		return nil, fmt.Errorf("workflow video segments are missing")
@@ -370,6 +375,7 @@ func (w *Worker) buildWorkflowFinalVideoArtifact(ctx context.Context, state *vid
 	return &standardized, nil
 }
 
+// 为 AI 作业执行提供加载已完成分段产物辅助能力，统一处理输入、状态和产物细节。
 func (w *Worker) loadCompletedSegmentArtifact(ctx context.Context, segment videoCompletedSegment) (*BinaryArtifact, error) {
 	storageKey := strings.TrimSpace(segment.StorageKey)
 	if storageKey == "" && strings.TrimSpace(segment.PublicURL) != "" {
@@ -402,6 +408,7 @@ func (w *Worker) loadCompletedSegmentArtifact(ctx context.Context, segment video
 	}, nil
 }
 
+// 构建工作流分段参考图片s，为视频工作流生成后续步骤所需的派生参数或载荷。
 func buildWorkflowSegmentReferenceImages(base []MediaInput, state videoExecutionState) []MediaInput {
 	if len(state.ReferenceFrames) > 0 {
 		if refs := mediaInputsFromVideoReferenceFrames(state.ReferenceFrames); len(refs) > 0 {
@@ -411,6 +418,40 @@ func buildWorkflowSegmentReferenceImages(base []MediaInput, state videoExecution
 	return append([]MediaInput(nil), base...)
 }
 
+// 构建工作流分段提示词，为视频工作流生成后续步骤所需的派生参数或载荷。
+func buildWorkflowSegmentPrompt(basePrompt string, state videoExecutionState, segmentIndex int, plannedSegments int) string {
+	trimmed := strings.TrimSpace(basePrompt)
+	if trimmed == "" {
+		return ""
+	}
+	if plannedSegments <= 1 || segmentIndex <= 0 {
+		return trimmed
+	}
+
+	completedCount := len(state.CompletedSegments)
+	stageInstruction := "作为中段内容，延续上一段最后一帧自然推进动作、镜头和情绪，不要重新起镜。"
+	switch {
+	case segmentIndex <= 1:
+		stageInstruction = "作为开场段，建立主体、场景和节奏，并与提供的首帧参考图保持一致，同时给后续段落留出自然延展空间。"
+	case segmentIndex >= plannedSegments:
+		stageInstruction = "作为结尾段，延续上一段最后一帧自然收束，完成动作闭环和卖点落点，不要突然切换主体、场景或风格。"
+	}
+
+	var builder strings.Builder
+	builder.WriteString(trimmed)
+	builder.WriteString("\n\n分段续写要求:\n")
+	builder.WriteString(fmt.Sprintf("1. 当前生成第 %d/%d 段。", segmentIndex, plannedSegments))
+	if completedCount > 0 {
+		builder.WriteString(fmt.Sprintf(" 前面已完成 %d 段，必须保持产品、角色、场景、光线、色调和镜头语言连续一致。", completedCount))
+	}
+	builder.WriteString("\n2. ")
+	builder.WriteString(stageInstruction)
+	builder.WriteString("\n3. 系统会附带上一段最后一帧作为参考图，请把它视为当前段落的起始画面，确保动作、构图和主体位置自然衔接。")
+	builder.WriteString("\n4. 不要新增无关主体，不要突然改变服装、材质、品牌元素、空间关系或叙事方向。")
+	return builder.String()
+}
+
+// 处理reset活跃视频分段状态相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func resetActiveVideoSegmentState(state *videoExecutionState) {
 	if state == nil {
 		return
@@ -425,6 +466,7 @@ func resetActiveVideoSegmentState(state *videoExecutionState) {
 	state.UpdatedAt = time.Time{}
 }
 
+// 处理追加UniqueString相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func appendUniqueString(values []string, extra string) []string {
 	trimmed := strings.TrimSpace(extra)
 	if trimmed == "" {
@@ -438,6 +480,7 @@ func appendUniqueString(values []string, extra string) []string {
 	return append(values, trimmed)
 }
 
+// 处理mark工作流Preparation计费Success相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func markWorkflowPreparationBillingSuccess(state *videoExecutionState, snapshot *workflowPricingSnapshot) {
 	if state == nil || snapshot == nil || (snapshot.SpecialPriceCredits != nil && *snapshot.SpecialPriceCredits > 0) {
 		return
@@ -455,6 +498,7 @@ func markWorkflowPreparationBillingSuccess(state *videoExecutionState, snapshot 
 	}
 }
 
+// 处理工作流Successful分段Item键相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func workflowSuccessfulSegmentItemKey(snapshot *workflowPricingSnapshot, segmentIndex int) string {
 	if snapshot != nil && snapshot.SpecialPriceCredits != nil && *snapshot.SpecialPriceCredits > 0 {
 		return workflowSpecialPriceSegmentItemKey(segmentIndex)
@@ -462,6 +506,7 @@ func workflowSuccessfulSegmentItemKey(snapshot *workflowPricingSnapshot, segment
 	return workflowVideoSegmentItemKey(segmentIndex)
 }
 
+// 构建工作流计费消息，为视频工作流生成后续步骤所需的派生参数或载荷。
 func buildWorkflowBillingMessage(base string, detail string) string {
 	base = strings.TrimSpace(base)
 	detail = strings.TrimSpace(detail)
@@ -474,6 +519,7 @@ func buildWorkflowBillingMessage(base string, detail string) string {
 	return base + "：" + detail
 }
 
+// 处理intPointer相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func intPointer(value int) *int {
 	if value <= 0 {
 		return nil
@@ -481,6 +527,7 @@ func intPointer(value int) *int {
 	return &value
 }
 
+// 处理int64值Zero相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func int64ValueOrZero(value *int64) int64 {
 	if value == nil {
 		return 0
@@ -488,6 +535,7 @@ func int64ValueOrZero(value *int64) int64 {
 	return *value
 }
 
+// 处理concat视频产物相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func concatVideoArtifacts(ctx context.Context, artifacts []BinaryArtifact, ffmpegPath string) (BinaryArtifact, error) {
 	if len(artifacts) == 0 {
 		return BinaryArtifact{}, fmt.Errorf("video artifacts are required")
@@ -545,6 +593,7 @@ func concatVideoArtifacts(ctx context.Context, artifacts []BinaryArtifact, ffmpe
 	}, nil
 }
 
+// 提取视频Last帧，供视频工作流后续关联和分支判断复用。
 func extractVideoLastFrame(ctx context.Context, artifact BinaryArtifact, ffmpegPath string) (BinaryArtifact, error) {
 	if len(artifact.Data) == 0 {
 		return BinaryArtifact{}, fmt.Errorf("video artifact data is empty")
@@ -592,6 +641,7 @@ func extractVideoLastFrame(ctx context.Context, artifact BinaryArtifact, ffmpegP
 	}, nil
 }
 
+// 处理errorsAs重新入队相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func errorsAsRequeue(err error, target **requeueExecutionError) bool {
 	if err == nil {
 		return false

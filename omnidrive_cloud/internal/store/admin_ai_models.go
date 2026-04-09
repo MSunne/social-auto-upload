@@ -25,6 +25,7 @@ type AIModelUsageSummary struct {
 	DeviceDefaultCount       int64
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminAIModels(ctx context.Context, filter AdminAIModelListFilter) ([]domain.AIModel, int64, error) {
 	page, pageSize, offset := normalizeAdminPage(filter.Page, filter.PageSize)
 	_ = page
@@ -91,6 +92,7 @@ func (s *Store) ListAdminAIModels(ctx context.Context, filter AdminAIModelListFi
 	return items, total, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAIModelByID(ctx context.Context, id string) (*domain.AIModel, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT `+aiModelSelectColumns+`
@@ -130,6 +132,7 @@ type CreateAIModelInput struct {
 	IsEnabled                 bool
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateAIModel(ctx context.Context, input CreateAIModelInput) (*domain.AIModel, error) {
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO ai_models (
@@ -194,6 +197,7 @@ type UpdateAIModelInput struct {
 	IsEnabled                 *bool
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpdateAIModel(ctx context.Context, id string, input UpdateAIModelInput) (*domain.AIModel, error) {
 	setParts := []string{"updated_at = CLOCK_TIMESTAMP()"}
 	args := []any{id}
@@ -312,6 +316,7 @@ func (s *Store) UpdateAIModel(ctx context.Context, id string, input UpdateAIMode
 	return scanAIModel(row)
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAIModelUsageSummary(ctx context.Context, id string) (AIModelUsageSummary, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
@@ -347,6 +352,7 @@ func (s *Store) GetAIModelUsageSummary(ctx context.Context, id string) (AIModelU
 	return summary, nil
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) DeleteAIModel(ctx context.Context, id string) (bool, error) {
 	commandTag, err := s.pool.Exec(ctx, `
 		DELETE FROM ai_models

@@ -52,6 +52,7 @@ type ProviderError struct {
 	RequestID  string
 }
 
+// 返回供应方错误的可读错误消息，供日志记录和错误透传统一使用。
 func (e *ProviderError) Error() string {
 	if strings.TrimSpace(e.Code) == "" && strings.TrimSpace(e.Message) == "" {
 		return "sms provider request failed"
@@ -65,6 +66,7 @@ func (e *ProviderError) Error() string {
 	return strings.TrimSpace(e.Code) + ": " + strings.TrimSpace(e.Message)
 }
 
+// 规范化TemplateParam，统一阿里云短信链路的输入格式和后续处理行为。
 func normalizeTemplateParam(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -73,6 +75,7 @@ func normalizeTemplateParam(value string) string {
 	return strings.ReplaceAll(trimmed, "{{code}}", "##code##")
 }
 
+// 创建AliyunDypns客户端相关实例，组装运行所需依赖并返回给上层流程复用。
 func newAliyunDypnsClient(cfg RegistrationConfig) (*dypnsapi.Client, error) {
 	config := &openapi.Config{
 		AccessKeyId:     dara.String(strings.TrimSpace(cfg.AccessKeyID)),
@@ -82,6 +85,7 @@ func newAliyunDypnsClient(cfg RegistrationConfig) (*dypnsapi.Client, error) {
 	return dypnsapi.NewClient(config)
 }
 
+// 发送AliyunDypnsRegistration编码，把当前业务消息下发到外部通道。
 func sendAliyunDypnsRegistrationCode(cfg RegistrationConfig, phone string, countryCode string, outID string) (*SendCodeResult, error) {
 	client, err := newAliyunDypnsClient(cfg)
 	if err != nil {
@@ -142,6 +146,7 @@ func sendAliyunDypnsRegistrationCode(cfg RegistrationConfig, phone string, count
 	return result, nil
 }
 
+// 处理verifyAliyunDypnsRegistration编码相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func verifyAliyunDypnsRegistrationCode(cfg RegistrationConfig, phone string, countryCode string, code string, outID string) (*VerifyCodeResult, error) {
 	client, err := newAliyunDypnsClient(cfg)
 	if err != nil {
@@ -190,6 +195,7 @@ func verifyAliyunDypnsRegistrationCode(cfg RegistrationConfig, phone string, cou
 	return result, nil
 }
 
+// 处理wrapAliyun错误相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func wrapAliyunError(provider string, err error) error {
 	var sdkErr *teasdk.SDKError
 	if !errors.As(err, &sdkErr) {
@@ -207,6 +213,7 @@ func wrapAliyunError(provider string, err error) error {
 	}
 }
 
+// 处理string值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func stringValue(value *string) string {
 	if value == nil {
 		return ""
@@ -214,10 +221,12 @@ func stringValue(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
+// 处理bool值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func boolValue(value *bool) bool {
 	return value != nil && *value
 }
 
+// 处理int32值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func int32Value(value *int32) int {
 	if value == nil {
 		return 0

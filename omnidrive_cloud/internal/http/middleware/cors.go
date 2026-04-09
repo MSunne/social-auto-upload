@@ -11,6 +11,7 @@ var corsAllowedMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTI
 var corsAllowedHeaders = []string{"Accept", "Authorization", "Content-Type", "Origin", "X-Requested-With"}
 var corsExposedHeaders = []string{"Content-Length", "Content-Type"}
 
+// 创建跨域中间件，根据当前配置补齐浏览器请求需要的允许来源和方法头。
 func CORS(cfg config.Config) func(http.Handler) http.Handler {
 	allowedOrigins := append([]string(nil), cfg.CORSAllowedOrigins...)
 	allowAllOrigins := false

@@ -20,6 +20,7 @@ type LConAIProvider struct {
 	*APIYIProvider
 }
 
+// 创建LConAI供应方相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewLConAIProvider(cfg config.Config) (*LConAIProvider, error) {
 	baseURL := normalizeLConBaseURL(cfg.APIYIBaseURL)
 	if baseURL == "" {
@@ -35,22 +36,27 @@ func NewLConAIProvider(cfg config.Config) (*LConAIProvider, error) {
 	}, nil
 }
 
+// 处理Generate对话相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *LConAIProvider) GenerateChat(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 	return nil, fmt.Errorf("lconai provider does not support chat generation")
 }
 
+// 处理Generate对话流式相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *LConAIProvider) GenerateChatStream(ctx context.Context, req ChatRequest, onChunk func(ChatStreamChunk) error) (*ChatResult, error) {
 	return nil, fmt.Errorf("lconai provider does not support streaming chat generation")
 }
 
+// 处理Generate图片相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *LConAIProvider) GenerateImage(ctx context.Context, req ImageRequest) (*ImageResult, error) {
 	return nil, fmt.Errorf("lconai provider does not support image generation")
 }
 
+// 处理Generate分镜包相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *LConAIProvider) GenerateStoryboardPackage(ctx context.Context, req StoryboardPackageRequest) (*StoryboardPackageResult, error) {
 	return nil, fmt.Errorf("lconai provider does not support storyboard generation")
 }
 
+// 处理Submit视频相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *LConAIProvider) SubmitVideo(ctx context.Context, req VideoRequest) (*VideoSubmission, error) {
 	requestBody, contentType, err := p.buildSeedanceVideoSubmissionBody(ctx, req)
 	if err != nil {
@@ -98,6 +104,7 @@ func (p *LConAIProvider) SubmitVideo(ctx context.Context, req VideoRequest) (*Vi
 	}, nil
 }
 
+// 获取视频，为当前链路返回后续处理所需的数据内容。
 func (p *LConAIProvider) GetVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string) (*VideoStatus, error) {
 	body, err := p.doLConVideoRequest(ctx, baseURL, apiKey, http.MethodGet, fmt.Sprintf("/v1/videos/%s", url.PathEscape(videoID)), nil, "")
 	if err != nil {
@@ -155,6 +162,7 @@ func (p *LConAIProvider) GetVideo(ctx context.Context, videoID string, model str
 	return status, nil
 }
 
+// 下载视频，为后续处理步骤提供本地可用的数据副本。
 func (p *LConAIProvider) DownloadVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string, contentURL string) (*BinaryArtifact, error) {
 	if directURL := strings.TrimSpace(contentURL); directURL != "" {
 		return p.downloadBinary(ctx, directURL, fmt.Sprintf("%s.mp4", videoID), "video/mp4")
@@ -170,6 +178,7 @@ func (p *LConAIProvider) DownloadVideo(ctx context.Context, videoID string, mode
 	return p.downloadBinary(ctx, status.ContentURL, fmt.Sprintf("%s.mp4", videoID), "video/mp4")
 }
 
+// 构建Seedance视频SubmissionBody，为LCON AI生成后续步骤所需的派生参数或载荷。
 func (p *LConAIProvider) buildSeedanceVideoSubmissionBody(ctx context.Context, req VideoRequest) ([]byte, string, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -203,6 +212,7 @@ func (p *LConAIProvider) buildSeedanceVideoSubmissionBody(ctx context.Context, r
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
+// 处理清洗Seedance提示词相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func sanitizeSeedancePrompt(prompt string, aspectRatio string, resolution string) string {
 	parts := strings.Split(strings.TrimSpace(prompt), "\n")
 	result := make([]string, 0, len(parts))
@@ -230,6 +240,7 @@ func sanitizeSeedancePrompt(prompt string, aspectRatio string, resolution string
 	return strings.Join(result, "\n")
 }
 
+// 处理doLCon视频请求相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *LConAIProvider) doLConVideoRequest(ctx context.Context, baseURL string, apiKey string, method string, path string, body []byte, contentType string) ([]byte, error) {
 	normalizedBaseURL := normalizeLConBaseURL(baseURL)
 	if normalizedBaseURL == "" {
@@ -262,6 +273,7 @@ func (p *LConAIProvider) doLConVideoRequest(ctx context.Context, baseURL string,
 	return responseBody, nil
 }
 
+// 规范化Seedance视频Size，统一LCON AI链路的输入格式和后续处理行为。
 func normalizeSeedanceVideoSize(resolution string, aspectRatio string) string {
 	if trimmed := strings.TrimSpace(resolution); trimmed != "" {
 		return trimmed
@@ -274,6 +286,7 @@ func normalizeSeedanceVideoSize(resolution string, aspectRatio string) string {
 	}
 }
 
+// 规范化Seedance视频Seconds，统一LCON AI链路的输入格式和后续处理行为。
 func normalizeSeedanceVideoSeconds(value *int) string {
 	if value == nil || *value <= 0 {
 		return ""
@@ -281,6 +294,7 @@ func normalizeSeedanceVideoSeconds(value *int) string {
 	return strconv.Itoa(*value)
 }
 
+// 规范化LConBaseURL，统一LCON AI链路的输入格式和后续处理行为。
 func normalizeLConBaseURL(value string) string {
 	baseURL := strings.TrimRight(strings.TrimSpace(value), "/")
 	if baseURL == "" {

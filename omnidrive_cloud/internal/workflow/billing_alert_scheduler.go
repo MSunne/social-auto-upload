@@ -38,6 +38,7 @@ type billingAlertCandidate struct {
 	ProjectedBalance int64
 }
 
+// 创建计费告警Scheduler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewBillingAlertScheduler(app *appstate.App) (*BillingAlertScheduler, error) {
 	if app == nil {
 		return nil, fmt.Errorf("app is required")
@@ -48,6 +49,7 @@ func NewBillingAlertScheduler(app *appstate.App) (*BillingAlertScheduler, error)
 	}, nil
 }
 
+// 启动计费告警调度流程，持续处理后续轮询、调度或后台任务。
 func (s *BillingAlertScheduler) Start(parent context.Context) func() {
 	ctx, cancel := context.WithCancel(parent)
 	var wg sync.WaitGroup
@@ -67,6 +69,7 @@ func (s *BillingAlertScheduler) Start(parent context.Context) func() {
 	}
 }
 
+// 运行计费告警调度流程，按当前上下文驱动一次或持续的业务处理。
 func (s *BillingAlertScheduler) run(ctx context.Context) {
 	s.runOnce(ctx)
 
@@ -83,6 +86,7 @@ func (s *BillingAlertScheduler) run(ctx context.Context) {
 	}
 }
 
+// 执行一轮 AI 作业拉取与处理循环，供后台 worker 按固定节奏持续轮询。
 func (s *BillingAlertScheduler) runOnce(ctx context.Context) {
 	location := billingAlertLocation()
 	now := time.Now().In(location)
@@ -206,6 +210,7 @@ func (s *BillingAlertScheduler) runOnce(ctx context.Context) {
 	}
 }
 
+// 加载计费告警短信配置，供计费告警调度继续处理当前业务状态。
 func (s *BillingAlertScheduler) loadBillingAlertSMSConfig(ctx context.Context) (sms.RegistrationConfig, bool, error) {
 	record, err := s.app.Store.GetAdminSystemSettings(ctx)
 	if err != nil {
@@ -233,6 +238,7 @@ func (s *BillingAlertScheduler) loadBillingAlertSMSConfig(ctx context.Context) (
 	return config, ready, nil
 }
 
+// 处理groupAI作业s归属方相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func groupAIJobsByOwner(jobs []domain.AIJob) map[string][]domain.AIJob {
 	grouped := make(map[string][]domain.AIJob)
 	for _, job := range jobs {
@@ -245,6 +251,7 @@ func groupAIJobsByOwner(jobs []domain.AIJob) map[string][]domain.AIJob {
 	return grouped
 }
 
+// 处理首个Tomorrow计费Shortage相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func firstTomorrowBillingShortage(jobs []domain.AIJob, previews []store.UsageBillingQueuePreviewItem, startTomorrow time.Time, endTomorrow time.Time, location *time.Location) *billingAlertCandidate {
 	if len(jobs) == 0 || len(previews) == 0 {
 		return nil
@@ -274,6 +281,7 @@ func firstTomorrowBillingShortage(jobs []domain.AIJob, previews []store.UsageBil
 	return nil
 }
 
+// 处理用量计费LooksInsufficient相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func usageBillingLooksInsufficient(result store.ApplyUsageBillingResult) bool {
 	if !strings.EqualFold(strings.TrimSpace(result.BillStatus), "failed") {
 		return false
@@ -282,6 +290,7 @@ func usageBillingLooksInsufficient(result store.ApplyUsageBillingResult) bool {
 	return strings.Contains(message, "wallet credits insufficient") || strings.Contains(message, "积分不足")
 }
 
+// 构建计费告警TemplateParam，为计费告警调度生成后续步骤所需的派生参数或载荷。
 func buildBillingAlertTemplateParam(balance int64) (string, error) {
 	payload, err := json.Marshal(map[string]string{
 		"balance": fmt.Sprintf("%d", balance),
@@ -292,6 +301,7 @@ func buildBillingAlertTemplateParam(balance int64) (string, error) {
 	return string(payload), nil
 }
 
+// 处理计费告警Location相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func billingAlertLocation() *time.Location {
 	location, err := time.LoadLocation(billingAlertTimezone)
 	if err != nil {
@@ -300,6 +310,7 @@ func billingAlertLocation() *time.Location {
 	return location
 }
 
+// 处理计费告警窗口Bounds相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func billingAlertWindowBounds(now time.Time) (time.Time, time.Time, time.Time) {
 	location := now.Location()
 	startToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
@@ -308,6 +319,7 @@ func billingAlertWindowBounds(now time.Time) (time.Time, time.Time, time.Time) {
 	return startToday, startTomorrow, endTomorrow
 }
 
+// 处理生效作业执行时间相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func effectiveJobRunAt(job domain.AIJob) time.Time {
 	if job.RunAt != nil {
 		return job.RunAt.UTC()
@@ -315,6 +327,7 @@ func effectiveJobRunAt(job domain.AIJob) time.Time {
 	return job.CreatedAt.UTC()
 }
 
+// 规范化计费告警手机，统一计费告警调度链路的输入格式和后续处理行为。
 func normalizeBillingAlertPhone(user *domain.User) string {
 	if user == nil {
 		return ""
@@ -322,6 +335,7 @@ func normalizeBillingAlertPhone(user *domain.User) string {
 	return strings.TrimSpace(user.Phone)
 }
 
+// 处理must计费告警JSONBytes相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func mustBillingAlertJSONBytes(value any) []byte {
 	if value == nil {
 		return nil

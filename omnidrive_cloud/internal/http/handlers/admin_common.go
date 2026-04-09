@@ -21,6 +21,7 @@ type adminListResponse[T any] struct {
 	Filters    any                    `json:"filters,omitempty"`
 }
 
+// 解析管理端PageQuery，为管理端公共提供结构化输入。
 func parseAdminPageQuery(r *http.Request) adminPageQuery {
 	page := 1
 	pageSize := 20
@@ -51,6 +52,7 @@ func parseAdminPageQuery(r *http.Request) adminPageQuery {
 	}
 }
 
+// 构建管理端Pagination，为管理端公共生成后续步骤所需的派生参数或载荷。
 func buildAdminPagination(page int, pageSize int, total int64) domain.AdminPagination {
 	totalPages := 0
 	if total > 0 {
@@ -73,10 +75,12 @@ func renderAdminList[T any](w http.ResponseWriter, page adminPageQuery, total in
 	})
 }
 
+// 规范化管理端账号，统一管理端公共链路的输入格式和后续处理行为。
 func normalizeAdminAccount(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }
 
+// 处理首个Non空值管理端值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func firstNonEmptyAdminValue(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {

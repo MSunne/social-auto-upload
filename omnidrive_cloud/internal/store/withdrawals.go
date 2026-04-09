@@ -69,6 +69,7 @@ type adminWithdrawalRecord struct {
 	PaidAt             *time.Time
 }
 
+// 处理解码ProofURLs相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func decodeProofURLs(raw []byte) []string {
 	if len(raw) == 0 {
 		return []string{}
@@ -80,6 +81,7 @@ func decodeProofURLs(raw []byte) []string {
 	return items
 }
 
+// 处理扫描提现请求相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanWithdrawalRequest(scan scanFn) (*domain.WithdrawalRequest, error) {
 	var item domain.WithdrawalRequest
 	var accountPayload []byte
@@ -106,6 +108,7 @@ func scanWithdrawalRequest(scan scanFn) (*domain.WithdrawalRequest, error) {
 	return &item, nil
 }
 
+// 规范化ProofURLs，统一存储层链路的输入格式和后续处理行为。
 func normalizeProofURLs(items []string) []string {
 	result := make([]string, 0, len(items))
 	seen := make(map[string]struct{}, len(items))
@@ -123,6 +126,7 @@ func normalizeProofURLs(items []string) []string {
 	return result
 }
 
+// 处理扫描管理端提现记录相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanAdminWithdrawalRecord(scan scanFn) (*adminWithdrawalRecord, error) {
 	var item adminWithdrawalRecord
 	var proofURLs []byte
@@ -154,6 +158,7 @@ func scanAdminWithdrawalRecord(scan scanFn) (*adminWithdrawalRecord, error) {
 	return &item, nil
 }
 
+// 构建管理端提现行，为存储层生成后续步骤所需的派生参数或载荷。
 func buildAdminWithdrawalRow(record *adminWithdrawalRecord) domain.AdminWithdrawalRow {
 	return domain.AdminWithdrawalRow{
 		ID: record.ID,
@@ -172,6 +177,7 @@ func buildAdminWithdrawalRow(record *adminWithdrawalRecord) domain.AdminWithdraw
 	}
 }
 
+// 构建管理端提现详情，为存储层生成后续步骤所需的派生参数或载荷。
 func buildAdminWithdrawalDetail(record *adminWithdrawalRecord, availableAmountCents int64) domain.AdminWithdrawalDetail {
 	detail := domain.AdminWithdrawalDetail{
 		Record:               buildAdminWithdrawalRow(record),
@@ -197,6 +203,7 @@ func buildAdminWithdrawalDetail(record *adminWithdrawalRecord, availableAmountCe
 	return detail
 }
 
+// 获取管理端提现ID事务，为当前链路返回后续处理所需的数据内容。
 func getAdminWithdrawalByIDTx(ctx context.Context, tx pgx.Tx, withdrawalID string) (*adminWithdrawalRecord, error) {
 	row := tx.QueryRow(ctx, `
 		SELECT
@@ -235,6 +242,7 @@ func getAdminWithdrawalByIDTx(ctx context.Context, tx pgx.Tx, withdrawalID strin
 	return item, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAdminWithdrawalByID(ctx context.Context, withdrawalID string) (*domain.AdminWithdrawalDetail, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
@@ -278,6 +286,7 @@ func (s *Store) GetAdminWithdrawalByID(ctx context.Context, withdrawalID string)
 	return &detail, nil
 }
 
+// 计算PromoterAvailable提现Amount，供存储层复用派生状态和判定结果。
 func (s *Store) computePromoterAvailableWithdrawalAmount(ctx context.Context, promoterUserID string, excludeWithdrawalID string) (int64, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -295,6 +304,7 @@ func (s *Store) computePromoterAvailableWithdrawalAmount(ctx context.Context, pr
 	return amount, nil
 }
 
+// 计算PromoterAvailable提现Amount事务，供存储层复用派生状态和判定结果。
 func computePromoterAvailableWithdrawalAmountTx(ctx context.Context, tx pgx.Tx, promoterUserID string, excludeWithdrawalID string) (int64, error) {
 	var settledAmountCents int64
 	if err := tx.QueryRow(ctx, `
@@ -330,6 +340,7 @@ func computePromoterAvailableWithdrawalAmountTx(ctx context.Context, tx pgx.Tx, 
 	return availableAmountCents, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminWithdrawals(ctx context.Context, filter AdminWithdrawalListFilter) ([]domain.AdminWithdrawalRow, int64, domain.AdminWithdrawalListSummary, error) {
 	page, pageSize, offset := normalizeAdminPage(filter.Page, filter.PageSize)
 	_ = page
@@ -435,6 +446,7 @@ func (s *Store) ListAdminWithdrawals(ctx context.Context, filter AdminWithdrawal
 	return items, total, summary, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListWithdrawalRequestsByUser(ctx context.Context, promoterUserID string, limit int) ([]domain.WithdrawalRequest, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
@@ -476,6 +488,7 @@ func (s *Store) ListWithdrawalRequestsByUser(ctx context.Context, promoterUserID
 	return items, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetWithdrawalRequestByID(ctx context.Context, promoterUserID string, withdrawalID string) (*domain.WithdrawalRequest, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
@@ -506,6 +519,7 @@ func (s *Store) GetWithdrawalRequestByID(ctx context.Context, promoterUserID str
 	return item, nil
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateWithdrawalRequest(ctx context.Context, promoterUserID string, input CreateWithdrawalRequestInput) (*domain.WithdrawalRequest, error) {
 	if input.AmountCents <= 0 {
 		return nil, ErrWithdrawalAmountInvalid
@@ -571,6 +585,7 @@ func (s *Store) CreateWithdrawalRequest(ctx context.Context, promoterUserID stri
 	return item, nil
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) ApproveWithdrawal(ctx context.Context, withdrawalID string, input ReviewWithdrawalInput) (*domain.AdminWithdrawalDetail, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -635,6 +650,7 @@ func (s *Store) ApproveWithdrawal(ctx context.Context, withdrawalID string, inpu
 	return &detail, nil
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) RejectWithdrawal(ctx context.Context, withdrawalID string, input ReviewWithdrawalInput) (*domain.AdminWithdrawalDetail, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -695,6 +711,7 @@ func (s *Store) RejectWithdrawal(ctx context.Context, withdrawalID string, input
 	return &detail, nil
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) MarkWithdrawalPaid(ctx context.Context, withdrawalID string, input ReviewWithdrawalInput) (*domain.AdminWithdrawalDetail, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

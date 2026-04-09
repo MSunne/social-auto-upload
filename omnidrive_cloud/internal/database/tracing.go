@@ -29,6 +29,7 @@ type traceBatchState struct {
 type queryTraceKey struct{}
 type batchTraceKey struct{}
 
+// 创建QueryTracer相关实例，组装运行所需依赖并返回给上层流程复用。
 func newQueryTracer(logger *slog.Logger) *queryTracer {
 	if logger == nil {
 		logger = slog.Default()
@@ -36,6 +37,7 @@ func newQueryTracer(logger *slog.Logger) *queryTracer {
 	return &queryTracer{logger: logger}
 }
 
+// 处理TraceConnect启动相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (t *queryTracer) TraceConnectStart(ctx context.Context, data pgx.TraceConnectStartData) context.Context {
 	if data.ConnConfig != nil {
 		t.logger.Debug("db connect start",
@@ -48,6 +50,7 @@ func (t *queryTracer) TraceConnectStart(ctx context.Context, data pgx.TraceConne
 	return ctx
 }
 
+// 处理TraceConnectEnd相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (t *queryTracer) TraceConnectEnd(ctx context.Context, data pgx.TraceConnectEndData) {
 	if data.Err != nil {
 		t.logger.Error("db connect failed", "error", data.Err)
@@ -56,6 +59,7 @@ func (t *queryTracer) TraceConnectEnd(ctx context.Context, data pgx.TraceConnect
 	t.logger.Debug("db connect succeeded")
 }
 
+// 处理TraceQuery启动相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (t *queryTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
 	sql := normalizeSQL(data.SQL)
 	return context.WithValue(ctx, queryTraceKey{}, traceQueryState{
@@ -65,6 +69,7 @@ func (t *queryTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx
 	})
 }
 
+// 处理TraceQueryEnd相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (t *queryTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryEndData) {
 	state, _ := ctx.Value(queryTraceKey{}).(traceQueryState)
 	requestID := chimiddleware.GetReqID(ctx)
@@ -90,10 +95,12 @@ func (t *queryTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.T
 	t.logger.Debug("db query completed", attrs...)
 }
 
+// 处理TraceBatch启动相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (t *queryTracer) TraceBatchStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceBatchStartData) context.Context {
 	return context.WithValue(ctx, batchTraceKey{}, traceBatchState{startedAt: time.Now()})
 }
 
+// 处理TraceBatchQuery相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (t *queryTracer) TraceBatchQuery(ctx context.Context, _ *pgx.Conn, data pgx.TraceBatchQueryData) {
 	attrs := []any{
 		"request_id", chimiddleware.GetReqID(ctx),
@@ -109,6 +116,7 @@ func (t *queryTracer) TraceBatchQuery(ctx context.Context, _ *pgx.Conn, data pgx
 	t.logger.Debug("db batch query completed", attrs...)
 }
 
+// 处理TraceBatchEnd相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (t *queryTracer) TraceBatchEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceBatchEndData) {
 	state, _ := ctx.Value(batchTraceKey{}).(traceBatchState)
 	attrs := []any{
@@ -123,11 +131,13 @@ func (t *queryTracer) TraceBatchEnd(ctx context.Context, _ *pgx.Conn, data pgx.T
 	t.logger.Debug("db batch completed", attrs...)
 }
 
+// 处理Trace准备启动相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (t *queryTracer) TracePrepareStart(ctx context.Context, _ *pgx.Conn, data pgx.TracePrepareStartData) context.Context {
 	t.logger.Debug("db prepare start", "request_id", chimiddleware.GetReqID(ctx), "name", data.Name, "sql", normalizeSQL(data.SQL))
 	return ctx
 }
 
+// 处理Trace准备End相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (t *queryTracer) TracePrepareEnd(ctx context.Context, _ *pgx.Conn, data pgx.TracePrepareEndData) {
 	attrs := []any{
 		"request_id", chimiddleware.GetReqID(ctx),
@@ -141,11 +151,13 @@ func (t *queryTracer) TracePrepareEnd(ctx context.Context, _ *pgx.Conn, data pgx
 	t.logger.Debug("db prepare completed", attrs...)
 }
 
+// 规范化SQL，统一数据库追踪链路的输入格式和后续处理行为。
 func normalizeSQL(sql string) string {
 	sql = strings.Join(strings.Fields(strings.TrimSpace(sql)), " ")
 	return logging.TruncateString(sql, 1200)
 }
 
+// 判断是否应当SkipIdleBackgroundQuery，供当前链路选择后续处理策略。
 func shouldSkipIdleBackgroundQuery(requestID string, operation string, commandTag string) bool {
 	if requestID != "" || operation != "ai_worker_poll" {
 		return false
@@ -155,6 +167,7 @@ func shouldSkipIdleBackgroundQuery(requestID string, operation string, commandTa
 	return strings.HasSuffix(commandTag, " 0")
 }
 
+// 处理清洗LoggedQueryArgs相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func sanitizeLoggedQueryArgs(sql string, args []any) []any {
 	preview := logging.PreviewArgs(args, 256)
 	if len(preview) == 0 {
@@ -170,6 +183,7 @@ func sanitizeLoggedQueryArgs(sql string, args []any) []any {
 	return redacted
 }
 
+// 处理queryTouchesSensitiveColumns相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func queryTouchesSensitiveColumns(sql string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(sql))
 	if normalized == "" {

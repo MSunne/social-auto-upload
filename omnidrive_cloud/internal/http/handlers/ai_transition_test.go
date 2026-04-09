@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"testing"
 
 	"omnidrive_cloud/internal/domain"
@@ -85,5 +86,40 @@ func TestBuildAIJobBridgeStateWaitingRecharge(t *testing.T) {
 	state := buildAIJobBridgeState(job, nil, nil)
 	if state.DeliveryStage != "waiting_recharge" {
 		t.Fatalf("expected waiting_recharge stage, got %q", state.DeliveryStage)
+	}
+}
+
+func TestApplySkillWorkflowPricingSnapshotSupportsItemizedMultiples(t *testing.T) {
+	durationSeconds := 30
+	raw, err := applySkillWorkflowPricingSnapshot(nil, &domain.ProductSkill{
+		OutputType:           "视文模式",
+		FixedDurationSeconds: &durationSeconds,
+	}, &skillFixedDurationConfig{
+		DurationSeconds: 30,
+		SegmentSeconds:  10,
+	})
+	if err != nil {
+		t.Fatalf("applySkillWorkflowPricingSnapshot returned error: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("Unmarshal returned error: %v", err)
+	}
+	if payload["fixedDurationSeconds"] != float64(30) {
+		t.Fatalf("unexpected fixedDurationSeconds: %#v", payload["fixedDurationSeconds"])
+	}
+	workflowPricing, ok := payload["workflowPricing"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected workflowPricing payload, got %#v", payload["workflowPricing"])
+	}
+	if workflowPricing["durationSeconds"] != float64(30) {
+		t.Fatalf("unexpected durationSeconds: %#v", workflowPricing["durationSeconds"])
+	}
+	if workflowPricing["segmentSeconds"] != float64(10) {
+		t.Fatalf("unexpected segmentSeconds: %#v", workflowPricing["segmentSeconds"])
+	}
+	if _, exists := workflowPricing["ruleId"]; exists {
+		t.Fatalf("expected itemized snapshot without ruleId, got %#v", workflowPricing["ruleId"])
 	}
 }

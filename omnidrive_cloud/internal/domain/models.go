@@ -36,6 +36,7 @@ type Device struct {
 	CreatedAt                    time.Time            `json:"createdAt"`
 	UpdatedAt                    time.Time            `json:"updatedAt"`
 	Status                       string               `json:"status"`
+	BridgeStatus                 string               `json:"bridgeStatus"`
 	Load                         DeviceLoad           `json:"load"`
 }
 
@@ -50,6 +51,7 @@ type PlatformCapability struct {
 	DisabledReason *string `json:"disabledReason,omitempty"`
 }
 
+// 获取Agent键，为当前链路返回后续处理所需的数据内容。
 func (d Device) GetAgentKey() string {
 	return d.AgentKey
 }

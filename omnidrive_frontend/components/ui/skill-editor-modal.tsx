@@ -77,6 +77,12 @@ type OutputOption = {
   tone: string;
 };
 
+type SkillVideoDurationPreset = {
+  seconds: number;
+  label: string;
+  specialPriceCredits?: number | null;
+};
+
 const OUTPUT_OPTIONS: OutputOption[] = [
   {
     value: "图文模式",
@@ -145,6 +151,8 @@ function buildSkillFormState(skill?: Skill | null, coverPromptDefault = ""): Ski
 }
 
 const DEFAULT_VIDEO_TASK_NOTE = "默认不要字幕";
+const DEFAULT_SKILL_VIDEO_BASE_SECONDS = 8;
+const DEFAULT_SKILL_VIDEO_PRESET_MULTIPLIER_COUNT = 8;
 
 function isImageAsset(asset: SkillAsset) {
   return (asset.mimeType || "").startsWith("image/") || asset.assetType.includes("image");
@@ -269,8 +277,81 @@ function formatSkillBillingAmount(model?: AIModel | null) {
   return `${amount.toFixed(2)} 积分 / 次`;
 }
 
+function formatBillingMode(mode?: string | null) {
+  if (!mode) return "待配置";
+  const map: Record<string, string> = {
+    per_call: "按次计费",
+    per_second: "按秒计费",
+    per_token: "按 Token 计费",
+    per_image: "按图计费",
+  };
+  return map[mode] || mode;
+}
+
+function getVendorColor(vendor?: string | null) {
+  if (!vendor) return { border: "border-white/15", bg: "bg-white/8", text: "text-text-secondary" };
+  const v = vendor.toLowerCase();
+  if (v.includes("apiyi")) return { border: "border-sky-400/25", bg: "bg-sky-400/10", text: "text-sky-300" };
+  if (v.includes("iconai")) return { border: "border-emerald-400/25", bg: "bg-emerald-400/10", text: "text-emerald-300" };
+  if (v.includes("google")) return { border: "border-blue-400/25", bg: "bg-blue-400/10", text: "text-blue-300" };
+  if (v.includes("openai")) return { border: "border-green-400/25", bg: "bg-green-400/10", text: "text-green-300" };
+  return { border: "border-white/15", bg: "bg-white/8", text: "text-text-secondary" };
+}
+
 function isVideoTextOutput(outputType: string) {
   return normalizeSkillOutputLabel(outputType) === "视文模式";
+}
+
+function parseSkillVideoDurationSeconds(value: string) {
+  const match = value
+    .trim()
+    .toLowerCase()
+    .match(/^(\d+)\s*s?$/);
+  if (!match) {
+    return null;
+  }
+  const seconds = Number(match[1]);
+  return seconds > 0 ? seconds : null;
+}
+
+function resolveSkillVideoBaseSeconds(model?: AIModel | null) {
+  const supportedDurations = model?.videoSupportedDurations || [];
+  for (const item of supportedDurations) {
+    const seconds = parseSkillVideoDurationSeconds(item);
+    if (seconds) {
+      return seconds;
+    }
+  }
+  return DEFAULT_SKILL_VIDEO_BASE_SECONDS;
+}
+
+function buildSkillVideoDurationPresets(
+  baseSeconds: number,
+  durationRules: SkillEditorDefaults["videoTextDurationOptions"] = [],
+) {
+  const step = baseSeconds > 0 ? baseSeconds : DEFAULT_SKILL_VIDEO_BASE_SECONDS;
+  const matchedRules = durationRules.filter((item) => item.durationSeconds > 0 && item.durationSeconds % step === 0);
+  const secondsSet = new Set<number>();
+  const presets: SkillVideoDurationPreset[] = [];
+
+  for (let multiplier = 1; multiplier <= DEFAULT_SKILL_VIDEO_PRESET_MULTIPLIER_COUNT; multiplier += 1) {
+    const seconds = step * multiplier;
+    secondsSet.add(seconds);
+  }
+  matchedRules.forEach((item) => secondsSet.add(item.durationSeconds));
+
+  Array.from(secondsSet)
+    .sort((left, right) => left - right)
+    .forEach((seconds) => {
+      const matchedRule = matchedRules.find((item) => item.durationSeconds === seconds) ?? null;
+      presets.push({
+        seconds,
+        label: `${seconds}s`,
+        specialPriceCredits: matchedRule?.specialPriceCredits ?? null,
+      });
+    });
+
+  return presets;
 }
 
 export function SkillEditorModal({
@@ -327,6 +408,21 @@ export function SkillEditorModal({
     () => OUTPUT_OPTIONS.find((item) => item.value === form.outputType) ?? OUTPUT_OPTIONS[0],
     [form.outputType],
   );
+  const selectedVideoBaseSeconds = useMemo(
+    () => resolveSkillVideoBaseSeconds(selectedModel),
+    [selectedModel],
+  );
+  const videoDurationPresets = useMemo(
+    () => buildSkillVideoDurationPresets(selectedVideoBaseSeconds, videoTextDurationOptions),
+    [selectedVideoBaseSeconds, videoTextDurationOptions],
+  );
+  const matchedDurationRule = useMemo(() => {
+    const durationSeconds = Number(form.fixedDurationSeconds);
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+      return null;
+    }
+    return videoTextDurationOptions.find((item) => item.durationSeconds === durationSeconds) ?? null;
+  }, [form.fixedDurationSeconds, videoTextDurationOptions]);
 
   const mediaAssets = useMemo(() => assets.filter(isMediaAsset), [assets]);
   const imageAssets = useMemo(() => mediaAssets.filter(isImageAsset), [mediaAssets]);
@@ -415,19 +511,23 @@ export function SkillEditorModal({
   }, [isOpen, mediaAssets]);
 
   useEffect(() => {
-    if (!isOpen || !isVideoTextOutput(form.outputType) || form.fixedDurationSeconds || videoTextDurationOptions.length === 0) {
+    if (!isOpen || !isVideoTextOutput(form.outputType)) {
       return;
     }
     setForm((current) => {
-      if (!isVideoTextOutput(current.outputType) || current.fixedDurationSeconds) {
+      if (!isVideoTextOutput(current.outputType)) {
+        return current;
+      }
+      const durationSeconds = Number(current.fixedDurationSeconds);
+      if (Number.isFinite(durationSeconds) && durationSeconds > 0 && durationSeconds % selectedVideoBaseSeconds === 0) {
         return current;
       }
       return {
         ...current,
-        fixedDurationSeconds: String(videoTextDurationOptions[0].durationSeconds),
+        fixedDurationSeconds: String(selectedVideoBaseSeconds),
       };
     });
-  }, [form.fixedDurationSeconds, form.outputType, isOpen, videoTextDurationOptions]);
+  }, [form.outputType, isOpen, selectedVideoBaseSeconds]);
 
   useEffect(() => {
     if (!coverPromptWarningOpen) {
@@ -471,6 +571,15 @@ export function SkillEditorModal({
   const ensureSkillPayloadReady = (payload: ReturnType<typeof buildSkillPayload>) => {
     if (!payload.name || !payload.description || !payload.outputType || !payload.modelName) {
       throw new Error("请先填写完整的技能名称、简介、输出格式和模型，再上传素材");
+    }
+    if (isVideoTextOutput(payload.outputType)) {
+      const durationSeconds = Number(payload.fixedDurationSeconds || 0);
+      if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+        throw new Error("请先填写有效的视频固定时长");
+      }
+      if (durationSeconds % selectedVideoBaseSeconds !== 0) {
+        throw new Error(`当前模型基础时长为 ${selectedVideoBaseSeconds} 秒，请填写 ${selectedVideoBaseSeconds} 的倍数`);
+      }
     }
   };
 
@@ -604,7 +713,7 @@ export function SkillEditorModal({
           : current.promptTemplate,
       fixedDurationSeconds:
         nextOutputType === "视文模式"
-          ? current.fixedDurationSeconds || (videoTextDurationOptions[0] ? String(videoTextDurationOptions[0].durationSeconds) : "")
+          ? current.fixedDurationSeconds || String(selectedVideoBaseSeconds)
           : "",
       modelName:
         mapSkillOutputToModelCategory(current.outputType) === nextCategory ? current.modelName : "",
@@ -801,38 +910,6 @@ export function SkillEditorModal({
                       </div>
                     </div>
 
-                    {isVideoTextOutput(form.outputType) ? (
-                      <label className="space-y-2.5">
-                        <span className="text-sm font-medium text-white">固定视频时长</span>
-                        <select
-                          value={form.fixedDurationSeconds}
-                          onChange={(event) =>
-                            setForm((current) => ({ ...current, fixedDurationSeconds: event.target.value }))
-                          }
-                          className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white outline-none transition-all focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
-                        >
-                          <option value="" disabled className="bg-slate-950 text-white">
-                            请选择固定时长
-                          </option>
-                          {videoTextDurationOptions.map((option) => (
-                            <option
-                              key={option.ruleId}
-                              value={String(option.durationSeconds)}
-                              className="bg-slate-950 text-white"
-                            >
-                              {option.label}
-                              {typeof option.specialPriceCredits === "number" && option.specialPriceCredits > 0
-                                ? ` · 特价 ${option.specialPriceCredits} 积分`
-                                : " · 按实际模型步骤计费"}
-                            </option>
-                          ))}
-                        </select>
-                        <p className="text-xs leading-5 text-text-secondary">
-                          视文模式按技能固定时长执行。命中特价时优先按任务套餐计费，否则按实际执行到的模型步骤累计计费。
-                        </p>
-                      </label>
-                    ) : null}
-
                     <div className="grid gap-4 lg:grid-cols-2">
                       <label className="space-y-2.5">
                         <span className="text-sm font-medium text-white">简介</span>
@@ -937,8 +1014,158 @@ export function SkillEditorModal({
                   </SectionCard>
 
                   <SectionCard
+                    title="模型与时长"
+                    description="选择最终执行模型并设置视频时长。模型和时长紧密耦合，在同一区域方便对照。"
+                  >
+                    {modelsLoading ? (
+                      <InlineLoading label="正在读取可用模型..." />
+                    ) : availableModels.length === 0 ? (
+                      <div className="rounded-[24px] border border-dashed border-white/10 bg-white/[0.03] px-5 py-12 text-center text-sm text-text-secondary">
+                        当前没有匹配这个输出类型的已启用模型。
+                      </div>
+                    ) : (
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        {availableModels.map((model) => {
+                          const selected = model.modelName === form.modelName;
+                          const modelLimit = getModelReferenceLimit(form.outputType, model);
+                          const modelFileTypes = resolveSupportedFileTypes(model);
+                          const modelSupportsImages = hasSupportedFilePrefix(modelFileTypes, "image/");
+                          const modelSupportsVideos = hasSupportedFilePrefix(modelFileTypes, "video/");
+                          const vendorColor = getVendorColor(model.vendor);
+                          return (
+                            <button
+                              key={model.id}
+                              type="button"
+                              onClick={() =>
+                                setForm((current) => ({ ...current, modelName: model.modelName }))
+                              }
+                              className={cn(
+                                "group relative rounded-[26px] border p-5 text-left transition-all duration-200",
+                                selected
+                                  ? "border-accent/50 bg-[linear-gradient(160deg,rgba(177,73,255,0.12),rgba(0,245,212,0.04))] shadow-[0_0_0_1px_rgba(177,73,255,0.15),0_18px_45px_rgba(177,73,255,0.12)]"
+                                  : "border-white/10 bg-white/[0.04] hover:border-white/18 hover:bg-white/[0.06]",
+                              )}
+                            >
+                              {selected ? (
+                                <span className="absolute left-3 top-3 flex h-3 w-3">
+                                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent/60 opacity-75" />
+                                  <span className="relative inline-flex h-3 w-3 rounded-full bg-accent" />
+                                </span>
+                              ) : null}
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <p className="text-base font-semibold text-white">{getModelDisplayName(model)}</p>
+                                    <span className={cn("rounded-full border px-2.5 py-0.5 text-[11px] font-semibold", vendorColor.border, vendorColor.bg, vendorColor.text)}>
+                                      {model.vendor}
+                                    </span>
+                                  </div>
+                                  <p className="mt-2 line-clamp-2 text-sm leading-6 text-text-secondary">
+                                    {model.description || "暂无模型说明，可在后台补充。"}
+                                  </p>
+                                </div>
+                                <SelectionBadge selected={selected} />
+                              </div>
+                              <div className="mt-4 flex flex-wrap items-center gap-2">
+                                <span className="inline-flex items-center rounded-full border border-accent/20 bg-accent/8 px-2.5 py-1 text-xs font-semibold text-accent">
+                                  {formatSkillBillingAmount(model)}
+                                </span>
+                                <span className="inline-flex items-center rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-xs font-medium text-text-secondary">
+                                  {formatBillingMode(model.billingMode)}
+                                </span>
+                                <span className="inline-flex items-center rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-xs font-medium text-text-secondary">
+                                  {modelSupportsImages && modelSupportsVideos ? "🖼️🎬 " : modelSupportsVideos ? "🎬 " : modelSupportsImages ? "🖼️ " : ""}
+                                  {describeSupportedMediaTypes(modelSupportsImages, modelSupportsVideos)}
+                                </span>
+                                {modelLimit > 0 ? (
+                                  <span className="inline-flex items-center rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-xs font-medium text-text-secondary">
+                                    最多{modelLimit}个
+                                  </span>
+                                ) : null}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    <div className="rounded-[24px] border border-white/10 bg-[#0d1729] p-4">
+                      <div className="flex items-center gap-2 text-sm font-medium text-white">
+                        <Cpu className="h-4 w-4 text-cyan" />
+                        当前模型
+                      </div>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                        <SummaryLine
+                          label="当前模型"
+                          value={selectedModel ? getModelDisplayName(selectedModel) : "请选择模型"}
+                        />
+                        <SummaryLine
+                          label="单次扣费"
+                          value={formatSkillBillingAmount(selectedModel)}
+                        />
+                      </div>
+                      <p className="mt-3 text-xs leading-5 text-text-secondary">
+                        创建前即可看到当前技能单次预计扣费，实际扣费以任务入账结果为准。
+                      </p>
+                    </div>
+
+                    {isVideoTextOutput(form.outputType) ? (
+                      <div className="space-y-3">
+                        <span className="text-sm font-medium text-white">固定视频时长</span>
+                        <input
+                          type="number"
+                          min={selectedVideoBaseSeconds}
+                          step={selectedVideoBaseSeconds}
+                          value={form.fixedDurationSeconds}
+                          onChange={(event) =>
+                            setForm((current) => ({ ...current, fixedDurationSeconds: event.target.value }))
+                          }
+                          className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white outline-none transition-all focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
+                          placeholder={`请输入 ${selectedVideoBaseSeconds} 的倍数`}
+                        />
+                        <div className="flex flex-wrap gap-2">
+                          {videoDurationPresets.map((option) => {
+                            const presetSelected = Number(form.fixedDurationSeconds) === option.seconds;
+                            return (
+                              <button
+                                key={option.seconds}
+                                type="button"
+                                onClick={() =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    fixedDurationSeconds: String(option.seconds),
+                                  }))
+                                }
+                                className={cn(
+                                  "rounded-full border px-3 py-1.5 text-xs font-medium transition-all",
+                                  presetSelected
+                                    ? "border-accent/45 bg-accent/12 text-white"
+                                    : "border-white/10 bg-white/[0.04] text-text-secondary hover:border-white/20 hover:text-white",
+                                )}
+                              >
+                                {option.label}
+                                {typeof option.specialPriceCredits === "number" && option.specialPriceCredits > 0
+                                  ? ` · 特价 ${option.specialPriceCredits}`
+                                  : ""}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <p className="text-xs leading-5 text-text-secondary">
+                          当前模型基础时长为 {selectedVideoBaseSeconds} 秒，只支持 {selectedVideoBaseSeconds} 的倍数。超过单段时长后，系统会自动生成首帧并在多段时以上一段末帧续接，未命中特价时按首帧/分镜和每段视频实际步骤累计计费。
+                        </p>
+                        <p className="text-xs leading-5 text-text-secondary">
+                          {matchedDurationRule && typeof matchedDurationRule.specialPriceCredits === "number" && matchedDurationRule.specialPriceCredits > 0
+                            ? `当前时长命中特价 ${matchedDurationRule.specialPriceCredits} 积分。`
+                            : "当前时长未命中特价套餐，将按实际模型步骤计费。"}
+                        </p>
+                      </div>
+                    ) : null}
+                  </SectionCard>
+
+                  <SectionCard
                     title="执行方式"
-                    description="这里决定技能是否生效、是否启用简介 AI 优化，以及最终交给哪个模型执行。"
+                    description="决定技能是否生效、是否启用简介 AI 优化和分镜优化。"
                   >
                     <div className="grid gap-4 lg:grid-cols-3">
                       <SwitchCard
@@ -981,93 +1208,6 @@ export function SkillEditorModal({
                         }
                       />
                     </div>
-
-                    <div className="rounded-[24px] border border-white/10 bg-[#0d1729] p-4">
-                      <div className="flex items-center gap-2 text-sm font-medium text-white">
-                        <Cpu className="h-4 w-4 text-cyan" />
-                        最终执行模型
-                      </div>
-                      <p className="mt-2 text-sm leading-6 text-text-secondary">
-                        这里只选一个最终模型，方便按质量、速度和成本做取舍。分镜模型在系统侧单独配置。
-                      </p>
-                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                        <SummaryLine
-                          label="当前模型"
-                          value={selectedModel ? getModelDisplayName(selectedModel) : "请选择模型"}
-                        />
-                        <SummaryLine
-                          label="单次扣费"
-                          value={formatSkillBillingAmount(selectedModel)}
-                        />
-                      </div>
-                      <p className="mt-3 text-xs leading-5 text-text-secondary">
-                        创建前即可看到当前技能单次预计扣费，实际扣费以任务入账结果为准。
-                      </p>
-                    </div>
-
-                    {modelsLoading ? (
-                      <InlineLoading label="正在读取可用模型..." />
-                    ) : availableModels.length === 0 ? (
-                      <div className="rounded-[24px] border border-dashed border-white/10 bg-white/[0.03] px-5 py-12 text-center text-sm text-text-secondary">
-                        当前没有匹配这个输出类型的已启用模型。
-                      </div>
-                    ) : (
-                      <div className="grid gap-4 lg:grid-cols-2">
-                        {availableModels.map((model) => {
-                          const selected = model.modelName === form.modelName;
-                          const modelLimit = getModelReferenceLimit(form.outputType, model);
-                          const modelFileTypes = resolveSupportedFileTypes(model);
-                          const modelSupportsImages = hasSupportedFilePrefix(modelFileTypes, "image/");
-                          const modelSupportsVideos = hasSupportedFilePrefix(modelFileTypes, "video/");
-                          return (
-                            <button
-                              key={model.id}
-                              type="button"
-                              onClick={() =>
-                                setForm((current) => ({ ...current, modelName: model.modelName }))
-                              }
-                              className={cn(
-                                "rounded-[26px] border p-4 text-left transition-all",
-                                selected
-                                  ? "border-accent/50 bg-[linear-gradient(160deg,rgba(177,73,255,0.15),rgba(0,245,212,0.04))] shadow-[0_18px_45px_rgba(177,73,255,0.15)]"
-                                  : "border-white/10 bg-white/[0.04] hover:border-white/18 hover:bg-white/[0.06]",
-                              )}
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <p className="text-base font-semibold text-white">{getModelDisplayName(model)}</p>
-                                    <MiniPill>{model.vendor}</MiniPill>
-                                  </div>
-                                  <p className="mt-2 text-sm leading-6 text-text-secondary">
-                                    {model.description || "暂无模型说明，可在后台补充。"}
-                                  </p>
-                                </div>
-                                <SelectionBadge selected={selected} />
-                              </div>
-                              <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                                <MetricBlock
-                                  label="单次扣费"
-                                  value={formatSkillBillingAmount(model)}
-                                />
-                                <MetricBlock
-                                  label="计费"
-                                  value={model.billingMode || "待配置"}
-                                />
-                                <MetricBlock
-                                  label="参考媒体"
-                                  value={describeSupportedMediaTypes(modelSupportsImages, modelSupportsVideos)}
-                                />
-                                <MetricBlock
-                                  label="媒体上限"
-                                  value={modelLimit > 0 ? `最多 ${modelLimit} 个` : "不限或未声明"}
-                                />
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
                   </SectionCard>
 
 

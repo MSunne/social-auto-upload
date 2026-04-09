@@ -45,10 +45,12 @@ type createAdminRoleRequest struct {
 	PermissionCodes []string `json:"permissionCodes"`
 }
 
+// 创建管理端RBACHandler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewAdminRBACHandler(app *appstate.App) *AdminRBACHandler {
 	return &AdminRBACHandler{app: app}
 }
 
+// 处理管理端RBAC列表Admins接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminRBACHandler) ListAdmins(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	roleID := strings.TrimSpace(r.URL.Query().Get("roleId"))
@@ -99,6 +101,7 @@ func (h *AdminRBACHandler) ListAdmins(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理管理端RBAC创建管理端接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminRBACHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 	var payload createAdminRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -178,6 +181,7 @@ func (h *AdminRBACHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusCreated, admin)
 }
 
+// 处理管理端RBAC更新管理端接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminRBACHandler) UpdateAdmin(w http.ResponseWriter, r *http.Request) {
 	adminID := strings.TrimSpace(chi.URLParam(r, "adminId"))
 	if adminID == "" {
@@ -289,6 +293,7 @@ func (h *AdminRBACHandler) UpdateAdmin(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, admin)
 }
 
+// 处理管理端RBAC列表角色接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminRBACHandler) ListRoles(w http.ResponseWriter, r *http.Request) {
 	items, err := h.app.Store.ListAdminRoles(r.Context())
 	if err != nil {
@@ -318,6 +323,7 @@ func (h *AdminRBACHandler) ListRoles(w http.ResponseWriter, r *http.Request) {
 	}, nil)
 }
 
+// 处理管理端RBAC创建角色接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminRBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 	var payload createAdminRoleRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -372,6 +378,7 @@ func (h *AdminRBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusCreated, role)
 }
 
+// 确保Super管理端Remains已满足执行前提，必要时补齐缺失状态或配置。
 func ensureSuperAdminRemains(ctx context.Context, s *store.Store, existingAdmin *domain.AdminIdentity, update store.UpdateAdminUserInput) error {
 	if existingAdmin == nil {
 		return nil
@@ -406,6 +413,7 @@ func ensureSuperAdminRemains(ctx context.Context, s *store.Store, existingAdmin 
 	return nil
 }
 
+// 处理containsString相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func containsString(items []string, target string) bool {
 	target = strings.TrimSpace(target)
 	for _, item := range items {
@@ -416,6 +424,7 @@ func containsString(items []string, target string) bool {
 	return false
 }
 
+// 处理trim可选String相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func trimOptionalString(value *string) *string {
 	if value == nil {
 		return nil
@@ -427,6 +436,7 @@ func trimOptionalString(value *string) *string {
 	return &trimmed
 }
 
+// 判断是否属于管理端输入错误，供当前链路选择后续处理策略。
 func isAdminInputError(err error) bool {
 	if err == nil {
 		return false
@@ -435,6 +445,7 @@ func isAdminInputError(err error) bool {
 	return strings.Contains(message, "required") || strings.Contains(message, "invalid")
 }
 
+// 判断是否属于管理端UniqueViolation，供当前链路选择后续处理策略。
 func isAdminUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"

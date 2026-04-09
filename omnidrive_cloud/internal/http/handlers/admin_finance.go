@@ -99,10 +99,12 @@ type createWalletAdjustmentRequest struct {
 	Payload       json.RawMessage `json:"payload"`
 }
 
+// 创建管理端财务Handler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewAdminFinanceHandler(app *appstate.App) *AdminFinanceHandler {
 	return &AdminFinanceHandler{app: app}
 }
 
+// 处理解码管理端财务请求相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func decodeAdminFinanceRequest(r *http.Request, destination any) (map[string]json.RawMessage, error) {
 	if r.Body == nil {
 		return nil, errors.New("empty request body")
@@ -129,11 +131,13 @@ func decodeAdminFinanceRequest(r *http.Request, destination any) (map[string]jso
 	return raw, nil
 }
 
+// 处理财务FieldTouched相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func financeFieldTouched(raw map[string]json.RawMessage, key string) bool {
 	_, exists := raw[key]
 	return exists
 }
 
+// 处理存储计费Entitlements相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func toStoreBillingEntitlements(items []adminBillingPackageEntitlementRequest) []store.BillingPackageEntitlementInput {
 	result := make([]store.BillingPackageEntitlementInput, 0, len(items))
 	for _, item := range items {
@@ -148,6 +152,7 @@ func toStoreBillingEntitlements(items []adminBillingPackageEntitlementRequest) [
 	return result
 }
 
+// 处理管理端财务详情订单接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminFinanceHandler) DetailOrder(w http.ResponseWriter, r *http.Request) {
 	orderID := strings.TrimSpace(chi.URLParam(r, "orderId"))
 	if orderID == "" {
@@ -191,6 +196,7 @@ func (h *AdminFinanceHandler) DetailOrder(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// 处理管理端财务列表订单事件接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminFinanceHandler) ListOrderEvents(w http.ResponseWriter, r *http.Request) {
 	orderID := strings.TrimSpace(chi.URLParam(r, "orderId"))
 	if orderID == "" {
@@ -216,6 +222,7 @@ func (h *AdminFinanceHandler) ListOrderEvents(w http.ResponseWriter, r *http.Req
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理管理端财务详情钱包台账接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminFinanceHandler) DetailWalletLedger(w http.ResponseWriter, r *http.Request) {
 	ledgerID := strings.TrimSpace(chi.URLParam(r, "ledgerId"))
 	if ledgerID == "" {
@@ -272,6 +279,7 @@ func (h *AdminFinanceHandler) DetailWalletLedger(w http.ResponseWriter, r *http.
 	render.JSON(w, http.StatusOK, detail)
 }
 
+// 处理管理端财务创建钱包Adjustment接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminFinanceHandler) CreateWalletAdjustment(w http.ResponseWriter, r *http.Request) {
 	var payload createWalletAdjustmentRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -361,6 +369,7 @@ func (h *AdminFinanceHandler) CreateWalletAdjustment(w http.ResponseWriter, r *h
 	})
 }
 
+// 处理管理端财务创建定价套餐接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminFinanceHandler) CreatePricingPackage(w http.ResponseWriter, r *http.Request) {
 	var payload createAdminBillingPackageRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -433,6 +442,7 @@ func (h *AdminFinanceHandler) CreatePricingPackage(w http.ResponseWriter, r *htt
 	render.JSON(w, http.StatusCreated, item)
 }
 
+// 处理管理端财务更新定价套餐接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminFinanceHandler) UpdatePricingPackage(w http.ResponseWriter, r *http.Request) {
 	packageID := strings.TrimSpace(chi.URLParam(r, "packageId"))
 	if packageID == "" {
@@ -517,6 +527,7 @@ func (h *AdminFinanceHandler) UpdatePricingPackage(w http.ResponseWriter, r *htt
 	render.JSON(w, http.StatusOK, item)
 }
 
+// 处理管理端财务创建工作流时长规则接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminFinanceHandler) CreateWorkflowDurationRule(w http.ResponseWriter, r *http.Request) {
 	var payload createWorkflowDurationRuleRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -593,6 +604,7 @@ func (h *AdminFinanceHandler) CreateWorkflowDurationRule(w http.ResponseWriter, 
 	render.JSON(w, http.StatusCreated, item)
 }
 
+// 处理管理端财务更新工作流时长规则接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminFinanceHandler) UpdateWorkflowDurationRule(w http.ResponseWriter, r *http.Request) {
 	ruleID := strings.TrimSpace(chi.URLParam(r, "ruleId"))
 	if ruleID == "" {

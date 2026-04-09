@@ -22,15 +22,21 @@ type Store struct {
 	pool *pgxpool.Pool
 }
 
+// 创建存储层相关实例，组装运行所需依赖并返回给上层流程复用。
 func New(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
 }
 
 type deviceRuntimeHeartbeatHints struct {
-	HeartbeatIntervalSeconds int `json:"heartbeatIntervalSeconds"`
-	HeartbeatInterval        int `json:"heartbeatInterval"`
+	HeartbeatIntervalSeconds int    `json:"heartbeatIntervalSeconds"`
+	HeartbeatInterval        int    `json:"heartbeatInterval"`
+	BridgeStatus             string `json:"bridgeStatus"`
+	BridgeLastError          string `json:"bridgeLastError"`
+	LastError                string `json:"lastError"`
+	CloudReachable           *bool  `json:"cloudReachable"`
 }
 
+// 根据最后心跳时间和运行时载荷计算设备状态，供列表查询和诊断逻辑复用。
 func computeDeviceStatus(lastSeenAt *time.Time, runtimePayload []byte) string {
 	if lastSeenAt == nil {
 		return "offline"
@@ -41,6 +47,39 @@ func computeDeviceStatus(lastSeenAt *time.Time, runtimePayload []byte) string {
 	return "offline"
 }
 
+// 根据最后心跳时间和运行时载荷计算设备桥接状态，供在线诊断和监控逻辑复用。
+func computeDeviceBridgeStatus(lastSeenAt *time.Time, runtimePayload []byte) string {
+	if computeDeviceStatus(lastSeenAt, runtimePayload) != "online" {
+		return "offline"
+	}
+	if len(runtimePayload) == 0 {
+		return "unknown"
+	}
+
+	var hints deviceRuntimeHeartbeatHints
+	if err := json.Unmarshal(runtimePayload, &hints); err != nil {
+		return "unknown"
+	}
+
+	switch strings.ToLower(strings.TrimSpace(hints.BridgeStatus)) {
+	case "healthy":
+		return "healthy"
+	case "degraded":
+		return "degraded"
+	case "unknown":
+		return "unknown"
+	}
+
+	if hints.CloudReachable != nil && !*hints.CloudReachable {
+		return "degraded"
+	}
+	if strings.TrimSpace(hints.BridgeLastError) != "" || strings.TrimSpace(hints.LastError) != "" {
+		return "degraded"
+	}
+	return "unknown"
+}
+
+// 根据运行时载荷推导设备在线判定窗口，避免不同心跳频率下出现误判。
 func onlineWindowForRuntimePayload(runtimePayload []byte) time.Duration {
 	if len(runtimePayload) == 0 {
 		return onlineWindow
@@ -69,6 +108,7 @@ func onlineWindowForRuntimePayload(runtimePayload []byte) time.Duration {
 	return window
 }
 
+// 构建设备在线 SQL 条件，供查询语句在数据库层复用统一判定逻辑。
 func deviceOnlineSQLPredicate(tableAlias string) string {
 	qualified := strings.TrimSpace(tableAlias)
 	if qualified == "" {
@@ -88,6 +128,16 @@ func deviceOnlineSQLPredicate(tableAlias string) string {
 	)
 }
 
+// 构建设备健康在线 SQL 条件，供查询语句在数据库层复用统一判定逻辑。
+func deviceHealthyOnlineSQLPredicate(tableAlias string) string {
+	qualified := strings.TrimSpace(tableAlias)
+	if qualified == "" {
+		qualified = "devices"
+	}
+	return fmt.Sprintf("(%s AND LOWER(COALESCE(%s.runtime_payload->>'bridgeStatus', 'unknown')) = 'healthy')", deviceOnlineSQLPredicate(qualified), qualified)
+}
+
+// 将非空字符串转换为指针，统一存储层对可选字符串字段的入参表达。
 func stringPtr(value string) *string {
 	if value == "" {
 		return nil
@@ -95,6 +145,7 @@ func stringPtr(value string) *string {
 	return &value
 }
 
+// 解包可选字符串指针，统一存储层对空值字段的回写行为。
 func valueOrEmpty(value *string) string {
 	if value == nil {
 		return ""
@@ -102,6 +153,7 @@ func valueOrEmpty(value *string) string {
 	return *value
 }
 
+// 将非零时间转换为 UTC 指针，统一数据库写入时的时间表达。
 func timePtr(value time.Time) *time.Time {
 	if value.IsZero() {
 		return nil
@@ -110,6 +162,7 @@ func timePtr(value time.Time) *time.Time {
 	return &utc
 }
 
+// 在字节切片为空时返回 nil，统一 JSON 和二进制字段的持久化语义。
 func bytesOrNil(value []byte) []byte {
 	if len(value) == 0 {
 		return nil
@@ -117,6 +170,7 @@ func bytesOrNil(value []byte) []byte {
 	return value
 }
 
+// 将任意结构序列化为 JSON 字节，失败时直接 panic 以暴露调用方数据错误。
 func mustJSONBytes(value any) []byte {
 	payload, err := json.Marshal(value)
 	if err != nil {
@@ -717,14 +771,17 @@ type OverviewSummary struct {
 	RecentAIJobs            []domain.AIJob       `json:"recentAiJobs"`
 }
 
+// 执行数据库连通性检查，供服务启动和健康探针确认连接池是否可用。
 func (s *Store) Ping(ctx context.Context) error {
 	return s.pool.Ping(ctx)
 }
 
+// 处理发布任务租约TTL相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func PublishTaskLeaseTTL() time.Duration {
 	return publishTaskLeaseWindow
 }
 
+// 处理AI作业租约TTL相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func AIJobLeaseTTL() time.Duration {
 	return aiJobLeaseWindow
 }

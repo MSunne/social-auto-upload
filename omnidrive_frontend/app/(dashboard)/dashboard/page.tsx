@@ -32,7 +32,9 @@ export default function DashboardPage() {
     queryFn: () => listTasks(),
   });
 
-  const onlineDevices = devices.filter((d) => d.status === "online").length;
+  const onlineDevices = devices.filter(
+    (d) => d.status === "online" && d.bridgeStatus === "healthy",
+  ).length;
   const pendingTasks = tasks.filter(
     (t) => t.status === "pending" || t.status === "running",
   ).length;
@@ -121,7 +123,14 @@ export default function DashboardPage() {
                       </p>
                     </div>
                   </div>
-                  <StatusBadge status={device.status} />
+                  <div className="flex items-center gap-2">
+                    <StatusBadge status={device.status} />
+                    {device.status === "online" && device.bridgeStatus === "degraded" ? (
+                      <span className="rounded-full bg-danger/10 px-2 py-1 text-[10px] font-semibold text-danger">
+                        云桥异常
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
               ))}
             </div>

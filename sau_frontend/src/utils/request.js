@@ -49,13 +49,14 @@ request.interceptors.response.use(
 
     if (error.response) {
       const { status } = error.response
+      const backendMsg = error.response?.data?.msg || error.response?.data?.message
       const messages = {
         401: '未授权，请重新登录',
         403: '拒绝访问',
         404: '请求地址不存在',
         500: '服务器内部错误',
       }
-      ElMessage.error(messages[status] || `网络错误 (${status})`)
+      ElMessage.error(backendMsg || messages[status] || `网络错误 (${status})`)
     } else if (error.code === 'ECONNABORTED') {
       ElMessage.error('请求超时，请检查网络')
     } else {
@@ -105,6 +106,7 @@ export function createSSE(path, onMessage, onError) {
   const source = new EventSource(url)
 
   source.onmessage = (event) => {
+    if (typeof onMessage !== 'function') return
     try {
       // Prefer parsed JSON payloads, but preserve plain-text events for legacy endpoints.
       const data = JSON.parse(event.data)

@@ -97,3 +97,26 @@ func TestVideoExecutionStateRoundTripsReferenceFrames(t *testing.T) {
 		t.Fatalf("unexpected frame redesign state: %#v", state.FrameRedesign)
 	}
 }
+
+func TestBuildWorkflowSegmentPromptAddsContinuationGuidance(t *testing.T) {
+	prompt := buildWorkflowSegmentPrompt(
+		"让产品在越野场景中持续推进，并强化速度感。",
+		videoExecutionState{
+			CompletedSegments: []videoCompletedSegment{{SegmentIndex: 1}},
+		},
+		2,
+		3,
+	)
+
+	requiredSnippets := []string{
+		"当前生成第 2/3 段",
+		"上一段最后一帧",
+		"不要重新起镜",
+		"保持产品、角色、场景、光线、色调和镜头语言连续一致",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(prompt, snippet) {
+			t.Fatalf("expected prompt to contain %q, got %q", snippet, prompt)
+		}
+	}
+}

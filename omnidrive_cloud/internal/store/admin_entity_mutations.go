@@ -46,6 +46,7 @@ type UpdateAdminAIJobTargetInput struct {
 	RiskTagsTouched        bool
 }
 
+// 处理trim可选StringPointer相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func trimOptionalStringPointer(value *string) *string {
 	if value == nil {
 		return nil
@@ -54,6 +55,7 @@ func trimOptionalStringPointer(value *string) *string {
 	return &trimmed
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpdateAdminUserTarget(ctx context.Context, userID string, input UpdateAdminUserTargetInput) (*domain.AdminUserRow, error) {
 	var nameValue any
 	if input.Name != nil {
@@ -85,6 +87,7 @@ func (s *Store) UpdateAdminUserTarget(ctx context.Context, userID string, input 
 	return s.GetAdminUserByID(ctx, userID)
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) DeleteAdminUserCascade(ctx context.Context, userID string) (bool, int64, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -142,6 +145,7 @@ func (s *Store) DeleteAdminUserCascade(ctx context.Context, userID string) (bool
 	return true, ownedDeviceCount, nil
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpdateAdminDeviceTarget(ctx context.Context, deviceID string, input UpdateAdminDeviceTargetInput) (*domain.AdminDeviceRow, error) {
 	var nameValue any
 	if input.Name != nil {
@@ -170,6 +174,7 @@ func (s *Store) UpdateAdminDeviceTarget(ctx context.Context, deviceID string, in
 	return s.GetAdminDeviceByID(ctx, deviceID)
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpdateAdminMediaAccountTarget(ctx context.Context, accountID string, input UpdateAdminMediaAccountTargetInput) (*domain.AdminMediaAccountRow, error) {
 	notesValue := ""
 	if input.Notes != nil {
@@ -195,6 +200,7 @@ func (s *Store) UpdateAdminMediaAccountTarget(ctx context.Context, accountID str
 	return s.GetAdminAccountByID(ctx, accountID)
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpdateAdminPublishTaskTarget(ctx context.Context, taskID string, input UpdateAdminPublishTaskTargetInput) (*domain.AdminPublishTaskRow, error) {
 	notesValue := ""
 	if input.Notes != nil {
@@ -240,6 +246,7 @@ func (s *Store) UpdateAdminPublishTaskTarget(ctx context.Context, taskID string,
 	return s.GetAdminTaskByID(ctx, taskID)
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpdateAdminAIJobTarget(ctx context.Context, jobID string, input UpdateAdminAIJobTargetInput) (*domain.AdminAIJobRow, error) {
 	notesValue := ""
 	if input.Notes != nil {
@@ -285,6 +292,7 @@ func (s *Store) UpdateAdminAIJobTarget(ctx context.Context, jobID string, input 
 	return s.GetAdminAIJobByID(ctx, jobID)
 }
 
+// 根据ce释放发布任务Leases设备计算，供存储层链路复用关键派生结果。
 func (s *Store) ForceReleasePublishTaskLeasesByDevice(ctx context.Context, deviceID string, message *string) ([]domain.PublishTask, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -361,6 +369,7 @@ func (s *Store) ForceReleasePublishTaskLeasesByDevice(ctx context.Context, devic
 	return tasks, nil
 }
 
+// 根据ce释放AI作业Leases设备计算，供存储层链路复用关键派生结果。
 func (s *Store) ForceReleaseAIJobLeasesByDevice(ctx context.Context, deviceID string, message *string) ([]domain.AIJob, error) {
 	rows, err := s.pool.Query(ctx, `
 		UPDATE ai_jobs

@@ -20,6 +20,7 @@ type managedObjectRef struct {
 	SizeBytes  *int64
 }
 
+// 规范化ManagedObjectRef，统一存储ingest链路的输入格式和后续处理行为。
 func normalizeManagedObjectRef(ctx context.Context, app *appstate.App, basePath string, ref managedObjectRef) (managedObjectRef, bool, error) {
 	ref.FileName = deriveManagedFileName(ref.FileName, ref.PublicURL)
 	ref.MimeType = normalizeTrimmedString(ref.MimeType)
@@ -56,6 +57,7 @@ func normalizeManagedObjectRef(ctx context.Context, app *appstate.App, basePath 
 	return ref, true, nil
 }
 
+// 处理deriveManaged文件名称相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func deriveManagedFileName(fileName string, rawURL *string) string {
 	fileName = strings.TrimSpace(fileName)
 	if fileName != "" {
@@ -73,6 +75,7 @@ func deriveManagedFileName(fileName string, rawURL *string) string {
 	return "file.bin"
 }
 
+// 规范化SizeBytes，统一存储ingest链路的输入格式和后续处理行为。
 func normalizeSizeBytes(sizeBytes *int64) *int64 {
 	if sizeBytes == nil || *sizeBytes <= 0 {
 		return nil

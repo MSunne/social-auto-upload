@@ -50,6 +50,7 @@ const (
 	reusableVerificationLoginSessionWindow = 20 * time.Minute
 )
 
+// 判断是否属于Login取消动作，供当前链路选择后续处理策略。
 func isLoginCancelAction(actionType string) bool {
 	switch strings.TrimSpace(actionType) {
 	case "cancel_session", "cancel_login":
@@ -59,10 +60,12 @@ func isLoginCancelAction(actionType string) bool {
 	}
 }
 
+// 创建账号Handler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewAccountHandler(app *appstate.App) *AccountHandler {
 	return &AccountHandler{app: app}
 }
 
+// 处理findReusable登录会话相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func findReusableLoginSession(ctx context.Context, store *store.Store, ownerUserID string, deviceID string, platform string, accountName string) (*domain.LoginSession, error) {
 	ownerUserID = strings.TrimSpace(ownerUserID)
 	deviceID = strings.TrimSpace(deviceID)
@@ -86,6 +89,7 @@ func findReusableLoginSession(ctx context.Context, store *store.Store, ownerUser
 	return nil, nil
 }
 
+// 判断是否属于Reusable登录会话，供当前链路选择后续处理策略。
 func isReusableLoginSession(session *domain.LoginSession, now time.Time) bool {
 	if session == nil {
 		return false
@@ -102,6 +106,7 @@ func isReusableLoginSession(session *domain.LoginSession, now time.Time) bool {
 	}
 }
 
+// 处理账号列表接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AccountHandler) List(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	deviceID := strings.TrimSpace(r.URL.Query().Get("deviceId"))
@@ -114,6 +119,7 @@ func (h *AccountHandler) List(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理账号详情接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AccountHandler) Detail(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	accountID := strings.TrimSpace(chi.URLParam(r, "accountId"))
@@ -134,6 +140,7 @@ func (h *AccountHandler) Detail(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, account)
 }
 
+// 处理账号工作区接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AccountHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	accountID := strings.TrimSpace(chi.URLParam(r, "accountId"))
@@ -164,6 +171,7 @@ func (h *AccountHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理账号创建技能运行接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AccountHandler) CreateSkillRun(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	accountID := strings.TrimSpace(chi.URLParam(r, "accountId"))
@@ -484,6 +492,7 @@ func (h *AccountHandler) CreateSkillRun(w http.ResponseWriter, r *http.Request) 
 	render.JSON(w, statusCode, createdJobs)
 }
 
+// 构建账号技能运行Lock键，为账号生成后续步骤所需的派生参数或载荷。
 func buildAccountSkillRunLockKey(ownerUserID string, accountID string, skillID string, generateAt time.Time, scheduleKey string) string {
 	if strings.TrimSpace(scheduleKey) != "" {
 		return "account-skill-schedule:" + strings.TrimSpace(ownerUserID) + ":" + strings.TrimSpace(scheduleKey)
@@ -491,6 +500,7 @@ func buildAccountSkillRunLockKey(ownerUserID string, accountID string, skillID s
 	return "account-skill-run:" + strings.TrimSpace(ownerUserID) + ":" + strings.TrimSpace(accountID) + ":" + strings.TrimSpace(skillID) + ":" + generateAt.UTC().Format(time.RFC3339)
 }
 
+// 处理账号删除技能运行接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AccountHandler) DeleteSkillRun(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	accountID := strings.TrimSpace(chi.URLParam(r, "accountId"))
@@ -598,6 +608,7 @@ func (h *AccountHandler) DeleteSkillRun(w http.ResponseWriter, r *http.Request) 
 	render.JSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
 
+// 处理账号删除接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AccountHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	accountID := strings.TrimSpace(chi.URLParam(r, "accountId"))

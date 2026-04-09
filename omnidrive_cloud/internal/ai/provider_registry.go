@@ -9,6 +9,7 @@ import (
 	"omnidrive_cloud/internal/domain"
 )
 
+// 创建供应方相关实例，组装运行所需依赖并返回给上层流程复用。
 func newProviders(cfg config.Config) (map[string]Provider, error) {
 	apiyiProvider, err := NewAPIYIProvider(cfg)
 	if err != nil {
@@ -25,6 +26,7 @@ func newProviders(cfg config.Config) (map[string]Provider, error) {
 	}, nil
 }
 
+// 解析供应方模型，根据当前配置和上下文确定最终使用结果。
 func resolveProviderForModel(providers map[string]Provider, model *domain.AIModel) (Provider, error) {
 	if model == nil {
 		return nil, fmt.Errorf("ai model is required")
@@ -37,6 +39,7 @@ func resolveProviderForModel(providers map[string]Provider, model *domain.AIMode
 	return provider, nil
 }
 
+// 处理供应方来源相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func providerSource(model *domain.AIModel) string {
 	if model == nil {
 		return "unknown"
@@ -58,6 +61,7 @@ func providerSource(model *domain.AIModel) string {
 	}
 }
 
+// 规范化供应方Vendor，统一供应方注册表链路的输入格式和后续处理行为。
 func normalizeProviderVendor(value string) string {
 	switch strings.TrimSpace(strings.ToLower(value)) {
 	case "lconai", "lcon", "龙坤", "万象龙坤":
@@ -69,6 +73,7 @@ func normalizeProviderVendor(value string) string {
 	}
 }
 
+// 推断供应方BaseURL，在输入缺省时补齐供应方注册表链路需要的派生值。
 func inferProviderFromBaseURL(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -97,6 +102,7 @@ func inferProviderFromBaseURL(value string) string {
 	}
 }
 
+// 处理string值Ptr相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func stringValuePtr(value *string) string {
 	if value == nil {
 		return ""

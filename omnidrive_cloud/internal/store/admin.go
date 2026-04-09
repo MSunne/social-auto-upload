@@ -50,6 +50,7 @@ type AdminAuditListFilter struct {
 	AdminPageFilter
 }
 
+// 规范化管理端Page，统一存储层链路的输入格式和后续处理行为。
 func normalizeAdminPage(page int, pageSize int) (int, int, int) {
 	if page <= 0 {
 		page = 1
@@ -63,10 +64,12 @@ func normalizeAdminPage(page int, pageSize int) (int, int, int) {
 	return page, pageSize, (page - 1) * pageSize
 }
 
+// 处理ilikePattern相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func ilikePattern(value string) string {
 	return "%" + strings.TrimSpace(value) + "%"
 }
 
+// 处理paid充值Statuses相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func paidRechargeStatuses() []string {
 	return []string{"paid", "credited", "success", "completed"}
 }
@@ -151,6 +154,7 @@ const adminAuditEntriesStatusJoins = `
 		   AND entries.resource_id = pt.id
 `
 
+// 处理扫描管理端审计Rows相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanAdminAuditRows(rows pgx.Rows) ([]domain.AdminAuditRow, error) {
 	defer rows.Close()
 
@@ -213,6 +217,7 @@ func scanAdminAuditRows(rows pgx.Rows) ([]domain.AdminAuditRow, error) {
 	return items, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListRecentAdminAuditsByUserID(ctx context.Context, userID string, limit int) ([]domain.AdminAuditRow, error) {
 	if limit <= 0 {
 		limit = 20
@@ -233,6 +238,7 @@ func (s *Store) ListRecentAdminAuditsByUserID(ctx context.Context, userID string
 	return scanAdminAuditRows(rows)
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListRecentAdminAuditsByMediaAccountID(ctx context.Context, accountID string, limit int) ([]domain.AdminAuditRow, error) {
 	if limit <= 0 {
 		limit = 20
@@ -258,6 +264,7 @@ func (s *Store) ListRecentAdminAuditsByMediaAccountID(ctx context.Context, accou
 	return scanAdminAuditRows(rows)
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListRecentAdminAuditsByPublishTaskID(ctx context.Context, taskID string, limit int) ([]domain.AdminAuditRow, error) {
 	if limit <= 0 {
 		limit = 20
@@ -278,6 +285,7 @@ func (s *Store) ListRecentAdminAuditsByPublishTaskID(ctx context.Context, taskID
 	return scanAdminAuditRows(rows)
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListRecentAdminAuditsByAIJobID(ctx context.Context, jobID string, limit int) ([]domain.AdminAuditRow, error) {
 	if limit <= 0 {
 		limit = 20
@@ -298,6 +306,7 @@ func (s *Store) ListRecentAdminAuditsByAIJobID(ctx context.Context, jobID string
 	return scanAdminAuditRows(rows)
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAdminDashboardSummary(ctx context.Context) (*domain.AdminDashboardSummary, error) {
 	summary := &domain.AdminDashboardSummary{
 		ServerTime: time.Now().UTC(),
@@ -326,7 +335,7 @@ func (s *Store) GetAdminDashboardSummary(ctx context.Context) (*domain.AdminDash
 			COALESCE((SELECT SUM(GREATEST(released_amount_cents - settled_amount_cents, 0)) FROM distribution_commission_items), 0)::BIGINT,
 			COALESCE((SELECT SUM(settled_amount_cents) FROM distribution_commission_items), 0)::BIGINT,
 			COALESCE((SELECT SUM(amount_cents) FROM withdrawal_requests WHERE status IN ('requested', 'approved')), 0)::BIGINT
-	`, deviceOnlineSQLPredicate("devices")), paidRechargeStatuses()).Scan(
+	`, deviceHealthyOnlineSQLPredicate("devices")), paidRechargeStatuses()).Scan(
 		&summary.Metrics.UserCount,
 		&summary.Metrics.ActiveUserCount,
 		&summary.Metrics.DeviceCount,
@@ -356,6 +365,7 @@ func (s *Store) GetAdminDashboardSummary(ctx context.Context) (*domain.AdminDash
 	return summary, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminUsers(ctx context.Context, filter AdminUserListFilter) ([]domain.AdminUserRow, int64, error) {
 	page, pageSize, offset := normalizeAdminPage(filter.Page, filter.PageSize)
 	_ = page
@@ -474,6 +484,7 @@ func (s *Store) ListAdminUsers(ctx context.Context, filter AdminUserListFilter) 
 	return items, total, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminDevices(ctx context.Context, filter AdminDeviceListFilter) ([]domain.AdminDeviceRow, int64, error) {
 	page, pageSize, offset := normalizeAdminPage(filter.Page, filter.PageSize)
 	_ = page
@@ -537,6 +548,7 @@ func (s *Store) ListAdminDevices(ctx context.Context, filter AdminDeviceListFilt
 	return items, total, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminOrders(ctx context.Context, filter AdminOrderListFilter) ([]domain.AdminOrderRow, int64, domain.AdminOrderListSummary, error) {
 	page, pageSize, offset := normalizeAdminPage(filter.Page, filter.PageSize)
 	_ = page
@@ -685,6 +697,7 @@ func (s *Store) ListAdminOrders(ctx context.Context, filter AdminOrderListFilter
 	return items, summary.TotalOrderCount, summary, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminWalletLedgers(ctx context.Context, filter AdminWalletLedgerListFilter) ([]domain.AdminWalletLedgerRow, int64, domain.AdminWalletLedgerListSummary, error) {
 	page, pageSize, offset := normalizeAdminPage(filter.Page, filter.PageSize)
 	_ = page
@@ -794,6 +807,7 @@ func (s *Store) ListAdminWalletLedgers(ctx context.Context, filter AdminWalletLe
 	return items, summary.TotalEntryCount, summary, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminAudits(ctx context.Context, filter AdminAuditListFilter) ([]domain.AdminAuditRow, int64, error) {
 	page, pageSize, offset := normalizeAdminPage(filter.Page, filter.PageSize)
 	_ = page
@@ -857,6 +871,7 @@ func (s *Store) ListAdminAudits(ctx context.Context, filter AdminAuditListFilter
 	return items, total, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetBillingPackageByCode(ctx context.Context, packageID string) (*domain.BillingPackage, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, name, package_type, channel, payment_channels, currency, price_cents, credit_amount,

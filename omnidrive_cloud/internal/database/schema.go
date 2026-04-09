@@ -1408,6 +1408,7 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 `
 
+// 确保表结构已满足执行前提，必要时补齐缺失状态或配置。
 func (db *Database) EnsureSchema(ctx context.Context) error {
 	statements := splitSQLStatements(bootstrapSQL)
 	for _, statement := range statements {
@@ -1426,6 +1427,7 @@ func (db *Database) EnsureSchema(ctx context.Context) error {
 	return nil
 }
 
+// 处理表结构日志相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (db *Database) schemaLogger() *slog.Logger {
 	if db != nil && db.Logger != nil {
 		return db.Logger
@@ -1433,6 +1435,7 @@ func (db *Database) schemaLogger() *slog.Logger {
 	return slog.Default()
 }
 
+// 处理splitSQLStatements相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func splitSQLStatements(raw string) []string {
 	statements := make([]string, 0)
 	var builder strings.Builder
@@ -1482,6 +1485,7 @@ func splitSQLStatements(raw string) []string {
 	return statements
 }
 
+// 判断是否应当Ignore表结构错误，供当前链路选择后续处理策略。
 func shouldIgnoreSchemaError(statement string, err error) bool {
 	statement = strings.ToUpper(strings.TrimSpace(statement))
 	if !strings.HasPrefix(statement, "ALTER TABLE") &&
@@ -1503,6 +1507,7 @@ func shouldIgnoreSchemaError(statement string, err error) bool {
 		strings.Contains(errorText, "permission denied")
 }
 
+// 汇总SQLStatement，供接口响应或后续统计逻辑直接复用。
 func summarizeSQLStatement(statement string) string {
 	compact := strings.Join(strings.Fields(statement), " ")
 	if len(compact) <= 120 {

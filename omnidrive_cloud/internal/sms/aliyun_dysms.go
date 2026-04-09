@@ -8,6 +8,7 @@ import (
 	"github.com/alibabacloud-go/tea/dara"
 )
 
+// 创建AliyunDysms客户端相关实例，组装运行所需依赖并返回给上层流程复用。
 func newAliyunDysmsClient(cfg RegistrationConfig) (*dysmsapi.Client, error) {
 	config := &openapi.Config{
 		AccessKeyId:     dara.String(strings.TrimSpace(cfg.AccessKeyID)),
@@ -17,6 +18,7 @@ func newAliyunDysmsClient(cfg RegistrationConfig) (*dysmsapi.Client, error) {
 	return dysmsapi.NewClient(config)
 }
 
+// 发送AliyunDysmsRegistration编码，把当前业务消息下发到外部通道。
 func sendAliyunDysmsRegistrationCode(cfg RegistrationConfig, phone string, outID string, verificationCode string) (*SendCodeResult, error) {
 	client, err := newAliyunDysmsClient(cfg)
 	if err != nil {
@@ -61,6 +63,7 @@ func sendAliyunDysmsRegistrationCode(cfg RegistrationConfig, phone string, outID
 	}, nil
 }
 
+// 发送AliyunDysmsTemplate短信，把当前业务消息下发到外部通道。
 func sendAliyunDysmsTemplateSMS(cfg RegistrationConfig, phone string, outID string, signName string, templateCode string, templateParam string) (*SendCodeResult, error) {
 	client, err := newAliyunDysmsClient(cfg)
 	if err != nil {

@@ -17,6 +17,7 @@ type AdminSkillListFilter struct {
 	AdminPageFilter
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminSkills(ctx context.Context, filter AdminSkillListFilter) ([]domain.AdminSkillSummary, int64, error) {
 	page, pageSize, offset := normalizeAdminPage(filter.Page, filter.PageSize)
 	_ = page
@@ -108,6 +109,7 @@ type UpdateProductSkillAdminInput struct {
 	IsEnabled                *bool
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpdateProductSkillAdmin(ctx context.Context, id string, input UpdateProductSkillAdminInput) (*domain.ProductSkill, error) {
 	setParts := []string{"updated_at = CLOCK_TIMESTAMP()"}
 	args := []any{id}
@@ -171,6 +173,7 @@ func (s *Store) UpdateProductSkillAdmin(ctx context.Context, id string, input Up
 	return scanSkill(row)
 }
 
+// 处理裁剪StringNil相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func trimmedStringOrNil(value *string) any {
 	if value == nil {
 		return nil
@@ -182,6 +185,7 @@ func trimmedStringOrNil(value *string) any {
 	return trimmed
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetProductSkillByID(ctx context.Context, id string) (*domain.ProductSkill, error) {
 	row := s.pool.QueryRow(ctx, skillQueryWithLoad(`
 		WHERE id = $1

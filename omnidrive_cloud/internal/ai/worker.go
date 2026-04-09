@@ -55,6 +55,7 @@ const executionBillingRetryDelay = time.Minute
 const mediaFailureAutoRetryLimit = 1
 const mediaFailureAutoRetryDelay = 30 * time.Second
 
+// 返回需要重新入队的执行错误消息，供日志记录和上层重试判断复用。
 func (e *requeueExecutionError) Error() string {
 	if e == nil || strings.TrimSpace(e.Message) == "" {
 		return "execution should be requeued"
@@ -62,10 +63,12 @@ func (e *requeueExecutionError) Error() string {
 	return strings.TrimSpace(e.Message)
 }
 
+// 返回计费阻塞错误消息，提示调用方当前作业需要等待额度恢复后再继续执行。
 func (e *executionBillingBlockedError) Error() string {
 	return BuildUsageBillingBlockMessage(e.Result)
 }
 
+// 创建 AI worker，装配供应方客户端、轮询参数和并发控制所需依赖。
 func NewWorker(app *appstate.App) (*Worker, error) {
 	if app == nil {
 		return nil, fmt.Errorf("app is required")
@@ -105,6 +108,7 @@ func NewWorker(app *appstate.App) (*Worker, error) {
 	}, nil
 }
 
+// 启动 AI worker 后台循环，持续轮询可执行作业并在退出时返回停止函数。
 func (w *Worker) Start(parent context.Context) func() {
 	ctx, cancel := context.WithCancel(parent)
 	var wg sync.WaitGroup
@@ -131,6 +135,7 @@ func (w *Worker) Start(parent context.Context) func() {
 	}
 }
 
+// 在 worker 启动时恢复中断的作业状态，避免遗留租约导致任务长期滞留。
 func (w *Worker) recoverInterruptedJobsOnStartup(ctx context.Context) {
 	recovered, err := w.app.Store.RecoverInterruptedExecutableAIJobs(logctx.WithOperation(ctx, "ai_worker_startup_recovery"))
 	if err != nil {
@@ -143,6 +148,7 @@ func (w *Worker) recoverInterruptedJobsOnStartup(ctx context.Context) {
 	w.app.Logger.Info("ai worker recovered interrupted ai jobs on startup", "count", len(recovered))
 }
 
+// 处理 AI 作业执行中的运行流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) run(ctx context.Context) {
 	w.runOnce(ctx)
 
@@ -159,6 +165,7 @@ func (w *Worker) run(ctx context.Context) {
 	}
 }
 
+// 执行一轮 AI 作业拉取与处理循环，供后台 worker 按固定节奏持续轮询。
 func (w *Worker) runOnce(ctx context.Context) {
 	pollCtx := logctx.WithOperation(ctx, "ai_worker_poll")
 
@@ -211,6 +218,7 @@ func (w *Worker) runOnce(ctx context.Context) {
 	}
 }
 
+// 处理单个 AI 作业的完整执行链路，串联租约、调用、计费和结果回写。
 func (w *Worker) processJob(ctx context.Context, job domain.AIJob) {
 	leaseToken := uuid.NewString()
 	leaseExpiresAt := time.Now().UTC().Add(store.AIJobLeaseTTL())
@@ -350,6 +358,7 @@ func (w *Worker) processJob(ctx context.Context, job domain.AIJob) {
 	w.app.Logger.Error("ai worker ai job failed", "job_id", claimed.ID, "job_type", claimed.JobType, "model_name", claimed.ModelName, "error", execErr)
 }
 
+// 处理 AI 作业执行中的执行对话流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) executeChat(ctx context.Context, job *domain.AIJob, leaseToken string) error {
 	req, err := BuildChatRequest(job)
 	if err != nil {
@@ -425,6 +434,7 @@ func (w *Worker) executeChat(ctx context.Context, job *domain.AIJob, leaseToken 
 	return nil
 }
 
+// 处理 AI 作业执行中的执行图片流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) executeImage(ctx context.Context, job *domain.AIJob, leaseToken string) error {
 	req, err := BuildImageRequest(job)
 	if err != nil {
@@ -508,6 +518,7 @@ func (w *Worker) executeImage(ctx context.Context, job *domain.AIJob, leaseToken
 	return nil
 }
 
+// 处理 AI 作业执行中的执行视频流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken string, leaseExpiresAt time.Time) error {
 	if snapshot := parseWorkflowPricingSnapshot(job); snapshot != nil {
 		return w.executeWorkflowVideo(ctx, job, leaseToken, leaseExpiresAt, snapshot)
@@ -676,6 +687,7 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 	}
 }
 
+// 为 AI 作业执行提供下载Finalize视频产物辅助能力，统一处理输入、状态和产物细节。
 func (w *Worker) downloadAndFinalizeVideoArtifact(ctx context.Context, provider Provider, job *domain.AIJob, req VideoRequest, state *videoExecutionState, apiKey string) (*BinaryArtifact, error) {
 	var lastErr error
 
@@ -770,6 +782,7 @@ func (w *Worker) downloadAndFinalizeVideoArtifact(ctx context.Context, provider 
 	return nil, lastErr
 }
 
+// 处理 AI 作业执行中的准备分镜提示词流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) prepareStoryboardPrompt(ctx context.Context, job *domain.AIJob, leaseToken string, originalPrompt string) (map[string]any, string, error) {
 	payload := decodePayloadMap(job.InputPayload)
 	config, _ := payload["storyboardConfig"].(map[string]any)
@@ -849,6 +862,7 @@ func (w *Worker) prepareStoryboardPrompt(ctx context.Context, job *domain.AIJob,
 	}, optimizedPrompt, nil
 }
 
+// 处理 AI 作业执行中的准备可选媒体分镜提示词流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) prepareOptionalMediaStoryboardPrompt(ctx context.Context, job *domain.AIJob, leaseToken string, originalPrompt string) (map[string]any, string, error) {
 	storyboardPayload, optimizedPrompt, err := w.prepareStoryboardPrompt(ctx, job, leaseToken, originalPrompt)
 	if err == nil {
@@ -869,6 +883,7 @@ func (w *Worker) prepareOptionalMediaStoryboardPrompt(ctx context.Context, job *
 	return fallbackPayload, originalPrompt, nil
 }
 
+// 构建分镜回退载荷，为AI作业执行生成后续步骤所需的派生参数或载荷。
 func buildStoryboardFallbackPayload(job *domain.AIJob, originalPrompt string, err error) map[string]any {
 	payload := decodePayloadMap(job.InputPayload)
 	config, _ := payload["storyboardConfig"].(map[string]any)
@@ -893,6 +908,7 @@ func buildStoryboardFallbackPayload(job *domain.AIJob, originalPrompt string, er
 	return fallbackPayload
 }
 
+// 续租当前作业占用，防止长时间执行期间被其他 worker 误判为超时。
 func (w *Worker) renewLease(ctx context.Context, jobID string, leaseToken string, leaseExpiresAt time.Time) (time.Time, error) {
 	if time.Until(leaseExpiresAt) > store.AIJobLeaseTTL()/2 {
 		return leaseExpiresAt, nil
@@ -908,6 +924,7 @@ func (w *Worker) renewLease(ctx context.Context, jobID string, leaseToken string
 	return *renewed.LeaseExpiresAt, nil
 }
 
+// 启动作业租约心跳续期协程，保证长耗时执行阶段持续持有租约。
 func (w *Worker) startLeaseHeartbeat(parent context.Context, jobID string, leaseToken string) func() {
 	heartbeatCtx, cancel := context.WithCancel(parent)
 	interval := store.AIJobLeaseTTL() / 3
@@ -939,6 +956,7 @@ func (w *Worker) startLeaseHeartbeat(parent context.Context, jobID string, lease
 	return cancel
 }
 
+// 同步作业运行中的阶段和元数据，便于前端和审计看到最新执行进度。
 func (w *Worker) syncRunningState(ctx context.Context, job *domain.AIJob, leaseToken string, message string, outputPayload []byte) (*domain.AIJob, error) {
 	return w.app.Store.SyncCloudAIJobExecution(ctx, job.ID, leaseToken, store.UpdateAIJobInput{
 		Message:       stringPtr(message),
@@ -947,6 +965,7 @@ func (w *Worker) syncRunningState(ctx context.Context, job *domain.AIJob, leaseT
 	})
 }
 
+// 写回作业成功结果并释放执行占用，结束当前 AI 作业生命周期。
 func (w *Worker) completeJob(ctx context.Context, job *domain.AIJob, leaseToken string, message string, outputPayload []byte, costCredits *int64) (*domain.AIJob, error) {
 	status := "success"
 	return w.app.Store.SyncCloudAIJobExecution(ctx, job.ID, leaseToken, store.UpdateAIJobInput{
@@ -958,6 +977,7 @@ func (w *Worker) completeJob(ctx context.Context, job *domain.AIJob, leaseToken 
 	})
 }
 
+// 写回作业失败结果并释放执行占用，为后续排障或人工处理保留上下文。
 func (w *Worker) failJob(ctx context.Context, jobID string, leaseToken string, message string, outputPayload []byte) (*domain.AIJob, error) {
 	status := "failed"
 	return w.app.Store.SyncCloudAIJobExecution(ctx, jobID, leaseToken, store.UpdateAIJobInput{
@@ -968,6 +988,7 @@ func (w *Worker) failJob(ctx context.Context, jobID string, leaseToken string, m
 	})
 }
 
+// 将当前作业重新放回可执行队列，供后续轮询再次接手处理。
 func (w *Worker) requeueJob(ctx context.Context, jobID string, leaseToken string, message string, outputPayload []byte) (*domain.AIJob, error) {
 	status := "queued"
 	return w.app.Store.SyncCloudAIJobExecution(ctx, jobID, leaseToken, store.UpdateAIJobInput{
@@ -978,6 +999,7 @@ func (w *Worker) requeueJob(ctx context.Context, jobID string, leaseToken string
 	})
 }
 
+// 按退避策略重新入队当前作业，降低外部服务抖动时的重试压力。
 func (w *Worker) requeueJobWithBackoff(ctx context.Context, jobID string, leaseToken string, message string, outputPayload []byte, delay time.Duration) (*domain.AIJob, error) {
 	if delay <= 0 {
 		return w.requeueJob(ctx, jobID, leaseToken, message, outputPayload)
@@ -986,6 +1008,7 @@ func (w *Worker) requeueJobWithBackoff(ctx context.Context, jobID string, leaseT
 	return w.app.Store.RequeueCloudAIJobWithBackoff(ctx, jobID, leaseToken, retryAt, stringPtr(message), outputPayload)
 }
 
+// 处理 AI 作业执行中的暂停作业充值流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) pauseJobForRecharge(ctx context.Context, jobID string, leaseToken string, message string, outputPayload []byte, delay time.Duration) (*domain.AIJob, error) {
 	retryAt := time.Now().UTC()
 	if delay > 0 {
@@ -994,6 +1017,7 @@ func (w *Worker) pauseJobForRecharge(ctx context.Context, jobID string, leaseTok
 	return w.app.Store.MarkCloudAIJobWaitingRecharge(ctx, jobID, leaseToken, retryAt, stringPtr(message), outputPayload)
 }
 
+// 构建AIExecution失败消息，为AI作业执行生成后续步骤所需的派生参数或载荷。
 func buildAIExecutionFailureMessage(jobType string, err error) string {
 	if err == nil {
 		return "AI 云端执行失败"
@@ -1013,6 +1037,7 @@ func buildAIExecutionFailureMessage(jobType string, err error) string {
 	}
 }
 
+// 构建临时视频重试错误，为AI作业执行生成后续步骤所需的派生参数或载荷。
 func buildTemporaryVideoRequeueError(job *domain.AIJob, state videoExecutionState, err error) error {
 	message := "AI 视频服务暂时波动，任务已自动排队重试"
 	if isLMRootGeminiPromptRewriteErrorMessage(errorString(err)) {
@@ -1024,6 +1049,7 @@ func buildTemporaryVideoRequeueError(job *domain.AIJob, state videoExecutionStat
 	}
 }
 
+// 判断是否应当Auto重试媒体失败，供当前链路选择后续处理策略。
 func shouldAutoRetryMediaFailure(job *domain.AIJob, err error) bool {
 	if job == nil {
 		return false
@@ -1045,12 +1071,14 @@ func shouldAutoRetryMediaFailure(job *domain.AIJob, err error) bool {
 	}
 }
 
+// 处理媒体Auto重试数量载荷相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func mediaAutoRetryCountFromPayload(raw []byte) int {
 	payload := decodePayloadMap(raw)
 	executionPayload, _ := payload["execution"].(map[string]any)
 	return intValue(executionPayload["autoRetryCount"])
 }
 
+// 构建媒体自动重试消息，为AI作业执行生成后续步骤所需的派生参数或载荷。
 func buildMediaAutoRetryMessage(jobType string, retryCount int) string {
 	label := "内容"
 	switch strings.TrimSpace(strings.ToLower(jobType)) {
@@ -1062,6 +1090,7 @@ func buildMediaAutoRetryMessage(jobType string, retryCount int) string {
 	return fmt.Sprintf("AI %s生成失败，系统将自动重试第 %d/%d 次", label, retryCount, mediaFailureAutoRetryLimit)
 }
 
+// 构建媒体自动重试载荷，为AI作业执行生成后续步骤所需的派生参数或载荷。
 func buildMediaAutoRetryPayload(job *domain.AIJob, failureMessage string, retryCount int) []byte {
 	payload := decodePayloadMap(job.OutputPayload)
 	delete(payload, "video")
@@ -1083,6 +1112,7 @@ func buildMediaAutoRetryPayload(job *domain.AIJob, failureMessage string, retryC
 	return mustJSON(payload)
 }
 
+// 判断是否应当恢复远端视频轮询，供当前链路选择后续处理策略。
 func shouldResumeRemoteVideoPolling(job *domain.AIJob, err error) bool {
 	if job == nil {
 		return false
@@ -1097,6 +1127,7 @@ func shouldResumeRemoteVideoPolling(job *domain.AIJob, err error) bool {
 	return strings.TrimSpace(state.RemoteVideoID) != ""
 }
 
+// 判断是否应当重新入队视频提交错误，供当前链路选择后续处理策略。
 func shouldRequeueVideoSubmissionError(err error) bool {
 	if err == nil {
 		return false
@@ -1108,6 +1139,7 @@ func shouldRequeueVideoSubmissionError(err error) bool {
 	return strings.Contains(strings.ToLower(message), "provider request failed with status 429")
 }
 
+// 判断是否属于瞬时视频供应方Execution错误，供当前链路选择后续处理策略。
 func isTransientVideoProviderExecutionError(err error) bool {
 	if err == nil {
 		return false
@@ -1139,6 +1171,7 @@ func isTransientVideoProviderExecutionError(err error) bool {
 	return false
 }
 
+// 判断是否属于瞬时图片供应方Execution错误，供当前链路选择后续处理策略。
 func isTransientImageProviderExecutionError(err error) bool {
 	if err == nil {
 		return false
@@ -1170,6 +1203,7 @@ func isTransientImageProviderExecutionError(err error) bool {
 	return false
 }
 
+// 处理contains永久媒体失败Marker相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func containsPermanentMediaFailureMarker(message string) bool {
 	lower := strings.ToLower(strings.TrimSpace(message))
 	if lower == "" {
@@ -1199,6 +1233,7 @@ func containsPermanentMediaFailureMarker(message string) bool {
 	return false
 }
 
+// 处理truncate失败消息相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func truncateFailureMessage(message string, limit int) string {
 	message = strings.TrimSpace(message)
 	if limit <= 0 || len(message) == 0 {
@@ -1211,6 +1246,7 @@ func truncateFailureMessage(message string, limit int) string {
 	return strings.TrimSpace(string(runes[:limit])) + "..."
 }
 
+// 将任意数值型输入归一为 int，供运行时配置解析逻辑复用。
 func intValue(value any) int {
 	switch typed := value.(type) {
 	case int:
@@ -1232,6 +1268,7 @@ func intValue(value any) int {
 	}
 }
 
+// 在错误存在时返回可读消息，统一日志和响应中的错误文案处理。
 func errorString(err error) string {
 	if err == nil {
 		return ""
@@ -1239,6 +1276,7 @@ func errorString(err error) string {
 	return strings.TrimSpace(err.Error())
 }
 
+// 处理 AI 作业执行中的保存二进制产物流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) saveBinaryArtifact(ctx context.Context, job *domain.AIJob, artifactType string, artifactKey string, source string, artifact BinaryArtifact) (store.UpsertAIJobArtifactInput, error) {
 	fileName := safeFileName(artifact.FileName)
 	if fileName == "" {
@@ -1272,6 +1310,7 @@ func (w *Worker) saveBinaryArtifact(ctx context.Context, job *domain.AIJob, arti
 	}, nil
 }
 
+// 处理 AI 作业执行中的记录审计事件流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) recordAuditEvent(ctx context.Context, job *domain.AIJob, action string, title string, status string, message *string, payload map[string]any) {
 	if job == nil {
 		return
@@ -1291,6 +1330,7 @@ func (w *Worker) recordAuditEvent(ctx context.Context, job *domain.AIJob, action
 	_ = w.app.Store.CreateAuditEvent(ctx, input)
 }
 
+// 处理 AI 作业执行中的记录计费阻塞审计记录流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) recordBillingBlockedAudit(ctx context.Context, job *domain.AIJob, message string, result *store.ApplyUsageBillingResult) {
 	if job == nil {
 		return
@@ -1307,6 +1347,7 @@ func (w *Worker) recordBillingBlockedAudit(ctx context.Context, job *domain.AIJo
 	})
 }
 
+// 处理 AI 作业执行中的应用用量计费流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) applyUsageBilling(ctx context.Context, job *domain.AIJob, input store.ApplyUsageBillingInput) *store.ApplyUsageBillingResult {
 	if strings.TrimSpace(input.UserID) == "" || strings.TrimSpace(input.SourceID) == "" {
 		return &store.ApplyUsageBillingResult{
@@ -1360,6 +1401,7 @@ func (w *Worker) applyUsageBilling(ctx context.Context, job *domain.AIJob, input
 	return result
 }
 
+// 处理 AI 作业执行中的确保Execution计费流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) ensureExecutionBilling(ctx context.Context, job *domain.AIJob) error {
 	if plan, planErr := BuildWorkflowBillingPlan(ctx, w.app, job); planErr != nil {
 		return planErr
@@ -1427,6 +1469,7 @@ func (w *Worker) ensureExecutionBilling(ctx context.Context, job *domain.AIJob) 
 	return nil
 }
 
+// 处理 AI 作业执行中的返还用量额度Failure流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) returnUsageCreditsForFailure(ctx context.Context, job *domain.AIJob, failureMessage string) {
 	if plan, err := BuildWorkflowBillingPlan(ctx, w.app, job); err == nil && plan != nil {
 		if refundErr := w.app.Store.RefundAIBillingSessionBySource(ctx, "ai_job", job.ID, failureMessage); refundErr != nil {
@@ -1444,6 +1487,7 @@ func (w *Worker) returnUsageCreditsForFailure(ctx context.Context, job *domain.A
 	}
 }
 
+// 处理resultBill消息相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func resultBillMessage(result *store.ApplyUsageBillingResult) *string {
 	if result == nil {
 		return nil
@@ -1492,6 +1536,7 @@ type videoCompletedSegment struct {
 	ReferenceFrame  map[string]any `json:"referenceFrame,omitempty"`
 }
 
+// 构建视频输出载荷，为AI作业执行生成后续步骤所需的派生参数或载荷。
 func buildVideoOutputPayload(job *domain.AIJob, state videoExecutionState, artifacts []domain.AIJobArtifact) []byte {
 	payload := decodePayloadMap(job.OutputPayload)
 	providerName := strings.TrimSpace(state.Provider)
@@ -1570,6 +1615,7 @@ func buildVideoOutputPayload(job *domain.AIJob, state videoExecutionState, artif
 	return mustJSON(payload)
 }
 
+// 合并计费Into载荷，统一多来源数据后返回稳定结果。
 func mergeBillingIntoPayload(raw []byte, billing *store.ApplyUsageBillingResult) []byte {
 	payload := map[string]any{}
 	if len(raw) > 0 {
@@ -1579,6 +1625,7 @@ func mergeBillingIntoPayload(raw []byte, billing *store.ApplyUsageBillingResult)
 	return mustJSON(payload)
 }
 
+// 合并MetadataInto载荷，统一多来源数据后返回稳定结果。
 func mergeMetadataIntoPayload(raw []byte, key string, value any) []byte {
 	payload := map[string]any{}
 	if len(raw) > 0 {
@@ -1588,6 +1635,7 @@ func mergeMetadataIntoPayload(raw []byte, key string, value any) []byte {
 	return mustJSON(payload)
 }
 
+// 解析视频Execution状态，为AI作业执行提供结构化输入。
 func parseVideoExecutionState(raw []byte) videoExecutionState {
 	state := videoExecutionState{
 		SubmittedAt: time.Now().UTC(),
@@ -1660,6 +1708,7 @@ func parseVideoExecutionState(raw []byte) videoExecutionState {
 	return state
 }
 
+// 处理 AI 作业执行中的解析模型运行时流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) resolveModelRuntime(ctx context.Context, modelName string) (*domain.AIModel, Provider, string, string, string, error) {
 	model, err := w.app.Store.GetAIModelByName(ctx, modelName)
 	if err != nil {
@@ -1677,6 +1726,7 @@ func (w *Worker) resolveModelRuntime(ctx context.Context, modelName string) (*do
 	return model, provider, vendor, baseURL, apiKey, nil
 }
 
+// 处理 AI 作业执行中的解析模型运行时配置流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) resolveModelRuntimeConfig(ctx context.Context, modelName string) (string, string, error) {
 	_, _, _, baseURL, apiKey, err := w.resolveModelRuntime(ctx, modelName)
 	if err != nil {
@@ -1685,6 +1735,7 @@ func (w *Worker) resolveModelRuntimeConfig(ctx context.Context, modelName string
 	return baseURL, apiKey, nil
 }
 
+// 汇总产物，供接口响应或后续统计逻辑直接复用。
 func summarizeArtifacts(items []domain.AIJobArtifact) []map[string]any {
 	result := make([]map[string]any, 0, len(items))
 	for _, item := range items {
@@ -1703,6 +1754,7 @@ func summarizeArtifacts(items []domain.AIJobArtifact) []map[string]any {
 	return result
 }
 
+// 处理 AI 作业执行中的准备视频生成输入流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) prepareVideoGenerationInputs(ctx context.Context, job *domain.AIJob, leaseToken string, req *VideoRequest, state *videoExecutionState) (map[string]any, error) {
 	if job == nil || req == nil || state == nil {
 		return nil, nil
@@ -1775,6 +1827,7 @@ func (w *Worker) prepareVideoGenerationInputs(ctx context.Context, job *domain.A
 	return nil, nil
 }
 
+// 处理视频Preprocess启用相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func videoPreprocessEnabled(payload map[string]any) bool {
 	if raw, exists := payload["disableVideoPreprocess"]; exists {
 		return !boolValue(raw)
@@ -1782,6 +1835,7 @@ func videoPreprocessEnabled(payload map[string]any) bool {
 	return true
 }
 
+// 处理视频分镜启用相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func videoStoryboardEnabled(payload map[string]any) bool {
 	if raw, exists := payload["storyboardEnabled"]; exists {
 		return boolValue(raw)
@@ -1790,6 +1844,7 @@ func videoStoryboardEnabled(payload map[string]any) bool {
 	return boolValue(config["enabled"])
 }
 
+// 处理 AI 作业执行中的准备视频分镜包流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) prepareVideoStoryboardPackage(ctx context.Context, job *domain.AIJob, leaseToken string, payload map[string]any, req *VideoRequest, state *videoExecutionState) (map[string]any, error) {
 	if existingRefs := mediaInputsFromVideoReferenceFrames(state.ReferenceFrames); len(existingRefs) > 0 && strings.TrimSpace(state.FinalPrompt) != "" {
 		req.ReferenceImages = existingRefs
@@ -1900,6 +1955,7 @@ func (w *Worker) prepareVideoStoryboardPackage(ctx context.Context, job *domain.
 	return state.Storyboard, nil
 }
 
+// 处理 AI 作业执行中的准备视频封面参考帧流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) prepareVideoCoverReferenceFrame(ctx context.Context, job *domain.AIJob, leaseToken string, payload map[string]any, req *VideoRequest, state *videoExecutionState) (map[string]any, error) {
 	if existingRefs := mediaInputsFromVideoReferenceFrames(state.ReferenceFrames); len(existingRefs) > 0 {
 		req.ReferenceImages = existingRefs
@@ -1967,6 +2023,7 @@ func (w *Worker) prepareVideoCoverReferenceFrame(ctx context.Context, job *domai
 	return framePayload, nil
 }
 
+// 处理 AI 作业执行中的同步视频RunningStage流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) syncVideoRunningStage(ctx context.Context, job *domain.AIJob, leaseToken string, state videoExecutionState, stage string, message string, extras map[string]any) {
 	if job == nil {
 		return
@@ -1980,6 +2037,7 @@ func (w *Worker) syncVideoRunningStage(ctx context.Context, job *domain.AIJob, l
 	}
 }
 
+// 处理 AI 作业执行中的保存视频参考帧流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) saveVideoReferenceFrame(ctx context.Context, job *domain.AIJob, image BinaryArtifact, role string, prompt string, source string, modelName string) (map[string]any, map[string]any, error) {
 	artifactKey := fmt.Sprintf("video-%s-frame%s", strings.TrimSpace(role), extensionForMIME(image.MIMEType, ".png"))
 	input, err := w.saveBinaryArtifact(ctx, job, "image", artifactKey, source, image)
@@ -2015,6 +2073,7 @@ func (w *Worker) saveVideoReferenceFrame(ctx context.Context, job *domain.AIJob,
 	return frameMetadata, framePayload, nil
 }
 
+// 处理 AI 作业执行中的解析视频分镜配置流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) resolveVideoStoryboardConfig(ctx context.Context) (string, string, []map[string]any, error) {
 	prompt := strings.TrimSpace(DefaultVideoStoryboardSystemPrompt)
 	references := make([]map[string]any, 0)
@@ -2061,6 +2120,7 @@ func (w *Worker) resolveVideoStoryboardConfig(ctx context.Context) (string, stri
 	return "", "", nil, fmt.Errorf("storyboard model is not configured or does not support cover+script generation")
 }
 
+// 处理 AI 作业执行中的解析视频封面模型运行时配置流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) resolveVideoCoverModelRuntimeConfig(ctx context.Context) (string, Provider, string, string, string, error) {
 	candidates := nonEmpty([]string{
 		strings.TrimSpace(DefaultVideoCoverModelName),
@@ -2082,6 +2142,7 @@ func (w *Worker) resolveVideoCoverModelRuntimeConfig(ctx context.Context) (strin
 	return "", nil, "", "", "", fmt.Errorf("video cover model is not configured")
 }
 
+// 构建视频分镜回退载荷，为AI作业执行生成后续步骤所需的派生参数或载荷。
 func buildVideoStoryboardFallbackPayload(job *domain.AIJob, originalPrompt string, err error) map[string]any {
 	payload := decodePayloadMap(job.InputPayload)
 	publishPayload, _ := payload["publishPayload"].(map[string]any)
@@ -2095,6 +2156,7 @@ func buildVideoStoryboardFallbackPayload(job *domain.AIJob, originalPrompt strin
 	}
 }
 
+// 构建分镜提示词，为AI作业执行生成后续步骤所需的派生参数或载荷。
 func buildStoryboardPrompt(job *domain.AIJob, originalPrompt string, payload map[string]any, referenceTexts []map[string]string, referenceImages []map[string]string, references any) string {
 	var builder strings.Builder
 	publishIntroEnabled := true
@@ -2195,6 +2257,7 @@ func buildStoryboardPrompt(job *domain.AIJob, originalPrompt string, payload map
 	return builder.String()
 }
 
+// 构建视频分镜包提示词，为AI作业执行生成后续步骤所需的派生参数或载荷。
 func buildVideoStoryboardPackagePrompt(job *domain.AIJob, originalPrompt string, payload map[string]any, referenceTexts []map[string]string, referenceImages []MediaInput, references []map[string]any) string {
 	var builder strings.Builder
 	publishIntroEnabled := true
@@ -2287,6 +2350,7 @@ func buildVideoStoryboardPackagePrompt(job *domain.AIJob, originalPrompt string,
 	return builder.String()
 }
 
+// 解析分镜Optimization响应，为AI作业执行提供结构化输入。
 func parseStoryboardOptimizationResponse(raw string, fallbackPrompt string, fallbackContentText string) (string, string, string) {
 	cleaned := strings.TrimSpace(raw)
 	if cleaned == "" {
@@ -2325,6 +2389,7 @@ func parseStoryboardOptimizationResponse(raw string, fallbackPrompt string, fall
 	return stripped, strings.TrimSpace(fallbackContentText), "text_fallback"
 }
 
+// 剥离 Markdown 代码块围栏，便于后续解析模型输出正文。
 func stripMarkdownCodeFence(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if !strings.HasPrefix(trimmed, "```") {
@@ -2342,6 +2407,7 @@ func stripMarkdownCodeFence(raw string) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
+// 规范化字符串切片，去除空项后供提示词和媒体输入复用。
 func normalizeStringSlice(raw any) []string {
 	items, ok := raw.([]any)
 	if !ok {
@@ -2367,6 +2433,7 @@ func normalizeStringSlice(raw any) []string {
 	return result
 }
 
+// 返回首个非 nil 值，供多来源配置回退逻辑复用。
 func firstNonNilValue(values ...any) any {
 	for _, value := range values {
 		if value != nil {
@@ -2376,6 +2443,7 @@ func firstNonNilValue(values ...any) any {
 	return nil
 }
 
+// 规范化已完成视频分段，统一AI作业执行链路的输入格式和后续处理行为。
 func normalizeCompletedVideoSegments(raw any) []videoCompletedSegment {
 	items, ok := raw.([]any)
 	if !ok {
@@ -2405,6 +2473,7 @@ func normalizeCompletedVideoSegments(raw any) []videoCompletedSegment {
 	return result
 }
 
+// 处理 AI 作业执行中的解析技能视频封面提示词模板流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) resolveSkillVideoCoverPromptTemplate(ctx context.Context, job *domain.AIJob) (string, error) {
 	defaultPrompt := strings.TrimSpace(DefaultSkillVideoCoverPromptTemplate)
 	if job == nil {
@@ -2438,6 +2507,7 @@ func (w *Worker) resolveSkillVideoCoverPromptTemplate(ctx context.Context, job *
 	return defaultPrompt, nil
 }
 
+// 构建技能视频帧提示词，为AI作业执行生成后续步骤所需的派生参数或载荷。
 func buildSkillVideoFramePrompt(coverPromptTemplate string, job *domain.AIJob, payload map[string]any, optimizedVideoPrompt string, referenceTexts []map[string]string, role string, sourceImageCount int) string {
 	var builder strings.Builder
 	role = strings.TrimSpace(strings.ToLower(role))
@@ -2492,6 +2562,7 @@ func buildSkillVideoFramePrompt(coverPromptTemplate string, job *domain.AIJob, p
 	return builder.String()
 }
 
+// 解析对话提示词，根据当前配置和上下文确定最终使用结果。
 func resolveChatPrompt(job *domain.AIJob, messages []ChatMessage) string {
 	prompt := strings.TrimSpace(stringValue(job.Prompt))
 	if prompt != "" {
@@ -2509,6 +2580,7 @@ func resolveChatPrompt(job *domain.AIJob, messages []ChatMessage) string {
 	return ""
 }
 
+// 替换对话消息中的最后一条用户消息，保持提示词拼装顺序稳定。
 func replaceLastUserMessage(messages []ChatMessage, prompt string) []ChatMessage {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
@@ -2523,6 +2595,7 @@ func replaceLastUserMessage(messages []ChatMessage, prompt string) []ChatMessage
 	return append(messages, ChatMessage{Role: "user", Content: prompt})
 }
 
+// 规范化分镜Texts，统一AI作业执行链路的输入格式和后续处理行为。
 func normalizeStoryboardTexts(raw any) []map[string]string {
 	items, ok := raw.([]any)
 	if !ok {
@@ -2546,6 +2619,7 @@ func normalizeStoryboardTexts(raw any) []map[string]string {
 	return result
 }
 
+// 规范化分镜Images，统一AI作业执行链路的输入格式和后续处理行为。
 func normalizeStoryboardImages(raw any) []map[string]string {
 	items, ok := raw.([]any)
 	if !ok {
@@ -2569,11 +2643,13 @@ func normalizeStoryboardImages(raw any) []map[string]string {
 	return result
 }
 
+// 判断是否应当准备技能视频参考帧，供当前链路选择后续处理策略。
 func shouldPrepareSkillVideoReferenceFrames(job *domain.AIJob, payload map[string]any) bool {
 	_ = payload
 	return job != nil && strings.EqualFold(strings.TrimSpace(job.JobType), "video")
 }
 
+// 收集技能视频来源图片，整合AI作业执行链路所需的候选输入。
 func collectSkillVideoSourceImages(payload map[string]any) []MediaInput {
 	if payload == nil {
 		return nil
@@ -2583,6 +2659,7 @@ func collectSkillVideoSourceImages(payload map[string]any) []MediaInput {
 	})
 }
 
+// 处理媒体输入视频参考帧相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func mediaInputsFromVideoReferenceFrames(items []map[string]any) []MediaInput {
 	result := make([]MediaInput, 0, len(items))
 	for _, item := range items {
@@ -2600,6 +2677,7 @@ func mediaInputsFromVideoReferenceFrames(items []map[string]any) []MediaInput {
 	return result
 }
 
+// 规范化对象切片结构，过滤空值并统一后续 JSON 处理。
 func normalizeObjectSlice(raw any) []map[string]any {
 	items, ok := raw.([]any)
 	if !ok {
@@ -2619,6 +2697,7 @@ func normalizeObjectSlice(raw any) []map[string]any {
 	return result
 }
 
+// 规范化单个对象内容，统一媒体和运行时载荷中的字段结构。
 func normalizeObject(raw any) map[string]any {
 	typed, ok := raw.(map[string]any)
 	if !ok {
@@ -2627,6 +2706,7 @@ func normalizeObject(raw any) map[string]any {
 	return typed
 }
 
+// 返回首个非空对象切片，供媒体和分镜输入回退逻辑复用。
 func firstNonEmptyObjectSlice(values ...[]map[string]any) []map[string]any {
 	for _, value := range values {
 		if len(value) > 0 {
@@ -2636,6 +2716,7 @@ func firstNonEmptyObjectSlice(values ...[]map[string]any) []map[string]any {
 	return nil
 }
 
+// 处理bool值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func boolValue(value any) bool {
 	switch typed := value.(type) {
 	case bool:
@@ -2650,6 +2731,7 @@ func boolValue(value any) bool {
 	}
 }
 
+// 处理计费载荷相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func billingToPayload(result *store.ApplyUsageBillingResult) map[string]any {
 	if result == nil {
 		return map[string]any{
@@ -2665,6 +2747,7 @@ func billingToPayload(result *store.ApplyUsageBillingResult) map[string]any {
 	}
 }
 
+// 构建Completion消息，为AI作业执行生成后续步骤所需的派生参数或载荷。
 func buildCompletionMessage(base string, billing *store.ApplyUsageBillingResult) string {
 	if billing == nil {
 		return base
@@ -2685,6 +2768,7 @@ func buildCompletionMessage(base string, billing *store.ApplyUsageBillingResult)
 	}
 }
 
+// 处理计费额度Ptr相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func billingCreditsPtr(result *store.ApplyUsageBillingResult) *int64 {
 	if result == nil {
 		return nil
@@ -2696,6 +2780,7 @@ func billingCreditsPtr(result *store.ApplyUsageBillingResult) *int64 {
 	return &credits
 }
 
+// 处理mustJSON相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func mustJSON(payload any) []byte {
 	if payload == nil {
 		return nil
@@ -2707,6 +2792,7 @@ func mustJSON(payload any) []byte {
 	return data
 }
 
+// 处理safe文件名称相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func safeFileName(value string) string {
 	value = strings.TrimSpace(filepath.Base(value))
 	value = strings.ReplaceAll(value, " ", "-")
@@ -2714,6 +2800,7 @@ func safeFileName(value string) string {
 	return value
 }
 
+// 处理safe产物键相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func safeArtifactKey(primary string, fallback string) string {
 	primary = safeFileName(primary)
 	if primary != "" {
@@ -2722,6 +2809,7 @@ func safeArtifactKey(primary string, fallback string) string {
 	return safeFileName(fallback)
 }
 
+// 解析RFC3339，为AI作业执行提供结构化输入。
 func parseRFC3339(value string) (time.Time, bool) {
 	if strings.TrimSpace(value) == "" {
 		return time.Time{}, false
@@ -2733,6 +2821,7 @@ func parseRFC3339(value string) (time.Time, bool) {
 	return parsed, true
 }
 
+// 将非空字符串转换为指针，统一存储层对可选字符串字段的入参表达。
 func stringPtr(value string) *string {
 	if strings.TrimSpace(value) == "" {
 		return nil
@@ -2741,6 +2830,7 @@ func stringPtr(value string) *string {
 	return &trimmed
 }
 
+// 处理首个NonNil时间相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func firstNonNilTime(value *time.Time, fallback time.Time) time.Time {
 	if value != nil {
 		return value.UTC()

@@ -14,6 +14,7 @@ type AdminPartnerProfileListFilter struct {
 	AdminPageFilter
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminPartnerProfiles(ctx context.Context, filter AdminPartnerProfileListFilter) ([]domain.AdminPartnerProfileRow, int64, domain.AdminPartnerProfileSummary, error) {
 	page, pageSize, offset := normalizeAdminPage(filter.Page, filter.PageSize)
 	_ = page

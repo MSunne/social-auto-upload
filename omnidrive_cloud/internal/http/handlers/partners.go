@@ -13,10 +13,12 @@ type PartnerHandler struct {
 	app *appstate.App
 }
 
+// 创建分销伙伴Handler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewPartnerHandler(app *appstate.App) *PartnerHandler {
 	return &PartnerHandler{app: app}
 }
 
+// 处理分销伙伴My概览接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *PartnerHandler) MyOverview(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	overview, err := h.app.Store.GetPartnerOverviewByUserID(r.Context(), user.ID)
@@ -27,6 +29,7 @@ func (h *PartnerHandler) MyOverview(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, overview)
 }
 
+// 处理分销伙伴开启My资料接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *PartnerHandler) OpenMyProfile(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 

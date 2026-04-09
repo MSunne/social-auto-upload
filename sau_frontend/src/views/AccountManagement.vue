@@ -38,7 +38,7 @@
         class="search-input"
       />
       <div class="toolbar-actions">
-        <el-button type="primary" @click="showAddDialog = true">
+        <el-button type="primary" @click="openAddDialog">
           <el-icon><Plus /></el-icon> 添加账号
         </el-button>
         <el-button @click="batchValidate" :loading="validating">
@@ -70,8 +70,18 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="280" fixed="right">
+        <el-table-column label="操作" width="360" fixed="right">
           <template #default="{ row }">
+            <el-button
+              size="small"
+              type="success"
+              plain
+              @click="openBackend(row)"
+              :loading="row._openingBackend"
+              :disabled="isBackendEntryDisabled(row)"
+            >
+              进入后台
+            </el-button>
             <el-button size="small" type="primary" plain @click="validateOne(row.id)" :loading="row._validating">验证</el-button>
             <el-button size="small" type="danger" plain @click="deleteAccount(row.id)">删除</el-button>
           </template>
@@ -80,7 +90,7 @@
     </div>
 
     <!-- ═══ Add Account Dialog ═══ -->
-    <el-dialog v-model="showAddDialog" title="添加账号" width="480px" destroy-on-close :close-on-click-modal="!loginState.started" :close-on-press-escape="!loginState.started" :show-close="!loginState.started">
+    <el-dialog v-model="showAddDialog" title="添加账号" width="480px" destroy-on-close :close-on-click-modal="!loginState.started" :close-on-press-escape="!loginState.started" :show-close="!loginState.started" @closed="handleAddDialogClosed">
       <el-form label-width="80px">
         <el-form-item label="平台">
           <el-select v-model="newAccount.platformType" placeholder="选择平台" style="width: 100%" :disabled="loginState.started">
@@ -131,6 +141,7 @@ const showAddDialog = ref(false)
 
 const newAccount = ref({ platformType: null, name: '' })
 const loginState = ref({ started: false, messages: [] })
+const loginEventSource = ref(null)
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5409'
 const authHeaders = computed(() => ({ Authorization: `Bearer ${localStorage.getItem('token') || ''}` }))
@@ -141,8 +152,14 @@ const filteredAccounts = computed(() => {
   return accountStore.accounts.filter(a => a.name?.toLowerCase().includes(q) || a.platform?.toLowerCase().includes(q))
 })
 
+const BACKEND_ENTRY_PLATFORM_TYPES = new Set([2, 3, 4])
+
 // Map platform names to Element Plus tag colors so the table stays readable at a glance.
 const platformTagType = (p) => ({ '抖音': 'danger', '快手': 'success', '视频号': 'warning', '小红书': '' }[p] || 'info')
+
+const supportsBackendEntry = (row) => BACKEND_ENTRY_PLATFORM_TYPES.has(Number(row?.type))
+
+const isBackendEntryDisabled = (row) => !supportsBackendEntry(row)
 
 // Load cloud-synced platform capabilities before users try to start a login flow.
 const fetchPlatforms = async () => {
@@ -201,6 +218,21 @@ const deleteAccount = async (id) => {
   } catch { ElMessage.error('删除失败') }
 }
 
+// Launch the local headed browser so operators can inspect the third-party creator backend directly.
+const openBackend = async (row) => {
+  if (!supportsBackendEntry(row)) {
+    ElMessage.warning('当前账号平台暂不支持进入后台，首版仅支持抖音、视频号、快手')
+    return
+  }
+
+  row._openingBackend = true
+  try {
+    const res = await accountApi.openBackend(row.id)
+    ElMessage.success(res?.msg || '已在本机打开后台')
+  } catch {}
+  row._openingBackend = false
+}
+
 // Ask the local backend to push the latest account state to OmniDrive without blocking the UI.
 const forceSync = async () => {
   syncing.value = true
@@ -217,6 +249,46 @@ const forceSync = async () => {
   syncing.value = false
 }
 
+const resolveSseErrorMessage = (event, fallback = '登录失败，请重试') => {
+  const rawData = event?.data
+  if (!rawData) return fallback
+
+  if (typeof rawData === 'string') {
+    try {
+      const parsed = JSON.parse(rawData)
+      return parsed?.payload?.message || parsed?.message || fallback
+    } catch {
+      return rawData
+    }
+  }
+
+  return rawData?.payload?.message || rawData?.message || fallback
+}
+
+const createDefaultAccount = () => ({ platformType: null, name: '' })
+
+const closeLoginEventSource = () => {
+  if (loginEventSource.value) {
+    loginEventSource.value.close()
+    loginEventSource.value = null
+  }
+}
+
+const resetAddDialogState = ({ resetAccount = false } = {}) => {
+  closeLoginEventSource()
+  loginState.value = { started: false, messages: [] }
+  if (resetAccount) newAccount.value = createDefaultAccount()
+}
+
+const openAddDialog = () => {
+  resetAddDialogState({ resetAccount: true })
+  showAddDialog.value = true
+}
+
+const handleAddDialogClosed = () => {
+  resetAddDialogState({ resetAccount: true })
+}
+
 // Open the backend SSE login flow and append all status messages so operators can debug login progress.
 const startLogin = () => {
   const platformType = Number(newAccount.value.platformType)
@@ -230,27 +302,36 @@ const startLogin = () => {
     return
   }
 
+  closeLoginEventSource()
   loginState.value = { started: true, messages: [{ text: '正在初始化登录…', type: 'info' }] }
   const sseUrl = accountApi.getLoginSSEUrl(platformType, newAccount.value.name)
-  const es = createSSE(sseUrl)
-
-  es.onmessage = (e) => {
-    loginState.value.messages.push({ text: e.data, type: 'info' })
-  }
+  const es = createSSE(sseUrl, (payload) => {
+    const message = typeof payload === 'string'
+      ? payload
+      : payload?.payload?.message || payload?.message
+    if (message) loginState.value.messages.push({ text: message, type: 'info' })
+  }, () => {
+    if (!loginState.value.started) return
+    loginState.value.messages.push({ text: '❌ 登录连接已中断，请关闭弹窗后重试', type: 'error' })
+    closeLoginEventSource()
+    loginState.value.started = false
+  })
+  loginEventSource.value = es
   es.addEventListener('qr', (e) => {
     loginState.value.messages.push({ text: `二维码已生成，请扫码`, type: 'success' })
   })
   es.addEventListener('done', () => {
     loginState.value.messages.push({ text: '✅ 登录成功！', type: 'success' })
-    es.close()
+    closeLoginEventSource()
     loginState.value.started = false
     showAddDialog.value = false
     ElMessage.success('登录成功')
     fetchAccounts()
   })
-  es.addEventListener('error', () => {
-    loginState.value.messages.push({ text: '❌ 登录失败', type: 'error' })
-    es.close()
+  es.addEventListener('error', (event) => {
+    const errorMessage = resolveSseErrorMessage(event)
+    loginState.value.messages.push({ text: `❌ ${errorMessage}`, type: 'error' })
+    closeLoginEventSource()
     loginState.value.started = false
   })
 }

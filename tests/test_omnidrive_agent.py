@@ -204,7 +204,7 @@ class OmniDriveBridgeTests(unittest.TestCase):
         )
         request_calls = []
 
-        def fake_request(method, path, *, params=None, payload=None):
+        def fake_request(method, path, *, params=None, payload=None, track_bridge_health=True):
             request_calls.append((method, path, payload))
             return {"device": {"deviceCode": bridge.device_code}}
 
@@ -238,6 +238,60 @@ class OmniDriveBridgeTests(unittest.TestCase):
         self.assertFalse(status["cloudReachable"])
         self.assertIsNotNone(status["cloudRetryAt"])
         self.assertIn("127.0.0.1:8410", status["lastError"])
+        self.assertEqual(status["bridgeStatus"], "degraded")
+        self.assertIn("127.0.0.1:8410", status["bridgeLastError"])
+
+    def test_bridge_timeout_marks_bridge_degraded(self):
+        bridge = self.make_bridge()
+
+        with mock.patch.object(bridge._session, "request", side_effect=requests.ReadTimeout("read timed out")):
+            with self.assertRaises(requests.ReadTimeout):
+                bridge._request("GET", "/api/v1/agent/publish-tasks/device-1")
+
+        status = bridge.status()
+        self.assertEqual(status["bridgeStatus"], "degraded")
+        self.assertIn("read timed out", status["bridgeLastError"])
+        self.assertIsNotNone(status["bridgeLastErrorAt"])
+
+    def test_heartbeat_does_not_clear_bridge_degraded_state(self):
+        bridge = self.make_bridge()
+        bridge._update_state(
+            bridgeStatus="degraded",
+            bridgeLastError="Read timed out",
+            bridgeLastErrorAt="2026-04-07T10:24:37Z",
+            lastError="Read timed out",
+        )
+
+        with mock.patch.object(agent_module, "get_local_ip", return_value="192.168.1.10"), mock.patch.object(
+            bridge, "_request", return_value={"device": {"deviceCode": bridge.device_code}}
+        ):
+            bridge._heartbeat()
+
+        status = bridge.status()
+        self.assertEqual(status["bridgeStatus"], "degraded")
+        self.assertEqual(status["bridgeLastError"], "Read timed out")
+        self.assertEqual(status["bridgeLastErrorAt"], "2026-04-07T10:24:37Z")
+
+    def test_non_heartbeat_request_recovers_bridge_health(self):
+        bridge = self.make_bridge()
+        bridge._update_state(
+            bridgeStatus="degraded",
+            bridgeLastError="Read timed out",
+            bridgeLastErrorAt="2026-04-07T10:24:37Z",
+        )
+        response = mock.Mock()
+        response.content = b"{}"
+        response.json.return_value = {}
+        response.raise_for_status.return_value = None
+
+        with mock.patch.object(bridge._session, "request", return_value=response):
+            bridge._request("GET", "/api/v1/agent/publish-tasks/device-1")
+
+        status = bridge.status()
+        self.assertEqual(status["bridgeStatus"], "healthy")
+        self.assertIsNone(status["bridgeLastError"])
+        self.assertIsNone(status["bridgeLastErrorAt"])
+        self.assertIsNotNone(status["bridgeLastSuccessAt"])
 
     def test_sync_skills_cleans_stale_assets_and_records_local_paths(self):
         bridge = self.make_bridge()

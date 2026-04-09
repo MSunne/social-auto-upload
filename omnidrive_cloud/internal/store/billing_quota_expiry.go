@@ -23,6 +23,7 @@ type expiringQuotaAccountRecord struct {
 	SourceID       *string
 }
 
+// 处理ExpireDue额度账号相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) ExpireDueQuotaAccounts(ctx context.Context, limit int) (*ExpireDueQuotaAccountsResult, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 200

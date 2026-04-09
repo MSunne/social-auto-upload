@@ -11,6 +11,7 @@ import (
 	"omnidrive_cloud/internal/domain"
 )
 
+// 处理扫描AI计费会话相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanAIBillingSession(scan scanFn) (*domain.AIBillingSession, error) {
 	var item domain.AIBillingSession
 	var specialRuleID *string
@@ -46,6 +47,7 @@ func scanAIBillingSession(scan scanFn) (*domain.AIBillingSession, error) {
 	return &item, nil
 }
 
+// 处理扫描AI计费Item相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanAIBillingItem(scan scanFn) (*domain.AIBillingItem, error) {
 	var item domain.AIBillingItem
 	var modelName *string
@@ -89,6 +91,7 @@ func scanAIBillingItem(scan scanFn) (*domain.AIBillingItem, error) {
 	return &item, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAIBillingItemsBySession(ctx context.Context, sessionID string) ([]domain.AIBillingItem, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, session_id, user_id, source_type, source_id, item_key, item_type, label, model_name,
@@ -116,6 +119,7 @@ func (s *Store) ListAIBillingItemsBySession(ctx context.Context, sessionID strin
 	return items, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAIBillingSessionBySource(ctx context.Context, sourceType string, sourceID string) (*domain.AIBillingSession, []domain.AIBillingItem, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, user_id, source_type, source_id, workflow_code, output_type, duration_seconds, segment_seconds,
@@ -139,6 +143,7 @@ func (s *Store) GetAIBillingSessionBySource(ctx context.Context, sourceType stri
 	return session, items, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAIBillingSessionsByUser(ctx context.Context, userID string, page int, pageSize int) ([]domain.AIBillingSession, int64, error) {
 	if page <= 0 {
 		page = 1
@@ -182,6 +187,7 @@ func (s *Store) ListAIBillingSessionsByUser(ctx context.Context, userID string, 
 	return items, total, rows.Err()
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateOrRechargeAIBillingSession(
 	ctx context.Context,
 	sessionInput CreateAIBillingSessionInput,
@@ -204,6 +210,7 @@ func (s *Store) CreateOrRechargeAIBillingSession(
 	return session, items, nil
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) createOrRechargeAIBillingSessionTx(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -314,6 +321,7 @@ func (s *Store) createOrRechargeAIBillingSessionTx(
 	return s.getAIBillingSessionWithItemsTx(ctx, tx, sessionInput.SourceType, sessionInput.SourceID)
 }
 
+// 处理FinalizeAI计费会话相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) FinalizeAIBillingSession(
 	ctx context.Context,
 	sourceType string,
@@ -338,6 +346,7 @@ func (s *Store) FinalizeAIBillingSession(
 	return session, items, nil
 }
 
+// 处理RefundAI计费会话来源相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) RefundAIBillingSessionBySource(ctx context.Context, sourceType string, sourceID string, failureMessage string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -351,6 +360,7 @@ func (s *Store) RefundAIBillingSessionBySource(ctx context.Context, sourceType s
 	return tx.Commit(ctx)
 }
 
+// 处理finalizeAI计费会话事务相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) finalizeAIBillingSessionTx(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -435,6 +445,7 @@ func (s *Store) finalizeAIBillingSessionTx(
 	return s.refreshAIBillingSessionSummaryTx(ctx, tx, session.ID, message, payload)
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) getAIBillingSessionWithItemsTx(ctx context.Context, tx pgx.Tx, sourceType string, sourceID string) (*domain.AIBillingSession, []domain.AIBillingItem, error) {
 	session, err := s.getAIBillingSessionBySourceTx(ctx, tx, sourceType, sourceID)
 	if err != nil || session == nil {
@@ -447,6 +458,7 @@ func (s *Store) getAIBillingSessionWithItemsTx(ctx context.Context, tx pgx.Tx, s
 	return session, items, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) getAIBillingSessionBySourceTx(ctx context.Context, tx pgx.Tx, sourceType string, sourceID string) (*domain.AIBillingSession, error) {
 	row := tx.QueryRow(ctx, `
 		SELECT id, user_id, source_type, source_id, workflow_code, output_type, duration_seconds, segment_seconds,
@@ -467,6 +479,7 @@ func (s *Store) getAIBillingSessionBySourceTx(ctx context.Context, tx pgx.Tx, so
 	return item, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) listAIBillingItemsBySessionTx(ctx context.Context, tx pgx.Tx, sessionID string) ([]domain.AIBillingItem, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT i.id, i.session_id, i.user_id, i.source_type, i.source_id, i.item_key, i.item_type, i.label, i.model_name,
@@ -495,6 +508,7 @@ func (s *Store) listAIBillingItemsBySessionTx(ctx context.Context, tx pgx.Tx, se
 	return items, rows.Err()
 }
 
+// 处理充值AI计费会话事务相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) rechargeAIBillingSessionTx(ctx context.Context, tx pgx.Tx, session domain.AIBillingSession, items []domain.AIBillingItem, sourceSnapshot []byte) (*domain.AIBillingSession, []domain.AIBillingItem, error) {
 	currentBalance, err := ensureWalletAndLockTx(ctx, tx, session.UserID)
 	if err != nil {
@@ -564,6 +578,7 @@ func (s *Store) rechargeAIBillingSessionTx(ctx context.Context, tx pgx.Tx, sessi
 	return s.getAIBillingSessionWithItemsTx(ctx, tx, session.SourceType, session.SourceID)
 }
 
+// 刷新AI计费会话Summary事务，重新计算依赖信息并同步最新执行上下文。
 func (s *Store) refreshAIBillingSessionSummaryTx(ctx context.Context, tx pgx.Tx, sessionID string, message string, payload []byte) (*domain.AIBillingSession, []domain.AIBillingItem, error) {
 	var plannedCredits int64
 	var billedCredits int64
@@ -625,6 +640,7 @@ func (s *Store) refreshAIBillingSessionSummaryTx(ctx context.Context, tx pgx.Tx,
 	return session, items, nil
 }
 
+// 处理解码AI计费Item载荷相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func decodeAIBillingItemPayload(raw []byte) map[string]any {
 	if len(raw) == 0 {
 		return map[string]any{}
@@ -636,6 +652,7 @@ func decodeAIBillingItemPayload(raw []byte) map[string]any {
 	return payload
 }
 
+// 处理首个Non空值值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func firstNonEmptyValue(values ...string) string {
 	for _, value := range values {
 		trimmed := strings.TrimSpace(value)

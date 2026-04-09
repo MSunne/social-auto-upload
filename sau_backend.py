@@ -22,6 +22,8 @@ from myUtils.login import (
     get_tencent_cookie,
     douyin_cookie_gen,
     get_ks_cookie,
+    get_backend_entry_config,
+    open_platform_backend_session,
     xiaohongshu_cookie_gen,
     push_login_failed_status,
 )
@@ -72,6 +74,8 @@ from utils.log import (
 )
 
 active_queues = {}
+active_backend_sessions = {}
+backend_session_lock = threading.Lock()
 app = Flask(__name__)
 ensure_account_storage_schema()
 ensure_platform_capability_schema()
@@ -488,6 +492,148 @@ def fetch_account_rows(account_ids=None):
                 '''
             )
         return cursor.fetchall()
+
+
+def is_backend_session_alive(session):
+    thread = (session or {}).get("thread")
+    return bool(thread and thread.is_alive())
+
+
+def serialize_backend_session(session):
+    if not session:
+        return None
+    return {
+        "accountId": session.get("accountId"),
+        "platformType": session.get("platformType"),
+        "accountName": session.get("accountName"),
+        "startedAt": session.get("startedAt"),
+        "status": "running" if is_backend_session_alive(session) else "closed",
+    }
+
+
+def get_active_backend_session(account_id):
+    normalized_id = int(account_id)
+    with backend_session_lock:
+        existing = active_backend_sessions.get(normalized_id)
+        if existing and is_backend_session_alive(existing):
+            return dict(existing)
+        if existing:
+            active_backend_sessions.pop(normalized_id, None)
+    return None
+
+
+def clear_backend_session(account_id, thread=None):
+    normalized_id = int(account_id)
+    with backend_session_lock:
+        existing = active_backend_sessions.get(normalized_id)
+        if not existing:
+            return
+        if thread is not None and existing.get("thread") is not thread:
+            return
+        active_backend_sessions.pop(normalized_id, None)
+
+
+def run_open_backend_session_thread(account_id, platform_type, account_name):
+    current_thread = threading.current_thread()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(
+            open_platform_backend_session(
+                int(platform_type),
+                str(account_name).strip(),
+                int(account_id),
+                keep_window_open=True,
+            )
+        )
+    except Exception as exc:
+        login_logger.exception(
+            "backend session thread failed account_id={} platform_type={} account_name={} error={}",
+            account_id,
+            platform_type,
+            account_name,
+            exc,
+        )
+    finally:
+        try:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        except Exception:
+            pass
+        asyncio.set_event_loop(None)
+        loop.close()
+        clear_backend_session(account_id, thread=current_thread)
+
+
+def start_backend_session(row):
+    account_id = int(row["id"])
+    with backend_session_lock:
+        existing = active_backend_sessions.get(account_id)
+        if existing and is_backend_session_alive(existing):
+            return None, dict(existing)
+        if existing:
+            active_backend_sessions.pop(account_id, None)
+
+        thread = threading.Thread(
+            target=run_open_backend_session_thread,
+            args=(account_id, int(row["type"]), str(row["userName"]).strip()),
+            daemon=True,
+        )
+        session = {
+            "accountId": account_id,
+            "platformType": int(row["type"]),
+            "accountName": str(row["userName"]).strip(),
+            "startedAt": datetime.now(timezone.utc).isoformat(),
+            "thread": thread,
+        }
+        active_backend_sessions[account_id] = session
+
+    try:
+        thread.start()
+    except Exception:
+        clear_backend_session(account_id, thread=thread)
+        raise
+    return dict(session), None
+
+
+def handle_open_backend_request(account_id, *, require_skill_auth=False):
+    if require_skill_auth:
+        auth_error = ensure_skill_api_authorized()
+        if auth_error:
+            return auth_error
+
+    rows = fetch_account_rows(account_ids=[account_id])
+    if not rows:
+        return jsonify({"code": 404, "msg": "账号不存在", "data": None}), 404
+
+    row = rows[0]
+    if not get_backend_entry_config(row["type"]):
+        return jsonify({
+            "code": 400,
+            "msg": "当前账号平台暂不支持进入后台，首版仅支持抖音、视频号、快手",
+            "data": None,
+        }), 400
+
+    existing_session = get_active_backend_session(account_id)
+    if existing_session:
+        return jsonify({
+            "code": 409,
+            "msg": "该账号后台已打开，请勿重复启动",
+            "data": serialize_backend_session(existing_session),
+        }), 409
+
+    session, conflict = start_backend_session(row)
+    if conflict:
+        return jsonify({
+            "code": 409,
+            "msg": "该账号后台已打开，请勿重复启动",
+            "data": serialize_backend_session(conflict),
+        }), 409
+
+    return jsonify({
+        "code": 200,
+        "msg": "已在本机打开后台",
+        "data": serialize_backend_session(session),
+    }), 200
 
 
 def fetch_account_rows_by_file_paths(account_file_paths):
@@ -2701,6 +2847,11 @@ def delete_account():
         }), 500
 
 
+@app.route('/api/accounts/<int:account_id>/open-backend', methods=['POST'])
+def open_account_backend(account_id):
+    return handle_open_backend_request(account_id, require_skill_auth=False)
+
+
 # SSE 登录接口
 @app.route('/login')
 def login():
@@ -2724,7 +2875,7 @@ def login():
 
     def on_close():
         print(f"清理队列: {id}")
-        del active_queues[id]
+        active_queues.pop(id, None)
     # 启动异步任务线程
     thread = threading.Thread(target=run_async_function, args=(type,id,status_queue), daemon=True)
     thread.start()
@@ -2734,6 +2885,7 @@ def login():
     response.headers['Content-Type'] = 'text/event-stream'
     response.headers['Connection'] = 'keep-alive'
     response.headers['X-OmniBull-Platform'] = capability["label"]
+    response.call_on_close(on_close)
     return response
 
 
@@ -3063,6 +3215,11 @@ def skill_account_detail(account_id):
         "msg": "success",
         "data": serialize_account_detail(rows[0]),
     }), 200
+
+
+@app.route('/api/skill/accounts/<int:account_id>/open-backend', methods=['POST'])
+def skill_account_open_backend(account_id):
+    return handle_open_backend_request(account_id, require_skill_auth=True)
 
 
 @app.route('/api/skill/accounts/validate', methods=['POST'])
@@ -3674,7 +3831,6 @@ def run_async_function(type,id,status_queue,command_queue=None):
         login_logger.exception("login thread execution failed platform_type={} account_name={} error={}", type, id, exc)
         if status_queue is not None:
             push_login_failed_status(status_queue, command_queue, str(exc))
-            status_queue.put("500")
 
 
 if should_boot_background_services():
@@ -3691,11 +3847,13 @@ def sse_stream(status_queue):
             msg = status_queue.get()
             if isinstance(msg, dict):
                 event_type = msg.get("type", "message")
+                payload = msg.get("payload") or {}
                 data_str = json.dumps(msg, ensure_ascii=False)
                 if event_type == "qr_status":
                     yield f"event: qr\ndata: {data_str}\n\n"
-                elif event_type == "error":
-                    yield f"event: error\ndata: {data_str}\n\n"
+                elif event_type in {"error", "login_failed"}:
+                    message = str(payload.get("message") or "").strip() or "登录失败，请重试"
+                    yield f"event: error\ndata: {message}\n\n"
                 else:
                     yield f"event: {event_type}\ndata: {data_str}\n\n"
             elif isinstance(msg, str):
@@ -3704,7 +3862,7 @@ def sse_stream(status_queue):
                 elif msg == "200":
                     yield f"event: done\ndata: 200\n\n"
                 elif msg == "CANCELLED":
-                    yield f"event: error\ndata: 取消登录\n\n"
+                    yield f"event: error\ndata: 本地登录浏览器已关闭，本次添加账号未完成\n\n"
                 elif msg == "500":
                     yield f"event: error\ndata: 内部错误\n\n"
                 else:

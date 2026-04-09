@@ -54,6 +54,7 @@ type Config struct {
 	BillingManualSupportNote      string
 }
 
+// 加载配置，供配置继续处理当前业务状态。
 func Load() Config {
 	_ = godotenv.Load()
 	environment := envOrDefault("OMNIDRIVE_ENV", "development")
@@ -113,6 +114,7 @@ func Load() Config {
 	}
 }
 
+// 处理env默认相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func envOrDefault(key string, fallback string) string {
 	value := os.Getenv(key)
 	if value == "" {
@@ -121,6 +123,7 @@ func envOrDefault(key string, fallback string) string {
 	return value
 }
 
+// 处理env首个相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func envFirst(fallback string, keys ...string) string {
 	for _, key := range keys {
 		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
@@ -130,6 +133,7 @@ func envFirst(fallback string, keys ...string) string {
 	return fallback
 }
 
+// 处理envAsInt相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func envAsInt(key string, fallback int) int {
 	value := os.Getenv(key)
 	if value == "" {
@@ -143,6 +147,7 @@ func envAsInt(key string, fallback int) int {
 	return parsed
 }
 
+// 处理envAsBool相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func envAsBool(key string, fallback bool) bool {
 	value := os.Getenv(key)
 	if value == "" {
@@ -156,6 +161,7 @@ func envAsBool(key string, fallback bool) bool {
 	return parsed
 }
 
+// 处理envAsCSV相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func envAsCSV(key string, fallback []string) []string {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
@@ -179,6 +185,7 @@ func envAsCSV(key string, fallback []string) []string {
 	return items
 }
 
+// 处理默认跨域AllowedOrigins相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func defaultCORSAllowedOrigins(environment string) []string {
 	if strings.EqualFold(strings.TrimSpace(environment), "development") {
 		return []string{"*"}
@@ -186,10 +193,12 @@ func defaultCORSAllowedOrigins(environment string) []string {
 	return nil
 }
 
+// 处理默认LogLevel相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func defaultLogLevel(environment string) string {
 	return "info"
 }
 
+// 根据mat计算默认Log，供配置链路复用关键派生结果。
 func defaultLogFormat(environment string) string {
 	_ = environment
 	return "json"

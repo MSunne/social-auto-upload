@@ -13,6 +13,7 @@ import (
 	"omnidrive_cloud/internal/domain"
 )
 
+// 处理扫描发布任务相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanPublishTask(row pgx.Row) (*domain.PublishTask, error) {
 	var task domain.PublishTask
 	var contentText *string
@@ -72,6 +73,7 @@ func scanPublishTask(row pgx.Row) (*domain.PublishTask, error) {
 	return &task, nil
 }
 
+// 执行任务相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListPublishTasksByOwner(ctx context.Context, ownerUserID string, filter ListPublishTasksFilter) ([]domain.PublishTask, error) {
 	query := `
 		SELECT pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
@@ -135,6 +137,7 @@ func (s *Store) ListPublishTasksByOwner(ctx context.Context, ownerUserID string,
 	return items, rows.Err()
 }
 
+// 执行任务相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetPublishTaskByOwner(ctx context.Context, taskID string, ownerUserID string) (*domain.PublishTask, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
@@ -156,6 +159,7 @@ func (s *Store) GetPublishTaskByOwner(ctx context.Context, taskID string, ownerU
 	return task, nil
 }
 
+// 执行任务相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetPublishTaskByID(ctx context.Context, taskID string) (*domain.PublishTask, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, device_id, account_id, skill_id, skill_revision, platform, account_name,
@@ -176,6 +180,7 @@ func (s *Store) GetPublishTaskByID(ctx context.Context, taskID string) (*domain.
 	return task, nil
 }
 
+// 执行任务相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreatePublishTask(ctx context.Context, input CreatePublishTaskInput) (*domain.PublishTask, error) {
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO publish_tasks (
@@ -193,6 +198,7 @@ func (s *Store) CreatePublishTask(ctx context.Context, input CreatePublishTaskIn
 	return scanPublishTask(row)
 }
 
+// 执行任务相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListPendingPublishTasksByDevice(ctx context.Context, deviceID string) ([]domain.PublishTask, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, device_id, account_id, skill_id, skill_revision, platform, account_name,
@@ -223,6 +229,7 @@ func (s *Store) ListPendingPublishTasksByDevice(ctx context.Context, deviceID st
 	return items, rows.Err()
 }
 
+// 同步发布任务，把当前上报或计算结果落到持久化状态中。
 func (s *Store) SyncPublishTask(ctx context.Context, input SyncPublishTaskInput) (*domain.PublishTask, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -292,6 +299,7 @@ func (s *Store) SyncPublishTask(ctx context.Context, input SyncPublishTaskInput)
 	return task, nil
 }
 
+// 执行任务相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpdatePublishTask(ctx context.Context, taskID string, ownerUserID string, input UpdatePublishTaskInput) (*domain.PublishTask, error) {
 	var mediaPayload any
 	if input.MediaTouched {
@@ -341,6 +349,7 @@ func (s *Store) UpdatePublishTask(ctx context.Context, taskID string, ownerUserI
 	return task, nil
 }
 
+// 刷新发布任务技能Revision，重新计算依赖信息并同步最新执行上下文。
 func (s *Store) RefreshPublishTaskSkillRevision(ctx context.Context, taskID string, ownerUserID string, skillRevision *string, message *string) (*domain.PublishTask, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE publish_tasks pt
@@ -367,6 +376,7 @@ func (s *Store) RefreshPublishTaskSkillRevision(ctx context.Context, taskID stri
 	return task, nil
 }
 
+// 执行任务相关的租约与并发控制操作，确保调度和执行状态保持一致。
 func (s *Store) ClaimPublishTaskLease(ctx context.Context, taskID string, deviceID string, leaseToken string, leaseExpiresAt time.Time) (*domain.PublishTask, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE publish_tasks
@@ -398,6 +408,7 @@ func (s *Store) ClaimPublishTaskLease(ctx context.Context, taskID string, device
 	return task, nil
 }
 
+// 执行任务相关的租约与并发控制操作，确保调度和执行状态保持一致。
 func (s *Store) RenewPublishTaskLease(ctx context.Context, taskID string, deviceID string, leaseToken string, leaseExpiresAt time.Time) (*domain.PublishTask, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE publish_tasks
@@ -424,6 +435,7 @@ func (s *Store) RenewPublishTaskLease(ctx context.Context, taskID string, device
 	return task, nil
 }
 
+// 执行任务相关的租约与并发控制操作，确保调度和执行状态保持一致。
 func (s *Store) ReleasePublishTaskLeaseByAgent(ctx context.Context, taskID string, deviceID string, leaseToken string, message *string) (*domain.PublishTask, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE publish_tasks
@@ -468,6 +480,7 @@ func (s *Store) ReleasePublishTaskLeaseByAgent(ctx context.Context, taskID strin
 	return task, nil
 }
 
+// 处理请求取消发布任务相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) RequestCancelPublishTask(ctx context.Context, taskID string, ownerUserID string) (*domain.PublishTask, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE publish_tasks pt
@@ -522,6 +535,7 @@ func (s *Store) RequestCancelPublishTask(ctx context.Context, taskID string, own
 	return task, nil
 }
 
+// 重试发布任务，重置必要状态后重新放回执行链路。
 func (s *Store) RetryPublishTask(ctx context.Context, taskID string, ownerUserID string) (*domain.PublishTask, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE publish_tasks pt
@@ -554,6 +568,7 @@ func (s *Store) RetryPublishTask(ctx context.Context, taskID string, ownerUserID
 	return task, nil
 }
 
+// 根据ce释放发布任务租约计算，供任务链路复用关键派生结果。
 func (s *Store) ForceReleasePublishTaskLease(ctx context.Context, taskID string, ownerUserID string) (*domain.PublishTask, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE publish_tasks pt
@@ -600,6 +615,7 @@ func (s *Store) ForceReleasePublishTaskLease(ctx context.Context, taskID string,
 	return task, nil
 }
 
+// 恢复发布任务验证码，在外部条件修复后继续原有处理流程。
 func (s *Store) ResumePublishTaskFromVerification(ctx context.Context, taskID string, ownerUserID string, message *string) (*domain.PublishTask, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE publish_tasks pt
@@ -633,6 +649,7 @@ func (s *Store) ResumePublishTaskFromVerification(ctx context.Context, taskID st
 	return task, nil
 }
 
+// 解析发布任务Manually，根据当前配置和上下文确定最终使用结果。
 func (s *Store) ResolvePublishTaskManually(ctx context.Context, taskID string, ownerUserID string, status string, message *string) (*domain.PublishTask, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE publish_tasks pt
@@ -674,6 +691,7 @@ func (s *Store) ResolvePublishTaskManually(ctx context.Context, taskID string, o
 	return task, nil
 }
 
+// 恢复Expired发布任务Leases，把中断或遗留状态重新接回当前执行链路。
 func (s *Store) RecoverExpiredPublishTaskLeases(ctx context.Context, deviceID string) ([]domain.PublishTask, error) {
 	rows, err := s.pool.Query(ctx, `
 		UPDATE publish_tasks
@@ -722,6 +740,7 @@ func (s *Store) RecoverExpiredPublishTaskLeases(ctx context.Context, deviceID st
 	return items, rows.Err()
 }
 
+// 处理扫描发布任务事件相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanPublishTaskEvent(row pgx.Row) (*domain.PublishTaskEvent, error) {
 	var event domain.PublishTaskEvent
 	var message *string
@@ -745,6 +764,7 @@ func scanPublishTaskEvent(row pgx.Row) (*domain.PublishTaskEvent, error) {
 	return &event, nil
 }
 
+// 处理扫描发布任务产物相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanPublishTaskArtifact(row pgx.Row) (*domain.PublishTaskArtifact, error) {
 	var item domain.PublishTaskArtifact
 	var title *string
@@ -787,6 +807,7 @@ func scanPublishTaskArtifact(row pgx.Row) (*domain.PublishTaskArtifact, error) {
 	return &item, nil
 }
 
+// 处理扫描发布任务素材Ref相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanPublishTaskMaterialRef(row pgx.Row) (*domain.PublishTaskMaterialRef, error) {
 	var item domain.PublishTaskMaterialRef
 	var absolutePath *string
@@ -827,6 +848,7 @@ func scanPublishTaskMaterialRef(row pgx.Row) (*domain.PublishTaskMaterialRef, er
 	return &item, nil
 }
 
+// 处理扫描发布任务运行时状态相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanPublishTaskRuntimeState(row pgx.Row) (*domain.PublishTaskRuntimeState, error) {
 	var item domain.PublishTaskRuntimeState
 	var executionPayload []byte
@@ -847,6 +869,7 @@ func scanPublishTaskRuntimeState(row pgx.Row) (*domain.PublishTaskRuntimeState, 
 	return &item, nil
 }
 
+// 执行任务相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreatePublishTaskEvent(ctx context.Context, input CreatePublishTaskEventInput) (*domain.PublishTaskEvent, error) {
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO publish_task_events (
@@ -859,6 +882,7 @@ func (s *Store) CreatePublishTaskEvent(ctx context.Context, input CreatePublishT
 	return scanPublishTaskEvent(row)
 }
 
+// 执行任务相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListPublishTaskEventsByOwner(ctx context.Context, taskID string, ownerUserID string) ([]domain.PublishTaskEvent, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT pte.id, pte.task_id, pte.event_type, pte.source, pte.status, pte.message, pte.payload, pte.created_at
@@ -884,6 +908,7 @@ func (s *Store) ListPublishTaskEventsByOwner(ctx context.Context, taskID string,
 	return items, rows.Err()
 }
 
+// 执行任务相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpsertPublishTaskArtifacts(ctx context.Context, items []UpsertPublishTaskArtifactInput) ([]domain.PublishTaskArtifact, error) {
 	if len(items) == 0 {
 		return []domain.PublishTaskArtifact{}, nil
@@ -934,6 +959,7 @@ func (s *Store) UpsertPublishTaskArtifacts(ctx context.Context, items []UpsertPu
 	return result, nil
 }
 
+// 执行任务相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListPublishTaskArtifactsByOwner(ctx context.Context, taskID string, ownerUserID string) ([]domain.PublishTaskArtifact, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT pta.id, pta.task_id, pta.artifact_key, pta.artifact_type, pta.source, pta.title,
@@ -961,6 +987,7 @@ func (s *Store) ListPublishTaskArtifactsByOwner(ctx context.Context, taskID stri
 	return items, rows.Err()
 }
 
+// 执行任务相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListPublishTaskArtifactsByTaskID(ctx context.Context, taskID string) ([]domain.PublishTaskArtifact, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, task_id, artifact_key, artifact_type, source, title,
@@ -986,6 +1013,7 @@ func (s *Store) ListPublishTaskArtifactsByTaskID(ctx context.Context, taskID str
 	return items, rows.Err()
 }
 
+// 替换发布任务素材Refs，保持任务链路中的输入结构或状态一致。
 func (s *Store) ReplacePublishTaskMaterialRefs(ctx context.Context, taskID string, ownerUserID string, items []ReplacePublishTaskMaterialRefInput) ([]domain.PublishTaskMaterialRef, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -1031,6 +1059,7 @@ func (s *Store) ReplacePublishTaskMaterialRefs(ctx context.Context, taskID strin
 	return results, nil
 }
 
+// 执行任务相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListPublishTaskMaterialRefsByOwner(ctx context.Context, taskID string, ownerUserID string) ([]domain.PublishTaskMaterialRef, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT refs.id, refs.task_id, refs.device_id, refs.root_name, refs.relative_path, refs.role,
@@ -1058,6 +1087,7 @@ func (s *Store) ListPublishTaskMaterialRefsByOwner(ctx context.Context, taskID s
 	return items, rows.Err()
 }
 
+// 执行任务相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListPublishTaskMaterialRefsByTaskID(ctx context.Context, taskID string) ([]domain.PublishTaskMaterialRef, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT refs.id, refs.task_id, refs.device_id, refs.root_name, refs.relative_path, refs.role,
@@ -1083,6 +1113,7 @@ func (s *Store) ListPublishTaskMaterialRefsByTaskID(ctx context.Context, taskID 
 	return items, rows.Err()
 }
 
+// 执行任务相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListPublishTasksByMaterialRef(ctx context.Context, ownerUserID string, deviceID string, rootName string, relativePath string, subtree bool, limit int) ([]domain.PublishTask, error) {
 	normalizedPath := normalizeMaterialPath(relativePath)
 	query := `
@@ -1137,6 +1168,7 @@ func (s *Store) ListPublishTasksByMaterialRef(ctx context.Context, ownerUserID s
 	return items, rows.Err()
 }
 
+// 执行任务相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) CountPublishTaskMaterialHealth(ctx context.Context, taskID string) (int64, int64, int64, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
@@ -1179,6 +1211,7 @@ func (s *Store) CountPublishTaskMaterialHealth(ctx context.Context, taskID strin
 	return totalCount, availableCount, driftedCount, nil
 }
 
+// 执行任务相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) CountPublishTaskAvailableMaterials(ctx context.Context, taskID string) (int64, int64, error) {
 	totalCount, availableCount, _, err := s.CountPublishTaskMaterialHealth(ctx, taskID)
 	if err != nil {
@@ -1187,6 +1220,7 @@ func (s *Store) CountPublishTaskAvailableMaterials(ctx context.Context, taskID s
 	return totalCount, availableCount, nil
 }
 
+// 执行任务相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetPublishTaskRuntimeStateByTaskID(ctx context.Context, taskID string) (*domain.PublishTaskRuntimeState, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT task_id, execution_payload, last_agent_sync_at, created_at, updated_at
@@ -1204,6 +1238,7 @@ func (s *Store) GetPublishTaskRuntimeStateByTaskID(ctx context.Context, taskID s
 	return item, nil
 }
 
+// 执行任务相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpsertPublishTaskRuntimeState(ctx context.Context, input UpsertPublishTaskRuntimeStateInput) (*domain.PublishTaskRuntimeState, error) {
 	var executionPayload any
 	if input.ExecutionTouched {
@@ -1227,6 +1262,7 @@ func (s *Store) UpsertPublishTaskRuntimeState(ctx context.Context, input UpsertP
 	return scanPublishTaskRuntimeState(row)
 }
 
+// 执行任务相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) DeletePublishTaskRuntimeState(ctx context.Context, taskID string) error {
 	_, err := s.pool.Exec(ctx, `
 		DELETE FROM publish_task_runtime_states
@@ -1235,6 +1271,7 @@ func (s *Store) DeletePublishTaskRuntimeState(ctx context.Context, taskID string
 	return err
 }
 
+// 执行任务相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) DeletePublishTaskArtifactsByOwner(ctx context.Context, taskID string, ownerUserID string) (int64, error) {
 	commandTag, err := s.pool.Exec(ctx, `
 		DELETE FROM publish_task_artifacts pta
@@ -1250,6 +1287,7 @@ func (s *Store) DeletePublishTaskArtifactsByOwner(ctx context.Context, taskID st
 	return commandTag.RowsAffected(), nil
 }
 
+// 执行任务相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) DeletePublishTask(ctx context.Context, taskID string, ownerUserID string) (bool, error) {
 	commandTag, err := s.pool.Exec(ctx, `
 		DELETE FROM publish_tasks pt

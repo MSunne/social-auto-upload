@@ -24,10 +24,12 @@ type reviewWithdrawalRequest struct {
 	ProofURLs        []string `json:"proofUrls"`
 }
 
+// 创建管理端提现Handler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewAdminWithdrawalHandler(app *appstate.App) *AdminWithdrawalHandler {
 	return &AdminWithdrawalHandler{app: app}
 }
 
+// 处理管理端提现列表提现接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminWithdrawalHandler) ListWithdrawals(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, summary, err := h.app.Store.ListAdminWithdrawals(r.Context(), store.AdminWithdrawalListFilter{
@@ -50,6 +52,7 @@ func (h *AdminWithdrawalHandler) ListWithdrawals(w http.ResponseWriter, r *http.
 	})
 }
 
+// 处理管理端提现详情提现接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminWithdrawalHandler) DetailWithdrawal(w http.ResponseWriter, r *http.Request) {
 	withdrawalID := strings.TrimSpace(chi.URLParam(r, "withdrawalId"))
 	if withdrawalID == "" {
@@ -69,18 +72,22 @@ func (h *AdminWithdrawalHandler) DetailWithdrawal(w http.ResponseWriter, r *http
 	render.JSON(w, http.StatusOK, record)
 }
 
+// 处理管理端提现Approve提现接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminWithdrawalHandler) ApproveWithdrawal(w http.ResponseWriter, r *http.Request) {
 	h.handleWithdrawalReviewAction(w, r, "approve")
 }
 
+// 处理管理端提现Reject提现接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminWithdrawalHandler) RejectWithdrawal(w http.ResponseWriter, r *http.Request) {
 	h.handleWithdrawalReviewAction(w, r, "reject")
 }
 
+// 处理管理端提现Mark提现Paid接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminWithdrawalHandler) MarkWithdrawalPaid(w http.ResponseWriter, r *http.Request) {
 	h.handleWithdrawalReviewAction(w, r, "mark_paid")
 }
 
+// 处理管理端提现handle提现Review动作接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminWithdrawalHandler) handleWithdrawalReviewAction(w http.ResponseWriter, r *http.Request, action string) {
 	withdrawalID := strings.TrimSpace(chi.URLParam(r, "withdrawalId"))
 	if withdrawalID == "" {

@@ -31,10 +31,12 @@ type updateDeviceRequest struct {
 	IsEnabled             *bool   `json:"isEnabled"`
 }
 
+// 创建设备Handler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewDeviceHandler(app *appstate.App) *DeviceHandler {
 	return &DeviceHandler{app: app}
 }
 
+// 应用生效设备模型Defaults，把外部输入转换为当前链路的最终状态变更。
 func applyEffectiveDeviceModelDefaults(device *domain.Device, settings effectiveAdminSystemSettings) {
 	if device == nil {
 		return
@@ -58,6 +60,7 @@ func applyEffectiveDeviceModelDefaults(device *domain.Device, settings effective
 	}
 }
 
+// 处理设备列表接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *DeviceHandler) List(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	items, err := h.app.Store.ListDevicesByOwner(r.Context(), user.ID)
@@ -76,6 +79,7 @@ func (h *DeviceHandler) List(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理设备详情接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *DeviceHandler) Detail(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	deviceID := strings.TrimSpace(chi.URLParam(r, "deviceId"))
@@ -103,6 +107,7 @@ func (h *DeviceHandler) Detail(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, device)
 }
 
+// 处理设备工作区接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *DeviceHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	deviceID := strings.TrimSpace(chi.URLParam(r, "deviceId"))
@@ -178,6 +183,7 @@ func (h *DeviceHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理设备认领接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *DeviceHandler) Claim(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 
@@ -251,6 +257,7 @@ func (h *DeviceHandler) Claim(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, device)
 }
 
+// 处理设备更新接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *DeviceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	deviceID := chi.URLParam(r, "deviceId")
@@ -317,6 +324,7 @@ func (h *DeviceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, device)
 }
 
+// 处理设备解绑接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *DeviceHandler) Unbind(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	deviceID := strings.TrimSpace(chi.URLParam(r, "deviceId"))

@@ -14,6 +14,7 @@ import (
 	"omnidrive_cloud/internal/domain"
 )
 
+// 处理AI作业QualifiedColumn相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func aiJobQualifiedColumn(alias string, column string) string {
 	trimmedAlias := strings.TrimSpace(alias)
 	if trimmedAlias == "" {
@@ -27,6 +28,7 @@ const (
 	aiJobPayloadModeSummary = "summary"
 )
 
+// 处理AI作业列表载荷Mode相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func aiJobListPayloadMode(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", aiJobPayloadModeFull:
@@ -38,6 +40,7 @@ func aiJobListPayloadMode(value string) string {
 	}
 }
 
+// 处理AI作业输入载荷SelectColumn相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func aiJobInputPayloadSelectColumn(alias string, payloadMode string) string {
 	qualified := aiJobQualifiedColumn(alias, "input_payload")
 	if aiJobListPayloadMode(payloadMode) != aiJobPayloadModeSummary {
@@ -49,6 +52,7 @@ func aiJobInputPayloadSelectColumn(alias string, payloadMode string) string {
 	)
 }
 
+// 处理AI作业输出载荷SelectColumn相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func aiJobOutputPayloadSelectColumn(alias string, payloadMode string) string {
 	qualified := aiJobQualifiedColumn(alias, "output_payload")
 	if aiJobListPayloadMode(payloadMode) != aiJobPayloadModeSummary {
@@ -60,6 +64,7 @@ func aiJobOutputPayloadSelectColumn(alias string, payloadMode string) string {
 	)
 }
 
+// 根据计算AI作业SelectColumns，供AI作业链路复用关键派生结果。
 func aiJobSelectColumnsFor(alias string, payloadMode string) string {
 	qualifiedModelName := aiJobQualifiedColumn(alias, "model_name")
 	columns := []string{
@@ -117,6 +122,7 @@ type aiModelPricingPayload struct {
 	ChatOutputBillingAmount *float64 `json:"chatOutputBillingAmount,omitempty"`
 }
 
+// 规范化AI模型计费Mode，统一AI作业链路的输入格式和后续处理行为。
 func normalizeAIModelBillingMode(category string, billingMode string) string {
 	switch strings.ToLower(strings.TrimSpace(billingMode)) {
 	case "per_call", "per_second", "per_token":
@@ -129,6 +135,7 @@ func normalizeAIModelBillingMode(category string, billingMode string) string {
 	}
 }
 
+// 处理扫描AI模型相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanAIModel(row pgx.Row) (*domain.AIModel, error) {
 	var model domain.AIModel
 	var baseURL *string
@@ -187,6 +194,7 @@ func scanAIModel(row pgx.Row) (*domain.AIModel, error) {
 	return &model, nil
 }
 
+// 应用AI模型定价载荷，把外部输入转换为当前链路的最终状态变更。
 func applyAIModelPricingPayload(model *domain.AIModel) {
 	if model == nil {
 		return
@@ -220,6 +228,7 @@ func applyAIModelPricingPayload(model *domain.AIModel) {
 	}
 }
 
+// 处理解码String列表相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func decodeStringList(raw []byte) []string {
 	if len(raw) == 0 {
 		return nil
@@ -231,6 +240,7 @@ func decodeStringList(raw []byte) []string {
 	return values
 }
 
+// 规范化可选String，统一AI作业链路的输入格式和后续处理行为。
 func normalizeOptionalString(value *string) *string {
 	if value == nil {
 		return nil
@@ -242,6 +252,7 @@ func normalizeOptionalString(value *string) *string {
 	return &trimmed
 }
 
+// 处理扫描AI作业相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanAIJob(row pgx.Row) (*domain.AIJob, error) {
 	var job domain.AIJob
 	var deviceID *string
@@ -309,6 +320,7 @@ func scanAIJob(row pgx.Row) (*domain.AIJob, error) {
 	return &job, nil
 }
 
+// 处理扫描AI作业产物相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanAIJobArtifact(row pgx.Row) (*domain.AIJobArtifact, error) {
 	var item domain.AIJobArtifact
 	var title *string
@@ -363,6 +375,7 @@ func scanAIJobArtifact(row pgx.Row) (*domain.AIJobArtifact, error) {
 	return &item, nil
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAIModels(ctx context.Context, category string) ([]domain.AIModel, error) {
 	query := `
 		SELECT ` + aiModelSelectColumns + `
@@ -393,6 +406,7 @@ func (s *Store) ListAIModels(ctx context.Context, category string) ([]domain.AIM
 	return items, rows.Err()
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAIModelByName(ctx context.Context, modelName string) (*domain.AIModel, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT `+aiModelSelectColumns+`
@@ -410,6 +424,7 @@ func (s *Store) GetAIModelByName(ctx context.Context, modelName string) (*domain
 	return model, nil
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAIModelByIDOrName(ctx context.Context, value string) (*domain.AIModel, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT `+aiModelSelectColumns+`
@@ -427,6 +442,7 @@ func (s *Store) GetAIModelByIDOrName(ctx context.Context, value string) (*domain
 	return model, nil
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAIJobsByOwner(ctx context.Context, ownerUserID string, filter ListAIJobsFilter) ([]domain.AIJob, error) {
 	payloadMode := aiJobListPayloadMode(filter.PayloadMode)
 	query := fmt.Sprintf(`
@@ -494,6 +510,7 @@ func (s *Store) ListAIJobsByOwner(ctx context.Context, ownerUserID string, filte
 	return items, rows.Err()
 }
 
+// 执行AI作业相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateAIJob(ctx context.Context, input CreateAIJobInput) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO ai_jobs (
@@ -506,6 +523,7 @@ func (s *Store) CreateAIJob(ctx context.Context, input CreateAIJobInput) (*domai
 	return scanAIJob(row)
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAIJobByOwner(ctx context.Context, jobID string, ownerUserID string) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT `+aiJobSelectColumns+`
@@ -523,6 +541,7 @@ func (s *Store) GetAIJobByOwner(ctx context.Context, jobID string, ownerUserID s
 	return job, nil
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAIJobByID(ctx context.Context, jobID string) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT `+aiJobSelectColumns+`
@@ -540,6 +559,7 @@ func (s *Store) GetAIJobByID(ctx context.Context, jobID string) (*domain.AIJob, 
 	return job, nil
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAIJobByLocalTask(ctx context.Context, ownerUserID string, deviceID string, localTaskID string) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT `+aiJobSelectColumns+`
@@ -561,6 +581,7 @@ func (s *Store) GetAIJobByLocalTask(ctx context.Context, ownerUserID string, dev
 	return job, nil
 }
 
+// 执行AI作业相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpdateAIJob(ctx context.Context, jobID string, ownerUserID string, input UpdateAIJobInput) (*domain.AIJob, error) {
 	var deviceID any
 	if input.DeviceTouched {
@@ -672,6 +693,7 @@ func (s *Store) UpdateAIJob(ctx context.Context, jobID string, ownerUserID strin
 	return job, nil
 }
 
+// 执行AI作业相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpdateAIJobDeliveryByDevice(ctx context.Context, jobID string, deviceID string, status string, message *string, localPublishTaskID *string, deliveredAt *time.Time) (*domain.AIJob, bool, error) {
 	currentRow := s.pool.QueryRow(ctx, `
 		SELECT `+aiJobSelectColumns+`
@@ -713,6 +735,7 @@ func (s *Store) UpdateAIJobDeliveryByDevice(ctx context.Context, jobID string, d
 	return job, true, nil
 }
 
+// 处理AI作业投递Changed相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func aiJobDeliveryChanged(current *domain.AIJob, status string, message *string, localPublishTaskID *string) bool {
 	if current == nil {
 		return true
@@ -735,6 +758,7 @@ func aiJobDeliveryChanged(current *domain.AIJob, status string, message *string,
 	return false
 }
 
+// 处理same可选投递值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func sameOptionalDeliveryValue(current *string, incoming *string) bool {
 	if incoming == nil {
 		return true
@@ -742,6 +766,7 @@ func sameOptionalDeliveryValue(current *string, incoming *string) bool {
 	return strings.TrimSpace(valueOrEmpty(current)) == strings.TrimSpace(valueOrEmpty(incoming))
 }
 
+// 取消AI作业，推进状态机并释放当前占用资源。
 func (s *Store) CancelAIJob(ctx context.Context, jobID string, ownerUserID string, message *string) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE ai_jobs
@@ -766,6 +791,7 @@ func (s *Store) CancelAIJob(ctx context.Context, jobID string, ownerUserID strin
 	return job, nil
 }
 
+// 重试AI作业，重置必要状态后重新放回执行链路。
 func (s *Store) RetryAIJob(ctx context.Context, jobID string, ownerUserID string, message *string) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE ai_jobs
@@ -795,6 +821,7 @@ func (s *Store) RetryAIJob(ctx context.Context, jobID string, ownerUserID string
 	return job, nil
 }
 
+// 执行AI作业相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) DeleteAccountSkillRunPlanByOwner(ctx context.Context, jobID string, ownerUserID string, scheduleKey string, repeating bool) (bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -840,6 +867,7 @@ func (s *Store) DeleteAccountSkillRunPlanByOwner(ctx context.Context, jobID stri
 	return true, nil
 }
 
+// 根据ce释放AI作业租约归属方计算，供AI作业链路复用关键派生结果。
 func (s *Store) ForceReleaseAIJobLeaseByOwner(ctx context.Context, jobID string, ownerUserID string, message *string) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE ai_jobs
@@ -864,6 +892,7 @@ func (s *Store) ForceReleaseAIJobLeaseByOwner(ctx context.Context, jobID string,
 	return job, nil
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAIJobsBySkill(ctx context.Context, ownerUserID string, skillID string, limit int) ([]domain.AIJob, error) {
 	query := `
 		SELECT ` + aiJobSelectColumns + `
@@ -894,6 +923,7 @@ func (s *Store) ListAIJobsBySkill(ctx context.Context, ownerUserID string, skill
 	return items, rows.Err()
 }
 
+// 判断是否存在活跃AI作业s技能来源，供当前链路选择后续处理策略。
 func (s *Store) HasActiveAIJobsBySkillAndSource(ctx context.Context, ownerUserID string, skillID string, source string) (bool, error) {
 	var exists bool
 	err := s.pool.QueryRow(ctx, `
@@ -912,6 +942,7 @@ func (s *Store) HasActiveAIJobsBySkillAndSource(ctx context.Context, ownerUserID
 	return exists, nil
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListRecurringAccountSkillTemplateJobs(ctx context.Context, limit int) ([]domain.AIJob, error) {
 	query := `
 		SELECT ` + aiJobSelectColumnsFor("recurring_jobs", aiJobPayloadModeFull) + `
@@ -949,6 +980,7 @@ func (s *Store) ListRecurringAccountSkillTemplateJobs(ctx context.Context, limit
 	return items, rows.Err()
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) FindActiveAccountSkillJobByScheduleKey(ctx context.Context, ownerUserID string, scheduleKey string) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT `+aiJobSelectColumns+`
@@ -971,6 +1003,7 @@ func (s *Store) FindActiveAccountSkillJobByScheduleKey(ctx context.Context, owne
 	return job, nil
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) FindActiveAccountSkillJobByRun(ctx context.Context, ownerUserID string, skillID string, deviceID string, accountID string, runAt time.Time) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT `+aiJobSelectColumns+`
@@ -999,6 +1032,7 @@ func (s *Store) FindActiveAccountSkillJobByRun(ctx context.Context, ownerUserID 
 	return job, nil
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListPendingAIJobsByDevice(ctx context.Context, deviceID string) ([]domain.AIJob, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+aiJobSelectColumns+`
@@ -1026,6 +1060,7 @@ func (s *Store) ListPendingAIJobsByDevice(ctx context.Context, deviceID string) 
 	return items, rows.Err()
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAgentAIJobsByDevice(ctx context.Context, deviceID string, sources []string, limit int) ([]domain.AIJob, error) {
 	query := `
 		SELECT ` + aiJobSelectColumns + `
@@ -1070,6 +1105,7 @@ func (s *Store) ListAgentAIJobsByDevice(ctx context.Context, deviceID string, so
 	return items, rows.Err()
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListExecutableAIJobs(ctx context.Context, limit int) ([]domain.AIJob, error) {
 	query := `
 		SELECT ` + aiJobSelectColumnsFor("target", aiJobPayloadModeFull) + `
@@ -1121,6 +1157,7 @@ func (s *Store) ListExecutableAIJobs(ctx context.Context, limit int) ([]domain.A
 	return items, rows.Err()
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListPendingExecutableAIJobsBefore(ctx context.Context, endExclusive time.Time, limit int) ([]domain.AIJob, error) {
 	query := `
 		SELECT ` + aiJobSelectColumns + `
@@ -1153,6 +1190,7 @@ func (s *Store) ListPendingExecutableAIJobsBefore(ctx context.Context, endExclus
 	return items, rows.Err()
 }
 
+// 处理PromoteDueScheduledAI作业s相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) PromoteDueScheduledAIJobs(ctx context.Context, limit int) ([]domain.AIJob, error) {
 	query := `
 		UPDATE ai_jobs
@@ -1195,6 +1233,7 @@ func (s *Store) PromoteDueScheduledAIJobs(ctx context.Context, limit int) ([]dom
 	return items, rows.Err()
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) FindScheduledOrActiveAIJobBySkillRun(ctx context.Context, skillID string, runAt time.Time) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT `+aiJobSelectColumns+`
@@ -1216,6 +1255,7 @@ func (s *Store) FindScheduledOrActiveAIJobBySkillRun(ctx context.Context, skillI
 	return job, nil
 }
 
+// 恢复ExpiredAI作业Leases，把中断或遗留状态重新接回当前执行链路。
 func (s *Store) RecoverExpiredAIJobLeases(ctx context.Context, deviceID string) ([]domain.AIJob, error) {
 	rows, err := s.pool.Query(ctx, `
 		UPDATE ai_jobs
@@ -1249,6 +1289,7 @@ func (s *Store) RecoverExpiredAIJobLeases(ctx context.Context, deviceID string) 
 	return items, rows.Err()
 }
 
+// 恢复ExpiredExecutableAI作业Leases，把中断或遗留状态重新接回当前执行链路。
 func (s *Store) RecoverExpiredExecutableAIJobLeases(ctx context.Context) ([]domain.AIJob, error) {
 	rows, err := s.pool.Query(ctx, `
 		UPDATE ai_jobs
@@ -1282,6 +1323,7 @@ func (s *Store) RecoverExpiredExecutableAIJobLeases(ctx context.Context) ([]doma
 	return items, rows.Err()
 }
 
+// 恢复中断ExecutableAI作业s，把中断或遗留状态重新接回当前执行链路。
 func (s *Store) RecoverInterruptedExecutableAIJobs(ctx context.Context) ([]domain.AIJob, error) {
 	rows, err := s.pool.Query(ctx, `
 		UPDATE ai_jobs
@@ -1318,6 +1360,7 @@ func (s *Store) RecoverInterruptedExecutableAIJobs(ctx context.Context) ([]domai
 	return items, rows.Err()
 }
 
+// 标记StaleQueuedExecutableAI作业s失败，记录原因并推进后续回滚或人工处理逻辑。
 func (s *Store) FailStaleQueuedExecutableAIJobs(ctx context.Context, queuedBefore time.Time, limit int) ([]domain.AIJob, error) {
 	query := `
 		WITH candidates AS (
@@ -1387,6 +1430,7 @@ func (s *Store) FailStaleQueuedExecutableAIJobs(ctx context.Context, queuedBefor
 	return items, rows.Err()
 }
 
+// 执行AI作业相关的租约与并发控制操作，确保调度和执行状态保持一致。
 func (s *Store) ClaimAIJobLease(ctx context.Context, jobID string, deviceID string, leaseToken string, leaseExpiresAt time.Time) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE ai_jobs
@@ -1412,6 +1456,7 @@ func (s *Store) ClaimAIJobLease(ctx context.Context, jobID string, deviceID stri
 	return job, nil
 }
 
+// 执行AI作业相关的租约与并发控制操作，确保调度和执行状态保持一致。
 func (s *Store) ClaimCloudAIJobLease(ctx context.Context, jobID string, leaseToken string, leaseExpiresAt time.Time) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE ai_jobs AS target
@@ -1455,6 +1500,7 @@ func (s *Store) ClaimCloudAIJobLease(ctx context.Context, jobID string, leaseTok
 	return job, nil
 }
 
+// 重新入队CloudAI作业Backoff，让当前对象在后续轮询中再次获得执行机会。
 func (s *Store) RequeueCloudAIJobWithBackoff(ctx context.Context, jobID string, leaseToken string, retryAt time.Time, message *string, outputPayload []byte) (*domain.AIJob, error) {
 	var payload any
 	if len(outputPayload) > 0 {
@@ -1492,6 +1538,7 @@ func (s *Store) RequeueCloudAIJobWithBackoff(ctx context.Context, jobID string, 
 	return job, nil
 }
 
+// 执行AI作业相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) MarkCloudAIJobWaitingRecharge(ctx context.Context, jobID string, leaseToken string, retryAt time.Time, message *string, outputPayload []byte) (*domain.AIJob, error) {
 	var payload any
 	if len(outputPayload) > 0 {
@@ -1529,6 +1576,7 @@ func (s *Store) MarkCloudAIJobWaitingRecharge(ctx context.Context, jobID string,
 	return job, nil
 }
 
+// 执行AI作业相关的租约与并发控制操作，确保调度和执行状态保持一致。
 func (s *Store) RenewAIJobLease(ctx context.Context, jobID string, deviceID string, leaseToken string, leaseExpiresAt time.Time) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE ai_jobs
@@ -1552,6 +1600,7 @@ func (s *Store) RenewAIJobLease(ctx context.Context, jobID string, deviceID stri
 	return job, nil
 }
 
+// 执行AI作业相关的租约与并发控制操作，确保调度和执行状态保持一致。
 func (s *Store) RenewCloudAIJobLease(ctx context.Context, jobID string, leaseToken string, leaseExpiresAt time.Time) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE ai_jobs
@@ -1574,6 +1623,7 @@ func (s *Store) RenewCloudAIJobLease(ctx context.Context, jobID string, leaseTok
 	return job, nil
 }
 
+// 执行AI作业相关的租约与并发控制操作，确保调度和执行状态保持一致。
 func (s *Store) ReleaseAIJobLeaseByAgent(ctx context.Context, jobID string, deviceID string, leaseToken string, message *string) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE ai_jobs
@@ -1602,6 +1652,7 @@ func (s *Store) ReleaseAIJobLeaseByAgent(ctx context.Context, jobID string, devi
 	return job, nil
 }
 
+// 同步CloudAI作业Execution，把当前上报或计算结果落到持久化状态中。
 func (s *Store) SyncCloudAIJobExecution(ctx context.Context, jobID string, leaseToken string, input UpdateAIJobInput) (*domain.AIJob, error) {
 	var outputPayload any
 	if input.OutputTouched {
@@ -1671,6 +1722,7 @@ func (s *Store) SyncCloudAIJobExecution(ctx context.Context, jobID string, lease
 	return job, nil
 }
 
+// 同步AI作业Execution，把当前上报或计算结果落到持久化状态中。
 func (s *Store) SyncAIJobExecution(ctx context.Context, jobID string, deviceID string, leaseToken string, input UpdateAIJobInput) (*domain.AIJob, error) {
 	var outputPayload any
 	if input.OutputTouched {
@@ -1740,6 +1792,7 @@ func (s *Store) SyncAIJobExecution(ctx context.Context, jobID string, deviceID s
 	return job, nil
 }
 
+// 执行AI作业相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpsertAIJobArtifacts(ctx context.Context, items []UpsertAIJobArtifactInput) ([]domain.AIJobArtifact, error) {
 	if len(items) == 0 {
 		return []domain.AIJobArtifact{}, nil
@@ -1784,6 +1837,7 @@ func (s *Store) UpsertAIJobArtifacts(ctx context.Context, items []UpsertAIJobArt
 	return result, nil
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAIJobArtifactsByOwner(ctx context.Context, jobID string, ownerUserID string) ([]domain.AIJobArtifact, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT a.id, a.job_id, a.artifact_key, a.artifact_type, a.source, a.title, a.file_name, a.mime_type,
@@ -1810,6 +1864,7 @@ func (s *Store) ListAIJobArtifactsByOwner(ctx context.Context, jobID string, own
 	return items, rows.Err()
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAIJobArtifactsByJobID(ctx context.Context, jobID string) ([]domain.AIJobArtifact, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, job_id, artifact_key, artifact_type, source, title, file_name, mime_type, storage_key,
@@ -1835,6 +1890,7 @@ func (s *Store) ListAIJobArtifactsByJobID(ctx context.Context, jobID string) ([]
 	return items, rows.Err()
 }
 
+// 执行AI作业相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) DeleteAIJobPublishLinksByOwner(ctx context.Context, jobID string, ownerUserID string) (int64, error) {
 	commandTag, err := s.pool.Exec(ctx, `
 		DELETE FROM ai_job_publish_links
@@ -1847,6 +1903,7 @@ func (s *Store) DeleteAIJobPublishLinksByOwner(ctx context.Context, jobID string
 	return commandTag.RowsAffected(), nil
 }
 
+// 执行AI作业相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) DeleteAIJobArtifactsByOwner(ctx context.Context, jobID string, ownerUserID string) (int64, error) {
 	commandTag, err := s.pool.Exec(ctx, `
 		DELETE FROM ai_job_artifacts a
@@ -1861,6 +1918,7 @@ func (s *Store) DeleteAIJobArtifactsByOwner(ctx context.Context, jobID string, o
 	return commandTag.RowsAffected(), nil
 }
 
+// 处理LinkAI作业发布任务相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) LinkAIJobToPublishTask(ctx context.Context, input LinkAIJobPublishTaskInput) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO ai_job_publish_links (job_id, task_id, owner_user_id)
@@ -1870,6 +1928,7 @@ func (s *Store) LinkAIJobToPublishTask(ctx context.Context, input LinkAIJobPubli
 	return err
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) FindReusablePublishTaskByAIJobTarget(ctx context.Context, jobID string, ownerUserID string, deviceID string, platform string, accountName string) (*domain.PublishTask, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
@@ -1909,6 +1968,7 @@ func (s *Store) FindReusablePublishTaskByAIJobTarget(ctx context.Context, jobID 
 	return task, nil
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListPublishTasksByAIJobOwner(ctx context.Context, jobID string, ownerUserID string, limit int) ([]domain.PublishTask, error) {
 	query := `
 		SELECT pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,

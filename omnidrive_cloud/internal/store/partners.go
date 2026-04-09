@@ -21,6 +21,7 @@ var (
 
 const partnerCodeAlphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 
+// 规范化分销伙伴编码，统一分销伙伴链路的输入格式和后续处理行为。
 func normalizePartnerCode(value string) string {
 	trimmed := strings.ToUpper(strings.TrimSpace(value))
 	if trimmed == "" {
@@ -37,6 +38,7 @@ func normalizePartnerCode(value string) string {
 	return builder.String()
 }
 
+// 处理扫描分销伙伴资料相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanPartnerProfile(scan scanFn) (*domain.PartnerProfile, error) {
 	var item domain.PartnerProfile
 	if err := scan(
@@ -55,6 +57,7 @@ func scanPartnerProfile(scan scanFn) (*domain.PartnerProfile, error) {
 	return &item, nil
 }
 
+// 执行分销伙伴相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetPartnerProfileByUserID(ctx context.Context, userID string) (*domain.PartnerProfile, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT user_id, partner_code, partner_name, contact_name, contact_phone, contact_wechat, status, created_at, updated_at
@@ -72,6 +75,7 @@ func (s *Store) GetPartnerProfileByUserID(ctx context.Context, userID string) (*
 	return item, nil
 }
 
+// 获取分销伙伴资料编码事务，为当前链路返回后续处理所需的数据内容。
 func getPartnerProfileByCodeTx(ctx context.Context, tx pgx.Tx, partnerCode string) (*domain.PartnerProfile, error) {
 	row := tx.QueryRow(ctx, `
 		SELECT user_id, partner_code, partner_name, contact_name, contact_phone, contact_wechat, status, created_at, updated_at
@@ -90,6 +94,7 @@ func getPartnerProfileByCodeTx(ctx context.Context, tx pgx.Tx, partnerCode strin
 	return item, nil
 }
 
+// 执行分销伙伴相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) OpenPartnerProfile(ctx context.Context, userID string) (*domain.PartnerProfile, error) {
 	trimmedUserID := strings.TrimSpace(userID)
 	if trimmedUserID == "" {
@@ -164,6 +169,7 @@ func (s *Store) OpenPartnerProfile(ctx context.Context, userID string) (*domain.
 	return created, nil
 }
 
+// 执行分销伙伴相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) SetPartnerProfileStatus(ctx context.Context, userID string, status string) (*domain.PartnerProfile, error) {
 	trimmedUserID := strings.TrimSpace(userID)
 	trimmedStatus := strings.TrimSpace(status)
@@ -215,6 +221,7 @@ func (s *Store) SetPartnerProfileStatus(ctx context.Context, userID string, stat
 	return s.GetPartnerProfileByUserID(ctx, trimmedUserID)
 }
 
+// 获取分销伙伴资料用户ID事务，为当前链路返回后续处理所需的数据内容。
 func getPartnerProfileByUserIDTx(ctx context.Context, tx pgx.Tx, userID string) (*domain.PartnerProfile, error) {
 	row := tx.QueryRow(ctx, `
 		SELECT user_id, partner_code, partner_name, contact_name, contact_phone, contact_wechat, status, created_at, updated_at
@@ -232,6 +239,7 @@ func getPartnerProfileByUserIDTx(ctx context.Context, tx pgx.Tx, userID string) 
 	return item, nil
 }
 
+// 处理generate分销伙伴编码相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func generatePartnerCode() (string, error) {
 	const randomLength = 6
 
@@ -249,6 +257,7 @@ func generatePartnerCode() (string, error) {
 	return builder.String(), nil
 }
 
+// 执行分销伙伴相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateUserRegistration(ctx context.Context, input CreateUserRegistrationInput) (*domain.User, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -308,6 +317,7 @@ func (s *Store) CreateUserRegistration(ctx context.Context, input CreateUserRegi
 	return &user, nil
 }
 
+// 执行分销伙伴相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetPartnerOverviewByUserID(ctx context.Context, userID string) (*domain.PartnerOverview, error) {
 	profile, err := s.GetPartnerProfileByUserID(ctx, userID)
 	if err != nil {

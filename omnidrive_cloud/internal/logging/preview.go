@@ -42,6 +42,7 @@ var sensitiveKeys = map[string]struct{}{
 	"x-agent-key":    {},
 }
 
+// 处理预览Body相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func PreviewBody(contentType string, body []byte, truncated bool) string {
 	if len(body) == 0 {
 		return ""
@@ -80,6 +81,7 @@ func PreviewBody(contentType string, body []byte, truncated bool) string {
 	return preview
 }
 
+// 处理预览Args相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func PreviewArgs(args []any, limit int) []any {
 	if len(args) == 0 {
 		return nil
@@ -95,6 +97,7 @@ func PreviewArgs(args []any, limit int) []any {
 	return sanitized
 }
 
+// 处理Redact值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func RedactValue(value any) any {
 	switch typed := value.(type) {
 	case map[string]any:
@@ -138,6 +141,7 @@ func RedactValue(value any) any {
 	}
 }
 
+// 处理TruncateString相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func TruncateString(value string, limit int) string {
 	value = strings.TrimSpace(value)
 	if limit <= 0 || len(value) <= limit {
@@ -146,6 +150,7 @@ func TruncateString(value string, limit int) string {
 	return value[:limit] + "...(truncated)"
 }
 
+// 处理清洗JSON预览相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func sanitizeJSONPreview(body []byte) string {
 	var payload any
 	if err := json.Unmarshal(body, &payload); err == nil {
@@ -156,6 +161,7 @@ func sanitizeJSONPreview(body []byte) string {
 	return TruncateString(string(body), DefaultPreviewLimit)
 }
 
+// 处理清洗Arg相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func sanitizeArg(arg any, limit int) any {
 	switch typed := arg.(type) {
 	case nil:
@@ -175,6 +181,7 @@ func sanitizeArg(arg any, limit int) any {
 	}
 }
 
+// 处理清洗StringLiteral相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func sanitizeStringLiteral(value string, limit int) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -186,6 +193,7 @@ func sanitizeStringLiteral(value string, limit int) string {
 	return TruncateString(value, limit)
 }
 
+// 判断是否属于Sensitive键，供当前链路选择后续处理策略。
 func isSensitiveKey(key string) bool {
 	trimmed := strings.TrimSpace(key)
 	if trimmed == "" {
@@ -199,6 +207,7 @@ func isSensitiveKey(key string) bool {
 	return ok
 }
 
+// 处理looksSensitiveString相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func looksSensitiveString(value string) bool {
 	switch {
 	case strings.HasPrefix(value, "$2a$"), strings.HasPrefix(value, "$2b$"), strings.HasPrefix(value, "$2y$"):

@@ -36,6 +36,7 @@ type UpdateDeviceActivationConfigInput struct {
 	NotesTouched      bool
 }
 
+// 规范化Comparable编码，统一存储层链路的输入格式和后续处理行为。
 func normalizeComparableCode(value string) string {
 	trimmed := strings.TrimSpace(strings.ToUpper(value))
 	if trimmed == "" {
@@ -51,20 +52,24 @@ func normalizeComparableCode(value string) string {
 	return builder.String()
 }
 
+// 规范化设备激活编码，统一存储层链路的输入格式和后续处理行为。
 func normalizeDeviceActivationCode(value string) string {
 	return normalizeComparableCode(value)
 }
 
+// 判断是否存在hStandalone激活编码，供当前链路选择后续处理策略。
 func hashStandaloneActivationCode(activationCode string) string {
 	sum := sha256.Sum256([]byte(normalizeDeviceActivationCode(activationCode)))
 	return hex.EncodeToString(sum[:])
 }
 
+// 判断是否存在hLegacy设备激活编码，供当前链路选择后续处理策略。
 func hashLegacyDeviceActivationCode(deviceCode string, activationCode string) string {
 	sum := sha256.Sum256([]byte(normalizeComparableCode(deviceCode) + ":" + normalizeDeviceActivationCode(activationCode)))
 	return hex.EncodeToString(sum[:])
 }
 
+// 构建设备激活Hint，为存储层生成后续步骤所需的派生参数或载荷。
 func buildDeviceActivationHint(normalizedCode string) *string {
 	if normalizedCode == "" {
 		return nil
@@ -75,6 +80,7 @@ func buildDeviceActivationHint(normalizedCode string) *string {
 	return stringPtr("尾号 " + normalizedCode[len(normalizedCode)-4:])
 }
 
+// 处理扫描设备激活配置相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanDeviceActivationConfig(scan scanFn) (*domain.DeviceActivationConfig, error) {
 	var item domain.DeviceActivationConfig
 	var orderNo *string
@@ -115,6 +121,7 @@ type claimableDeviceActivationRecord struct {
 	ActivationStatus *string
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) findClaimableDeviceActivationRecord(ctx context.Context, tx pgx.Tx, normalizedActivationCode string) (*claimableDeviceActivationRecord, error) {
 	standaloneHash := hashStandaloneActivationCode(normalizedActivationCode)
 
@@ -172,6 +179,7 @@ func (s *Store) findClaimableDeviceActivationRecord(ctx context.Context, tx pgx.
 	return nil, pgx.ErrNoRows
 }
 
+// 执行存储层相关的租约与并发控制操作，确保调度和执行状态保持一致。
 func (s *Store) ClaimDeviceWithActivation(ctx context.Context, activationCode string, ownerUserID string) (*domain.Device, error) {
 	normalizedActivationCode := normalizeDeviceActivationCode(activationCode)
 	if normalizedActivationCode == "" {
@@ -242,6 +250,7 @@ func (s *Store) ClaimDeviceWithActivation(ctx context.Context, activationCode st
 	return s.GetOwnedDevice(ctx, device.ID, ownerUserID)
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpdateAdminDeviceActivationConfig(ctx context.Context, deviceID string, input UpdateDeviceActivationConfigInput) (*domain.AdminDeviceRow, error) {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {

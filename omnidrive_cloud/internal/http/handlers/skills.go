@@ -77,16 +77,25 @@ type skillEditorDefaultsResponse struct {
 }
 
 type skillEditorDurationOption struct {
+	RuleID              string `json:"ruleId"`
 	DurationSeconds     int    `json:"durationSeconds"`
 	SegmentSeconds      int    `json:"segmentSeconds"`
 	SpecialPriceCredits *int64 `json:"specialPriceCredits,omitempty"`
 	Label               string `json:"label"`
 }
 
+type skillFixedDurationConfig struct {
+	DurationSeconds int
+	SegmentSeconds  int
+	Rule            *domain.WorkflowDurationRule
+}
+
+// 创建技能Handler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewSkillHandler(app *appstate.App) *SkillHandler {
 	return &SkillHandler{app: app}
 }
 
+// 处理清洗技能调度相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func sanitizeSkillSchedule(skill *domain.ProductSkill) {
 	if skill == nil {
 		return
@@ -100,6 +109,7 @@ func sanitizeSkillSchedule(skill *domain.ProductSkill) {
 
 const videoTextWorkflowCode = "video_text"
 
+// 判断是否属于视频Text输出Type，供当前链路选择后续处理策略。
 func isVideoTextOutputType(outputType string) bool {
 	switch strings.TrimSpace(outputType) {
 	case "video", "video_text", "视文模式":
@@ -109,6 +119,7 @@ func isVideoTextOutputType(outputType string) bool {
 	}
 }
 
+// 根据技能计算工作流输出Type，供技能链路复用关键派生结果。
 func workflowOutputTypeForSkill(outputType string) string {
 	if isVideoTextOutputType(outputType) {
 		return "视文模式"
@@ -116,6 +127,7 @@ func workflowOutputTypeForSkill(outputType string) string {
 	return strings.TrimSpace(outputType)
 }
 
+// 规范化Fixed时长Seconds，统一技能链路的输入格式和后续处理行为。
 func normalizeFixedDurationSeconds(value *int) *int {
 	if value == nil || *value <= 0 {
 		return nil
@@ -123,7 +135,39 @@ func normalizeFixedDurationSeconds(value *int) *int {
 	return value
 }
 
-func (h *SkillHandler) validateSkillFixedDuration(ctx context.Context, outputType string, fixedDurationSeconds *int) (*domain.WorkflowDurationRule, error) {
+// 解析技能Fixed时长配置，根据当前配置和上下文确定最终使用结果。
+func resolveSkillFixedDurationConfig(ctx context.Context, app *appstate.App, modelName string, fixedDurationSeconds *int) (*skillFixedDurationConfig, error) {
+	normalized := normalizeFixedDurationSeconds(fixedDurationSeconds)
+	if normalized == nil {
+		return nil, fmt.Errorf("视文模式必须配置 fixedDurationSeconds")
+	}
+	model, err := app.Store.GetAIModelByName(ctx, strings.TrimSpace(modelName))
+	if err != nil {
+		return nil, err
+	}
+	if model == nil || strings.TrimSpace(model.Category) != "video" {
+		return nil, fmt.Errorf("当前所选模型不是可用的视频模型")
+	}
+	segmentSeconds := workflow.ResolveSkillVideoSegmentSeconds(model)
+	if segmentSeconds <= 0 {
+		return nil, fmt.Errorf("当前模型未配置可用的视频基础时长")
+	}
+	if *normalized < segmentSeconds || *normalized%segmentSeconds != 0 {
+		return nil, fmt.Errorf("当前模型基础时长为 %d 秒，仅支持 %d 的倍数时长", segmentSeconds, segmentSeconds)
+	}
+	rule, err := app.Store.FindEnabledWorkflowDurationRule(ctx, videoTextWorkflowCode, "视文模式", *normalized)
+	if err != nil {
+		return nil, err
+	}
+	return &skillFixedDurationConfig{
+		DurationSeconds: *normalized,
+		SegmentSeconds:  segmentSeconds,
+		Rule:            rule,
+	}, nil
+}
+
+// 处理校验技能Fixed时长相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
+func validateSkillFixedDuration(ctx context.Context, app *appstate.App, outputType string, modelName string, fixedDurationSeconds *int) (*skillFixedDurationConfig, error) {
 	normalized := normalizeFixedDurationSeconds(fixedDurationSeconds)
 	if !isVideoTextOutputType(outputType) {
 		if normalized != nil {
@@ -131,19 +175,10 @@ func (h *SkillHandler) validateSkillFixedDuration(ctx context.Context, outputTyp
 		}
 		return nil, nil
 	}
-	if normalized == nil {
-		return nil, fmt.Errorf("视文模式必须配置 fixedDurationSeconds")
-	}
-	rule, err := h.app.Store.FindEnabledWorkflowDurationRule(ctx, videoTextWorkflowCode, workflowOutputTypeForSkill(outputType), *normalized)
-	if err != nil {
-		return nil, err
-	}
-	if rule == nil {
-		return nil, fmt.Errorf("当前固定时长未命中启用中的视文模式时长策略")
-	}
-	return rule, nil
+	return resolveSkillFixedDurationConfig(ctx, app, modelName, normalized)
 }
 
+// 解析技能Execution时间，为技能提供结构化输入。
 func parseSkillExecutionTime(raw string, now time.Time) (*time.Time, error) {
 	value := strings.TrimSpace(raw)
 	if value == "" {
@@ -179,6 +214,7 @@ func parseSkillExecutionTime(raw string, now time.Time) (*time.Time, error) {
 	return nil, fmt.Errorf("executionTime must be RFC3339 or HH:MM[:SS]")
 }
 
+// 规范化技能主题，统一技能链路的输入格式和后续处理行为。
 func normalizeSkillTopics(topics []string) []string {
 	if len(topics) == 0 {
 		return []string{}
@@ -200,6 +236,7 @@ func normalizeSkillTopics(topics []string) []string {
 	return normalized
 }
 
+// 处理技能列表接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *SkillHandler) List(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	items, err := h.app.Store.ListSkillsByOwner(r.Context(), user.ID)
@@ -228,6 +265,7 @@ func (h *SkillHandler) List(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理技能EditorDefaults接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *SkillHandler) EditorDefaults(w http.ResponseWriter, r *http.Request) {
 	settings, err := loadEffectiveAdminSystemSettings(r.Context(), h.app)
 	if err != nil {
@@ -242,6 +280,7 @@ func (h *SkillHandler) EditorDefaults(w http.ResponseWriter, r *http.Request) {
 	durationOptions := make([]skillEditorDurationOption, 0, len(durationRules))
 	for _, item := range durationRules {
 		durationOptions = append(durationOptions, skillEditorDurationOption{
+			RuleID:              item.ID,
 			DurationSeconds:     item.DurationSeconds,
 			SegmentSeconds:      item.SegmentSeconds,
 			SpecialPriceCredits: item.SpecialPriceCredits,
@@ -254,6 +293,7 @@ func (h *SkillHandler) EditorDefaults(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理技能详情接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *SkillHandler) Detail(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	skillID := strings.TrimSpace(chi.URLParam(r, "skillId"))
@@ -276,6 +316,7 @@ func (h *SkillHandler) Detail(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, skill)
 }
 
+// 处理技能工作区接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *SkillHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	skillID := strings.TrimSpace(chi.URLParam(r, "skillId"))
@@ -331,6 +372,7 @@ func (h *SkillHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理技能Impact接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *SkillHandler) Impact(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	skillID := strings.TrimSpace(chi.URLParam(r, "skillId"))
@@ -416,6 +458,7 @@ func (h *SkillHandler) Impact(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理技能创建接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 
@@ -462,7 +505,7 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if _, err := h.validateSkillFixedDuration(r.Context(), payload.OutputType, payload.FixedDurationSeconds); err != nil {
+	if _, err := validateSkillFixedDuration(r.Context(), h.app, payload.OutputType, payload.ModelName, payload.FixedDurationSeconds); err != nil {
 		render.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -530,6 +573,7 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusCreated, skill)
 }
 
+// 处理技能更新接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	skillID := strings.TrimSpace(chi.URLParam(r, "skillId"))
@@ -568,11 +612,18 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if payload.OutputType != nil && strings.TrimSpace(*payload.OutputType) != "" {
 		nextOutputType = strings.TrimSpace(*payload.OutputType)
 	}
+	nextModelName := existing.ModelName
+	if payload.ModelName != nil && strings.TrimSpace(*payload.ModelName) != "" {
+		nextModelName = strings.TrimSpace(*payload.ModelName)
+	}
 	nextFixedDurationSeconds := existing.FixedDurationSeconds
 	if payload.FixedDurationSeconds != nil {
 		nextFixedDurationSeconds = normalizeFixedDurationSeconds(payload.FixedDurationSeconds)
 	}
-	if _, err := h.validateSkillFixedDuration(r.Context(), nextOutputType, nextFixedDurationSeconds); err != nil {
+	if !isVideoTextOutputType(nextOutputType) {
+		nextFixedDurationSeconds = nil
+	}
+	if _, err := validateSkillFixedDuration(r.Context(), h.app, nextOutputType, nextModelName, nextFixedDurationSeconds); err != nil {
 		render.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -657,6 +708,7 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, skill)
 }
 
+// 处理技能删除接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *SkillHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	skillID := strings.TrimSpace(chi.URLParam(r, "skillId"))
@@ -726,6 +778,7 @@ func (h *SkillHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
 
+// 处理技能列表Assets接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *SkillHandler) ListAssets(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	skillID := strings.TrimSpace(chi.URLParam(r, "skillId"))
@@ -752,6 +805,7 @@ func (h *SkillHandler) ListAssets(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理技能创建资源接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *SkillHandler) CreateAsset(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	skillID := strings.TrimSpace(chi.URLParam(r, "skillId"))
@@ -832,6 +886,7 @@ func (h *SkillHandler) CreateAsset(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusCreated, asset)
 }
 
+// 清理技能资源文件，释放当前链路不再需要的临时资源或旧数据。
 func cleanupSkillAssetFiles(app *appstate.App, ctx context.Context, assets []domain.ProductSkillAsset) {
 	if app == nil || app.Storage == nil {
 		return
@@ -850,6 +905,7 @@ func cleanupSkillAssetFiles(app *appstate.App, ctx context.Context, assets []dom
 	}
 }
 
+// 处理技能上传资源接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *SkillHandler) UploadAsset(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	skillID := strings.TrimSpace(chi.URLParam(r, "skillId"))
@@ -939,6 +995,7 @@ func (h *SkillHandler) UploadAsset(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusCreated, asset)
 }
 
+// 处理技能删除资源接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *SkillHandler) DeleteAsset(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	skillID := strings.TrimSpace(chi.URLParam(r, "skillId"))
@@ -988,6 +1045,7 @@ func (h *SkillHandler) DeleteAsset(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
 
+// 处理清洗上传Filename相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func sanitizeUploadFilename(fileName string) string {
 	base := strings.TrimSpace(filepath.Base(fileName))
 	if base == "" || base == "." || base == "/" {
@@ -996,6 +1054,7 @@ func sanitizeUploadFilename(fileName string) string {
 	return strings.ReplaceAll(base, " ", "_")
 }
 
+// 处理技能资源审计消息相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func skillAssetAuditMessage(transferred bool) string {
 	if transferred {
 		return "技能资产已从远程地址转存到对象存储"

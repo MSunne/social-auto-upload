@@ -15,6 +15,7 @@ type queryRower interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
+// 规范化管理端String列表，统一存储层链路的输入格式和后续处理行为。
 func normalizeAdminStringList(values []string) []string {
 	if len(values) == 0 {
 		return nil
@@ -37,10 +38,12 @@ func normalizeAdminStringList(values []string) []string {
 	return items
 }
 
+// 规范化Text值，统一存储层链路的输入格式和后续处理行为。
 func normalizeTextValues(values []string) []string {
 	return normalizeAdminStringList(values)
 }
 
+// 处理管理端Primary角色相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func adminPrimaryRole(roles []string) string {
 	items := normalizeAdminStringList(roles)
 	if len(items) == 0 {
@@ -49,6 +52,7 @@ func adminPrimaryRole(roles []string) string {
 	return items[0]
 }
 
+// 处理sort管理端Identity相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func sortAdminIdentity(identity *domain.AdminIdentity) {
 	if identity == nil {
 		return
@@ -63,6 +67,7 @@ func sortAdminIdentity(identity *domain.AdminIdentity) {
 	}
 }
 
+// 确保管理端角色sExist已满足执行前提，必要时补齐缺失状态或配置。
 func ensureAdminRolesExist(ctx context.Context, tx pgx.Tx, roleIDs []string) error {
 	normalized := normalizeAdminStringList(roleIDs)
 	if len(normalized) == 0 {

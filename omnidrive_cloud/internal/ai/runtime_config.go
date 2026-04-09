@@ -7,6 +7,7 @@ import (
 	"omnidrive_cloud/internal/domain"
 )
 
+// 解析模型运行时配置，根据当前配置和上下文确定最终使用结果。
 func ResolveModelRuntimeConfig(cfg config.Config, model *domain.AIModel) (string, string) {
 	if model == nil {
 		return "", ""

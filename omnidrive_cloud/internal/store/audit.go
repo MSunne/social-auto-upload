@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateAuditEvent(ctx context.Context, input CreateAuditEventInput) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO audit_events (
@@ -15,6 +16,7 @@ func (s *Store) CreateAuditEvent(ctx context.Context, input CreateAuditEventInpu
 	return err
 }
 
+// 判断是否存在Recent审计事件，供当前链路选择后续处理策略。
 func (s *Store) HasRecentAuditEvent(ctx context.Context, ownerUserID string, action string, since time.Time) (bool, error) {
 	var exists bool
 	err := s.pool.QueryRow(ctx, `
@@ -47,6 +49,7 @@ type CreateAdminAuditLogInput struct {
 	Payload      []byte
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateAdminAuditLog(ctx context.Context, input CreateAdminAuditLogInput) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO admin_audit_logs (

@@ -21,6 +21,7 @@ var nonPublicIPPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("2001:db8::/32"),
 }
 
+// 解析心跳公开IP，根据当前配置和上下文确定最终使用结果。
 func resolveHeartbeatPublicIP(r *http.Request, payloadPublicIP *string) *string {
 	if derived := extractRequestPublicIP(r); derived != nil {
 		return derived
@@ -28,6 +29,7 @@ func resolveHeartbeatPublicIP(r *http.Request, payloadPublicIP *string) *string 
 	return normalizePublicIPPtr(payloadPublicIP)
 }
 
+// 提取请求公开IP，供客户端IP后续关联和分支判断复用。
 func extractRequestPublicIP(r *http.Request) *string {
 	if r == nil {
 		return nil
@@ -43,6 +45,7 @@ func extractRequestPublicIP(r *http.Request) *string {
 	return normalizePublicIPString(r.RemoteAddr)
 }
 
+// 规范化公开IPPtr，统一客户端IP链路的输入格式和后续处理行为。
 func normalizePublicIPPtr(value *string) *string {
 	if value == nil {
 		return nil
@@ -50,6 +53,7 @@ func normalizePublicIPPtr(value *string) *string {
 	return normalizePublicIPString(*value)
 }
 
+// 规范化公开IPString，统一客户端IP链路的输入格式和后续处理行为。
 func normalizePublicIPString(value string) *string {
 	addr, ok := parseIPCandidate(value)
 	if !ok || !isLikelyPublicIP(addr) {
@@ -59,6 +63,7 @@ func normalizePublicIPString(value string) *string {
 	return &normalized
 }
 
+// 解析IPCandidate，为客户端IP提供结构化输入。
 func parseIPCandidate(value string) (netip.Addr, bool) {
 	candidate := strings.TrimSpace(value)
 	if candidate == "" || strings.EqualFold(candidate, "unknown") {
@@ -82,6 +87,7 @@ func parseIPCandidate(value string) (netip.Addr, bool) {
 	return addr.Unmap(), true
 }
 
+// 判断是否属于Likely公开IP，供当前链路选择后续处理策略。
 func isLikelyPublicIP(addr netip.Addr) bool {
 	if !addr.IsValid() {
 		return false

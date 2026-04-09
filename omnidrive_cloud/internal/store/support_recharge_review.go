@@ -43,6 +43,7 @@ type InvalidateSupportRechargeInput struct {
 	Note       *string
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) getRechargeOrderByIDAnyUser(ctx context.Context, orderID string) (*domain.RechargeOrder, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, order_no, user_id, package_id, package_snapshot, channel, status, subject, body, currency,
@@ -62,6 +63,7 @@ func (s *Store) getRechargeOrderByIDAnyUser(ctx context.Context, orderID string)
 	return item, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) getRechargeOrderByIDAnyUserTx(ctx context.Context, tx pgx.Tx, orderID string) (*domain.RechargeOrder, error) {
 	row := tx.QueryRow(ctx, `
 		SELECT id, order_no, user_id, package_id, package_snapshot, channel, status, subject, body, currency,
@@ -82,6 +84,7 @@ func (s *Store) getRechargeOrderByIDAnyUserTx(ctx context.Context, tx pgx.Tx, or
 	return item, nil
 }
 
+// 处理解码支持充值载荷相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func decodeSupportRechargePayload(raw []byte) map[string]any {
 	payload := map[string]any{}
 	if len(raw) == 0 {
@@ -94,6 +97,7 @@ func decodeSupportRechargePayload(raw []byte) map[string]any {
 	return payload
 }
 
+// 处理值空值String相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func valueOrEmptyString(value *string) string {
 	if value == nil {
 		return ""
@@ -101,6 +105,7 @@ func valueOrEmptyString(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
+// 处理查找NestedString相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func lookupNestedString(payload map[string]any, parents ...string) string {
 	var current any = payload
 	for _, key := range parents {
@@ -114,6 +119,7 @@ func lookupNestedString(payload map[string]any, parents ...string) string {
 	return strings.TrimSpace(value)
 }
 
+// 判断是否属于充值订单Credited，供当前链路选择后续处理策略。
 func isRechargeOrderCredited(order *domain.RechargeOrder) bool {
 	if order == nil {
 		return false
@@ -129,6 +135,7 @@ func isRechargeOrderCredited(order *domain.RechargeOrder) bool {
 	}
 }
 
+// 判断是否属于充值订单PendingReview，供当前链路选择后续处理策略。
 func isRechargeOrderPendingReview(order *domain.RechargeOrder) bool {
 	if order == nil {
 		return false
@@ -143,6 +150,7 @@ func isRechargeOrderPendingReview(order *domain.RechargeOrder) bool {
 	return strings.EqualFold(lookupNestedString(payload, "submission", "status"), "submitted")
 }
 
+// 判断是否属于充值订单Closed，供当前链路选择后续处理策略。
 func isRechargeOrderClosed(order *domain.RechargeOrder) bool {
 	if order == nil {
 		return false
@@ -158,6 +166,7 @@ func isRechargeOrderClosed(order *domain.RechargeOrder) bool {
 	}
 }
 
+// 构建支持充值GrantPlan，为存储层生成后续步骤所需的派生参数或载荷。
 func buildSupportRechargeGrantPlan(order *domain.RechargeOrder, now time.Time) ([]domain.BillingPackageEntitlement, *time.Time, string) {
 	if order == nil {
 		return nil, nil, ""
@@ -206,6 +215,7 @@ func buildSupportRechargeGrantPlan(order *domain.RechargeOrder, now time.Time) (
 	return entitlements, expiresAt, packageName
 }
 
+// 加载支付TransactionID事务，供存储层继续处理当前业务状态。
 func loadPaymentTransactionIDTx(ctx context.Context, tx pgx.Tx, orderID string) (*string, error) {
 	var paymentTransactionID string
 	err := tx.QueryRow(ctx, `
@@ -225,6 +235,7 @@ func loadPaymentTransactionIDTx(ctx context.Context, tx pgx.Tx, orderID string) 
 	return &paymentTransactionID, nil
 }
 
+// 处理额度支持充值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) CreditSupportRecharge(ctx context.Context, orderID string, input CreditSupportRechargeInput) (*domain.RechargeOrder, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -449,6 +460,7 @@ func (s *Store) CreditSupportRecharge(ctx context.Context, orderID string, input
 	return s.getRechargeOrderByIDAnyUser(ctx, order.ID)
 }
 
+// 处理值空值分销CommissionID相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func valueOrEmptyDistributionCommissionID(item *distributionCommissionItemRecord) string {
 	if item == nil {
 		return ""
@@ -456,6 +468,7 @@ func valueOrEmptyDistributionCommissionID(item *distributionCommissionItemRecord
 	return strings.TrimSpace(item.ID)
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) RejectSupportRecharge(ctx context.Context, orderID string, input RejectSupportRechargeInput) (*domain.RechargeOrder, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -561,6 +574,7 @@ func (s *Store) RejectSupportRecharge(ctx context.Context, orderID string, input
 	return s.getRechargeOrderByIDAnyUser(ctx, order.ID)
 }
 
+// 处理Invalidate支持充值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) InvalidateSupportRecharge(ctx context.Context, orderID string, input InvalidateSupportRechargeInput) (*domain.RechargeOrder, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

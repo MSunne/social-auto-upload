@@ -17,10 +17,12 @@ type MaterialHandler struct {
 	app *appstate.App
 }
 
+// 创建素材Handler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewMaterialHandler(app *appstate.App) *MaterialHandler {
 	return &MaterialHandler{app: app}
 }
 
+// 处理素材Roots接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *MaterialHandler) Roots(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	deviceID := strings.TrimSpace(r.URL.Query().Get("deviceId"))
@@ -33,6 +35,7 @@ func (h *MaterialHandler) Roots(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理素材列表接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *MaterialHandler) List(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	deviceID := strings.TrimSpace(r.URL.Query().Get("deviceId"))
@@ -68,6 +71,7 @@ func (h *MaterialHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理素材文件接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *MaterialHandler) File(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	deviceID := strings.TrimSpace(r.URL.Query().Get("deviceId"))
@@ -90,6 +94,7 @@ func (h *MaterialHandler) File(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, item)
 }
 
+// 处理素材工作区接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *MaterialHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	deviceID := strings.TrimSpace(r.URL.Query().Get("deviceId"))
@@ -226,6 +231,7 @@ type syncMaterialFileRequest struct {
 	PreviewText  *string `json:"previewText"`
 }
 
+// 处理素材素材根目录同步接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *MaterialHandler) SyncRoots(w http.ResponseWriter, r *http.Request) {
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
 	if agentKey == "" {
@@ -281,6 +287,7 @@ func (h *MaterialHandler) SyncRoots(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, map[string]any{"synced": len(items)})
 }
 
+// 处理素材素材目录同步接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *MaterialHandler) SyncDirectory(w http.ResponseWriter, r *http.Request) {
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
 	if agentKey == "" {
@@ -351,6 +358,7 @@ func (h *MaterialHandler) SyncDirectory(w http.ResponseWriter, r *http.Request) 
 	render.JSON(w, http.StatusOK, map[string]any{"synced": len(items)})
 }
 
+// 处理素材素材文件同步接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *MaterialHandler) SyncFile(w http.ResponseWriter, r *http.Request) {
 	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
 	if agentKey == "" {
@@ -422,6 +430,7 @@ func (h *MaterialHandler) SyncFile(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, item)
 }
 
+// 规范化可选String，统一素材链路的输入格式和后续处理行为。
 func normalizeOptionalString(value *string) *string {
 	if value == nil {
 		return nil
@@ -433,6 +442,7 @@ func normalizeOptionalString(value *string) *string {
 	return &trimmed
 }
 
+// 规范化素材路径，统一素材链路的输入格式和后续处理行为。
 func normalizeMaterialPath(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" || value == "." || value == "/" {
@@ -443,6 +453,7 @@ func normalizeMaterialPath(value string) string {
 	return path.Clean(value)
 }
 
+// 规范化素材Parent，统一素材链路的输入格式和后续处理行为。
 func normalizeMaterialParent(relativePath string) string {
 	normalized := normalizeMaterialPath(relativePath)
 	if normalized == "" {
@@ -455,6 +466,7 @@ func normalizeMaterialParent(relativePath string) string {
 	return parent
 }
 
+// 处理素材StringPtr相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func materialStringPtr(value string) *string {
 	if strings.TrimSpace(value) == "" {
 		return nil

@@ -58,10 +58,12 @@ type updateDistributionRelationRequest struct {
 	Notes  *string `json:"notes"`
 }
 
+// 创建管理端分销Handler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewAdminDistributionHandler(app *appstate.App) *AdminDistributionHandler {
 	return &AdminDistributionHandler{app: app}
 }
 
+// 处理管理端分销列表分销伙伴接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminDistributionHandler) ListPartners(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, summary, err := h.app.Store.ListAdminPartnerProfiles(r.Context(), store.AdminPartnerProfileListFilter{
@@ -84,6 +86,7 @@ func (h *AdminDistributionHandler) ListPartners(w http.ResponseWriter, r *http.R
 	})
 }
 
+// 处理管理端分销开启分销伙伴接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminDistributionHandler) OpenPartner(w http.ResponseWriter, r *http.Request) {
 	var payload openPartnerProfileRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -134,6 +137,7 @@ func (h *AdminDistributionHandler) OpenPartner(w http.ResponseWriter, r *http.Re
 	render.JSON(w, http.StatusCreated, profile)
 }
 
+// 处理管理端分销更新分销伙伴接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminDistributionHandler) UpdatePartner(w http.ResponseWriter, r *http.Request) {
 	userID := strings.TrimSpace(chi.URLParam(r, "userId"))
 	if userID == "" {
@@ -182,6 +186,7 @@ func (h *AdminDistributionHandler) UpdatePartner(w http.ResponseWriter, r *http.
 	render.JSON(w, http.StatusOK, profile)
 }
 
+// 处理管理端分销列表Relations接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminDistributionHandler) ListRelations(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, summary, err := h.app.Store.ListAdminDistributionRelations(r.Context(), store.AdminDistributionRelationListFilter{
@@ -204,6 +209,7 @@ func (h *AdminDistributionHandler) ListRelations(w http.ResponseWriter, r *http.
 	})
 }
 
+// 处理管理端分销创建Relation接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminDistributionHandler) CreateRelation(w http.ResponseWriter, r *http.Request) {
 	var payload createDistributionRelationRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -264,6 +270,7 @@ func (h *AdminDistributionHandler) CreateRelation(w http.ResponseWriter, r *http
 	render.JSON(w, http.StatusCreated, record)
 }
 
+// 处理管理端分销更新Relation接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminDistributionHandler) UpdateRelation(w http.ResponseWriter, r *http.Request) {
 	relationID := strings.TrimSpace(chi.URLParam(r, "relationId"))
 	if relationID == "" {
@@ -317,6 +324,7 @@ func (h *AdminDistributionHandler) UpdateRelation(w http.ResponseWriter, r *http
 	render.JSON(w, http.StatusOK, record)
 }
 
+// 处理管理端分销列表规则接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminDistributionHandler) ListRules(w http.ResponseWriter, r *http.Request) {
 	items, err := h.app.Store.ListAdminDistributionRules(r.Context())
 	if err != nil {
@@ -337,6 +345,7 @@ func (h *AdminDistributionHandler) ListRules(w http.ResponseWriter, r *http.Requ
 	}, nil)
 }
 
+// 处理管理端分销创建规则接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminDistributionHandler) CreateRule(w http.ResponseWriter, r *http.Request) {
 	var payload createDistributionRuleRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -389,6 +398,7 @@ func (h *AdminDistributionHandler) CreateRule(w http.ResponseWriter, r *http.Req
 	render.JSON(w, http.StatusCreated, record)
 }
 
+// 处理管理端分销列表Commissions接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminDistributionHandler) ListCommissions(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, summary, err := h.app.Store.ListAdminCommissions(r.Context(), store.AdminCommissionListFilter{
@@ -411,6 +421,7 @@ func (h *AdminDistributionHandler) ListCommissions(w http.ResponseWriter, r *htt
 	})
 }
 
+// 处理管理端分销列表CommissionReleases接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminDistributionHandler) ListCommissionReleases(w http.ResponseWriter, r *http.Request) {
 	commissionID := strings.TrimSpace(chi.URLParam(r, "commissionId"))
 	if commissionID == "" {
@@ -433,6 +444,7 @@ func (h *AdminDistributionHandler) ListCommissionReleases(w http.ResponseWriter,
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理管理端分销列表Settlements接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminDistributionHandler) ListSettlements(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, summary, err := h.app.Store.ListAdminSettlements(r.Context(), store.AdminSettlementListFilter{
@@ -455,6 +467,7 @@ func (h *AdminDistributionHandler) ListSettlements(w http.ResponseWriter, r *htt
 	})
 }
 
+// 处理管理端分销创建Settlement接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminDistributionHandler) CreateSettlement(w http.ResponseWriter, r *http.Request) {
 	var payload createDistributionSettlementRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -505,6 +518,7 @@ func (h *AdminDistributionHandler) CreateSettlement(w http.ResponseWriter, r *ht
 	render.JSON(w, http.StatusCreated, record)
 }
 
+// 处理管理端分销解析分销用户ID接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminDistributionHandler) resolveDistributionUserID(ctx context.Context, candidates ...string) (string, error) {
 	for _, candidate := range candidates {
 		trimmed := strings.TrimSpace(candidate)

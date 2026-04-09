@@ -10,11 +10,19 @@ from queue import Empty
 
 from playwright.async_api import async_playwright
 
-from myUtils.auth import check_cookie_detail, validate_login_completion_detail
-from utils.account_storage import upsert_login_account
+from myUtils.auth import check_cookie_detail, validate_active_page_detail, validate_login_completion_detail
+from utils.account_storage import (
+    resolve_account_storage_state,
+    update_account_runtime_status,
+    update_account_storage_state,
+    upsert_login_account,
+)
 from utils.base_social_media import set_init_script
 from utils.browser_hook import get_browser_options
+from utils.creator_popup import dismiss_platform_popups
 from utils.log import login_logger, log_throttled
+
+LOCAL_LOGIN_WAIT_TIMEOUT_SECONDS = 24 * 60 * 60
 
 VERIFICATION_TITLE_TEXTS = [
     "身份验证",
@@ -1702,6 +1710,12 @@ def get_login_browser_options(command_queue=None, extra_args=None):
     return get_browser_options(headless=None, extra_args=extra_args)
 
 
+def get_login_wait_timeout(command_queue=None):
+    if command_queue is None:
+        return LOCAL_LOGIN_WAIT_TIMEOUT_SECONDS
+    return 200
+
+
 async def fill_input_like_user(page, input_locator, text):
     try:
         await input_locator.scroll_into_view_if_needed()
@@ -1770,7 +1784,7 @@ async def fill_input_like_user(page, input_locator, text):
 
 
 def push_structured_status(status_queue, command_queue, event_type, payload):
-    if status_queue is not None and command_queue is not None:
+    if status_queue is not None:
         status_queue.put({
             "type": event_type,
             "payload": payload,
@@ -1787,6 +1801,55 @@ def push_login_failed_status(status_queue, command_queue, message):
             "message": normalized_message,
         },
     )
+
+
+async def close_login_browser_resources(page, context, browser):
+    if page is not None:
+        try:
+            await page.close()
+        except Exception:
+            pass
+    if context is not None:
+        try:
+            await context.close()
+        except Exception:
+            pass
+    if browser is not None:
+        try:
+            await browser.close()
+        except Exception:
+            pass
+
+
+async def keep_local_login_browser_open(context, browser, *, poll_interval=1.0):
+    try:
+        while True:
+            browser_connected = True
+            try:
+                browser_connected = bool(browser.is_connected())
+            except Exception:
+                browser_connected = True
+
+            open_pages = []
+            try:
+                open_pages = [page for page in context.pages if not page.is_closed()]
+            except Exception:
+                open_pages = []
+
+            if not browser_connected or not open_pages:
+                break
+            await asyncio.sleep(poll_interval)
+    finally:
+        await close_login_browser_resources(None, context, browser)
+
+
+async def finalize_successful_login(status_queue, page, context, browser, *, keep_browser_open=False):
+    if status_queue is not None:
+        status_queue.put("200")
+    if keep_browser_open:
+        await keep_local_login_browser_open(context, browser)
+        return
+    await close_login_browser_resources(page, context, browser)
 
 
 async def detect_login_qr_state(page, qr_locator=None, qr_action_root=None):
@@ -2060,6 +2123,7 @@ async def wait_for_login_result(
     verification_settle_seconds=2.0,
     success_validator=None,
     success_check_interval=2.5,
+    allow_qr_hidden_success=True,
 ):
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
@@ -2242,7 +2306,7 @@ async def wait_for_login_result(
                 qr_hidden_since = None
             elif qr_hidden_since is None:
                 qr_hidden_since = now
-            elif now - qr_hidden_since >= 1.5:
+            elif allow_qr_hidden_success and now - qr_hidden_since >= 1.5:
                 login_logger.info("login qr disappeared and stayed hidden original_url={} current_url={}", original_url, page.url)
                 return True
         else:
@@ -2414,6 +2478,265 @@ def build_login_success_validator(account_type):
 
     return validator
 
+
+BACKEND_ENTRY_CONFIGS = {
+    2: {
+        "platform_label": "tencent",
+        "popup_key": "tencent",
+        "content_list_url": "https://channels.weixin.qq.com/platform/post/list",
+        "login_entry_url": "https://channels.weixin.qq.com",
+        "extra_args": ["--lang=en-GB"],
+        "settle_seconds": 1.0,
+    },
+    3: {
+        "platform_label": "douyin",
+        "popup_key": "douyin",
+        "content_list_url": "https://creator.douyin.com/creator-micro/content/manage",
+        "login_entry_url": "https://creator.douyin.com/",
+        "extra_args": [],
+        "settle_seconds": 1.5,
+    },
+    4: {
+        "platform_label": "kuaishou",
+        "popup_key": "kuaishou",
+        "content_list_url": "https://cp.kuaishou.com/article/manage/video?status=2&from=publish",
+        "login_entry_url": "https://cp.kuaishou.com",
+        "extra_args": ["--lang=en-GB"],
+        "settle_seconds": 1.5,
+    },
+}
+
+
+def get_backend_entry_config(account_type):
+    try:
+        normalized_type = int(account_type)
+    except (TypeError, ValueError):
+        return None
+    return BACKEND_ENTRY_CONFIGS.get(normalized_type)
+
+
+async def persist_account_storage_state(context, account_ref):
+    storage_state = await context.storage_state()
+    update_account_storage_state(account_ref, storage_state)
+    return storage_state
+
+
+async def prepare_backend_login_session(account_type, page):
+    config = get_backend_entry_config(account_type)
+    if not config:
+        raise ValueError(f"unsupported backend entry platform: {account_type}")
+
+    login_entry_url = config["login_entry_url"]
+    await page.goto(login_entry_url)
+
+    if int(account_type) == 2:
+        iframe_locator = page.frame_locator("iframe").first
+        qr_locator = iframe_locator.get_by_role("img").first
+        await qr_locator.wait_for(state="visible", timeout=30000)
+        return page.url, qr_locator, iframe_locator
+
+    if int(account_type) == 3:
+        qr_locator = page.get_by_role("img", name="二维码")
+        await qr_locator.wait_for(state="visible", timeout=30000)
+        return page.url, qr_locator, page
+
+    if int(account_type) == 4:
+        login_link = page.get_by_role("link", name="立即登录")
+        if await login_link.count():
+            await login_link.first.click()
+        scan_login = page.get_by_text("扫码登录")
+        if await scan_login.count():
+            await scan_login.first.click()
+        qr_locator = page.get_by_role("img", name="qrcode")
+        await qr_locator.wait_for(state="visible", timeout=30000)
+        return page.url, qr_locator, page
+
+    raise ValueError(f"unsupported backend entry platform: {account_type}")
+
+
+async def keep_backend_session_window_open(context, browser, account_ref, *, persist_on_close=False, poll_interval=1.0):
+    try:
+        while True:
+            browser_connected = True
+            try:
+                browser_connected = bool(browser.is_connected())
+            except Exception:
+                browser_connected = True
+
+            open_pages = []
+            try:
+                open_pages = [page for page in context.pages if not page.is_closed()]
+            except Exception:
+                open_pages = []
+
+            if not browser_connected or not open_pages:
+                break
+            await asyncio.sleep(poll_interval)
+    finally:
+        if persist_on_close:
+            try:
+                await persist_account_storage_state(context, account_ref)
+            except Exception as exc:
+                login_logger.warning("backend session close persist failed account_ref={} error={}", account_ref, exc)
+        try:
+            await context.close()
+        except Exception:
+            pass
+        try:
+            await browser.close()
+        except Exception:
+            pass
+
+
+async def open_platform_backend_session(account_type, account_name, account_ref, *, keep_window_open=True):
+    config = get_backend_entry_config(account_type)
+    if not config:
+        raise ValueError(f"unsupported backend entry platform: {account_type}")
+
+    storage_state = None
+    try:
+        storage_state = resolve_account_storage_state(account_ref)
+    except Exception as exc:
+        login_logger.warning(
+            "backend session storage restore failed account_name={} platform_type={} error={}",
+            account_name,
+            account_type,
+            exc,
+        )
+
+    async with async_playwright() as playwright:
+        options = get_browser_options(headless=False, extra_args=config.get("extra_args") or [])
+        browser = await playwright.chromium.launch(**options)
+        try:
+            try:
+                if storage_state is not None:
+                    context = await browser.new_context(storage_state=storage_state)
+                else:
+                    context = await browser.new_context()
+            except Exception as exc:
+                login_logger.warning(
+                    "backend session falling back to empty browser context account_name={} platform_type={} error={}",
+                    account_name,
+                    account_type,
+                    exc,
+                )
+                context = await browser.new_context()
+
+            context = await set_init_script(context)
+            page = await context.new_page()
+            logged_in = False
+
+            try:
+                await page.goto(config["content_list_url"])
+                active_result = await validate_active_page_detail(
+                    int(account_type),
+                    page,
+                    settle_seconds=config.get("settle_seconds", 1.5),
+                    retries=4,
+                    retry_delay_seconds=1.0,
+                )
+                if bool(active_result.get("ok")):
+                    await dismiss_platform_popups(page, config["popup_key"])
+                    await persist_account_storage_state(context, account_ref)
+                    update_account_runtime_status(account_ref, 1, None)
+                    logged_in = True
+                    login_logger.info(
+                        "backend session entered directly account_name={} platform_type={} current_url={}",
+                        account_name,
+                        account_type,
+                        page.url,
+                    )
+                else:
+                    failure_message = str(active_result.get("message") or "").strip() or "本地 cookie 当前不可用"
+                    update_account_runtime_status(account_ref, 0, failure_message)
+                    login_logger.info(
+                        "backend session requires re-login account_name={} platform_type={} message={}",
+                        account_name,
+                        account_type,
+                        failure_message,
+                    )
+                    original_url, qr_locator, qr_action_root = await prepare_backend_login_session(account_type, page)
+                    url_changed_event = asyncio.Event()
+
+                    async def on_url_change():
+                        if page.url != original_url:
+                            url_changed_event.set()
+
+                    page.on(
+                        "framenavigated",
+                        lambda frame: asyncio.create_task(on_url_change()) if frame == page.main_frame else None,
+                    )
+
+                    login_result = await wait_for_login_result(
+                        page,
+                        original_url,
+                        url_changed_event,
+                        None,
+                        command_queue=None,
+                        timeout=86400,
+                        qr_locator=qr_locator,
+                        qr_action_root=qr_action_root,
+                        success_validator=build_login_success_validator(int(account_type)),
+                    )
+                    if login_result and login_result != "cancelled":
+                        await persist_login_state_with_retry(
+                            context,
+                            int(account_type),
+                            account_name,
+                            config["platform_label"],
+                            verify_timeout=60 if int(account_type) == 2 else 30,
+                            page=page,
+                            status_queue=None,
+                            command_queue=None,
+                        )
+                        await page.goto(config["content_list_url"])
+                        await dismiss_platform_popups(page, config["popup_key"])
+                        await persist_account_storage_state(context, account_ref)
+                        update_account_runtime_status(account_ref, 1, None)
+                        logged_in = True
+                        login_logger.info(
+                            "backend session entered after qr login account_name={} platform_type={} current_url={}",
+                            account_name,
+                            account_type,
+                            page.url,
+                        )
+                    else:
+                        login_logger.info(
+                            "backend session ended without new login account_name={} platform_type={} result={}",
+                            account_name,
+                            account_type,
+                            login_result,
+                        )
+
+                if keep_window_open:
+                    await keep_backend_session_window_open(
+                        context,
+                        browser,
+                        account_ref,
+                        persist_on_close=logged_in,
+                    )
+                else:
+                    if logged_in:
+                        await persist_account_storage_state(context, account_ref)
+                    await context.close()
+                    await browser.close()
+            except Exception:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
+                raise
+        except Exception:
+            try:
+                await browser.close()
+            except Exception:
+                pass
+            raise
+
 # 抖音登录
 async def douyin_cookie_gen(id,status_queue, command_queue=None):
     url_changed_event = asyncio.Event()
@@ -2446,17 +2769,16 @@ async def douyin_cookie_gen(id,status_queue, command_queue=None):
                 url_changed_event,
                 status_queue,
                 command_queue,
-                timeout=200,
+                timeout=get_login_wait_timeout(command_queue=command_queue),
                 qr_locator=img_locator,
                 qr_action_root=page,
                 initial_qr_data=qr_data,
                 success_validator=build_login_success_validator(3),
+                allow_qr_hidden_success=command_queue is not None,
             )
             if login_result == "cancelled":
                 login_logger.info("douyin login cancelled account_name={}", id)
-                await page.close()
-                await context.close()
-                await browser.close()
+                await close_login_browser_resources(page, context, browser)
                 status_queue.put("CANCELLED")
                 return None
             if not login_result:
@@ -2470,10 +2792,8 @@ async def douyin_cookie_gen(id,status_queue, command_queue=None):
             )
         except asyncio.TimeoutError:
             login_logger.warning("douyin login timed out account_name={}", id)
-            await page.close()
-            await context.close()
-            await browser.close()
-            status_queue.put("500")
+            push_login_failed_status(status_queue, command_queue, "抖音登录超时，请重试")
+            await close_login_browser_resources(page, context, browser)
             return None
         try:
             saved_file = await persist_login_state_with_retry(
@@ -2487,22 +2807,21 @@ async def douyin_cookie_gen(id,status_queue, command_queue=None):
             )
         except LoginCancelled:
             login_logger.info("douyin login cancelled while waiting cookie ready account_name={}", id)
-            await page.close()
-            await context.close()
-            await browser.close()
+            await close_login_browser_resources(page, context, browser)
             status_queue.put("CANCELLED")
             return None
         except LoginPersistFailed as exc:
             login_logger.warning("douyin login state persist failed account_name={} error={}", id, exc)
             push_login_failed_status(status_queue, command_queue, str(exc))
-            await page.close()
-            await context.close()
-            await browser.close()
+            await close_login_browser_resources(page, context, browser)
             return None
-        await page.close()
-        await context.close()
-        await browser.close()
-        status_queue.put("200")
+        await finalize_successful_login(
+            status_queue,
+            page,
+            context,
+            browser,
+            keep_browser_open=command_queue is None,
+        )
 
 
 # 视频号登录
@@ -2545,17 +2864,16 @@ async def get_tencent_cookie(id,status_queue, command_queue=None):
                 url_changed_event,
                 status_queue,
                 command_queue,
-                timeout=200,
+                timeout=get_login_wait_timeout(command_queue=command_queue),
                 qr_locator=img_locator,
                 qr_action_root=iframe_locator,
                 initial_qr_data=qr_data,
                 success_validator=build_login_success_validator(2),
+                allow_qr_hidden_success=command_queue is not None,
             )
             if login_result == "cancelled":
                 login_logger.info("tencent login cancelled account_name={}", id)
-                await page.close()
-                await context.close()
-                await browser.close()
+                await close_login_browser_resources(page, context, browser)
                 status_queue.put("CANCELLED")
                 return None
             if not login_result:
@@ -2568,11 +2886,9 @@ async def get_tencent_cookie(id,status_queue, command_queue=None):
                 {"message": "安全验证通过，正在测试并保存登录配置，此过程通常约 10-15 秒，偶遇网络或平台校验可能长达一分钟，请耐心等待..."},
             )
         except asyncio.TimeoutError:
-            status_queue.put("500")
             login_logger.warning("tencent login timed out account_name={}", id)
-            await page.close()
-            await context.close()
-            await browser.close()
+            push_login_failed_status(status_queue, command_queue, "视频号登录超时，请重试")
+            await close_login_browser_resources(page, context, browser)
             return None
         try:
             saved_file = await persist_login_state_with_retry(
@@ -2587,22 +2903,21 @@ async def get_tencent_cookie(id,status_queue, command_queue=None):
             )
         except LoginCancelled:
             login_logger.info("tencent login cancelled while waiting cookie ready account_name={}", id)
-            await page.close()
-            await context.close()
-            await browser.close()
+            await close_login_browser_resources(page, context, browser)
             status_queue.put("CANCELLED")
             return None
         except LoginPersistFailed as exc:
             login_logger.warning("tencent login state persist failed account_name={} error={}", id, exc)
             push_login_failed_status(status_queue, command_queue, str(exc))
-            await page.close()
-            await context.close()
-            await browser.close()
+            await close_login_browser_resources(page, context, browser)
             return None
-        await page.close()
-        await context.close()
-        await browser.close()
-        status_queue.put("200")
+        await finalize_successful_login(
+            status_queue,
+            page,
+            context,
+            browser,
+            keep_browser_open=command_queue is None,
+        )
 
 # 快手登录
 async def get_ks_cookie(id,status_queue, command_queue=None):
@@ -2640,17 +2955,16 @@ async def get_ks_cookie(id,status_queue, command_queue=None):
                 url_changed_event,
                 status_queue,
                 command_queue,
-                timeout=200,
+                timeout=get_login_wait_timeout(command_queue=command_queue),
                 qr_locator=img_locator,
                 qr_action_root=page,
                 initial_qr_data=qr_data,
                 success_validator=build_login_success_validator(4),
+                allow_qr_hidden_success=command_queue is not None,
             )
             if login_result == "cancelled":
                 login_logger.info("kuaishou login cancelled account_name={}", id)
-                await page.close()
-                await context.close()
-                await browser.close()
+                await close_login_browser_resources(page, context, browser)
                 status_queue.put("CANCELLED")
                 return None
             if not login_result:
@@ -2663,11 +2977,9 @@ async def get_ks_cookie(id,status_queue, command_queue=None):
                 {"message": "安全验证通过，正在测试并保存登录配置，此过程通常约 10-15 秒，偶遇网络或平台校验可能长达一分钟，请耐心等待..."},
             )
         except asyncio.TimeoutError:
-            status_queue.put("500")
             login_logger.warning("kuaishou login timed out account_name={}", id)
-            await page.close()
-            await context.close()
-            await browser.close()
+            push_login_failed_status(status_queue, command_queue, "快手登录超时，请重试")
+            await close_login_browser_resources(page, context, browser)
             return None
         try:
             saved_file = await persist_login_state_with_retry(
@@ -2681,22 +2993,21 @@ async def get_ks_cookie(id,status_queue, command_queue=None):
             )
         except LoginCancelled:
             login_logger.info("kuaishou login cancelled while waiting cookie ready account_name={}", id)
-            await page.close()
-            await context.close()
-            await browser.close()
+            await close_login_browser_resources(page, context, browser)
             status_queue.put("CANCELLED")
             return None
         except LoginPersistFailed as exc:
             login_logger.warning("kuaishou login state persist failed account_name={} error={}", id, exc)
             push_login_failed_status(status_queue, command_queue, str(exc))
-            await page.close()
-            await context.close()
-            await browser.close()
+            await close_login_browser_resources(page, context, browser)
             return None
-        await page.close()
-        await context.close()
-        await browser.close()
-        status_queue.put("200")
+        await finalize_successful_login(
+            status_queue,
+            page,
+            context,
+            browser,
+            keep_browser_open=command_queue is None,
+        )
 
 # 小红书登录
 async def xiaohongshu_cookie_gen(id,status_queue, command_queue=None):
@@ -2734,17 +3045,16 @@ async def xiaohongshu_cookie_gen(id,status_queue, command_queue=None):
                 url_changed_event,
                 status_queue,
                 command_queue,
-                timeout=200,
+                timeout=get_login_wait_timeout(command_queue=command_queue),
                 qr_locator=img_locator,
                 qr_action_root=page,
                 initial_qr_data=qr_data,
                 success_validator=build_login_success_validator(1),
+                allow_qr_hidden_success=command_queue is not None,
             )
             if login_result == "cancelled":
                 login_logger.info("xiaohongshu login cancelled account_name={}", id)
-                await page.close()
-                await context.close()
-                await browser.close()
+                await close_login_browser_resources(page, context, browser)
                 status_queue.put("CANCELLED")
                 return None
             if not login_result:
@@ -2757,11 +3067,9 @@ async def xiaohongshu_cookie_gen(id,status_queue, command_queue=None):
                 {"message": "安全验证通过，正在测试并保存登录配置，此过程通常约 10-15 秒，偶遇网络或平台校验可能长达一分钟，请耐心等待..."},
             )
         except asyncio.TimeoutError:
-            status_queue.put("500")
             login_logger.warning("xiaohongshu login timed out account_name={}", id)
-            await page.close()
-            await context.close()
-            await browser.close()
+            push_login_failed_status(status_queue, command_queue, "小红书登录超时，请重试")
+            await close_login_browser_resources(page, context, browser)
             return None
         try:
             saved_file = await persist_login_state_with_retry(
@@ -2775,22 +3083,21 @@ async def xiaohongshu_cookie_gen(id,status_queue, command_queue=None):
             )
         except LoginCancelled:
             login_logger.info("xiaohongshu login cancelled while waiting cookie ready account_name={}", id)
-            await page.close()
-            await context.close()
-            await browser.close()
+            await close_login_browser_resources(page, context, browser)
             status_queue.put("CANCELLED")
             return None
         except LoginPersistFailed as exc:
             login_logger.warning("xiaohongshu login state persist failed account_name={} error={}", id, exc)
             push_login_failed_status(status_queue, command_queue, str(exc))
-            await page.close()
-            await context.close()
-            await browser.close()
+            await close_login_browser_resources(page, context, browser)
             return None
-        await page.close()
-        await context.close()
-        await browser.close()
-        status_queue.put("200")
+        await finalize_successful_login(
+            status_queue,
+            page,
+            context,
+            browser,
+            keep_browser_open=command_queue is None,
+        )
 
 # a = asyncio.run(xiaohongshu_cookie_gen(4,None))
 # print(a)

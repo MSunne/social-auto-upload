@@ -51,6 +51,7 @@ type CreateAdminSessionInput struct {
 	UserAgent   *string
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) CountAdminUsers(ctx context.Context) (int64, error) {
 	var count int64
 	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*)::BIGINT FROM admin_users`).Scan(&count); err != nil {
@@ -59,6 +60,7 @@ func (s *Store) CountAdminUsers(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) CountActiveAdminUsers(ctx context.Context) (int64, error) {
 	var count int64
 	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*)::BIGINT FROM admin_users WHERE is_active = TRUE`).Scan(&count); err != nil {
@@ -67,6 +69,7 @@ func (s *Store) CountActiveAdminUsers(ctx context.Context) (int64, error) {
 	return count, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) CountActiveAdminsByRole(ctx context.Context, roleID string) (int64, error) {
 	var count int64
 	if err := s.pool.QueryRow(ctx, `
@@ -80,6 +83,7 @@ func (s *Store) CountActiveAdminsByRole(ctx context.Context, roleID string) (int
 	return count, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAdminUserByAccount(ctx context.Context, account string) (*AdminUserWithPassword, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
@@ -134,10 +138,12 @@ func (s *Store) GetAdminUserByAccount(ctx context.Context, account string) (*Adm
 	return &result, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAdminUserByEmail(ctx context.Context, email string) (*AdminUserWithPassword, error) {
 	return s.GetAdminUserByAccount(ctx, email)
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAdminIdentityByID(ctx context.Context, adminID string) (*domain.AdminIdentity, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
@@ -170,6 +176,7 @@ func (s *Store) GetAdminIdentityByID(ctx context.Context, adminID string) (*doma
 	return item, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAdminIdentityBySessionID(ctx context.Context, sessionID string) (*domain.AdminIdentity, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
@@ -208,6 +215,7 @@ func (s *Store) GetAdminIdentityBySessionID(ctx context.Context, sessionID strin
 	return item, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminIdentities(ctx context.Context, filter AdminIdentityListFilter) ([]domain.AdminIdentity, int64, error) {
 	page, pageSize, offset := normalizeAdminPage(filter.Page, filter.PageSize)
 	_ = page
@@ -295,6 +303,7 @@ func (s *Store) ListAdminIdentities(ctx context.Context, filter AdminIdentityLis
 	return items, total, rows.Err()
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateAdminUser(ctx context.Context, input CreateAdminUserInput) (*domain.AdminIdentity, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -334,6 +343,7 @@ func (s *Store) CreateAdminUser(ctx context.Context, input CreateAdminUserInput)
 	return item, nil
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpdateAdminUser(ctx context.Context, adminID string, input UpdateAdminUserInput) (*domain.AdminIdentity, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -424,6 +434,7 @@ func (s *Store) UpdateAdminUser(ctx context.Context, adminID string, input Updat
 	return item, nil
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateAdminSession(ctx context.Context, input CreateAdminSessionInput) error {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -450,6 +461,7 @@ func (s *Store) CreateAdminSession(ctx context.Context, input CreateAdminSession
 	return tx.Commit(ctx)
 }
 
+// 处理Revoke管理端会话相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) RevokeAdminSession(ctx context.Context, sessionID string) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE admin_sessions
@@ -463,6 +475,7 @@ func (s *Store) RevokeAdminSession(ctx context.Context, sessionID string) error 
 	return err
 }
 
+// 处理Revoke管理端会话用户ID相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) RevokeAdminSessionsByUserID(ctx context.Context, adminUserID string) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE admin_sessions
@@ -476,6 +489,7 @@ func (s *Store) RevokeAdminSessionsByUserID(ctx context.Context, adminUserID str
 	return err
 }
 
+// 处理校验管理端角色IDs相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func validateAdminRoleIDs(ctx context.Context, tx pgx.Tx, roleIDs []string) error {
 	items := normalizeAdminStringList(roleIDs)
 	if len(items) == 0 {
@@ -496,6 +510,7 @@ func validateAdminRoleIDs(ctx context.Context, tx pgx.Tx, roleIDs []string) erro
 	return nil
 }
 
+// 处理扫描管理端Identity相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanAdminIdentity(scan func(dest ...any) error) (*domain.AdminIdentity, error) {
 	var item domain.AdminIdentity
 	var roleIDs []string
@@ -523,6 +538,7 @@ func scanAdminIdentity(scan func(dest ...any) error) (*domain.AdminIdentity, err
 	return &item, nil
 }
 
+// 获取管理端IdentityID事务，为当前链路返回后续处理所需的数据内容。
 func getAdminIdentityByIDTx(ctx context.Context, tx pgx.Tx, adminID string) (*domain.AdminIdentity, error) {
 	row := tx.QueryRow(ctx, `
 		SELECT

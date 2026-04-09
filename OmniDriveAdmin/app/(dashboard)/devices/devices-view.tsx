@@ -49,27 +49,53 @@ const summarizeBridgeError = (value?: string | null) => {
   return `${normalized.slice(0, 85)}...`;
 };
 
-const getBridgeHealth = (deviceStatus: string, isEnabled: boolean, runtimePayload?: DeviceRuntimePayload) => {
+const getBridgeHealth = (
+  deviceStatus: string,
+  bridgeStatus: string | undefined,
+  isEnabled: boolean,
+  runtimePayload?: DeviceRuntimePayload,
+) => {
   if (!isEnabled) {
     return null;
   }
+  if (deviceStatus !== "online") {
+    return {
+      label: "等待设备恢复",
+      className: "text-[var(--color-text-secondary)] border-[var(--color-border)] bg-[var(--color-bg-secondary)]",
+    };
+  }
+  if (bridgeStatus === "degraded") {
+    return {
+      label: "云桥异常",
+      className: "text-red-400 border-red-500/30 bg-red-500/10",
+      detail:
+        summarizeBridgeError(runtimePayload?.bridgeLastError) ||
+        summarizeBridgeError(runtimePayload?.lastError) ||
+        "无法连接 OmniDrive API",
+      retryAt: runtimePayload?.cloudRetryAt || undefined,
+    };
+  }
+  if (bridgeStatus === "healthy") {
+    return {
+      label: "云桥正常",
+      className: "text-emerald-400 border-emerald-500/30 bg-emerald-500/10",
+      detail: runtimePayload?.bridgeLastSuccessAt
+        ? `最近恢复 ${formatDateTime(runtimePayload.bridgeLastSuccessAt)}`
+        : runtimePayload?.lastLoginPollAt
+          ? `登录轮询 ${formatLastSeen(runtimePayload.lastLoginPollAt)}`
+          : undefined,
+    };
+  }
   if (
     !runtimePayload ||
-    (runtimePayload.cloudReachable === undefined &&
+    (runtimePayload.bridgeStatus === undefined &&
+      runtimePayload.cloudReachable === undefined &&
       runtimePayload.lastError === undefined &&
       runtimePayload.lastLoginPollAt === undefined)
   ) {
     return {
       label: "未上报桥接健康",
       className: "text-[var(--color-text-secondary)] border-[var(--color-border)] bg-[var(--color-bg-secondary)]",
-    };
-  }
-  if (runtimePayload.cloudReachable === false) {
-    return {
-      label: "云桥异常",
-      className: "text-red-400 border-red-500/30 bg-red-500/10",
-      detail: summarizeBridgeError(runtimePayload.lastError) || "无法连接 OmniDrive API",
-      retryAt: runtimePayload.cloudRetryAt || undefined,
     };
   }
   if (runtimePayload.lastError) {
@@ -79,15 +105,8 @@ const getBridgeHealth = (deviceStatus: string, isEnabled: boolean, runtimePayloa
       detail: summarizeBridgeError(runtimePayload.lastError),
     };
   }
-  if (deviceStatus === "online") {
-    return {
-      label: "云桥正常",
-      className: "text-emerald-400 border-emerald-500/30 bg-emerald-500/10",
-      detail: runtimePayload.lastLoginPollAt ? `登录轮询 ${formatLastSeen(runtimePayload.lastLoginPollAt)}` : undefined,
-    };
-  }
   return {
-    label: "等待设备恢复",
+    label: "桥接状态未知",
     className: "text-[var(--color-text-secondary)] border-[var(--color-border)] bg-[var(--color-bg-secondary)]",
   };
 };
@@ -393,7 +412,12 @@ export function DevicesView() {
               )}
               {data?.items.map((row) => {
                 const activationMeta = formatActivationStatus(row);
-                const bridgeHealth = getBridgeHealth(row.device.status, row.device.isEnabled, row.device.runtimePayload);
+                const bridgeHealth = getBridgeHealth(
+                  row.device.status,
+                  row.device.bridgeStatus,
+                  row.device.isEnabled,
+                  row.device.runtimePayload,
+                );
                 return (
                   <tr
                     key={row.device.id}

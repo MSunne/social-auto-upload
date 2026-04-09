@@ -46,6 +46,7 @@ type Service struct {
 	s3VideoStorePath      string
 }
 
+// 根据配置创建对象存储服务，在本地存储和 S3 存储之间选择最终实现。
 func New(cfg config.Config) (*Service, error) {
 	if hasS3Config(cfg) {
 		return newS3Service(cfg)
@@ -53,10 +54,12 @@ func New(cfg config.Config) (*Service, error) {
 	return newLocalService(cfg)
 }
 
+// 保存字节内容到对象存储，并统一处理内容类型和最终存储键。
 func (s *Service) SaveBytes(ctx context.Context, storageKey string, contentType string, data []byte) (*Object, error) {
 	return s.saveReader(ctx, storageKey, contentType, bytes.NewReader(data), int64(len(data)))
 }
 
+// 将远端 URL 指向的内容转存到对象存储，必要时回退到临时文件方案。
 func (s *Service) SaveRemoteURL(ctx context.Context, storageKey string, contentType string, rawURL string) (*Object, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
@@ -75,6 +78,7 @@ func (s *Service) SaveRemoteURL(ctx context.Context, storageKey string, contentT
 	return fallbackObject, nil
 }
 
+// 从对象存储读取字节内容，并返回后续响应所需的内容类型。
 func (s *Service) ReadBytes(ctx context.Context, storageKey string) ([]byte, string, error) {
 	storageKey = sanitizeStorageKey(storageKey)
 
@@ -107,6 +111,7 @@ func (s *Service) ReadBytes(ctx context.Context, storageKey string) ([]byte, str
 	}
 }
 
+// 删除对象存储中的目标资源，并兼容本地或 S3 两种存储模式。
 func (s *Service) DeleteObject(ctx context.Context, storageKey string) error {
 	storageKey = sanitizeStorageKey(storageKey)
 	switch s.mode {
@@ -121,11 +126,13 @@ func (s *Service) DeleteObject(ctx context.Context, storageKey string) error {
 	}
 }
 
+// 判断公开 URL 是否归属当前对象存储服务，供回收和去重逻辑选择分支。
 func (s *Service) OwnsPublicURL(rawURL string) bool {
 	_, ok := s.StorageKeyFromPublicURL(rawURL)
 	return ok
 }
 
+// 从公开 URL 中提取存储键，供资源回收和关联恢复逻辑复用。
 func (s *Service) StorageKeyFromPublicURL(rawURL string) (string, bool) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
@@ -148,10 +155,12 @@ func (s *Service) StorageKeyFromPublicURL(rawURL string) (string, bool) {
 	return "", false
 }
 
+// 返回当前对象存储使用的底层模式，供上层逻辑区分本地或 S3 分支。
 func (s *Service) Mode() string {
 	return string(s.mode)
 }
 
+// 创建本地Service相关实例，组装运行所需依赖并返回给上层流程复用。
 func newLocalService(cfg config.Config) (*Service, error) {
 	rootDir := cfg.LocalStorageDir
 	if rootDir == "" {
@@ -173,6 +182,7 @@ func newLocalService(cfg config.Config) (*Service, error) {
 	}, nil
 }
 
+// 创建S3Service相关实例，组装运行所需依赖并返回给上层流程复用。
 func newS3Service(cfg config.Config) (*Service, error) {
 	if strings.TrimSpace(cfg.S3Endpoint) == "" || strings.TrimSpace(cfg.S3Bucket) == "" || strings.TrimSpace(cfg.S3AccessKey) == "" || strings.TrimSpace(cfg.S3SecretKey) == "" {
 		return nil, fmt.Errorf("s3 storage requires endpoint, bucket, access key, and secret key")
@@ -204,6 +214,7 @@ func newS3Service(cfg config.Config) (*Service, error) {
 	}, nil
 }
 
+// 保存Reader，统一对象存储链路中的资源落盘或持久化行为。
 func (s *Service) saveReader(ctx context.Context, storageKey string, contentType string, reader io.Reader, size int64) (*Object, error) {
 	storageKey = sanitizeStorageKey(storageKey)
 	contentType = resolveContentType(contentType, storageKey)
@@ -252,6 +263,7 @@ func (s *Service) saveReader(ctx context.Context, storageKey string, contentType
 	}
 }
 
+// 保存远端URLDirect，统一对象存储链路中的资源落盘或持久化行为。
 func (s *Service) saveRemoteURLDirect(ctx context.Context, storageKey string, contentType string, rawURL string) (*Object, error) {
 	resp, err := s.fetchRemote(ctx, rawURL)
 	if err != nil {
@@ -287,6 +299,7 @@ func (s *Service) saveRemoteURLDirect(ctx context.Context, storageKey string, co
 	}
 }
 
+// 保存远端URLViaTemp文件，统一对象存储链路中的资源落盘或持久化行为。
 func (s *Service) saveRemoteURLViaTempFile(ctx context.Context, storageKey string, contentType string, rawURL string) (*Object, error) {
 	if s.mode != storageModeS3 {
 		return nil, fmt.Errorf("temp-file fallback is only used for s3 storage")
@@ -323,6 +336,7 @@ func (s *Service) saveRemoteURLViaTempFile(ctx context.Context, storageKey strin
 	return s.saveReader(ctx, storageKey, resolvedContentType, tempFile, info.Size())
 }
 
+// 处理fetch远端相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Service) fetchRemote(ctx context.Context, rawURL string) (*http.Response, error) {
 	parsedURL, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
@@ -350,6 +364,7 @@ func (s *Service) fetchRemote(ctx context.Context, rawURL string) (*http.Respons
 	return resp, nil
 }
 
+// 处理final存储键相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Service) finalStorageKey(storageKey string, contentType string) string {
 	storageKey = sanitizeStorageKey(storageKey)
 	if s.mode != storageModeS3 {
@@ -363,6 +378,7 @@ func (s *Service) finalStorageKey(storageKey string, contentType string) string 
 	return sanitizeStorageKey(path.Join(storeRoot, storageKey))
 }
 
+// 根据内容类型计算存储Root，供对象存储链路复用关键派生结果。
 func (s *Service) storeRootForContentType(contentType string) string {
 	contentType = strings.ToLower(strings.TrimSpace(contentType))
 	switch {
@@ -375,10 +391,12 @@ func (s *Service) storeRootForContentType(contentType string) string {
 	}
 }
 
+// 根据计算公开URL，供对象存储链路复用关键派生结果。
 func (s *Service) publicURLFor(storageKey string) string {
 	return strings.TrimRight(s.objectBaseURL, "/") + "/" + sanitizeStorageKey(storageKey)
 }
 
+// 判断是否存在S3配置，供当前链路选择后续处理策略。
 func hasS3Config(cfg config.Config) bool {
 	values := []string{
 		cfg.S3Endpoint,
@@ -394,6 +412,7 @@ func hasS3Config(cfg config.Config) bool {
 	return false
 }
 
+// 解析S3Settings，根据当前配置和上下文确定最终使用结果。
 func resolveS3Settings(cfg config.Config) (string, bool, minio.BucketLookupType, string, []string, error) {
 	bucket := strings.TrimSpace(cfg.S3Bucket)
 	rawEndpoint := strings.TrimSpace(cfg.S3Endpoint)
@@ -460,6 +479,7 @@ func resolveS3Settings(cfg config.Config) (string, bool, minio.BucketLookupType,
 	return clientHost, scheme != "http", bucketLookup, primaryBaseURL, managedPrefixes, nil
 }
 
+// 构建本地对象访问基址，为对象存储生成后续步骤所需的派生参数或载荷。
 func buildLocalObjectBaseURL(publicBaseURL string) string {
 	if publicBaseURL == "" {
 		return "/api/v1/files"
@@ -467,10 +487,12 @@ func buildLocalObjectBaseURL(publicBaseURL string) string {
 	return publicBaseURL + "/api/v1/files"
 }
 
+// 处理默认HTTP客户端相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func defaultHTTPClient() *http.Client {
 	return &http.Client{Timeout: 2 * time.Minute}
 }
 
+// 解析内容类型，根据当前配置和上下文确定最终使用结果。
 func resolveContentType(contentType string, storageKey string) string {
 	contentType = strings.TrimSpace(contentType)
 	if contentType == "" {
@@ -482,6 +504,7 @@ func resolveContentType(contentType string, storageKey string) string {
 	return contentType
 }
 
+// 判断是否应当UseDNSBucket查找，供当前链路选择后续处理策略。
 func shouldUseDNSBucketLookup(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
 	if host == "" {
@@ -490,6 +513,7 @@ func shouldUseDNSBucketLookup(host string) bool {
 	return strings.HasPrefix(host, "s3.") || strings.Contains(host, ".amazonaws.com") || strings.Contains(host, ".qiniucs.com")
 }
 
+// 剥离URLSuffix中的包装内容，便于后续解析实际数据。
 func stripURLSuffix(rawURL string) string {
 	if idx := strings.IndexAny(rawURL, "?#"); idx >= 0 {
 		return rawURL[:idx]
@@ -497,6 +521,7 @@ func stripURLSuffix(rawURL string) string {
 	return rawURL
 }
 
+// 处理清洗存储键相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func sanitizeStorageKey(storageKey string) string {
 	parts := strings.Split(strings.ReplaceAll(storageKey, "\\", "/"), "/")
 	cleanParts := make([]string, 0, len(parts))
@@ -513,6 +538,7 @@ func sanitizeStorageKey(storageKey string) string {
 	return path.Clean(strings.Join(cleanParts, "/"))
 }
 
+// 处理清洗存储路径相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func sanitizeStorePath(storePath string) string {
 	storePath = strings.TrimSpace(storePath)
 	if storePath == "" {
@@ -521,6 +547,7 @@ func sanitizeStorePath(storePath string) string {
 	return strings.Trim(sanitizeStorageKey(storePath), "/")
 }
 
+// 处理追加IfMissing相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func appendIfMissing(items []string, item string) []string {
 	for _, existing := range items {
 		if existing == item {
@@ -530,6 +557,7 @@ func appendIfMissing(items []string, item string) []string {
 	return append(items, item)
 }
 
+// 处理首个Non空值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
@@ -539,6 +567,7 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// 判断是否存在路径Prefix，供当前链路选择后续处理策略。
 func hasPathPrefix(value string, prefix string) bool {
 	value = strings.Trim(sanitizeStorageKey(value), "/")
 	prefix = strings.Trim(sanitizeStorageKey(prefix), "/")

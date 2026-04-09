@@ -7,6 +7,7 @@ import (
 	"omnidrive_cloud/internal/domain"
 )
 
+// 构建发布任务桥接状态，为任务桥接状态生成后续步骤所需的派生参数或载荷。
 func buildPublishTaskBridgeState(task *domain.PublishTask, runtime *domain.PublishTaskRuntimeState) domain.PublishTaskBridgeState {
 	bridge := domain.PublishTaskBridgeState{
 		Origin:         "cloud",
@@ -52,6 +53,7 @@ func buildPublishTaskBridgeState(task *domain.PublishTask, runtime *domain.Publi
 	return bridge
 }
 
+// 规范化桥接String，统一任务桥接状态链路的输入格式和后续处理行为。
 func normalizeBridgeString(value any) *string {
 	text, ok := value.(string)
 	if !ok {

@@ -14,6 +14,7 @@ import (
 	"omnidrive_cloud/internal/store"
 )
 
+// 组装计费发放命令依赖并启动主流程，发生错误时直接退出进程。
 func main() {
 	var (
 		userID        string
@@ -128,6 +129,7 @@ func main() {
 	}
 }
 
+// 解析用户ID，根据当前配置和上下文确定最终使用结果。
 func resolveUserID(ctx context.Context, repo *store.Store, userID string, email string) (string, error) {
 	if strings.TrimSpace(userID) != "" {
 		user, err := repo.GetUserByID(ctx, userID)
@@ -150,6 +152,7 @@ func resolveUserID(ctx context.Context, repo *store.Store, userID string, email 
 	return userWithPassword.User.ID, nil
 }
 
+// 将非空字符串转换为指针，统一存储层对可选字符串字段的入参表达。
 func stringPtr(value string) *string {
 	if strings.TrimSpace(value) == "" {
 		return nil

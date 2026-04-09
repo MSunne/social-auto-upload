@@ -14,10 +14,12 @@ type AdminConsoleHandler struct {
 	app *appstate.App
 }
 
+// 创建管理端ConsoleHandler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewAdminConsoleHandler(app *appstate.App) *AdminConsoleHandler {
 	return &AdminConsoleHandler{app: app}
 }
 
+// 处理管理端ConsoleDashboardSummary接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) DashboardSummary(w http.ResponseWriter, r *http.Request) {
 	summary, err := h.app.Store.GetAdminDashboardSummary(r.Context())
 	if err != nil {
@@ -27,6 +29,7 @@ func (h *AdminConsoleHandler) DashboardSummary(w http.ResponseWriter, r *http.Re
 	render.JSON(w, http.StatusOK, summary)
 }
 
+// 处理管理端Console列表用户接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, err := h.app.Store.ListAdminUsers(r.Context(), store.AdminUserListFilter{
@@ -52,6 +55,7 @@ func (h *AdminConsoleHandler) ListUsers(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// 处理管理端Console列表设备接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ListDevices(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, err := h.app.Store.ListAdminDevices(r.Context(), store.AdminDeviceListFilter{
@@ -77,6 +81,7 @@ func (h *AdminConsoleHandler) ListDevices(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// 处理管理端Console列表定价套餐接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ListPricingPackages(w http.ResponseWriter, r *http.Request) {
 	items, err := h.app.Store.ListAdminBillingPackages(r.Context())
 	if err != nil {
@@ -96,6 +101,7 @@ func (h *AdminConsoleHandler) ListPricingPackages(w http.ResponseWriter, r *http
 	}, nil)
 }
 
+// 处理管理端Console列表定价规则接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ListPricingRules(w http.ResponseWriter, r *http.Request) {
 	items, err := h.app.Store.ListBillingPricingRules(r.Context())
 	if err != nil {
@@ -108,6 +114,7 @@ func (h *AdminConsoleHandler) ListPricingRules(w http.ResponseWriter, r *http.Re
 	}, nil)
 }
 
+// 处理管理端Console列表工作流时长规则接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ListWorkflowDurationRules(w http.ResponseWriter, r *http.Request) {
 	items, err := h.app.Store.ListWorkflowDurationRules(r.Context())
 	if err != nil {
@@ -127,6 +134,7 @@ func (h *AdminConsoleHandler) ListWorkflowDurationRules(w http.ResponseWriter, r
 	}, nil)
 }
 
+// 处理管理端Console列表订单接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ListOrders(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, summary, err := h.app.Store.ListAdminOrders(r.Context(), store.AdminOrderListFilter{
@@ -151,6 +159,7 @@ func (h *AdminConsoleHandler) ListOrders(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// 处理管理端Console列表钱包Ledgers接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ListWalletLedgers(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, summary, err := h.app.Store.ListAdminWalletLedgers(r.Context(), store.AdminWalletLedgerListFilter{
@@ -172,6 +181,7 @@ func (h *AdminConsoleHandler) ListWalletLedgers(w http.ResponseWriter, r *http.R
 	})
 }
 
+// 处理管理端Console列表计费Activities接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ListBillingActivities(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, summary, err := h.app.Store.ListAdminBillingActivities(r.Context(), store.AdminBillingActivityListFilter{
@@ -205,6 +215,7 @@ func (h *AdminConsoleHandler) ListBillingActivities(w http.ResponseWriter, r *ht
 	})
 }
 
+// 处理管理端Console列表用量事件接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ListUsageEvents(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, summary, err := h.app.Store.ListAdminBillingUsageEvents(r.Context(), store.AdminBillingUsageEventListFilter{
@@ -234,6 +245,7 @@ func (h *AdminConsoleHandler) ListUsageEvents(w http.ResponseWriter, r *http.Req
 	})
 }
 
+// 处理管理端Console列表支持充值s接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ListSupportRecharges(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	requestedStatus := strings.TrimSpace(r.URL.Query().Get("status"))
@@ -285,6 +297,7 @@ func (h *AdminConsoleHandler) ListSupportRecharges(w http.ResponseWriter, r *htt
 	})
 }
 
+// 处理管理端Console列表Audits接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ListAudits(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, err := h.app.Store.ListAdminAudits(r.Context(), store.AdminAuditListFilter{

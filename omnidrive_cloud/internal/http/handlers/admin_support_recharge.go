@@ -20,6 +20,7 @@ type adminSupportRechargeDecisionRequest struct {
 	PaymentReference string `json:"paymentReference"`
 }
 
+// 处理裁剪StringPtr相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func trimmedStringPtr(value string) *string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -28,6 +29,7 @@ func trimmedStringPtr(value string) *string {
 	return &trimmed
 }
 
+// 处理解码管理端支持充值载荷相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func decodeAdminSupportRechargePayload(raw []byte) map[string]any {
 	payload := map[string]any{}
 	if len(raw) == 0 {
@@ -40,6 +42,7 @@ func decodeAdminSupportRechargePayload(raw []byte) map[string]any {
 	return payload
 }
 
+// 处理查找支持充值值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func lookupSupportRechargeValue(payload map[string]any, parents ...string) any {
 	var current any = payload
 	for _, key := range parents {
@@ -52,6 +55,7 @@ func lookupSupportRechargeValue(payload map[string]any, parents ...string) any {
 	return current
 }
 
+// 处理查找支持充值String相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func lookupSupportRechargeString(payload map[string]any, parents ...string) *string {
 	value, _ := lookupSupportRechargeValue(payload, parents...).(string)
 	trimmed := strings.TrimSpace(value)
@@ -61,6 +65,7 @@ func lookupSupportRechargeString(payload map[string]any, parents ...string) *str
 	return &trimmed
 }
 
+// 处理查找支持充值Int64相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func lookupSupportRechargeInt64(payload map[string]any, parents ...string) *int64 {
 	value := lookupSupportRechargeValue(payload, parents...)
 	switch typed := value.(type) {
@@ -78,6 +83,7 @@ func lookupSupportRechargeInt64(payload map[string]any, parents ...string) *int6
 	}
 }
 
+// 解析支持充值Bonus额度，根据当前配置和上下文确定最终使用结果。
 func resolveSupportRechargeBonusCredits(order domain.RechargeOrder, payload map[string]any) int64 {
 	if order.ManualBonusCreditAmount > 0 {
 		return order.ManualBonusCreditAmount
@@ -88,6 +94,7 @@ func resolveSupportRechargeBonusCredits(order domain.RechargeOrder, payload map[
 	return 0
 }
 
+// 处理查找支持充值时间相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func lookupSupportRechargeTime(payload map[string]any, parents ...string) *time.Time {
 	value, _ := lookupSupportRechargeValue(payload, parents...).(string)
 	trimmed := strings.TrimSpace(value)
@@ -102,6 +109,7 @@ func lookupSupportRechargeTime(payload map[string]any, parents ...string) *time.
 	return &utc
 }
 
+// 处理查找支持充值Strings相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func lookupSupportRechargeStrings(payload map[string]any, parents ...string) []string {
 	rawItems, ok := lookupSupportRechargeValue(payload, parents...).([]any)
 	if !ok {
@@ -119,6 +127,7 @@ func lookupSupportRechargeStrings(payload map[string]any, parents ...string) []s
 	return items
 }
 
+// 规范化支持充值状态，统一管理端支持充值链路的输入格式和后续处理行为。
 func normalizeSupportRechargeStatus(order domain.RechargeOrder, payload map[string]any) string {
 	raw := strings.TrimSpace(order.Status)
 	reviewStatus := ""
@@ -144,6 +153,7 @@ func normalizeSupportRechargeStatus(order domain.RechargeOrder, payload map[stri
 	}
 }
 
+// 处理管理端支持充值动作相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func adminSupportRechargeActions(status string) domain.AdminSupportRechargeActions {
 	switch status {
 	case "pending_review":
@@ -161,6 +171,7 @@ func adminSupportRechargeActions(status string) domain.AdminSupportRechargeActio
 	}
 }
 
+// 构建管理端支持充值行，为管理端支持充值生成后续步骤所需的派生参数或载荷。
 func buildAdminSupportRechargeRow(item domain.AdminOrderRow) domain.AdminSupportRechargeRow {
 	payload := decodeAdminSupportRechargePayload(item.Order.CustomerServicePayload)
 	status := normalizeSupportRechargeStatus(item.Order, payload)
@@ -209,6 +220,7 @@ func buildAdminSupportRechargeRow(item domain.AdminOrderRow) domain.AdminSupport
 	}
 }
 
+// 构建管理端支持充值详情，为管理端支持充值生成后续步骤所需的派生参数或载荷。
 func buildAdminSupportRechargeDetail(item *domain.AdminOrderRow, events []domain.RechargeOrderEvent) domain.AdminSupportRechargeDetail {
 	payload := decodeAdminSupportRechargePayload(item.Order.CustomerServicePayload)
 	record := buildAdminSupportRechargeRow(*item)
@@ -270,6 +282,7 @@ func buildAdminSupportRechargeDetail(item *domain.AdminOrderRow, events []domain
 	}
 }
 
+// 处理管理端Console加载管理端支持充值详情接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) loadAdminSupportRechargeDetail(r *http.Request, orderID string) (*domain.AdminSupportRechargeDetail, error) {
 	item, err := h.app.Store.GetAdminOrderByID(r.Context(), orderID)
 	if err != nil {
@@ -288,6 +301,7 @@ func (h *AdminConsoleHandler) loadAdminSupportRechargeDetail(r *http.Request, or
 	return &detail, nil
 }
 
+// 处理管理端Console详情支持充值接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) DetailSupportRecharge(w http.ResponseWriter, r *http.Request) {
 	orderID := strings.TrimSpace(chi.URLParam(r, "orderId"))
 	if orderID == "" {
@@ -307,6 +321,7 @@ func (h *AdminConsoleHandler) DetailSupportRecharge(w http.ResponseWriter, r *ht
 	render.JSON(w, http.StatusOK, detail)
 }
 
+// 处理管理端Console查找支持充值接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) LookupSupportRecharge(w http.ResponseWriter, r *http.Request) {
 	code := strings.TrimSpace(r.URL.Query().Get("code"))
 	if code == "" {
@@ -337,6 +352,7 @@ func (h *AdminConsoleHandler) LookupSupportRecharge(w http.ResponseWriter, r *ht
 	render.JSON(w, http.StatusOK, detail)
 }
 
+// 处理管理端Console列表支持充值事件接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ListSupportRechargeEvents(w http.ResponseWriter, r *http.Request) {
 	orderID := strings.TrimSpace(chi.URLParam(r, "orderId"))
 	if orderID == "" {
@@ -356,6 +372,7 @@ func (h *AdminConsoleHandler) ListSupportRechargeEvents(w http.ResponseWriter, r
 	render.JSON(w, http.StatusOK, detail.Events)
 }
 
+// 处理管理端Console额度支持充值接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) CreditSupportRecharge(w http.ResponseWriter, r *http.Request) {
 	orderID := strings.TrimSpace(chi.URLParam(r, "orderId"))
 	if orderID == "" {
@@ -418,6 +435,7 @@ func (h *AdminConsoleHandler) CreditSupportRecharge(w http.ResponseWriter, r *ht
 	render.JSON(w, http.StatusOK, detail)
 }
 
+// 处理管理端ConsoleReject支持充值接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) RejectSupportRecharge(w http.ResponseWriter, r *http.Request) {
 	orderID := strings.TrimSpace(chi.URLParam(r, "orderId"))
 	if orderID == "" {
@@ -478,6 +496,7 @@ func (h *AdminConsoleHandler) RejectSupportRecharge(w http.ResponseWriter, r *ht
 	render.JSON(w, http.StatusOK, detail)
 }
 
+// 处理管理端ConsoleInvalidate支持充值接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) InvalidateSupportRecharge(w http.ResponseWriter, r *http.Request) {
 	orderID := strings.TrimSpace(chi.URLParam(r, "orderId"))
 	if orderID == "" {

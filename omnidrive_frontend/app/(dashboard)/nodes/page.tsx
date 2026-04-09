@@ -54,6 +54,36 @@ const statusConfig: Record<
   },
 };
 
+const bridgeStatusConfig: Record<
+  string,
+  { label: string; className: string }
+> = {
+  healthy: {
+    label: "云桥正常",
+    className: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
+  },
+  degraded: {
+    label: "云桥异常",
+    className: "bg-rose-500/15 text-rose-300 border-rose-500/30",
+  },
+  unknown: {
+    label: "云桥未知",
+    className: "bg-gray-500/15 text-gray-300 border-gray-500/30",
+  },
+  offline: {
+    label: "等待恢复",
+    className: "bg-gray-500/15 text-gray-300 border-gray-500/30",
+  },
+};
+
+function summarizeBridgeError(device: Device) {
+  const runtime = device.runtimePayload;
+  const raw = String(runtime?.bridgeLastError || runtime?.lastError || "").replace(/\s+/g, " ").trim();
+  if (!raw) return "";
+  if (raw.length <= 64) return raw;
+  return `${raw.slice(0, 61)}...`;
+}
+
 /* ── Toggle Switch component ── */
 function Toggle({
   checked,
@@ -280,6 +310,9 @@ export default function NodesPage() {
                 {pagedDevices.map((device) => {
                   const cfg =
                     statusConfig[device.status] ?? statusConfig.unknown;
+                  const bridgeCfg =
+                    bridgeStatusConfig[device.bridgeStatus || "unknown"] ?? bridgeStatusConfig.unknown;
+                  const bridgeError = summarizeBridgeError(device);
                   return (
                     <tr
                       key={device.id}
@@ -302,11 +335,25 @@ export default function NodesPage() {
 
                       {/* 状态 */}
                       <td className="px-5 py-4">
-                        <span
-                          className={`inline-flex items-center rounded-md border px-2.5 py-1 text-xs font-semibold ${cfg.className}`}
-                        >
-                          {cfg.label}
-                        </span>
+                        <div className="space-y-2">
+                          <span
+                            className={`inline-flex items-center rounded-md border px-2.5 py-1 text-xs font-semibold ${cfg.className}`}
+                          >
+                            {cfg.label}
+                          </span>
+                          <div>
+                            <span
+                              className={`inline-flex items-center rounded-md border px-2.5 py-1 text-xs font-semibold ${bridgeCfg.className}`}
+                            >
+                              {bridgeCfg.label}
+                            </span>
+                          </div>
+                          {bridgeError ? (
+                            <div className="max-w-xs text-xs text-rose-300/90">
+                              {bridgeError}
+                            </div>
+                          ) : null}
+                        </div>
                       </td>
 
                       {/* 推理模型 */}

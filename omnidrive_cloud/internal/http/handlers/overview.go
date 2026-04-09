@@ -15,10 +15,12 @@ type OverviewHandler struct {
 	app *appstate.App
 }
 
+// 创建概览Handler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewOverviewHandler(app *appstate.App) *OverviewHandler {
 	return &OverviewHandler{app: app}
 }
 
+// 处理概览汇总接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *OverviewHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	summary, err := h.app.Store.GetOverviewSummary(r.Context(), user.ID)
@@ -29,6 +31,7 @@ func (h *OverviewHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, summary)
 }
 
+// 处理概览历史接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *OverviewHandler) History(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	limit := 0

@@ -33,10 +33,12 @@ type skillVideoGenerationOptions struct {
 	DurationSeconds *int
 }
 
+// 计算计划中的技能生成时间，供技能作业helpers链路复用派生的时间结果。
 func ScheduledSkillGenerationTime(publishAt time.Time) time.Time {
 	return publishAt.UTC().Add(-30 * time.Minute)
 }
 
+// 构建技能作业提示词，为技能作业helpers生成后续步骤所需的派生参数或载荷。
 func BuildSkillJobPrompt(skill domain.ProductSkill, jobType string) string {
 	prompt := strings.TrimSpace(optionalStringValue(skill.PromptTemplate))
 	if prompt == "" {
@@ -51,6 +53,7 @@ func BuildSkillJobPrompt(skill domain.ProductSkill, jobType string) string {
 	return prompt
 }
 
+// 构建技能发布提示词Template，为技能作业helpers生成后续步骤所需的派生参数或载荷。
 func BuildSkillPublishPromptTemplate(skill domain.ProductSkill) string {
 	if !skill.PublishIntroEnabled {
 		return ""
@@ -58,10 +61,12 @@ func BuildSkillPublishPromptTemplate(skill domain.ProductSkill) string {
 	return strings.TrimSpace(optionalStringValue(skill.PublishPromptTemplate))
 }
 
+// 处理默认技能分镜提示词Template相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func DefaultSkillStoryboardPromptTemplate(outputType string) string {
 	return strings.TrimSpace(defaultSkillStoryboardPrompt)
 }
 
+// 解析技能分镜提示词Template，根据当前配置和上下文确定最终使用结果。
 func ResolveSkillStoryboardPromptTemplate(skill domain.ProductSkill, jobType string) string {
 	if prompt := strings.TrimSpace(optionalStringValue(skill.StoryboardPromptTemplate)); prompt != "" {
 		return prompt
@@ -72,6 +77,7 @@ func ResolveSkillStoryboardPromptTemplate(skill domain.ProductSkill, jobType str
 	return strings.TrimSpace(defaultSkillStoryboardPrompt)
 }
 
+// 映射技能输出Type作业Type，把外部配置转换为当前业务可识别的表示。
 func MapSkillOutputTypeToJobType(outputType string) (string, bool) {
 	switch strings.TrimSpace(outputType) {
 	case "image", "image_text", "图文模式":
@@ -85,6 +91,7 @@ func MapSkillOutputTypeToJobType(outputType string) (string, bool) {
 	}
 }
 
+// 根据Auto发布计算账号Allowed，供技能作业helpers链路复用关键派生结果。
 func AccountAllowedForAutoPublish(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "failed", "invalid", "disabled", "deleted":
@@ -94,6 +101,7 @@ func AccountAllowedForAutoPublish(status string) bool {
 	}
 }
 
+// 构建技能AI作业载荷，为技能作业helpers生成后续步骤所需的派生参数或载荷。
 func BuildSkillAIJobPayload(
 	ctx context.Context,
 	app *appstate.App,
@@ -181,23 +189,24 @@ func BuildSkillAIJobPayload(
 			payload["durationSeconds"] = *videoOptions.DurationSeconds
 		}
 		if isVideoTextSkillOutput(skill.OutputType) && skill.FixedDurationSeconds != nil && *skill.FixedDurationSeconds > 0 {
+			segmentSeconds := ResolveSkillVideoSegmentSeconds(model)
 			rule, ruleErr := app.Store.FindEnabledWorkflowDurationRule(ctx, "video_text", "视文模式", *skill.FixedDurationSeconds)
 			if ruleErr != nil {
 				return nil, ruleErr
 			}
-			if rule == nil {
-				return nil, fmt.Errorf("skill fixed duration is not enabled in workflow duration rules")
-			}
 			payload["fixedDurationSeconds"] = *skill.FixedDurationSeconds
 			payload["durationSeconds"] = *skill.FixedDurationSeconds
-			payload["workflowPricing"] = map[string]any{
-				"workflowCode":        "video_text",
-				"outputType":          "视文模式",
-				"ruleId":              rule.ID,
-				"durationSeconds":     rule.DurationSeconds,
-				"segmentSeconds":      rule.SegmentSeconds,
-				"specialPriceCredits": rule.SpecialPriceCredits,
+			workflowPricing := map[string]any{
+				"workflowCode":    "video_text",
+				"outputType":      "视文模式",
+				"durationSeconds": *skill.FixedDurationSeconds,
+				"segmentSeconds":  segmentSeconds,
 			}
+			if rule != nil {
+				workflowPricing["ruleId"] = rule.ID
+				workflowPricing["specialPriceCredits"] = rule.SpecialPriceCredits
+			}
+			payload["workflowPricing"] = workflowPricing
 		}
 	}
 
@@ -245,6 +254,7 @@ func BuildSkillAIJobPayload(
 	return json.Marshal(payload)
 }
 
+// 规范化技能主题，统一技能作业helpers链路的输入格式和后续处理行为。
 func normalizeSkillTopics(topics []string) []string {
 	if len(topics) == 0 {
 		return []string{}
@@ -266,6 +276,7 @@ func normalizeSkillTopics(topics []string) []string {
 	return normalized
 }
 
+// 判断是否属于视频Text技能输出，供当前链路选择后续处理策略。
 func isVideoTextSkillOutput(outputType string) bool {
 	switch strings.TrimSpace(outputType) {
 	case "video", "video_text", "视文模式":
@@ -275,6 +286,7 @@ func isVideoTextSkillOutput(outputType string) bool {
 	}
 }
 
+// 加载技能分镜配置，供技能作业helpers继续处理当前业务状态。
 func loadSkillStoryboardConfig(ctx context.Context, app *appstate.App, skill domain.ProductSkill, jobType string) (string, string, []map[string]any, error) {
 	prompt := ResolveSkillStoryboardPromptTemplate(skill, jobType)
 	model := strings.TrimSpace(app.Config.DefaultChatModel)
@@ -310,6 +322,7 @@ func loadSkillStoryboardConfig(ctx context.Context, app *appstate.App, skill dom
 	return prompt, model, references, nil
 }
 
+// 读取技能资源Text，按当前存储模式返回后续流程需要的数据内容。
 func readSkillAssetText(ctx context.Context, app *appstate.App, asset domain.ProductSkillAsset) string {
 	if app == nil || app.Storage == nil || asset.StorageKey == nil || strings.TrimSpace(*asset.StorageKey) == "" {
 		return ""
@@ -321,6 +334,7 @@ func readSkillAssetText(ctx context.Context, app *appstate.App, asset domain.Pro
 	return strings.TrimSpace(string(data))
 }
 
+// 收集Ordered技能参考媒体Assets，整合技能作业helpers链路所需的候选输入。
 func collectOrderedSkillReferenceMediaAssets(assets []domain.ProductSkillAsset, referencePayload []byte) []domain.ProductSkillAsset {
 	if len(assets) == 0 {
 		return nil
@@ -362,6 +376,7 @@ func collectOrderedSkillReferenceMediaAssets(assets []domain.ProductSkillAsset, 
 	return items
 }
 
+// 处理解码技能参考媒体订单相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func decodeSkillReferenceMediaOrder(raw []byte) []string {
 	if len(raw) == 0 {
 		return nil
@@ -377,6 +392,7 @@ func decodeSkillReferenceMediaOrder(raw []byte) []string {
 	return normalizeReferenceMediaOrderValues(values)
 }
 
+// 规范化参考媒体订单值，统一技能作业helpers链路的输入格式和后续处理行为。
 func normalizeReferenceMediaOrderValues(value any) []string {
 	rawValues, ok := value.([]any)
 	if !ok {
@@ -398,6 +414,7 @@ func normalizeReferenceMediaOrderValues(value any) []string {
 	return result
 }
 
+// 构建技能参考媒体，为技能作业helpers生成后续步骤所需的派生参数或载荷。
 func buildSkillReferenceMedia(asset domain.ProductSkillAsset) map[string]any {
 	kind := "image"
 	if isSkillReferenceVideo(asset) {
@@ -415,6 +432,7 @@ func buildSkillReferenceMedia(asset domain.ProductSkillAsset) map[string]any {
 	}
 }
 
+// 判断是否属于技能参考图片，供当前链路选择后续处理策略。
 func isSkillReferenceImage(asset domain.ProductSkillAsset) bool {
 	if asset.MimeType != nil && strings.HasPrefix(strings.ToLower(strings.TrimSpace(*asset.MimeType)), "image/") {
 		return true
@@ -423,6 +441,7 @@ func isSkillReferenceImage(asset domain.ProductSkillAsset) bool {
 	return strings.Contains(value, "image") || strings.Contains(value, "cover")
 }
 
+// 判断是否属于技能参考视频，供当前链路选择后续处理策略。
 func isSkillReferenceVideo(asset domain.ProductSkillAsset) bool {
 	if asset.MimeType != nil && strings.HasPrefix(strings.ToLower(strings.TrimSpace(*asset.MimeType)), "video/") {
 		return true
@@ -431,6 +450,7 @@ func isSkillReferenceVideo(asset domain.ProductSkillAsset) bool {
 	return strings.Contains(value, "video")
 }
 
+// 判断是否属于技能参考Text，供当前链路选择后续处理策略。
 func isSkillReferenceText(asset domain.ProductSkillAsset) bool {
 	if asset.MimeType != nil {
 		mimeType := strings.ToLower(strings.TrimSpace(*asset.MimeType))
@@ -442,6 +462,7 @@ func isSkillReferenceText(asset domain.ProductSkillAsset) bool {
 	return strings.Contains(value, "text") || strings.Contains(value, "prompt")
 }
 
+// 处理可选String值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func optionalStringValue(value *string) string {
 	if value == nil {
 		return ""
@@ -449,6 +470,7 @@ func optionalStringValue(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
+// 处理追加Unique视频Subtitle规则相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func appendUniqueVideoSubtitleRule(prompt string) string {
 	trimmed := strings.TrimSpace(prompt)
 	if trimmed == "" {
@@ -461,6 +483,7 @@ func appendUniqueVideoSubtitleRule(prompt string) string {
 	return trimmed + "\n" + defaultSkillVideoSubtitleRule
 }
 
+// 解析技能视频生成Options，根据当前配置和上下文确定最终使用结果。
 func resolveSkillVideoGenerationOptions(skill domain.ProductSkill, model *domain.AIModel) skillVideoGenerationOptions {
 	maps := decodeSkillReferencePayloadMaps(skill.ReferencePayload)
 	resolution := firstStringValueFromMaps(maps, "resolution", "videoSize", "size")
@@ -484,11 +507,8 @@ func resolveSkillVideoGenerationOptions(skill domain.ProductSkill, model *domain
 		aspectRatio = defaultSkillVideoAspectRatio
 	}
 
-	if durationSeconds <= 0 && model != nil {
-		durationSeconds = firstSupportedSkillVideoDurationSeconds(model.VideoSupportedDurations)
-	}
 	if durationSeconds <= 0 {
-		durationSeconds = defaultSkillVideoDurationSeconds
+		durationSeconds = ResolveSkillVideoSegmentSeconds(model)
 	}
 
 	return skillVideoGenerationOptions{
@@ -498,6 +518,7 @@ func resolveSkillVideoGenerationOptions(skill domain.ProductSkill, model *domain
 	}
 }
 
+// 处理解码技能参考载荷Maps相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func decodeSkillReferencePayloadMaps(raw []byte) []map[string]any {
 	if len(raw) == 0 {
 		return nil
@@ -519,6 +540,7 @@ func decodeSkillReferencePayloadMaps(raw []byte) []map[string]any {
 	return result
 }
 
+// 处理首个String值Maps相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func firstStringValueFromMaps(maps []map[string]any, keys ...string) string {
 	for _, item := range maps {
 		for _, key := range keys {
@@ -535,6 +557,7 @@ func firstStringValueFromMaps(maps []map[string]any, keys ...string) string {
 	return ""
 }
 
+// 处理首个Int值Maps相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func firstIntValueFromMaps(maps []map[string]any, keys ...string) (int, bool) {
 	for _, item := range maps {
 		for _, key := range keys {
@@ -556,6 +579,7 @@ func firstIntValueFromMaps(maps []map[string]any, keys ...string) (int, bool) {
 	return 0, false
 }
 
+// 处理首个Supported技能视频Resolution相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func firstSupportedSkillVideoResolution(values []string) string {
 	for _, item := range values {
 		resolution, _ := parseSkillVideoResolutionOption(item)
@@ -566,6 +590,7 @@ func firstSupportedSkillVideoResolution(values []string) string {
 	return ""
 }
 
+// 处理首个Supported技能视频时长Seconds相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func firstSupportedSkillVideoDurationSeconds(values []string) int {
 	for _, item := range values {
 		seconds, ok := parseSkillVideoDurationSeconds(item)
@@ -576,6 +601,17 @@ func firstSupportedSkillVideoDurationSeconds(values []string) int {
 	return 0
 }
 
+// 解析技能视频分段Seconds，根据当前配置和上下文确定最终使用结果。
+func ResolveSkillVideoSegmentSeconds(model *domain.AIModel) int {
+	if model != nil {
+		if seconds := firstSupportedSkillVideoDurationSeconds(model.VideoSupportedDurations); seconds > 0 {
+			return seconds
+		}
+	}
+	return defaultSkillVideoDurationSeconds
+}
+
+// 解析技能视频Resolution选项，为技能作业helpers提供结构化输入。
 func parseSkillVideoResolutionOption(value string) (string, string) {
 	normalized := strings.TrimSpace(strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(value, "×", "x"), "*", "x")))
 	parts := strings.Split(normalized, "x")
@@ -593,6 +629,7 @@ func parseSkillVideoResolutionOption(value string) (string, string) {
 	return fmt.Sprintf("%dx%d", width, height), skillAspectRatioFromDimensions(width, height)
 }
 
+// 解析技能视频时长Seconds，为技能作业helpers提供结构化输入。
 func parseSkillVideoDurationSeconds(value string) (int, bool) {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	normalized = strings.TrimSuffix(normalized, "s")
@@ -607,11 +644,13 @@ func parseSkillVideoDurationSeconds(value string) (int, bool) {
 	return parsed, true
 }
 
+// 处理技能AspectRatioResolution相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func skillAspectRatioFromResolution(value string) string {
 	_, aspectRatio := parseSkillVideoResolutionOption(value)
 	return aspectRatio
 }
 
+// 处理技能AspectRatioDimensions相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func skillAspectRatioFromDimensions(width int, height int) string {
 	divisor := skillGreatestCommonDivisor(width, height)
 	if divisor <= 0 {
@@ -620,6 +659,7 @@ func skillAspectRatioFromDimensions(width int, height int) string {
 	return fmt.Sprintf("%d:%d", width/divisor, height/divisor)
 }
 
+// 处理技能Greatest公共Divisor相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func skillGreatestCommonDivisor(left int, right int) int {
 	for right != 0 {
 		left, right = right, left%right
@@ -633,6 +673,7 @@ func skillGreatestCommonDivisor(left int, right int) int {
 	return left
 }
 
+// 处理intPtr相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func intPtr(value int) *int {
 	if value <= 0 {
 		return nil

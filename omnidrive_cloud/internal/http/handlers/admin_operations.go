@@ -91,6 +91,7 @@ func limitSlice[T any](items []T, limit int) []T {
 	return items[:limit]
 }
 
+// 处理unique裁剪IDs相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func uniqueTrimmedIDs(values []string) []string {
 	seen := map[string]struct{}{}
 	items := make([]string, 0, len(values))
@@ -108,6 +109,7 @@ func uniqueTrimmedIDs(values []string) []string {
 	return items
 }
 
+// 规范化裁剪Strings，统一管理端operations链路的输入格式和后续处理行为。
 func normalizeTrimmedStrings(values []string) []string {
 	if len(values) == 0 {
 		return []string{}
@@ -128,6 +130,7 @@ func normalizeTrimmedStrings(values []string) []string {
 	return items
 }
 
+// 处理管理端设备Summary设备相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func adminDeviceSummaryFromDevice(device *domain.Device) domain.AdminDeviceSummary {
 	if device == nil {
 		return domain.AdminDeviceSummary{}
@@ -142,6 +145,7 @@ func adminDeviceSummaryFromDevice(device *domain.Device) domain.AdminDeviceSumma
 	}
 }
 
+// 处理管理端账号Summary账号相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func adminAccountSummaryFromAccount(account *domain.PlatformAccount) *domain.AdminAccountSummary {
 	if account == nil {
 		return nil
@@ -156,6 +160,7 @@ func adminAccountSummaryFromAccount(account *domain.PlatformAccount) *domain.Adm
 	}
 }
 
+// 处理管理端技能Summary技能相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func adminSkillSummaryFromSkill(skill *domain.ProductSkill) *domain.AdminSkillSummary {
 	if skill == nil {
 		return nil
@@ -178,6 +183,7 @@ func adminSkillSummaryFromSkill(skill *domain.ProductSkill) *domain.AdminSkillSu
 	}
 }
 
+// 处理管理端用户动作相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func adminUserActions(row *domain.AdminUserRow) domain.AdminUserActionState {
 	if row == nil {
 		return domain.AdminUserActionState{}
@@ -190,6 +196,7 @@ func adminUserActions(row *domain.AdminUserRow) domain.AdminUserActionState {
 	}
 }
 
+// 处理管理端设备动作相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func adminDeviceActions(row *domain.AdminDeviceRow) domain.AdminDeviceActionState {
 	if row == nil {
 		return domain.AdminDeviceActionState{}
@@ -202,6 +209,7 @@ func adminDeviceActions(row *domain.AdminDeviceRow) domain.AdminDeviceActionStat
 	}
 }
 
+// 处理管理端媒体账号动作相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func adminMediaAccountActions(row *domain.AdminMediaAccountRow) domain.AdminMediaAccountActionState {
 	if row == nil {
 		return domain.AdminMediaAccountActionState{}
@@ -213,6 +221,7 @@ func adminMediaAccountActions(row *domain.AdminMediaAccountRow) domain.AdminMedi
 	}
 }
 
+// 汇总管理端发布任务批量动作Items，供接口响应或后续统计逻辑直接复用。
 func summarizeAdminPublishTaskBulkActionItems(items []domain.AdminPublishTaskBulkActionItem) domain.AdminPublishTaskBulkActionSummary {
 	summary := domain.AdminPublishTaskBulkActionSummary{
 		ByStatus: map[string]int64{},
@@ -235,6 +244,7 @@ func summarizeAdminPublishTaskBulkActionItems(items []domain.AdminPublishTaskBul
 	return summary
 }
 
+// 汇总管理端AI作业批量动作Items，供接口响应或后续统计逻辑直接复用。
 func summarizeAdminAIJobBulkActionItems(items []domain.AdminAIJobBulkActionItem) domain.AdminAIJobBulkActionSummary {
 	summary := domain.AdminAIJobBulkActionSummary{
 		ByStatus: map[string]int64{},
@@ -257,6 +267,7 @@ func summarizeAdminAIJobBulkActionItems(items []domain.AdminAIJobBulkActionItem)
 	return summary
 }
 
+// 汇总管理端用户批量动作Items，供接口响应或后续统计逻辑直接复用。
 func summarizeAdminUserBulkActionItems(items []domain.AdminUserBulkActionItem) domain.AdminUserBulkActionSummary {
 	summary := domain.AdminUserBulkActionSummary{
 		SelectedCount: int64(len(items)),
@@ -279,6 +290,7 @@ func summarizeAdminUserBulkActionItems(items []domain.AdminUserBulkActionItem) d
 	return summary
 }
 
+// 汇总管理端设备批量动作Items，供接口响应或后续统计逻辑直接复用。
 func summarizeAdminDeviceBulkActionItems(items []domain.AdminDeviceBulkActionItem) domain.AdminDeviceBulkActionSummary {
 	summary := domain.AdminDeviceBulkActionSummary{
 		SelectedCount: int64(len(items)),
@@ -301,6 +313,7 @@ func summarizeAdminDeviceBulkActionItems(items []domain.AdminDeviceBulkActionIte
 	return summary
 }
 
+// 汇总管理端媒体账号批量动作Items，供接口响应或后续统计逻辑直接复用。
 func summarizeAdminMediaAccountBulkActionItems(items []domain.AdminMediaAccountBulkActionItem) domain.AdminMediaAccountBulkActionSummary {
 	summary := domain.AdminMediaAccountBulkActionSummary{
 		SelectedCount: int64(len(items)),
@@ -323,6 +336,7 @@ func summarizeAdminMediaAccountBulkActionItems(items []domain.AdminMediaAccountB
 	return summary
 }
 
+// 处理compactJSON载荷相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func compactJSONPayload(raw json.RawMessage) json.RawMessage {
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" || trimmed == "null" {
@@ -331,6 +345,7 @@ func compactJSONPayload(raw json.RawMessage) json.RawMessage {
 	return json.RawMessage(trimmed)
 }
 
+// 处理compactJSON载荷Bytes相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func compactJSONPayloadFromBytes(raw []byte) json.RawMessage {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || string(trimmed) == "null" {
@@ -354,6 +369,7 @@ type adminAIJobScheduleMeta struct {
 	ScheduleKey string
 }
 
+// 提取管理端AI作业调度Meta，供管理端operations后续关联和分支判断复用。
 func extractAdminAIJobScheduleMeta(job domain.AIJob) adminAIJobScheduleMeta {
 	meta := adminAIJobScheduleMeta{GenerateAt: job.RunAt}
 	if len(job.InputPayload) == 0 {
@@ -386,6 +402,7 @@ func extractAdminAIJobScheduleMeta(job domain.AIJob) adminAIJobScheduleMeta {
 	return meta
 }
 
+// 处理format管理端AI作业调度Summary相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func formatAdminAIJobScheduleSummary(meta adminAIJobScheduleMeta) string {
 	if !meta.RepeatDaily {
 		return ""
@@ -396,6 +413,7 @@ func formatAdminAIJobScheduleSummary(meta adminAIJobScheduleMeta) string {
 	return "同一循环任务，每天按时发布"
 }
 
+// 处理pick作业LifecycleTitle相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func pickJobLifecycleTitle(status string) string {
 	switch strings.TrimSpace(status) {
 	case "scheduled":
@@ -415,6 +433,7 @@ func pickJobLifecycleTitle(status string) string {
 	}
 }
 
+// 处理pick作业Lifecycle时间相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func pickJobLifecycleTime(job domain.AIJob) time.Time {
 	if job.FinishedAt != nil {
 		return *job.FinishedAt
@@ -425,6 +444,7 @@ func pickJobLifecycleTime(job domain.AIJob) time.Time {
 	return job.CreatedAt
 }
 
+// 构建AI作业ExecutionLogs，为管理端operations生成后续步骤所需的派生参数或载荷。
 func buildAIJobExecutionLogs(workspace *domain.AdminAIJobWorkspace) []domain.AdminExecutionLog {
 	if workspace == nil {
 		return nil
@@ -566,6 +586,7 @@ func buildAIJobExecutionLogs(workspace *domain.AdminAIJobWorkspace) []domain.Adm
 	return entries
 }
 
+// 处理管理端Console记录管理端动作接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) recordAdminAction(ctx context.Context, resourceType string, resourceID *string, action string, title string, status string, message *string, payload []byte) {
 	admin := httpcontext.CurrentAdmin(ctx)
 	if admin == nil {
@@ -586,6 +607,7 @@ func (h *AdminConsoleHandler) recordAdminAction(ctx context.Context, resourceTyp
 	})
 }
 
+// 构建管理端AI作业桥接状态，为管理端operations生成后续步骤所需的派生参数或载荷。
 func buildAdminAIJobBridgeState(job *domain.AIJob, artifactCount int64, mirroredArtifactCount int64, publishTaskCount int64) domain.AIJobBridgeState {
 	if job == nil {
 		return domain.AIJobBridgeState{}
@@ -648,6 +670,7 @@ func buildAdminAIJobBridgeState(job *domain.AIJob, artifactCount int64, mirrored
 	}
 }
 
+// 处理管理端Consoledecorate管理端任务行接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) decorateAdminTaskRow(ctx context.Context, row *domain.AdminPublishTaskRow, includeRuntime bool) (*domain.PublishTaskRuntimeState, error) {
 	if row == nil {
 		return nil, nil
@@ -689,6 +712,7 @@ func (h *AdminConsoleHandler) decorateAdminTaskRow(ctx context.Context, row *dom
 	return runtimeState, nil
 }
 
+// 处理管理端Consoledecorate管理端AI作业行接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) decorateAdminAIJobRow(row *domain.AdminAIJobRow) {
 	if row == nil {
 		return
@@ -697,6 +721,7 @@ func (h *AdminConsoleHandler) decorateAdminAIJobRow(row *domain.AdminAIJobRow) {
 	row.Bridge = buildAdminAIJobBridgeState(&row.Job, row.ArtifactCount, row.MirroredArtifactCount, row.PublishTaskCount)
 }
 
+// 处理管理端Consoledecorate管理端用户行接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) decorateAdminUserRow(row *domain.AdminUserRow) {
 	if row == nil {
 		return
@@ -704,6 +729,7 @@ func (h *AdminConsoleHandler) decorateAdminUserRow(row *domain.AdminUserRow) {
 	row.Actions = adminUserActions(row)
 }
 
+// 处理管理端Consoledecorate管理端设备行接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) decorateAdminDeviceRow(row *domain.AdminDeviceRow) {
 	if row == nil {
 		return
@@ -711,6 +737,7 @@ func (h *AdminConsoleHandler) decorateAdminDeviceRow(row *domain.AdminDeviceRow)
 	row.Actions = adminDeviceActions(row)
 }
 
+// 处理管理端Consoledecorate管理端媒体账号行接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) decorateAdminMediaAccountRow(row *domain.AdminMediaAccountRow) {
 	if row == nil {
 		return
@@ -718,6 +745,7 @@ func (h *AdminConsoleHandler) decorateAdminMediaAccountRow(row *domain.AdminMedi
 	row.Actions = adminMediaAccountActions(row)
 }
 
+// 处理管理端Console加载管理端任务行接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) loadAdminTaskRow(ctx context.Context, taskID string, includeRuntime bool) (*domain.AdminPublishTaskRow, *domain.PublishTaskRuntimeState, error) {
 	row, err := h.app.Store.GetAdminTaskByID(ctx, taskID)
 	if err != nil || row == nil {
@@ -730,6 +758,7 @@ func (h *AdminConsoleHandler) loadAdminTaskRow(ctx context.Context, taskID strin
 	return row, runtimeState, nil
 }
 
+// 处理管理端Console加载管理端AI作业行接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) loadAdminAIJobRow(ctx context.Context, jobID string) (*domain.AdminAIJobRow, error) {
 	row, err := h.app.Store.GetAdminAIJobByID(ctx, jobID)
 	if err != nil || row == nil {
@@ -739,6 +768,7 @@ func (h *AdminConsoleHandler) loadAdminAIJobRow(ctx context.Context, jobID strin
 	return row, nil
 }
 
+// 处理管理端Console加载管理端媒体账号行接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) loadAdminMediaAccountRow(ctx context.Context, accountID string) (*domain.AdminMediaAccountRow, error) {
 	row, err := h.app.Store.GetAdminAccountByID(ctx, accountID)
 	if err != nil || row == nil {
@@ -748,6 +778,7 @@ func (h *AdminConsoleHandler) loadAdminMediaAccountRow(ctx context.Context, acco
 	return row, nil
 }
 
+// 处理管理端Console创建管理端媒体账号Validation会话接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) createAdminMediaAccountValidationSession(ctx context.Context, record *domain.AdminMediaAccountRow) (*domain.LoginSession, *string, error) {
 	if record == nil {
 		return nil, auditStringPtr("Media account not found"), nil
@@ -805,6 +836,7 @@ func (h *AdminConsoleHandler) createAdminMediaAccountValidationSession(ctx conte
 	return session, nil, nil
 }
 
+// 处理管理端Console创建管理端远端登录会话接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) createAdminRemoteLoginSession(ctx context.Context, record *domain.AdminDeviceRow, platform string, accountName string) (*domain.LoginSession, *string, error) {
 	if record == nil {
 		return nil, auditStringPtr("Device not found"), nil
@@ -869,6 +901,7 @@ func (h *AdminConsoleHandler) createAdminRemoteLoginSession(ctx context.Context,
 	return session, nil, nil
 }
 
+// 处理管理端Console删除管理端媒体账号接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) deleteAdminMediaAccount(ctx context.Context, record *domain.AdminMediaAccountRow) (bool, *string, int64, int64, error) {
 	if record == nil {
 		return false, auditStringPtr("Media account not found"), 0, 0, nil
@@ -915,6 +948,7 @@ func (h *AdminConsoleHandler) deleteAdminMediaAccount(ctx context.Context, recor
 	return true, nil, 0, 0, nil
 }
 
+// 处理管理端Console强制释放设备Leases接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) forceReleaseDeviceLeases(ctx context.Context, record *domain.AdminDeviceRow) (*domain.AdminDeviceForceReleaseResult, *string, error) {
 	if record == nil {
 		return nil, auditStringPtr("Device not found"), nil
@@ -1027,6 +1061,7 @@ func (h *AdminConsoleHandler) forceReleaseDeviceLeases(ctx context.Context, reco
 	}, nil, nil
 }
 
+// 处理管理端Console详情用户接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) DetailUser(w http.ResponseWriter, r *http.Request) {
 	userID := strings.TrimSpace(chi.URLParam(r, "userId"))
 	if userID == "" {
@@ -1048,6 +1083,7 @@ func (h *AdminConsoleHandler) DetailUser(w http.ResponseWriter, r *http.Request)
 	render.JSON(w, http.StatusOK, record)
 }
 
+// 处理管理端Console更新用户接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	userID := strings.TrimSpace(chi.URLParam(r, "userId"))
 	if userID == "" {
@@ -1124,6 +1160,7 @@ func (h *AdminConsoleHandler) UpdateUser(w http.ResponseWriter, r *http.Request)
 	render.JSON(w, http.StatusOK, record)
 }
 
+// 处理管理端Console删除用户接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	userID := strings.TrimSpace(chi.URLParam(r, "userId"))
 	if userID == "" {
@@ -1166,6 +1203,7 @@ func (h *AdminConsoleHandler) DeleteUser(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// 处理管理端Console批量动作用户接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) BulkActionUsers(w http.ResponseWriter, r *http.Request) {
 	var payload adminBatchActionUsersRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -1272,6 +1310,7 @@ func (h *AdminConsoleHandler) BulkActionUsers(w http.ResponseWriter, r *http.Req
 	})
 }
 
+// 处理管理端Console用户工作区接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) UserWorkspace(w http.ResponseWriter, r *http.Request) {
 	userID := strings.TrimSpace(chi.URLParam(r, "userId"))
 	if userID == "" {
@@ -1344,6 +1383,7 @@ func (h *AdminConsoleHandler) UserWorkspace(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// 处理管理端Console详情设备接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) DetailDevice(w http.ResponseWriter, r *http.Request) {
 	deviceID := strings.TrimSpace(chi.URLParam(r, "deviceId"))
 	if deviceID == "" {
@@ -1365,6 +1405,7 @@ func (h *AdminConsoleHandler) DetailDevice(w http.ResponseWriter, r *http.Reques
 	render.JSON(w, http.StatusOK, record)
 }
 
+// 处理管理端Console更新设备接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 	deviceID := strings.TrimSpace(chi.URLParam(r, "deviceId"))
 	if deviceID == "" {
@@ -1446,6 +1487,7 @@ func (h *AdminConsoleHandler) UpdateDevice(w http.ResponseWriter, r *http.Reques
 	render.JSON(w, http.StatusOK, record)
 }
 
+// 处理管理端Console更新设备激活接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) UpdateDeviceActivation(w http.ResponseWriter, r *http.Request) {
 	deviceID := strings.TrimSpace(chi.URLParam(r, "deviceId"))
 	if deviceID == "" {
@@ -1570,6 +1612,7 @@ func (h *AdminConsoleHandler) UpdateDeviceActivation(w http.ResponseWriter, r *h
 	render.JSON(w, http.StatusOK, record)
 }
 
+// 处理管理端ConsoleUnbind设备接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) UnbindDevice(w http.ResponseWriter, r *http.Request) {
 	deviceID := strings.TrimSpace(chi.URLParam(r, "deviceId"))
 	if deviceID == "" {
@@ -1646,6 +1689,7 @@ func (h *AdminConsoleHandler) UnbindDevice(w http.ResponseWriter, r *http.Reques
 	render.JSON(w, http.StatusOK, record)
 }
 
+// 处理管理端Console设备工作区接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) DeviceWorkspace(w http.ResponseWriter, r *http.Request) {
 	deviceID := strings.TrimSpace(chi.URLParam(r, "deviceId"))
 	if deviceID == "" {
@@ -1715,6 +1759,7 @@ func (h *AdminConsoleHandler) DeviceWorkspace(w http.ResponseWriter, r *http.Req
 	render.JSON(w, http.StatusOK, workspace)
 }
 
+// 处理管理端Console强制释放设备接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ForceReleaseDevice(w http.ResponseWriter, r *http.Request) {
 	deviceID := strings.TrimSpace(chi.URLParam(r, "deviceId"))
 	if deviceID == "" {
@@ -1744,6 +1789,7 @@ func (h *AdminConsoleHandler) ForceReleaseDevice(w http.ResponseWriter, r *http.
 	render.JSON(w, http.StatusOK, result)
 }
 
+// 处理管理端Console批量动作设备接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) BulkActionDevices(w http.ResponseWriter, r *http.Request) {
 	var payload adminBatchActionDevicesRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -1873,6 +1919,7 @@ func (h *AdminConsoleHandler) BulkActionDevices(w http.ResponseWriter, r *http.R
 	})
 }
 
+// 处理管理端Console列表媒体账号接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ListMediaAccounts(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, summary, err := h.app.Store.ListAdminAccounts(r.Context(), store.AdminAccountListFilter{
@@ -1903,6 +1950,7 @@ func (h *AdminConsoleHandler) ListMediaAccounts(w http.ResponseWriter, r *http.R
 	})
 }
 
+// 处理管理端Console详情媒体账号接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) DetailMediaAccount(w http.ResponseWriter, r *http.Request) {
 	accountID := strings.TrimSpace(chi.URLParam(r, "accountId"))
 	if accountID == "" {
@@ -1923,6 +1971,7 @@ func (h *AdminConsoleHandler) DetailMediaAccount(w http.ResponseWriter, r *http.
 	render.JSON(w, http.StatusOK, record)
 }
 
+// 处理管理端Console更新媒体账号接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) UpdateMediaAccount(w http.ResponseWriter, r *http.Request) {
 	accountID := strings.TrimSpace(chi.URLParam(r, "accountId"))
 	if accountID == "" {
@@ -1976,6 +2025,7 @@ func (h *AdminConsoleHandler) UpdateMediaAccount(w http.ResponseWriter, r *http.
 	render.JSON(w, http.StatusOK, record)
 }
 
+// 处理管理端Console校验媒体账号接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ValidateMediaAccount(w http.ResponseWriter, r *http.Request) {
 	accountID := strings.TrimSpace(chi.URLParam(r, "accountId"))
 	if accountID == "" {
@@ -2005,6 +2055,7 @@ func (h *AdminConsoleHandler) ValidateMediaAccount(w http.ResponseWriter, r *htt
 	render.JSON(w, http.StatusCreated, session)
 }
 
+// 处理管理端Console创建远端Login接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) CreateRemoteLogin(w http.ResponseWriter, r *http.Request) {
 	var payload createRemoteLoginRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -2044,6 +2095,7 @@ func (h *AdminConsoleHandler) CreateRemoteLogin(w http.ResponseWriter, r *http.R
 	render.JSON(w, http.StatusCreated, session)
 }
 
+// 处理管理端Console获取登录会话接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) GetLoginSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := strings.TrimSpace(chi.URLParam(r, "sessionId"))
 	if sessionID == "" {
@@ -2064,6 +2116,7 @@ func (h *AdminConsoleHandler) GetLoginSession(w http.ResponseWriter, r *http.Req
 	render.JSON(w, http.StatusOK, session)
 }
 
+// 处理管理端Console创建登录会话动作接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) CreateLoginSessionAction(w http.ResponseWriter, r *http.Request) {
 	sessionID := strings.TrimSpace(chi.URLParam(r, "sessionId"))
 	if sessionID == "" {
@@ -2156,6 +2209,7 @@ func (h *AdminConsoleHandler) CreateLoginSessionAction(w http.ResponseWriter, r 
 	render.JSON(w, http.StatusCreated, action)
 }
 
+// 处理管理端Console删除媒体账号接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) DeleteMediaAccount(w http.ResponseWriter, r *http.Request) {
 	accountID := strings.TrimSpace(chi.URLParam(r, "accountId"))
 	if accountID == "" {
@@ -2195,6 +2249,7 @@ func (h *AdminConsoleHandler) DeleteMediaAccount(w http.ResponseWriter, r *http.
 	render.JSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
 
+// 处理管理端Console批量动作媒体账号接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) BulkActionMediaAccounts(w http.ResponseWriter, r *http.Request) {
 	var payload adminBatchActionMediaAccountsRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -2288,6 +2343,7 @@ func (h *AdminConsoleHandler) BulkActionMediaAccounts(w http.ResponseWriter, r *
 	})
 }
 
+// 处理管理端Console媒体账号工作区接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) MediaAccountWorkspace(w http.ResponseWriter, r *http.Request) {
 	accountID := strings.TrimSpace(chi.URLParam(r, "accountId"))
 	if accountID == "" {
@@ -2327,6 +2383,7 @@ func (h *AdminConsoleHandler) MediaAccountWorkspace(w http.ResponseWriter, r *ht
 	render.JSON(w, http.StatusOK, workspace)
 }
 
+// 处理管理端Console发布任务列表接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ListPublishTasks(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, summary, err := h.app.Store.ListAdminTasks(r.Context(), store.AdminTaskListFilter{
@@ -2363,6 +2420,7 @@ func (h *AdminConsoleHandler) ListPublishTasks(w http.ResponseWriter, r *http.Re
 	})
 }
 
+// 处理管理端Console详情发布任务接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) DetailPublishTask(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
 	if taskID == "" {
@@ -2383,6 +2441,7 @@ func (h *AdminConsoleHandler) DetailPublishTask(w http.ResponseWriter, r *http.R
 	render.JSON(w, http.StatusOK, record)
 }
 
+// 处理管理端Console更新发布任务接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) UpdatePublishTask(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
 	if taskID == "" {
@@ -2446,6 +2505,7 @@ func (h *AdminConsoleHandler) UpdatePublishTask(w http.ResponseWriter, r *http.R
 	render.JSON(w, http.StatusOK, record)
 }
 
+// 处理管理端Console发布任务工作区接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) PublishTaskWorkspace(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
 	if taskID == "" {
@@ -2493,6 +2553,7 @@ func (h *AdminConsoleHandler) PublishTaskWorkspace(w http.ResponseWriter, r *htt
 	render.JSON(w, http.StatusOK, workspace)
 }
 
+// 处理管理端Console列表发布任务事件接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ListPublishTaskEvents(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
 	if taskID == "" {
@@ -2522,6 +2583,7 @@ func (h *AdminConsoleHandler) ListPublishTaskEvents(w http.ResponseWriter, r *ht
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理管理端Console列表发布任务产物接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ListPublishTaskArtifacts(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
 	if taskID == "" {
@@ -2551,6 +2613,7 @@ func (h *AdminConsoleHandler) ListPublishTaskArtifacts(w http.ResponseWriter, r 
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理管理端Console列表发布任务素材接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ListPublishTaskMaterials(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
 	if taskID == "" {
@@ -2580,6 +2643,7 @@ func (h *AdminConsoleHandler) ListPublishTaskMaterials(w http.ResponseWriter, r 
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理管理端Console取消发布任务接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) CancelPublishTask(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
 	if taskID == "" {
@@ -2620,6 +2684,7 @@ func (h *AdminConsoleHandler) CancelPublishTask(w http.ResponseWriter, r *http.R
 	render.JSON(w, http.StatusOK, updated)
 }
 
+// 处理管理端Console重试发布任务接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) RetryPublishTask(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
 	if taskID == "" {
@@ -2660,6 +2725,7 @@ func (h *AdminConsoleHandler) RetryPublishTask(w http.ResponseWriter, r *http.Re
 	render.JSON(w, http.StatusOK, updated)
 }
 
+// 处理管理端Console强制释放发布任务接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ForceReleasePublishTask(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
 	if taskID == "" {
@@ -2700,6 +2766,7 @@ func (h *AdminConsoleHandler) ForceReleasePublishTask(w http.ResponseWriter, r *
 	render.JSON(w, http.StatusOK, updated)
 }
 
+// 处理管理端Console恢复发布任务接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ResumePublishTask(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
 	if taskID == "" {
@@ -2749,6 +2816,7 @@ func (h *AdminConsoleHandler) ResumePublishTask(w http.ResponseWriter, r *http.R
 	render.JSON(w, http.StatusOK, updated)
 }
 
+// 处理管理端Console人工解析发布任务接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ManualResolvePublishTask(w http.ResponseWriter, r *http.Request) {
 	taskID := strings.TrimSpace(chi.URLParam(r, "taskId"))
 	if taskID == "" {
@@ -2807,6 +2875,7 @@ func (h *AdminConsoleHandler) ManualResolvePublishTask(w http.ResponseWriter, r 
 	render.JSON(w, http.StatusOK, updated)
 }
 
+// 处理管理端Console批量动作发布任务s接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) BulkActionPublishTasks(w http.ResponseWriter, r *http.Request) {
 	var payload adminBatchActionPublishTasksRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -2973,6 +3042,7 @@ func (h *AdminConsoleHandler) BulkActionPublishTasks(w http.ResponseWriter, r *h
 	})
 }
 
+// 处理管理端ConsoleAI作业列表接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ListAIJobs(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, summary, err := h.app.Store.ListAdminAIJobs(r.Context(), store.AdminAIJobListFilter{
@@ -3008,6 +3078,7 @@ func (h *AdminConsoleHandler) ListAIJobs(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// 处理管理端Console详情AI作业接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) DetailAIJob(w http.ResponseWriter, r *http.Request) {
 	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
 	if jobID == "" {
@@ -3028,6 +3099,7 @@ func (h *AdminConsoleHandler) DetailAIJob(w http.ResponseWriter, r *http.Request
 	render.JSON(w, http.StatusOK, record)
 }
 
+// 处理管理端Console更新AI作业接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) UpdateAIJob(w http.ResponseWriter, r *http.Request) {
 	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
 	if jobID == "" {
@@ -3090,6 +3162,7 @@ func (h *AdminConsoleHandler) UpdateAIJob(w http.ResponseWriter, r *http.Request
 	render.JSON(w, http.StatusOK, record)
 }
 
+// 处理管理端ConsoleAI作业工作区接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) AIJobWorkspace(w http.ResponseWriter, r *http.Request) {
 	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
 	if jobID == "" {
@@ -3137,6 +3210,7 @@ func (h *AdminConsoleHandler) AIJobWorkspace(w http.ResponseWriter, r *http.Requ
 	render.JSON(w, http.StatusOK, workspace)
 }
 
+// 处理管理端Console列表AI作业产物接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ListAIJobArtifacts(w http.ResponseWriter, r *http.Request) {
 	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
 	if jobID == "" {
@@ -3162,6 +3236,7 @@ func (h *AdminConsoleHandler) ListAIJobArtifacts(w http.ResponseWriter, r *http.
 	render.JSON(w, http.StatusOK, items)
 }
 
+// 处理管理端Console取消AI作业接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) CancelAIJob(w http.ResponseWriter, r *http.Request) {
 	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
 	if jobID == "" {
@@ -3203,6 +3278,7 @@ func (h *AdminConsoleHandler) CancelAIJob(w http.ResponseWriter, r *http.Request
 	render.JSON(w, http.StatusOK, updated)
 }
 
+// 处理管理端Console重试AI作业接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) RetryAIJob(w http.ResponseWriter, r *http.Request) {
 	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
 	if jobID == "" {
@@ -3253,6 +3329,7 @@ func (h *AdminConsoleHandler) RetryAIJob(w http.ResponseWriter, r *http.Request)
 	render.JSON(w, http.StatusOK, updated)
 }
 
+// 处理管理端Console强制释放AI作业接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ForceReleaseAIJob(w http.ResponseWriter, r *http.Request) {
 	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
 	if jobID == "" {
@@ -3289,6 +3366,7 @@ func (h *AdminConsoleHandler) ForceReleaseAIJob(w http.ResponseWriter, r *http.R
 	render.JSON(w, http.StatusOK, updated)
 }
 
+// 处理管理端Console批量动作AI作业s接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) BulkActionAIJobs(w http.ResponseWriter, r *http.Request) {
 	var payload adminBatchActionAIJobsRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {

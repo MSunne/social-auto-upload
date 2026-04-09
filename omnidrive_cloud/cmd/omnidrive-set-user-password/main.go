@@ -14,6 +14,7 @@ import (
 	"omnidrive_cloud/internal/security"
 )
 
+// 组装用户密码设置命令依赖并启动主流程，发生错误时直接退出进程。
 func main() {
 	var email string
 	var phone string

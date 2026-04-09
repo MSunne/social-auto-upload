@@ -40,6 +40,11 @@ export const accountApi = {
     return http.get(`/deleteAccount?id=${id}`)
   },
 
+  /** 在本机打开账号后台 */
+  openBackend(id) {
+    return http.post(`/api/accounts/${id}/open-backend`)
+  },
+
   /** 上传 Cookie 文件 */
   uploadCookie(formData) {
     return http.upload('/uploadCookie', formData)

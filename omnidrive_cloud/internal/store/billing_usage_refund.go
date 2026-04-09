@@ -73,6 +73,7 @@ type distributionReleaseEventRecord struct {
 	Metadata                 []byte
 }
 
+// 返还用量额度Failed来源，把失败或回滚场景下的额度或资源归还到账户状态。
 func (s *Store) ReturnUsageCreditsForFailedSource(ctx context.Context, sourceType string, sourceID string, failureMessage string) error {
 	if strings.TrimSpace(sourceType) == "" || strings.TrimSpace(sourceID) == "" {
 		return nil
@@ -90,6 +91,7 @@ func (s *Store) ReturnUsageCreditsForFailedSource(ctx context.Context, sourceTyp
 	return tx.Commit(ctx)
 }
 
+// 根据Failed来源事务计算返还用量额度，供存储层的状态判定和查询逻辑复用。
 func (s *Store) returnUsageCreditsForFailedSourceTx(ctx context.Context, tx pgx.Tx, sourceType string, sourceID string, failureMessage string) error {
 	sourceType = strings.TrimSpace(sourceType)
 	sourceID = strings.TrimSpace(sourceID)
@@ -194,6 +196,7 @@ func (s *Store) returnUsageCreditsForFailedSourceTx(ctx context.Context, tx pgx.
 	return nil
 }
 
+// 处理refund用量事件事务相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) refundUsageEventTx(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -243,12 +246,14 @@ func (s *Store) refundUsageEventTx(
 	return summary, nil
 }
 
+// 判断是否存在RefundEffect，供当前链路选择后续处理策略。
 func (summary usageRefundSummary) hasRefundEffect() bool {
 	return summary.ReturnedCredits > 0 ||
 		len(summary.ReturnWalletLedgerIDs) > 0 ||
 		len(summary.ReversedReleaseEventIDs) > 0
 }
 
+// 处理refund钱包用量台账事务相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) refundWalletUsageLedgerTx(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -346,6 +351,7 @@ func (s *Store) refundWalletUsageLedgerTx(
 	return returnLedgerID, returnedCredits, reversedReleaseEventIDs, nil
 }
 
+// 处理refund额度用量台账事务相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) refundQuotaUsageLedgerTx(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -455,6 +461,7 @@ func (s *Store) refundQuotaUsageLedgerTx(
 	return returnLedgerID, returnedCredits, reversedReleaseEventIDs, nil
 }
 
+// 处理reverse钱包LotConsumptions事务相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) reverseWalletLotConsumptionsTx(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -525,6 +532,7 @@ func (s *Store) reverseWalletLotConsumptionsTx(
 	return nil
 }
 
+// 处理reverse分销释放事件钱包台账事务相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) reverseDistributionReleaseEventsByWalletLedgerTx(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -584,6 +592,7 @@ func (s *Store) reverseDistributionReleaseEventsByWalletLedgerTx(
 	return ids, nil
 }
 
+// 处理reverse分销释放事件额度台账事务相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) reverseDistributionReleaseEventsByQuotaLedgerTx(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -643,6 +652,7 @@ func (s *Store) reverseDistributionReleaseEventsByQuotaLedgerTx(
 	return ids, nil
 }
 
+// 处理reverse分销释放事件事务相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) reverseDistributionReleaseEventTx(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -715,6 +725,7 @@ func (s *Store) reverseDistributionReleaseEventTx(
 	return nil
 }
 
+// 处理扫描分销释放事件记录相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanDistributionReleaseEventRecord(scan scanFn) (*distributionReleaseEventRecord, error) {
 	var item distributionReleaseEventRecord
 	if err := scan(
@@ -737,6 +748,7 @@ func scanDistributionReleaseEventRecord(scan scanFn) (*distributionReleaseEventR
 	return &item, nil
 }
 
+// 处理解码用量事件载荷相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func decodeUsageEventPayload(raw []byte) map[string]any {
 	if len(raw) == 0 {
 		return map[string]any{}
@@ -748,6 +760,7 @@ func decodeUsageEventPayload(raw []byte) map[string]any {
 	return payload
 }
 
+// 处理用量载荷Int64相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func usagePayloadInt64(payload map[string]any, key string) int64 {
 	if payload == nil {
 		return 0
@@ -755,6 +768,7 @@ func usagePayloadInt64(payload map[string]any, key string) int64 {
 	return usageQuantityValue(payload[strings.TrimSpace(key)])
 }
 
+// 处理额度用量返还额度相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func quotaUsageReturnCredits(releaseUnitCredits int64, payload map[string]any, returnedUnits int64) int64 {
 	if returnedUnits <= 0 {
 		return 0
@@ -771,6 +785,7 @@ func quotaUsageReturnCredits(releaseUnitCredits int64, payload map[string]any, r
 	return 0
 }
 
+// 处理用量载荷Bool相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func usagePayloadBool(payload map[string]any, key string) bool {
 	value, ok := payload[strings.TrimSpace(key)]
 	if !ok {
@@ -786,6 +801,7 @@ func usagePayloadBool(payload map[string]any, key string) bool {
 	}
 }
 
+// 处理用量载荷StringSlice相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func usagePayloadStringSlice(payload map[string]any, key string) []string {
 	value, ok := payload[strings.TrimSpace(key)]
 	if !ok || value == nil {
@@ -812,6 +828,7 @@ func usagePayloadStringSlice(payload map[string]any, key string) []string {
 	}
 }
 
+// 处理unique裁剪Strings相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func uniqueTrimmedStrings(values []string) []string {
 	seen := make(map[string]struct{}, len(values))
 	result := make([]string, 0, len(values))
@@ -829,6 +846,7 @@ func uniqueTrimmedStrings(values []string) []string {
 	return result
 }
 
+// 处理首个Non空值Bytes相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func firstNonEmptyBytes(values ...[]byte) []byte {
 	for _, value := range values {
 		if len(value) > 0 {

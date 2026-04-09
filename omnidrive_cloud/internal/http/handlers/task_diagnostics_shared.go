@@ -8,6 +8,7 @@ import (
 	"omnidrive_cloud/internal/domain"
 )
 
+// 加载发布任务上下文归属方，供任务diagnosticsshared继续处理当前业务状态。
 func loadPublishTaskContextForOwner(ctx context.Context, app *appstate.App, ownerUserID string, task *domain.PublishTask) (*domain.Device, *domain.PlatformAccount, *domain.ProductSkill, error) {
 	device, err := app.Store.GetOwnedDevice(ctx, task.DeviceID, ownerUserID)
 	if err != nil {
@@ -39,6 +40,7 @@ func loadPublishTaskContextForOwner(ctx context.Context, app *appstate.App, owne
 	return device, account, skill, nil
 }
 
+// 构建发布任务DiagnosticItem，为任务diagnosticsshared生成后续步骤所需的派生参数或载荷。
 func buildPublishTaskDiagnosticItem(ctx context.Context, app *appstate.App, ownerUserID string, task *domain.PublishTask) (domain.PublishTaskDiagnosticItem, error) {
 	device, account, skill, err := loadPublishTaskContextForOwner(ctx, app, ownerUserID, task)
 	if err != nil {
@@ -52,6 +54,7 @@ func buildPublishTaskDiagnosticItem(ctx context.Context, app *appstate.App, owne
 	}, nil
 }
 
+// 汇总发布任务DiagnosticItems，供接口响应或后续统计逻辑直接复用。
 func summarizePublishTaskDiagnosticItems(items []domain.PublishTaskDiagnosticItem) domain.PublishTaskDiagnosticSummary {
 	summary := domain.PublishTaskDiagnosticSummary{
 		ByStatus:    map[string]int64{},

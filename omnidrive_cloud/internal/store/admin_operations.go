@@ -43,6 +43,7 @@ type AdminAIJobListFilter struct {
 	AdminPageFilter
 }
 
+// 处理管理端设备Summary相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func adminDeviceSummary(id string, deviceCode string, name string, isEnabled bool, lastSeenAt *time.Time) domain.AdminDeviceSummary {
 	return domain.AdminDeviceSummary{
 		ID:         id,
@@ -54,6 +55,7 @@ func adminDeviceSummary(id string, deviceCode string, name string, isEnabled boo
 	}
 }
 
+// 处理string空值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func stringOrEmpty(value *string) string {
 	if value == nil {
 		return ""
@@ -61,6 +63,7 @@ func stringOrEmpty(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
+// 处理解码管理端String列表相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func decodeAdminStringList(raw []byte) []string {
 	if len(raw) == 0 {
 		return []string{}
@@ -90,6 +93,7 @@ const adminAIJobSelectColumns = `
 	aj.run_at, aj.created_at, aj.updated_at, aj.delivered_at, aj.finished_at
 `
 
+// 处理扫描管理端用户行相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanAdminUserRow(scan scanFn) (*domain.AdminUserRow, error) {
 	var item domain.AdminUserRow
 	var notes *string
@@ -118,6 +122,7 @@ func scanAdminUserRow(scan scanFn) (*domain.AdminUserRow, error) {
 	return &item, nil
 }
 
+// 处理扫描管理端设备行相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanAdminDeviceRow(scan scanFn) (*domain.AdminDeviceRow, error) {
 	var item domain.AdminDeviceRow
 	var localIP *string
@@ -217,6 +222,7 @@ func scanAdminDeviceRow(scan scanFn) (*domain.AdminDeviceRow, error) {
 	item.Device.LastSeenAt = lastSeenAt
 	item.Device.Notes = notes
 	item.Device.Status = computeDeviceStatus(lastSeenAt, runtimePayload)
+	item.Device.BridgeStatus = computeDeviceBridgeStatus(lastSeenAt, runtimePayload)
 
 	if ownerSummaryID != nil {
 		item.Owner = &domain.AdminUserSummary{
@@ -244,6 +250,7 @@ func scanAdminDeviceRow(scan scanFn) (*domain.AdminDeviceRow, error) {
 	return &item, nil
 }
 
+// 处理扫描管理端媒体账号行相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanAdminMediaAccountRow(scan scanFn) (*domain.AdminMediaAccountRow, error) {
 	var item domain.AdminMediaAccountRow
 	var lastMessage *string
@@ -302,6 +309,7 @@ func scanAdminMediaAccountRow(scan scanFn) (*domain.AdminMediaAccountRow, error)
 	return &item, nil
 }
 
+// 处理扫描管理端发布任务行相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanAdminPublishTaskRow(scan scanFn) (*domain.AdminPublishTaskRow, error) {
 	var item domain.AdminPublishTaskRow
 	var contentText *string
@@ -450,6 +458,7 @@ func scanAdminPublishTaskRow(scan scanFn) (*domain.AdminPublishTaskRow, error) {
 	return &item, nil
 }
 
+// 处理扫描管理端AI作业行相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 	var item domain.AdminAIJobRow
 	var deviceID *string
@@ -615,6 +624,7 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 	return &item, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAdminUserByID(ctx context.Context, userID string) (*domain.AdminUserRow, error) {
 	row := s.pool.QueryRow(ctx, `
 			SELECT
@@ -686,6 +696,7 @@ func (s *Store) GetAdminUserByID(ctx context.Context, userID string) (*domain.Ad
 	return item, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAdminDeviceByID(ctx context.Context, deviceID string) (*domain.AdminDeviceRow, error) {
 	row := s.pool.QueryRow(ctx, fmt.Sprintf(`
 		SELECT %s, %s,
@@ -707,6 +718,7 @@ func (s *Store) GetAdminDeviceByID(ctx context.Context, deviceID string) (*domai
 	return item, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminAccounts(ctx context.Context, filter AdminAccountListFilter) ([]domain.AdminMediaAccountRow, int64, domain.AdminMediaAccountListSummary, error) {
 	page, pageSize, offset := normalizeAdminPage(filter.Page, filter.PageSize)
 	_ = page
@@ -795,6 +807,7 @@ func (s *Store) ListAdminAccounts(ctx context.Context, filter AdminAccountListFi
 	return items, total, summary, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAdminAccountByID(ctx context.Context, accountID string) (*domain.AdminMediaAccountRow, error) {
 	row := s.pool.QueryRow(ctx, fmt.Sprintf(`
 			SELECT
@@ -817,6 +830,7 @@ func (s *Store) GetAdminAccountByID(ctx context.Context, accountID string) (*dom
 	return item, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminTasks(ctx context.Context, filter AdminTaskListFilter) ([]domain.AdminPublishTaskRow, int64, domain.AdminPublishTaskListSummary, error) {
 	page, pageSize, offset := normalizeAdminPage(filter.Page, filter.PageSize)
 	_ = page
@@ -930,6 +944,7 @@ func (s *Store) ListAdminTasks(ctx context.Context, filter AdminTaskListFilter) 
 	return items, total, summary, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAdminTaskByID(ctx context.Context, taskID string) (*domain.AdminPublishTaskRow, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
@@ -964,6 +979,7 @@ func (s *Store) GetAdminTaskByID(ctx context.Context, taskID string) (*domain.Ad
 	return item, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminAIJobs(ctx context.Context, filter AdminAIJobListFilter) ([]domain.AdminAIJobRow, int64, domain.AdminAIJobListSummary, error) {
 	page, pageSize, offset := normalizeAdminPage(filter.Page, filter.PageSize)
 	_ = page
@@ -1079,6 +1095,7 @@ func (s *Store) ListAdminAIJobs(ctx context.Context, filter AdminAIJobListFilter
 	return items, total, summary, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAdminAIJobByID(ctx context.Context, jobID string) (*domain.AdminAIJobRow, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT

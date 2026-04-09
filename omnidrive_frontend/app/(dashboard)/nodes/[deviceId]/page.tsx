@@ -23,6 +23,40 @@ import {
   normalizeSkillOutputLabel,
 } from "@/lib/workflow";
 
+function formatBridgeStatus(status: string | null | undefined) {
+  switch (status) {
+    case "healthy":
+      return {
+        label: "云桥正常",
+        className: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
+      };
+    case "degraded":
+      return {
+        label: "云桥异常",
+        className: "bg-rose-500/15 text-rose-300 border-rose-500/30",
+      };
+    case "offline":
+      return {
+        label: "等待恢复",
+        className: "bg-gray-500/15 text-gray-300 border-gray-500/30",
+      };
+    default:
+      return {
+        label: "云桥未知",
+        className: "bg-gray-500/15 text-gray-300 border-gray-500/30",
+      };
+  }
+}
+
+function summarizeBridgeError(device: Device) {
+  const raw = String(
+    device.runtimePayload?.bridgeLastError || device.runtimePayload?.lastError || "",
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+  return raw || "暂无桥接异常";
+}
+
 function asLowerString(value: unknown) {
   return typeof value === "string" ? value.toLowerCase() : "";
 }
@@ -134,6 +168,8 @@ export default function NodeDetailPage({
     );
   }
 
+  const bridgeMeta = formatBridgeStatus(device.bridgeStatus);
+
   return (
     <>
       <div className="mb-4">
@@ -160,6 +196,35 @@ export default function NodeDetailPage({
           </button>
         }
       />
+
+      <div className="mb-6 grid gap-4 md:grid-cols-3">
+        <div className="rounded-2xl border border-border bg-surface p-4">
+          <div className="text-xs uppercase tracking-wider text-text-muted">设备状态</div>
+          <div className="mt-2 flex items-center gap-2">
+            <StatusBadge status={device.status} />
+            <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${bridgeMeta.className}`}>
+              {bridgeMeta.label}
+            </span>
+          </div>
+        </div>
+        <div className="rounded-2xl border border-border bg-surface p-4">
+          <div className="text-xs uppercase tracking-wider text-text-muted">最近心跳</div>
+          <div className="mt-2 text-sm text-text-primary">
+            {device.lastSeenAt ? new Date(device.lastSeenAt).toLocaleString("zh-CN") : "暂无心跳"}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-border bg-surface p-4">
+          <div className="text-xs uppercase tracking-wider text-text-muted">云桥诊断</div>
+          <div className="mt-2 text-sm text-text-primary">
+            {summarizeBridgeError(device)}
+          </div>
+          {device.runtimePayload?.bridgeLastSuccessAt ? (
+            <div className="mt-2 text-xs text-text-secondary">
+              最近恢复 {new Date(device.runtimePayload.bridgeLastSuccessAt).toLocaleString("zh-CN")}
+            </div>
+          ) : null}
+        </div>
+      </div>
 
       {skills.length === 0 ? (
         <EmptyState

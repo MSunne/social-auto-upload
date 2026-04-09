@@ -28,6 +28,7 @@ type AdminBillingUsageEventListFilter struct {
 	AdminPageFilter
 }
 
+// 处理扫描计费用量事件相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanBillingUsageEvent(scan scanFn) (*domain.BillingUsageEvent, error) {
 	var item domain.BillingUsageEvent
 	var sourceID *string
@@ -83,6 +84,7 @@ func scanBillingUsageEvent(scan scanFn) (*domain.BillingUsageEvent, error) {
 	return &item, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListBillingUsageEventsByUser(ctx context.Context, userID string, filter BillingUsageEventListFilter) ([]domain.BillingUsageEvent, error) {
 	whereParts := []string{"e.user_id = $1"}
 	args := []any{userID}
@@ -154,6 +156,7 @@ func (s *Store) ListBillingUsageEventsByUser(ctx context.Context, userID string,
 	return items, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminBillingUsageEvents(ctx context.Context, filter AdminBillingUsageEventListFilter) ([]domain.AdminBillingUsageEventRow, int64, domain.AdminBillingUsageEventListSummary, error) {
 	page, pageSize, offset := normalizeAdminPage(filter.Page, filter.PageSize)
 	_ = page

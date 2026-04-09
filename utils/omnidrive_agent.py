@@ -110,6 +110,10 @@ class OmniDriveBridge:
             "cloudUrl": self.cloud_base_url,
             "cloudReachable": None,
             "cloudRetryAt": None,
+            "bridgeStatus": "unknown",
+            "bridgeLastError": None,
+            "bridgeLastErrorAt": None,
+            "bridgeLastSuccessAt": None,
             "lastHeartbeatAt": None,
             "lastAccountSyncAt": None,
             "lastMaterialSyncAt": None,
@@ -290,7 +294,7 @@ class OmniDriveBridge:
             "X-Agent-Key": self.agent_key,
         }
 
-    def _request(self, method, path, *, params=None, payload=None):
+    def _request(self, method, path, *, params=None, payload=None, track_bridge_health=True):
         self._ensure_cloud_endpoint_available()
         try:
             response = self._session.request(
@@ -301,13 +305,21 @@ class OmniDriveBridge:
                 json=payload,
                 timeout=self.http_timeout,
             )
+        except requests.Timeout as exc:
+            if track_bridge_health:
+                self._mark_bridge_degraded(self._format_remote_error(exc))
+            raise
         except requests.ConnectionError as exc:
+            if track_bridge_health:
+                self._mark_bridge_degraded(self._format_remote_error(exc))
             if self._is_loopback_cloud_endpoint():
                 raise OmniDriveEndpointUnavailable(self._mark_cloud_unavailable(exc)) from exc
             raise
         response.raise_for_status()
         if self._is_loopback_cloud_endpoint():
             self._mark_cloud_reachable()
+        if track_bridge_health:
+            self._mark_bridge_healthy()
         if not response.content:
             return None
         return response.json()
@@ -335,6 +347,7 @@ class OmniDriveBridge:
         message = f"OmniDrive API unavailable at {self.cloud_base_url}: {exc}"
         self._cloud_retry_after_monotonic = time.monotonic() + retry_seconds
         self._cloud_unavailable_message = message
+        self._mark_bridge_degraded(message)
         self._update_state(
             cloudReachable=False,
             cloudRetryAt=datetime.fromtimestamp(retry_at_epoch, tz=timezone.utc).astimezone().isoformat(),
@@ -356,6 +369,25 @@ class OmniDriveBridge:
                 self.device_code,
                 self.cloud_base_url,
             )
+
+    def _mark_bridge_degraded(self, message):
+        text = str(message or "").strip() or "OmniDrive bridge request failed"
+        self._update_state(
+            bridgeStatus="degraded",
+            bridgeLastError=text,
+            bridgeLastErrorAt=self._iso_now(),
+            lastError=text,
+        )
+        return text
+
+    def _mark_bridge_healthy(self):
+        self._update_state(
+            bridgeStatus="healthy",
+            bridgeLastError=None,
+            bridgeLastErrorAt=None,
+            bridgeLastSuccessAt=self._iso_now(),
+            lastError=None,
+        )
 
     def _ensure_cloud_endpoint_available(self):
         target = self._cloud_probe_target()
@@ -388,10 +420,10 @@ class OmniDriveBridge:
                 "localIp": get_local_ip(),
                 "runtimePayload": self._build_runtime_payload(),
             },
+            track_bridge_health=False,
         )
         self._update_state(
             lastHeartbeatAt=self._now_string(),
-            lastError=None,
             localIp=get_local_ip(),
         )
         log_throttled(
@@ -2962,6 +2994,10 @@ class OmniDriveBridge:
         with self._state_lock:
             return {
                 "bridgeRunning": bool(self._state.get("running")),
+                "bridgeStatus": self._state.get("bridgeStatus"),
+                "bridgeLastError": self._state.get("bridgeLastError"),
+                "bridgeLastErrorAt": self._state.get("bridgeLastErrorAt"),
+                "bridgeLastSuccessAt": self._state.get("bridgeLastSuccessAt"),
                 "cloudReachable": self._state.get("cloudReachable"),
                 "cloudRetryAt": self._state.get("cloudRetryAt"),
                 "lastError": self._state.get("lastError"),

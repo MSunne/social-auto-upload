@@ -23,6 +23,7 @@ type SkillScheduler struct {
 	pollInterval time.Duration
 }
 
+// 创建技能Scheduler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewSkillScheduler(app *appstate.App) (*SkillScheduler, error) {
 	if app == nil {
 		return nil, fmt.Errorf("app is required")
@@ -37,6 +38,7 @@ func NewSkillScheduler(app *appstate.App) (*SkillScheduler, error) {
 	}, nil
 }
 
+// 启动技能调度流程，持续处理后续轮询、调度或后台任务。
 func (s *SkillScheduler) Start(parent context.Context) func() {
 	ctx, cancel := context.WithCancel(parent)
 	var wg sync.WaitGroup
@@ -56,6 +58,7 @@ func (s *SkillScheduler) Start(parent context.Context) func() {
 	}
 }
 
+// 运行技能调度流程，按当前上下文驱动一次或持续的业务处理。
 func (s *SkillScheduler) run(ctx context.Context) {
 	s.runOnce(ctx)
 
@@ -72,6 +75,7 @@ func (s *SkillScheduler) run(ctx context.Context) {
 	}
 }
 
+// 执行一轮 AI 作业拉取与处理循环，供后台 worker 按固定节奏持续轮询。
 func (s *SkillScheduler) runOnce(ctx context.Context) {
 	promoted, err := s.app.Store.PromoteDueScheduledAIJobs(ctx, 200)
 	if err != nil {
@@ -88,6 +92,7 @@ func (s *SkillScheduler) runOnce(ctx context.Context) {
 	// account-bound skill tasks in OmniBull.
 }
 
+// 确保Recurring账号技能Runs已满足执行前提，必要时补齐缺失状态或配置。
 func (s *SkillScheduler) ensureRecurringAccountSkillRuns(ctx context.Context) error {
 	jobs, err := s.app.Store.ListRecurringAccountSkillTemplateJobs(ctx, 200)
 	if err != nil {
@@ -101,6 +106,7 @@ func (s *SkillScheduler) ensureRecurringAccountSkillRuns(ctx context.Context) er
 	return nil
 }
 
+// 确保Recurring账号技能运行已满足执行前提，必要时补齐缺失状态或配置。
 func (s *SkillScheduler) ensureRecurringAccountSkillRun(ctx context.Context, seed domain.AIJob) error {
 	config, ok := ParseAccountSkillScheduleConfig(seed.InputPayload)
 	if !ok || !config.RepeatDaily || strings.TrimSpace(config.ScheduleKey) == "" {
@@ -187,10 +193,12 @@ func (s *SkillScheduler) ensureRecurringAccountSkillRun(ctx context.Context, see
 	return nil
 }
 
+// 根据Recurring账号技能运行计算存储键，供技能调度链路复用关键派生结果。
 func storeKeyForRecurringAccountSkillRun(ownerUserID string, scheduleKey string) string {
 	return "account-skill-schedule:" + strings.TrimSpace(ownerUserID) + ":" + strings.TrimSpace(scheduleKey)
 }
 
+// 确保Scheduled作业已满足执行前提，必要时补齐缺失状态或配置。
 func (s *SkillScheduler) ensureScheduledJob(ctx context.Context, skill domain.ProductSkill) error {
 	if skill.DeviceID == nil || strings.TrimSpace(*skill.DeviceID) == "" || skill.NextRunAt == nil {
 		return nil
@@ -284,6 +292,7 @@ func (s *SkillScheduler) ensureScheduledJob(ctx context.Context, skill domain.Pr
 	return nil
 }
 
+// 计算下一次Scheduled技能执行时间，供技能调度链路统一发布时间或调度判定结果。
 func nextScheduledSkillRunAt(skill domain.ProductSkill, publishAt time.Time) *time.Time {
 	if !skill.RepeatDaily {
 		return nil
@@ -292,6 +301,7 @@ func nextScheduledSkillRunAt(skill domain.ProductSkill, publishAt time.Time) *ti
 	return &next
 }
 
+// 处理format可选RFC3339相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func formatOptionalRFC3339(value *time.Time) string {
 	if value == nil {
 		return ""
@@ -299,10 +309,12 @@ func formatOptionalRFC3339(value *time.Time) string {
 	return value.UTC().Format(time.RFC3339)
 }
 
+// 计算计划中的技能生成时间，供技能调度链路复用派生的时间结果。
 func scheduledSkillGenerationTime(publishAt time.Time) time.Time {
 	return ScheduledSkillGenerationTime(publishAt)
 }
 
+// 构建作业载荷，为技能调度生成后续步骤所需的派生参数或载荷。
 func (s *SkillScheduler) buildJobPayload(ctx context.Context, skill domain.ProductSkill, generateAt time.Time, publishAt time.Time, jobType string) ([]byte, error) {
 	model, err := s.app.Store.GetAIModelByName(ctx, strings.TrimSpace(skill.ModelName))
 	if err != nil {
@@ -328,6 +340,7 @@ func (s *SkillScheduler) buildJobPayload(ctx context.Context, skill domain.Produ
 	return BuildSkillAIJobPayload(ctx, s.app, skill, model, generateAt, publishAt, jobType, targets)
 }
 
+// 根据Auto发布计算账号Allowed，供技能调度链路复用关键派生结果。
 func accountAllowedForAutoPublish(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "failed", "invalid", "disabled", "deleted":
@@ -337,6 +350,7 @@ func accountAllowedForAutoPublish(status string) bool {
 	}
 }
 
+// 处理string值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func stringValue(value *string) string {
 	if value == nil {
 		return ""
@@ -344,6 +358,7 @@ func stringValue(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
+// 将非空字符串转换为指针，统一存储层对可选字符串字段的入参表达。
 func stringPtr(value string) *string {
 	value = strings.TrimSpace(value)
 	if value == "" {

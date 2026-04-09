@@ -45,6 +45,7 @@ type UpsertAdminSystemSettingsInput struct {
 	ImageStoryboardReferences         []byte
 }
 
+// 处理扫描管理端系统Settings相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanAdminSystemSettings(scan scanFn) (*domain.AdminSystemSettingsRecord, error) {
 	var item domain.AdminSystemSettingsRecord
 	var paymentChannelsPayload []byte
@@ -99,6 +100,7 @@ func scanAdminSystemSettings(scan scanFn) (*domain.AdminSystemSettingsRecord, er
 	return &item, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAdminSystemSettings(ctx context.Context) (*domain.AdminSystemSettingsRecord, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
@@ -149,6 +151,7 @@ func (s *Store) GetAdminSystemSettings(ctx context.Context) (*domain.AdminSystem
 	return item, nil
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdminSystemSettingsInput) (*domain.AdminSystemSettingsRecord, error) {
 	paymentChannelsPayload, err := json.Marshal(input.PaymentChannels)
 	if err != nil {

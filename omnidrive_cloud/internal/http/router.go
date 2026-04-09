@@ -11,6 +11,7 @@ import (
 	authmiddleware "omnidrive_cloud/internal/http/middleware"
 )
 
+// 创建 HTTP 路由树，装配公开接口、用户接口、Agent 接口和管理端接口。
 func NewRouter(app *appstate.App) stdhttp.Handler {
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)

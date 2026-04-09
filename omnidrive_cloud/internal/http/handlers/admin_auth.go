@@ -24,10 +24,12 @@ type adminLoginRequest struct {
 	Password string `json:"password"`
 }
 
+// 创建管理端认证Handler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewAdminAuthHandler(app *appstate.App) *AdminAuthHandler {
 	return &AdminAuthHandler{app: app}
 }
 
+// 处理管理端认证登录接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminAuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var payload adminLoginRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -110,6 +112,7 @@ func (h *AdminAuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理管理端认证Logout接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminAuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	admin := httpcontext.CurrentAdmin(r.Context())
 	if admin == nil || strings.TrimSpace(admin.SessionID) == "" {
@@ -140,6 +143,7 @@ func (h *AdminAuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 处理管理端认证当前用户接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminAuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	admin := httpcontext.CurrentAdmin(r.Context())
 	if admin == nil {
@@ -149,6 +153,7 @@ func (h *AdminAuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusOK, admin)
 }
 
+// 处理管理端认证系统配置接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminAuthHandler) SystemConfig(w http.ResponseWriter, r *http.Request) {
 	configPayload, err := h.buildAdminSystemConfig(r.Context())
 	if err != nil {
@@ -158,6 +163,7 @@ func (h *AdminAuthHandler) SystemConfig(w http.ResponseWriter, r *http.Request) 
 	render.JSON(w, http.StatusOK, configPayload)
 }
 
+// 处理headerStringPtr相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func headerStringPtr(value string) *string {
 	value = strings.TrimSpace(value)
 	if value == "" {

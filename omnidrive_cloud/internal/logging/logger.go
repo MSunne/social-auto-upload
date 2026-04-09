@@ -8,6 +8,7 @@ import (
 	"omnidrive_cloud/internal/config"
 )
 
+// 创建日志相关实例，组装运行所需依赖并返回给上层流程复用。
 func New(cfg config.Config) *slog.Logger {
 	environment := strings.TrimSpace(cfg.Environment)
 	if environment == "" {
@@ -33,6 +34,7 @@ func New(cfg config.Config) *slog.Logger {
 	)
 }
 
+// 解析Level，为日志提供结构化输入。
 func parseLevel(raw string) slog.Level {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "debug":

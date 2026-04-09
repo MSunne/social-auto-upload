@@ -60,6 +60,7 @@ type aiWorkspace struct {
 	Artifacts []aiArtifact `json:"artifacts"`
 }
 
+// 组装AI冒烟验证命令依赖并启动主流程，发生错误时直接退出进程。
 func main() {
 	cfg := loadConfig()
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.timeout)
@@ -88,6 +89,7 @@ func main() {
 	}
 }
 
+// 加载配置，供AI冒烟验证命令继续处理当前业务状态。
 func loadConfig() config {
 	cfg := config{}
 	flag.StringVar(&cfg.baseURL, "base-url", envOrDefault("OMNIDRIVE_SMOKE_BASE_URL", "http://127.0.0.1:8410"), "OmniDrive API base URL")
@@ -114,6 +116,7 @@ func loadConfig() config {
 	return cfg
 }
 
+// 处理selectedModes相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func selectedModes(mode string) []string {
 	switch mode {
 	case "", "all":
@@ -126,6 +129,7 @@ func selectedModes(mode string) []string {
 	}
 }
 
+// 记录AI冒烟验证命令，便于排障时回溯当前链路的关键上下文。
 func login(ctx context.Context, client *http.Client, cfg config) (string, error) {
 	if cfg.email == "" || cfg.password == "" {
 		return "", errors.New("email/password or token is required")
@@ -144,6 +148,7 @@ func login(ctx context.Context, client *http.Client, cfg config) (string, error)
 	return response.AccessToken, nil
 }
 
+// 运行Scenario流程，按当前上下文驱动一次或持续的业务处理。
 func runScenario(ctx context.Context, client *http.Client, cfg config, token string, mode string) error {
 	request := map[string]any{}
 	switch mode {
@@ -200,6 +205,7 @@ func runScenario(ctx context.Context, client *http.Client, cfg config, token str
 	return nil
 }
 
+// 根据作业计算wait，供AI冒烟验证命令链路复用关键派生结果。
 func waitForJob(ctx context.Context, client *http.Client, cfg config, token string, jobID string) (*aiJob, error) {
 	ticker := time.NewTicker(cfg.pollInterval)
 	defer ticker.Stop()
@@ -222,6 +228,7 @@ func waitForJob(ctx context.Context, client *http.Client, cfg config, token stri
 	}
 }
 
+// 处理print工作区相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func printWorkspace(mode string, workspace aiWorkspace) {
 	fmt.Printf("[%s] final status=%s cost=%d artifacts=%d\n", mode, workspace.Job.Status, workspace.Job.CostCredits, len(workspace.Artifacts))
 	for _, artifact := range workspace.Artifacts {
@@ -242,6 +249,7 @@ func printWorkspace(mode string, workspace aiWorkspace) {
 	}
 }
 
+// 处理doJSON相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func doJSON(ctx context.Context, client *http.Client, method string, rawURL string, token string, payload any, destination any) error {
 	var body io.Reader
 	if payload != nil {
@@ -288,6 +296,7 @@ func doJSON(ctx context.Context, client *http.Client, method string, rawURL stri
 	return json.Unmarshal(data, destination)
 }
 
+// 处理prettyJSON相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func prettyJSON(data []byte) string {
 	if len(data) == 0 {
 		return ""
@@ -303,6 +312,7 @@ func prettyJSON(data []byte) string {
 	return string(pretty)
 }
 
+// 处理splitCSV相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func splitCSV(value string) []string {
 	parts := strings.Split(value, ",")
 	items := make([]string, 0, len(parts))
@@ -315,6 +325,7 @@ func splitCSV(value string) []string {
 	return items
 }
 
+// 处理env默认相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func envOrDefault(key string, fallback string) string {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
@@ -323,6 +334,7 @@ func envOrDefault(key string, fallback string) string {
 	return value
 }
 
+// 处理envInt默认相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func envIntOrDefault(key string, fallback int) int {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
@@ -335,6 +347,7 @@ func envIntOrDefault(key string, fallback int) int {
 	return result
 }
 
+// 处理env时长默认相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func envDurationOrDefault(key string, fallback time.Duration) time.Duration {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
@@ -347,6 +360,7 @@ func envDurationOrDefault(key string, fallback time.Duration) time.Duration {
 	return parsed
 }
 
+// 处理string值相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func stringValue(value *string) string {
 	if value == nil {
 		return ""
@@ -354,6 +368,7 @@ func stringValue(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
+// 处理fatalf相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func fatalf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 	os.Exit(1)

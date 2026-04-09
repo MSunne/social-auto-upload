@@ -13,6 +13,7 @@ import (
 	"omnidrive_cloud/internal/domain"
 )
 
+// 处理扫描设备相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanDevice(row pgx.Row) (*domain.Device, error) {
 	var device domain.Device
 	var localIP *string
@@ -71,9 +72,11 @@ func scanDevice(row pgx.Row) (*domain.Device, error) {
 	device.LastSeenAt = lastSeenAt
 	device.Notes = notes
 	device.Status = computeDeviceStatus(lastSeenAt, runtimePayload)
+	device.BridgeStatus = computeDeviceBridgeStatus(lastSeenAt, runtimePayload)
 	return &device, nil
 }
 
+// 处理扫描设备加载相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanDeviceWithLoad(row pgx.Row) (*domain.Device, error) {
 	var device domain.Device
 	var localIP *string
@@ -145,6 +148,7 @@ func scanDeviceWithLoad(row pgx.Row) (*domain.Device, error) {
 	device.LastSeenAt = lastSeenAt
 	device.Notes = notes
 	device.Status = computeDeviceStatus(lastSeenAt, runtimePayload)
+	device.BridgeStatus = computeDeviceBridgeStatus(lastSeenAt, runtimePayload)
 
 	return &device, nil
 }
@@ -181,6 +185,7 @@ const deviceLoadColumns = `
 	COALESCE((SELECT COUNT(*) FROM ai_jobs aj WHERE aj.lease_owner_device_id = devices.id AND aj.status = 'running' AND aj.lease_token IS NOT NULL), 0)::BIGINT AS leased_ai_job_count
 `
 
+// 处理设备Query加载相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func deviceQueryWithLoad(whereClause string) string {
 	return fmt.Sprintf(`
 		SELECT %s, %s
@@ -189,6 +194,7 @@ func deviceQueryWithLoad(whereClause string) string {
 	`, deviceSelectColumns, deviceLoadColumns, whereClause)
 }
 
+// 执行设备相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListDevicesByOwner(ctx context.Context, ownerUserID string) ([]domain.Device, error) {
 	rows, err := s.pool.Query(ctx, deviceQueryWithLoad(`
 		WHERE owner_user_id = $1
@@ -210,6 +216,7 @@ func (s *Store) ListDevicesByOwner(ctx context.Context, ownerUserID string) ([]d
 	return items, rows.Err()
 }
 
+// 执行设备相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetDeviceByID(ctx context.Context, deviceID string) (*domain.Device, error) {
 	row := s.pool.QueryRow(ctx, "SELECT "+deviceSelectColumns+" FROM devices WHERE id = $1", deviceID)
 	device, err := scanDevice(row)
@@ -222,6 +229,7 @@ func (s *Store) GetDeviceByID(ctx context.Context, deviceID string) (*domain.Dev
 	return device, nil
 }
 
+// 执行设备相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetOwnedDevice(ctx context.Context, deviceID string, ownerUserID string) (*domain.Device, error) {
 	row := s.pool.QueryRow(ctx, deviceQueryWithLoad(`
 		WHERE id = $1 AND owner_user_id = $2
@@ -236,6 +244,7 @@ func (s *Store) GetOwnedDevice(ctx context.Context, deviceID string, ownerUserID
 	return device, nil
 }
 
+// 执行设备相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetDeviceByCode(ctx context.Context, deviceCode string) (*domain.Device, error) {
 	row := s.pool.QueryRow(ctx, "SELECT "+deviceSelectColumns+" FROM devices WHERE device_code = $1", deviceCode)
 	device, err := scanDevice(row)
@@ -248,6 +257,7 @@ func (s *Store) GetDeviceByCode(ctx context.Context, deviceCode string) (*domain
 	return device, nil
 }
 
+// 执行设备相关的租约与并发控制操作，确保调度和执行状态保持一致。
 func (s *Store) ClaimDevice(ctx context.Context, deviceCode string, ownerUserID string) (*domain.Device, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE devices
@@ -269,6 +279,7 @@ func (s *Store) ClaimDevice(ctx context.Context, deviceCode string, ownerUserID 
 	return s.GetOwnedDevice(ctx, device.ID, ownerUserID)
 }
 
+// 执行设备相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpdateDevice(ctx context.Context, deviceID string, ownerUserID string, input UpdateDeviceInput) (*domain.Device, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE devices
@@ -293,6 +304,7 @@ func (s *Store) UpdateDevice(ctx context.Context, deviceID string, ownerUserID s
 	return s.GetOwnedDevice(ctx, device.ID, ownerUserID)
 }
 
+// 执行设备相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) UpsertHeartbeatDevice(ctx context.Context, input HeartbeatInput) (*domain.Device, error) {
 	now := time.Now().UTC()
 	runtimePayload := input.RuntimePayload
@@ -388,6 +400,7 @@ func (s *Store) UpsertHeartbeatDevice(ctx context.Context, input HeartbeatInput)
 	return device, nil
 }
 
+// 处理Unbind设备相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) UnbindDevice(ctx context.Context, deviceID string, ownerUserID string) (*domain.Device, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -431,6 +444,7 @@ func (s *Store) UnbindDevice(ctx context.Context, deviceID string, ownerUserID s
 	return device, nil
 }
 
+// 处理管理端Unbind设备相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) AdminUnbindDevice(ctx context.Context, deviceID string) (*domain.Device, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

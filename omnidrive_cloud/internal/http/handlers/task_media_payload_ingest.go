@@ -16,6 +16,7 @@ type taskMediaPayloadNormalizer struct {
 	taskID      string
 }
 
+// 规范化发布任务媒体载荷，统一任务媒体载荷ingest链路的输入格式和后续处理行为。
 func normalizePublishTaskMediaPayload(ctx context.Context, app *appstate.App, ownerUserID string, taskID string, payload interface{}) (interface{}, bool, error) {
 	if payload == nil {
 		return nil, false, nil
@@ -31,6 +32,7 @@ func normalizePublishTaskMediaPayload(ctx context.Context, app *appstate.App, ow
 	return normalizer.normalizeValue("", payload, false)
 }
 
+// 规范化值，统一任务媒体载荷ingest链路的输入格式和后续处理行为。
 func (n *taskMediaPayloadNormalizer) normalizeValue(fieldKey string, value interface{}, parentMediaObject bool) (interface{}, bool, error) {
 	switch typed := value.(type) {
 	case map[string]interface{}:
@@ -56,6 +58,7 @@ func (n *taskMediaPayloadNormalizer) normalizeValue(fieldKey string, value inter
 	}
 }
 
+// 规范化Array，统一任务媒体载荷ingest链路的输入格式和后续处理行为。
 func (n *taskMediaPayloadNormalizer) normalizeArray(containerKey string, items []interface{}) ([]interface{}, bool, error) {
 	result := make([]interface{}, len(items))
 	changed := false
@@ -91,6 +94,7 @@ func (n *taskMediaPayloadNormalizer) normalizeArray(containerKey string, items [
 	return result, changed, nil
 }
 
+// 规范化单个对象内容，统一媒体和运行时载荷中的字段结构。
 func (n *taskMediaPayloadNormalizer) normalizeObject(fieldKey string, value map[string]interface{}, parentMediaObject bool) (map[string]interface{}, bool, error) {
 	result := make(map[string]interface{}, len(value)+4)
 	for key, raw := range value {
@@ -158,6 +162,7 @@ func (n *taskMediaPayloadNormalizer) normalizeObject(fieldKey string, value map[
 	return result, changed, nil
 }
 
+// 根据Field计算路径，供任务媒体载荷ingest链路复用关键派生结果。
 func (n *taskMediaPayloadNormalizer) pathForField(fieldKey string) string {
 	segment := normalizeMediaFieldKey(fieldKey)
 	if segment == "" {
@@ -166,6 +171,7 @@ func (n *taskMediaPayloadNormalizer) pathForField(fieldKey string) string {
 	return fmt.Sprintf("%s/%s", n.basePath, segment)
 }
 
+// 规范化媒体Field键，统一任务媒体载荷ingest链路的输入格式和后续处理行为。
 func normalizeMediaFieldKey(value string) string {
 	value = strings.TrimSpace(strings.ToLower(value))
 	value = strings.ReplaceAll(value, "_", "")
@@ -173,11 +179,13 @@ func normalizeMediaFieldKey(value string) string {
 	return value
 }
 
+// 处理looksLike远端HTTPURL相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func looksLikeRemoteHTTPURL(value string) bool {
 	trimmed := strings.TrimSpace(strings.ToLower(value))
 	return strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://")
 }
 
+// 判断是否应当规范化Array媒体URL，供当前链路选择后续处理策略。
 func shouldNormalizeArrayMediaURL(containerKey string) bool {
 	switch normalizeMediaFieldKey(containerKey) {
 	case "images", "imageurls", "videos", "videourls", "attachments", "artifacts", "assets", "media", "mediaurls", "references", "previews", "keyframes", "frames":
@@ -187,6 +195,7 @@ func shouldNormalizeArrayMediaURL(containerKey string) bool {
 	}
 }
 
+// 判断是否应当规范化Object媒体URL，供当前链路选择后续处理策略。
 func shouldNormalizeObjectMediaURL(fieldKey string, objectIsMedia bool) bool {
 	switch fieldKey {
 	case "productlink", "link", "pageurl", "landingurl", "website", "weburl", "redirecturl", "callbackurl":
@@ -200,6 +209,7 @@ func shouldNormalizeObjectMediaURL(fieldKey string, objectIsMedia bool) bool {
 	}
 }
 
+// 判断是否属于媒体ObjectContainer键，供当前链路选择后续处理策略。
 func isMediaObjectContainerKey(fieldKey string) bool {
 	switch normalizeMediaFieldKey(fieldKey) {
 	case "images", "imageurls", "videos", "videourls", "thumbnail", "cover", "poster", "preview", "attachment", "artifacts", "assets", "media", "mediaurls", "references", "previews", "keyframes", "frames":
@@ -209,6 +219,7 @@ func isMediaObjectContainerKey(fieldKey string) bool {
 	}
 }
 
+// 映射LooksLike媒体Object，把外部配置转换为当前业务可识别的表示。
 func mapLooksLikeMediaObject(value map[string]interface{}) bool {
 	for key := range value {
 		switch normalizeMediaFieldKey(key) {
@@ -219,6 +230,7 @@ func mapLooksLikeMediaObject(value map[string]interface{}) bool {
 	return false
 }
 
+// 处理媒体映射StringPtr相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func mediaMapStringPtr(value map[string]interface{}, normalizedKey string) *string {
 	for key, raw := range value {
 		if normalizeMediaFieldKey(key) != normalizedKey {
@@ -233,6 +245,7 @@ func mediaMapStringPtr(value map[string]interface{}, normalizedKey string) *stri
 	return nil
 }
 
+// 处理媒体映射Int64Ptr相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func mediaMapInt64Ptr(value map[string]interface{}, normalizedKey string) *int64 {
 	for key, raw := range value {
 		if normalizeMediaFieldKey(key) != normalizedKey {

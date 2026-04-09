@@ -30,6 +30,30 @@ func TestComputeDeviceStatusFallsOfflinePastHeartbeatWindow(t *testing.T) {
 	}
 }
 
+func TestComputeDeviceBridgeStatusUsesRuntimeBridgeHealth(t *testing.T) {
+	now := time.Now().UTC()
+	lastSeenAt := now.Add(-30 * time.Second)
+
+	if got := computeDeviceBridgeStatus(&lastSeenAt, []byte(`{"bridgeStatus":"healthy"}`)); got != "healthy" {
+		t.Fatalf("expected healthy bridge status, got %q", got)
+	}
+	if got := computeDeviceBridgeStatus(&lastSeenAt, []byte(`{"bridgeStatus":"degraded","bridgeLastError":"timeout"}`)); got != "degraded" {
+		t.Fatalf("expected degraded bridge status, got %q", got)
+	}
+	if got := computeDeviceBridgeStatus(&lastSeenAt, []byte(`{"cloudReachable":false}`)); got != "degraded" {
+		t.Fatalf("expected cloudReachable=false to degrade bridge status, got %q", got)
+	}
+}
+
+func TestComputeDeviceBridgeStatusFallsOfflineWhenHeartbeatIsStale(t *testing.T) {
+	now := time.Now().UTC()
+	lastSeenAt := now.Add(-3 * time.Minute)
+
+	if got := computeDeviceBridgeStatus(&lastSeenAt, []byte(`{"bridgeStatus":"healthy"}`)); got != "offline" {
+		t.Fatalf("expected stale device bridge status to be offline, got %q", got)
+	}
+}
+
 func TestAIJobSelectColumnsForSummaryOmitsHeavyPayloads(t *testing.T) {
 	columns := aiJobSelectColumnsFor("ai_jobs", aiJobPayloadModeSummary)
 	if !strings.Contains(columns, "jsonb_build_object('skillName'") {

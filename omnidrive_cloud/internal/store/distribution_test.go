@@ -88,3 +88,21 @@ func TestCalculateDistributionGrantCreditsFromEntitlements(t *testing.T) {
 		t.Fatalf("expected wallet grant credits 1200, got %d", walletGrantCredits)
 	}
 }
+
+func TestScannedAdminUserSummaryHandlesNullableIdentityFields(t *testing.T) {
+	email := "partner@example.com"
+
+	got := scannedAdminUserSummary{
+		ID:    "user-1",
+		Email: &email,
+	}.summary()
+	if got.ID != "user-1" {
+		t.Fatalf("expected user id user-1, got %q", got.ID)
+	}
+	if got.Email != "partner@example.com" {
+		t.Fatalf("expected non-null email to be preserved, got %q", got.Email)
+	}
+	if got.Name != "" {
+		t.Fatalf("expected nil name to map to empty string, got %q", got.Name)
+	}
+}

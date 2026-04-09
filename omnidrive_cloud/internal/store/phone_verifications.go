@@ -42,6 +42,7 @@ type CreatePhoneVerificationInput struct {
 	ExpiresAt    time.Time
 }
 
+// 处理扫描手机验证码相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanPhoneVerification(scan scanFn) (*PhoneVerificationRecord, error) {
 	var item PhoneVerificationRecord
 	if err := scan(
@@ -69,6 +70,7 @@ func scanPhoneVerification(scan scanFn) (*PhoneVerificationRecord, error) {
 	return &item, nil
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreatePhoneVerification(ctx context.Context, input CreatePhoneVerificationInput) (*PhoneVerificationRecord, error) {
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO phone_verification_codes (
@@ -105,6 +107,7 @@ func (s *Store) CreatePhoneVerification(ctx context.Context, input CreatePhoneVe
 	return scanPhoneVerification(row.Scan)
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) CountPhoneVerificationsSince(ctx context.Context, phone string, countryCode string, scene string, since time.Time) (int64, error) {
 	var total int64
 	if err := s.pool.QueryRow(ctx, `
@@ -121,6 +124,7 @@ func (s *Store) CountPhoneVerificationsSince(ctx context.Context, phone string, 
 	return total, nil
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetLatestPhoneVerification(ctx context.Context, phone string, countryCode string, scene string) (*PhoneVerificationRecord, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT
@@ -161,6 +165,7 @@ func (s *Store) GetLatestPhoneVerification(ctx context.Context, phone string, co
 	return item, nil
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) MarkPhoneVerificationSent(ctx context.Context, id string, providerRequestID string, providerBizID string, providerCode string, providerMessage string, verificationCodeHash string) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE phone_verification_codes
@@ -177,6 +182,7 @@ func (s *Store) MarkPhoneVerificationSent(ctx context.Context, id string, provid
 	return err
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) MarkPhoneVerificationFailed(ctx context.Context, id string, providerCode string, providerMessage string) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE phone_verification_codes
@@ -190,6 +196,7 @@ func (s *Store) MarkPhoneVerificationFailed(ctx context.Context, id string, prov
 	return err
 }
 
+// 处理Increment手机验证码Attempt相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s *Store) IncrementPhoneVerificationAttempt(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE phone_verification_codes
@@ -201,6 +208,7 @@ func (s *Store) IncrementPhoneVerificationAttempt(ctx context.Context, id string
 	return err
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) MarkPhoneVerificationVerified(ctx context.Context, id string, providerCode string, providerMessage string) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE phone_verification_codes
@@ -215,6 +223,7 @@ func (s *Store) MarkPhoneVerificationVerified(ctx context.Context, id string, pr
 	return err
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) MarkPhoneVerificationConsumed(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE phone_verification_codes
@@ -227,6 +236,7 @@ func (s *Store) MarkPhoneVerificationConsumed(ctx context.Context, id string) er
 	return err
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) MarkPhoneVerificationExpired(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE phone_verification_codes

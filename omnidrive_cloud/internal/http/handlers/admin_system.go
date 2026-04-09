@@ -81,6 +81,7 @@ type effectiveAdminSystemSettings struct {
 	UpdatedAt                 *time.Time
 }
 
+// 处理默认管理端系统Settings相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func defaultAdminSystemSettings(cfg config.Config) effectiveAdminSystemSettings {
 	return effectiveAdminSystemSettings{
 		AIWorkerEnabled: cfg.AIWorkerEnabled,
@@ -115,10 +116,12 @@ func defaultAdminSystemSettings(cfg config.Config) effectiveAdminSystemSettings 
 	}
 }
 
+// 处理分镜模型Touched相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func storyboardModelTouched(raw map[string]json.RawMessage) bool {
 	return nestedFieldTouched(raw, "storyboardModel")
 }
 
+// 处理校验分镜包模型相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func validateStoryboardPackageModel(ctx context.Context, app *appstate.App, modelName string) error {
 	modelName = strings.TrimSpace(modelName)
 	if modelName == "" || app == nil || app.Store == nil {
@@ -134,6 +137,7 @@ func validateStoryboardPackageModel(ctx context.Context, app *appstate.App, mode
 	return nil
 }
 
+// 规范化管理端支付Channels，统一管理端系统链路的输入格式和后续处理行为。
 func normalizeAdminPaymentChannels(channels []string) ([]string, error) {
 	if len(channels) == 0 {
 		return nil, errors.New("paymentChannels must contain at least one channel")
@@ -164,6 +168,7 @@ func normalizeAdminPaymentChannels(channels []string) ([]string, error) {
 	return items, nil
 }
 
+// 处理支付Channel启用相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (s effectiveAdminSystemSettings) paymentChannelEnabled(channel string) bool {
 	for _, item := range s.PaymentChannels {
 		if item == channel {
@@ -173,6 +178,7 @@ func (s effectiveAdminSystemSettings) paymentChannelEnabled(channel string) bool
 	return false
 }
 
+// 处理filter启用支付Channels相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func filterEnabledPaymentChannels(packageChannels []string, enabledChannels []string) []string {
 	if len(packageChannels) == 0 || len(enabledChannels) == 0 {
 		return []string{}
@@ -199,6 +205,7 @@ func filterEnabledPaymentChannels(packageChannels []string, enabledChannels []st
 	return filtered
 }
 
+// 加载生效管理端系统Settings，供管理端系统继续处理当前业务状态。
 func loadEffectiveAdminSystemSettings(ctx context.Context, app *appstate.App) (effectiveAdminSystemSettings, error) {
 	settings := defaultAdminSystemSettings(app.Config)
 	record, err := app.Store.GetAdminSystemSettings(ctx)
@@ -229,6 +236,7 @@ func loadEffectiveAdminSystemSettings(ctx context.Context, app *appstate.App) (e
 	return settings, nil
 }
 
+// 构建管理端系统配置载荷，为管理端系统生成后续步骤所需的派生参数或载荷。
 func buildAdminSystemConfigPayload(app *appstate.App, settings effectiveAdminSystemSettings) domain.AdminSystemConfig {
 	notes := []string{
 		"管理端已切换为数据库管理员 + 角色权限模型。",
@@ -272,6 +280,7 @@ func buildAdminSystemConfigPayload(app *appstate.App, settings effectiveAdminSys
 	}
 }
 
+// 处理解码管理端系统配置Patch请求相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func decodeAdminSystemConfigPatchRequest(r *http.Request, destination any) (map[string]json.RawMessage, error) {
 	if r.Body == nil {
 		return nil, errors.New("empty request body")
@@ -298,11 +307,13 @@ func decodeAdminSystemConfigPatchRequest(r *http.Request, destination any) (map[
 	return raw, nil
 }
 
+// 处理nestedFieldTouched相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func nestedFieldTouched(raw map[string]json.RawMessage, key string) bool {
 	_, exists := raw[key]
 	return exists
 }
 
+// 规范化PatchedString，统一管理端系统链路的输入格式和后续处理行为。
 func normalizePatchedString(value *string) string {
 	if value == nil {
 		return ""
@@ -310,6 +321,7 @@ func normalizePatchedString(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
+// 规范化PatchedInt，统一管理端系统链路的输入格式和后续处理行为。
 func normalizePatchedInt(value *int, fallback int) int {
 	if value == nil {
 		return fallback
@@ -317,6 +329,7 @@ func normalizePatchedInt(value *int, fallback int) int {
 	return *value
 }
 
+// 规范化短信供应方，统一管理端系统链路的输入格式和后续处理行为。
 func normalizeSMSProvider(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", "aliyun", "aliyun_dypnsapi", "aliyun-dypnsapi":
@@ -328,6 +341,7 @@ func normalizeSMSProvider(value string) string {
 	}
 }
 
+// 规范化短信Country编码，统一管理端系统链路的输入格式和后续处理行为。
 func normalizeSMSCountryCode(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -343,6 +357,7 @@ func normalizeSMSCountryCode(value string) string {
 	return digits.String()
 }
 
+// 根据审计计算maskSecret，供管理端系统链路复用关键派生结果。
 func maskSecretForAudit(value string) string {
 	trimmed := strings.TrimSpace(value)
 	switch {
@@ -355,6 +370,7 @@ func maskSecretForAudit(value string) string {
 	}
 }
 
+// 处理管理端时间Ptr相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func adminTimePtr(value time.Time) *time.Time {
 	if value.IsZero() {
 		return nil
@@ -363,6 +379,7 @@ func adminTimePtr(value time.Time) *time.Time {
 	return &utc
 }
 
+// 清理Removed分镜参考，释放当前链路不再需要的临时资源或旧数据。
 func cleanupRemovedStoryboardReferences(ctx context.Context, app *appstate.App, previous json.RawMessage, next json.RawMessage) {
 	if app == nil || app.Storage == nil {
 		return
@@ -384,6 +401,7 @@ func cleanupRemovedStoryboardReferences(ctx context.Context, app *appstate.App, 
 	}
 }
 
+// 合并分镜参考Payloads，统一多来源数据后返回稳定结果。
 func mergeStoryboardReferencePayloads(payloads ...json.RawMessage) json.RawMessage {
 	items := make([]map[string]any, 0)
 	for _, payload := range payloads {
@@ -406,6 +424,7 @@ func mergeStoryboardReferencePayloads(payloads ...json.RawMessage) json.RawMessa
 	return merged
 }
 
+// 提取分镜存储键s，供管理端系统后续关联和分支判断复用。
 func extractStoryboardStorageKeys(payload json.RawMessage) map[string]struct{} {
 	results := make(map[string]struct{})
 	if len(payload) == 0 {
@@ -426,15 +445,18 @@ func extractStoryboardStorageKeys(payload json.RawMessage) map[string]struct{} {
 	return results
 }
 
+// 判断是否存在分镜ManagedPrefix，供当前链路选择后续处理策略。
 func hasStoryboardManagedPrefix(storageKey string) bool {
 	return strings.HasPrefix(strings.TrimSpace(storageKey), "system-config/storyboard/")
 }
 
+// 处理string值Any相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func stringValueFromAny(value any) string {
 	text, _ := value.(string)
 	return text
 }
 
+// 处理管理端认证构建管理端系统配置接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminAuthHandler) buildAdminSystemConfig(ctx context.Context) (domain.AdminSystemConfig, error) {
 	settings, err := loadEffectiveAdminSystemSettings(ctx, h.app)
 	if err != nil {
@@ -443,6 +465,7 @@ func (h *AdminAuthHandler) buildAdminSystemConfig(ctx context.Context) (domain.A
 	return buildAdminSystemConfigPayload(h.app, settings), nil
 }
 
+// 处理管理端认证更新系统配置接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Request) {
 	admin := httpcontext.CurrentAdmin(r.Context())
 	if admin == nil {
@@ -810,6 +833,7 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 	render.JSON(w, http.StatusOK, buildAdminSystemConfigPayload(h.app, settings))
 }
 
+// 处理管理端认证上传分镜资源接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminAuthHandler) UploadStoryboardAsset(w http.ResponseWriter, r *http.Request) {
 	admin := httpcontext.CurrentAdmin(r.Context())
 	if admin == nil {

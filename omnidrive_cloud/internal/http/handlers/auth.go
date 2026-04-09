@@ -53,10 +53,12 @@ type sendRegisterSMSCodeRequest struct {
 	CountryCode string `json:"countryCode"`
 }
 
+// 创建认证Handler相关实例，组装运行所需依赖并返回给上层流程复用。
 func NewAuthHandler(app *appstate.App) *AuthHandler {
 	return &AuthHandler{app: app}
 }
 
+// 规范化用户手机，统一认证链路的输入格式和后续处理行为。
 func normalizeUserPhone(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -81,6 +83,7 @@ func normalizeUserPhone(value string) string {
 	return ""
 }
 
+// 规范化用户Email，统一认证链路的输入格式和后续处理行为。
 func normalizeUserEmail(value string) string {
 	trimmed := strings.ToLower(strings.TrimSpace(value))
 	if trimmed == "" {
@@ -92,6 +95,7 @@ func normalizeUserEmail(value string) string {
 	return trimmed
 }
 
+// 规范化CountryDial编码，统一认证链路的输入格式和后续处理行为。
 func normalizeCountryDialCode(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -108,6 +112,7 @@ func normalizeCountryDialCode(value string) string {
 	return digits.String()
 }
 
+// 解析认证Identifiers，根据当前配置和上下文确定最终使用结果。
 func resolveAuthIdentifiers(phoneInput string, emailInput string) (string, string, string) {
 	rawPhone := strings.TrimSpace(phoneInput)
 	rawEmail := strings.TrimSpace(emailInput)
@@ -143,6 +148,7 @@ func resolveAuthIdentifiers(phoneInput string, emailInput string) (string, strin
 	return "", email, ""
 }
 
+// 规范化Register短信配置，统一认证链路的输入格式和后续处理行为。
 func normalizeRegisterSMSConfig(settings effectiveAdminSystemSettings) sms.RegistrationConfig {
 	provider := sms.ResolveProvider(settings.SMSRegistration.Provider, settings.SMSRegistration.TemplateCode)
 	endpoint := strings.TrimSpace(settings.SMSRegistration.Endpoint)
@@ -174,6 +180,7 @@ func normalizeRegisterSMSConfig(settings effectiveAdminSystemSettings) sms.Regis
 	}
 }
 
+// 确保Register短信就绪已满足执行前提，必要时补齐缺失状态或配置。
 func ensureRegisterSMSReady(settings effectiveAdminSystemSettings) (sms.RegistrationConfig, string) {
 	config := normalizeRegisterSMSConfig(settings)
 	if !settings.SMSRegistration.Enabled {
@@ -219,6 +226,7 @@ func ensureRegisterSMSReady(settings effectiveAdminSystemSettings) (sms.Registra
 	return config, ""
 }
 
+// 映射短信供应方错误，把外部配置转换为当前业务可识别的表示。
 func mapSMSProviderError(err error) (int, string, map[string]any) {
 	var providerErr *sms.ProviderError
 	if !errors.As(err, &providerErr) {
@@ -252,6 +260,7 @@ func mapSMSProviderError(err error) (int, string, map[string]any) {
 	}
 }
 
+// 处理认证respondLoginSuccess接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AuthHandler) respondLoginSuccess(w http.ResponseWriter, userWithPassword *store.UserWithPassword) {
 	token, err := h.app.Tokens.IssueToken(userWithPassword.User.ID)
 	if err != nil {
@@ -267,6 +276,7 @@ func (h *AuthHandler) respondLoginSuccess(w http.ResponseWriter, userWithPasswor
 	})
 }
 
+// 处理认证verifyLoginPassword接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AuthHandler) verifyLoginPassword(w http.ResponseWriter, userWithPassword *store.UserWithPassword, password string) bool {
 	if userWithPassword == nil {
 		render.Error(w, http.StatusUnauthorized, "账号或密码错误")
@@ -279,6 +289,7 @@ func (h *AuthHandler) verifyLoginPassword(w http.ResponseWriter, userWithPasswor
 	return true
 }
 
+// 处理认证发送Register短信编码接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AuthHandler) SendRegisterSMSCode(w http.ResponseWriter, r *http.Request) {
 	var payload sendRegisterSMSCodeRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -418,6 +429,7 @@ func (h *AuthHandler) SendRegisterSMSCode(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// 处理认证Register接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var payload registerRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -577,6 +589,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, http.StatusCreated, user)
 }
 
+// 处理认证登录接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var payload loginRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -611,6 +624,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	h.respondLoginSuccess(w, userWithPassword)
 }
 
+// 处理认证Login手机接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AuthHandler) LoginWithPhone(w http.ResponseWriter, r *http.Request) {
 	var payload phoneLoginRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -639,6 +653,7 @@ func (h *AuthHandler) LoginWithPhone(w http.ResponseWriter, r *http.Request) {
 	h.respondLoginSuccess(w, userWithPassword)
 }
 
+// 处理认证LoginPassword接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AuthHandler) LoginWithPassword(w http.ResponseWriter, r *http.Request) {
 	var payload passwordLoginRequest
 	if err := render.DecodeJSON(r, &payload); err != nil {
@@ -683,6 +698,7 @@ func (h *AuthHandler) LoginWithPassword(w http.ResponseWriter, r *http.Request) 
 	h.respondLoginSuccess(w, userWithPassword)
 }
 
+// 处理认证当前用户接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	if user == nil {

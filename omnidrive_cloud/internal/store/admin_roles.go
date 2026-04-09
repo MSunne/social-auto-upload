@@ -31,6 +31,7 @@ type CreateAdminRoleInput struct {
 	PermissionCodes []string
 }
 
+// 确保管理端RBACCatalog已满足执行前提，必要时补齐缺失状态或配置。
 func (s *Store) EnsureAdminRBACCatalog(ctx context.Context, permissions []UpsertAdminPermissionInput, roles []UpsertAdminRoleInput) error {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -82,6 +83,7 @@ func (s *Store) EnsureAdminRBACCatalog(ctx context.Context, permissions []Upsert
 	return tx.Commit(ctx)
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminPermissions(ctx context.Context) ([]domain.AdminPermission, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT code, name, description, category
@@ -104,6 +106,7 @@ func (s *Store) ListAdminPermissions(ctx context.Context) ([]domain.AdminPermiss
 	return items, rows.Err()
 }
 
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAdminRoles(ctx context.Context) ([]domain.AdminRole, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT
@@ -149,6 +152,7 @@ func (s *Store) ListAdminRoles(ctx context.Context) ([]domain.AdminRole, error) 
 	return items, rows.Err()
 }
 
+// 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateAdminRole(ctx context.Context, input CreateAdminRoleInput) (*domain.AdminRole, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -186,6 +190,7 @@ func (s *Store) CreateAdminRole(ctx context.Context, input CreateAdminRoleInput)
 	return item, nil
 }
 
+// 处理校验管理端权限Codes相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func validateAdminPermissionCodes(ctx context.Context, tx pgx.Tx, permissionCodes []string) error {
 	codes := normalizeAdminStringList(permissionCodes)
 	if len(codes) == 0 {
@@ -206,6 +211,7 @@ func validateAdminPermissionCodes(ctx context.Context, tx pgx.Tx, permissionCode
 	return nil
 }
 
+// 获取管理端角色ID事务，为当前链路返回后续处理所需的数据内容。
 func getAdminRoleByIDTx(ctx context.Context, tx pgx.Tx, roleID string) (*domain.AdminRole, error) {
 	row := tx.QueryRow(ctx, `
 		SELECT

@@ -19,6 +19,7 @@ import (
 	"omnidrive_cloud/internal/logging"
 )
 
+// 组装数据库初始化命令依赖并启动主流程，发生错误时直接退出进程。
 func main() {
 	cfg := config.Load()
 	if cfg.DatabaseDSN == "" {
