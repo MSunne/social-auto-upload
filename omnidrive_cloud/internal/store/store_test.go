@@ -59,6 +59,9 @@ func TestAIJobSelectColumnsForSummaryOmitsHeavyPayloads(t *testing.T) {
 	if !strings.Contains(columns, "jsonb_build_object('skillName'") {
 		t.Fatalf("expected summary columns to keep skillName, got %q", columns)
 	}
+	if !strings.Contains(columns, "'conversationId'") {
+		t.Fatalf("expected summary columns to keep conversationId, got %q", columns)
+	}
 	if !strings.Contains(columns, "jsonb_build_object('stage'") {
 		t.Fatalf("expected summary columns to keep output stage, got %q", columns)
 	}

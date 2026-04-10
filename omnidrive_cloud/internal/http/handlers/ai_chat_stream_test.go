@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 )
@@ -77,5 +78,17 @@ func TestDetectChatAttachmentKind(t *testing.T) {
 	}
 	if got := detectChatAttachmentKind("application/pdf", "demo.pdf"); got != "file" {
 		t.Fatalf("expected file kind for pdf, got %q", got)
+	}
+}
+
+func TestNormalizeStreamChatProviderError(t *testing.T) {
+	if got := normalizeStreamChatProviderError(context.Canceled); got != "聊天连接意外中断，请稍后重试。" {
+		t.Fatalf("expected canceled error to be normalized, got %q", got)
+	}
+	if got := normalizeStreamChatProviderError(context.DeadlineExceeded); got != "模型响应超时，请稍后重试。" {
+		t.Fatalf("expected deadline exceeded error to be normalized, got %q", got)
+	}
+	if got := normalizeStreamChatProviderError(nil); got != "" {
+		t.Fatalf("expected nil error to normalize to empty string, got %q", got)
 	}
 }

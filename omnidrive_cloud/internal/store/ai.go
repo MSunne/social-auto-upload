@@ -47,7 +47,8 @@ func aiJobInputPayloadSelectColumn(alias string, payloadMode string) string {
 		return qualified
 	}
 	return fmt.Sprintf(
-		`jsonb_strip_nulls(jsonb_build_object('skillName', %s->'skillName')) AS input_payload`,
+		`jsonb_strip_nulls(jsonb_build_object('skillName', %s->'skillName', 'conversationId', %s->'conversationId')) AS input_payload`,
+		qualified,
 		qualified,
 	)
 }

@@ -1297,6 +1297,7 @@ CREATE INDEX IF NOT EXISTS idx_publish_task_material_refs_task_id ON publish_tas
 CREATE INDEX IF NOT EXISTS idx_ai_models_category ON ai_models(category);
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_owner_user_id ON ai_jobs(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_job_type ON ai_jobs(job_type);
+CREATE INDEX IF NOT EXISTS idx_ai_jobs_owner_job_type_updated_at ON ai_jobs(owner_user_id, job_type, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_device_id ON ai_jobs(device_id);
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_source ON ai_jobs(source);
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_lease_expires_at ON ai_jobs(lease_expires_at);

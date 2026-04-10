@@ -87,6 +87,8 @@ type StreamReadState = {
 
 const DEFAULT_CHAT_MAX_TOKENS = 1800;
 const ATTACHMENT_HEAVY_CHAT_MAX_TOKENS = 3200;
+const CHAT_MODELS_STALE_TIME = 5 * 60 * 1000;
+const CHAT_HISTORY_STALE_TIME = 15 * 1000;
 
 const INITIAL_MESSAGES: ChatMessage[] = [
   {
@@ -717,13 +719,18 @@ function appendStreamError(existingContent: string, nextError: string) {
 }
 
 function getAssistantDisplayContent(message: ChatMessage) {
-  if (message.content.trim()) {
-    return message.content;
-  }
-  if (message.state === "streaming") {
-    return "模型正在思考中...";
-  }
   return message.content;
+}
+
+function ChatThinkingIndicator() {
+  return (
+    <div className="flex items-center gap-2 px-1 py-1.5">
+      <span className="chat-thinking-dot" />
+      <span className="chat-thinking-dot" />
+      <span className="chat-thinking-dot" />
+      <span className="ml-1.5 text-xs text-text-muted/70">AI正在思考中</span>
+    </div>
+  );
 }
 
 function AttachmentList({
@@ -999,6 +1006,7 @@ export default function ChatPage() {
   } = useQuery<AIModel[], Error>({
     queryKey: ["aiModels", "chat"],
     queryFn: () => listAIModels({ category: "chat" }),
+    staleTime: CHAT_MODELS_STALE_TIME,
   });
 
   const {
@@ -1006,19 +1014,28 @@ export default function ChatPage() {
     isLoading: historyLoading,
   } = useQuery<AIJob[], Error>({
     queryKey: ["aiJobs", "chat", "history"],
-    queryFn: () => listAIJobs({ jobType: "chat", source: "omnidrive_chat", limit: 30 }),
+    queryFn: () =>
+      listAIJobs({
+        jobType: "chat",
+        source: "omnidrive_chat",
+        payloadMode: "summary",
+        limit: 30,
+      }),
+    staleTime: CHAT_HISTORY_STALE_TIME,
   });
 
   const { data: selectedJob } = useQuery<AIJob, Error>({
     queryKey: ["aiJob", selectedJobId],
     queryFn: () => getAIJob(selectedJobId),
     enabled: Boolean(selectedJobId),
+    staleTime: CHAT_HISTORY_STALE_TIME,
   });
 
   const { data: selectedJobArtifacts = [] } = useQuery<AIJobArtifact[], Error>({
     queryKey: ["aiJobArtifacts", selectedJobId],
     queryFn: () => getAIJobArtifacts(selectedJobId),
     enabled: Boolean(selectedJobId),
+    staleTime: CHAT_HISTORY_STALE_TIME,
   });
 
   const chatModels = useMemo(() => {
@@ -1543,12 +1560,8 @@ export default function ChatPage() {
                     </div>
                   )}
                   <div className={cn("max-w-[90%] rounded-2xl px-4 py-3 shadow-sm", message.role === "user" ? "rounded-tr-md bg-gradient-to-r from-accent to-cyan text-background" : "rounded-tl-md border border-border bg-surface-hover text-text-primary", message.state === "error" && "border-red-500/30 bg-red-500/10 text-red-100")}>
-                    {message.state === "pending" ? (
-                      <div className="flex items-center gap-1.5 px-1 py-1">
-                        <span className="h-2 w-2 animate-bounce rounded-full bg-accent/90 [animation-delay:-0.2s]" />
-                        <span className="h-2 w-2 animate-bounce rounded-full bg-accent/70 [animation-delay:-0.1s]" />
-                        <span className="h-2 w-2 animate-bounce rounded-full bg-accent/50" />
-                      </div>
+                    {message.state === "pending" || (message.state === "streaming" && message.role === "assistant" && !message.content.trim()) ? (
+                      <ChatThinkingIndicator />
                     ) : (
                       <div className="text-sm leading-7">
                         {message.role === "assistant" ? (
@@ -1556,7 +1569,7 @@ export default function ChatPage() {
                         ) : (
                           <span className="whitespace-pre-wrap">{message.content}</span>
                         )}
-                        {message.state === "streaming" && <span className="ml-1 inline-block h-4 w-1.5 animate-pulse rounded-full bg-accent/80 align-middle" />}
+                        {message.state === "streaming" && message.content.trim() && <span className="chat-streaming-cursor" />}
                       </div>
                     )}
                     <AttachmentList attachments={message.attachments || []} compact />

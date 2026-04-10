@@ -559,3 +559,45 @@ body::before {
   animation: dataRise var(--rise-duration, 6s) linear infinite;
   animation-delay: var(--rise-delay, 0s);
 }
+
+/* ─── AI Chat Thinking Indicator ─── */
+@keyframes chatThinkingWave {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translateY(-6px) scale(1.25);
+    opacity: 1;
+  }
+}
+
+.chat-thinking-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 9999px;
+  background: linear-gradient(135deg, var(--color-accent), var(--color-cyan));
+  animation: chatThinkingWave 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  box-shadow: 0 0 8px var(--color-accent-glow);
+}
+.chat-thinking-dot:nth-child(1) { animation-delay: 0s; }
+.chat-thinking-dot:nth-child(2) { animation-delay: 0.15s; }
+.chat-thinking-dot:nth-child(3) { animation-delay: 0.30s; }
+
+@keyframes chatCursorBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+.chat-streaming-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  margin-left: 2px;
+  border-radius: 1px;
+  background: linear-gradient(180deg, var(--color-accent), var(--color-cyan));
+  vertical-align: text-bottom;
+  animation: chatCursorBlink 1s ease-in-out infinite;
+  box-shadow: 0 0 6px var(--color-accent-glow);
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -113,6 +114,7 @@ type persistedChatAttachment struct {
 }
 
 const streamChatPersistenceTimeout = 10 * time.Second
+const streamChatGenerationTimeout = 3 * time.Minute
 
 var defaultChatSupportedFileTypes = []string{
 	"image/*",
@@ -1115,7 +1117,9 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 
 	sawDoneEvent := false
 	streamWriteFailed := false
-	result, err := provider.GenerateChatStream(r.Context(), req, func(chunk aiclient.ChatStreamChunk) error {
+	streamCtx, cancelStream := h.streamChatGenerationContext(r.Context())
+	defer cancelStream()
+	result, err := provider.GenerateChatStream(streamCtx, req, func(chunk aiclient.ChatStreamChunk) error {
 		if streamWriteFailed {
 			return nil
 		}
@@ -1178,23 +1182,24 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
+		errMessage := normalizeStreamChatProviderError(err)
 		failedStatus := "failed"
 		failedAt := time.Now().UTC()
 		outputPayload := mustJSONBytes(map[string]any{
-			"error": err.Error(),
+			"error": errMessage,
 		})
 		h.persistStreamChatTerminalUpdate(r.Context(), jobID, user.ID, store.UpdateAIJobInput{
 			Status:          &failedStatus,
 			OutputPayload:   outputPayload,
 			OutputTouched:   true,
-			Message:         stringPtr(err.Error()),
+			Message:         stringPtr(errMessage),
 			FinishedAt:      &failedAt,
 			FinishedTouched: true,
 		})
 		_ = writeSSEEvent(w, flusher, "error", chatStreamResponse{
 			JobID:     jobID,
 			ModelName: payload.ModelName,
-			Error:     err.Error(),
+			Error:     errMessage,
 		})
 		return
 	}
@@ -1269,6 +1274,34 @@ func (h *AIHandler) streamChatPersistenceContext(parent context.Context) (contex
 		base = context.WithoutCancel(parent)
 	}
 	return context.WithTimeout(base, streamChatPersistenceTimeout)
+}
+
+// 处理AI流式对话执行上下文接口，解析请求参数并调用应用状态或存储层完成业务动作。
+func (h *AIHandler) streamChatGenerationContext(parent context.Context) (context.Context, context.CancelFunc) {
+	base := context.Background()
+	if parent != nil {
+		base = context.WithoutCancel(parent)
+	}
+	return context.WithTimeout(base, streamChatGenerationTimeout)
+}
+
+// 规范化流式对话提供方错误，统一AI作业链路的输入格式和后续处理行为。
+func normalizeStreamChatProviderError(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := strings.TrimSpace(err.Error())
+	lowerMessage := strings.ToLower(message)
+	switch {
+	case errors.Is(err, context.Canceled), strings.Contains(lowerMessage, "context canceled"):
+		return "聊天连接意外中断，请稍后重试。"
+	case errors.Is(err, context.DeadlineExceeded), strings.Contains(lowerMessage, "deadline exceeded"):
+		return "模型响应超时，请稍后重试。"
+	case message == "":
+		return "本次对话失败，请稍后重试。"
+	default:
+		return message
+	}
 }
 
 // 处理AIpersist流式对话Terminal更新接口，解析请求参数并调用应用状态或存储层完成业务动作。
