@@ -11,6 +11,7 @@ import {
   History,
   ImagePlus,
   LoaderCircle,
+  Maximize2,
   Mic,
   Package,
   RefreshCw,
@@ -140,6 +141,7 @@ function DropZone({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -200,42 +202,75 @@ function DropZone({
         >
           {/* Preview area */}
           {kind === "image" ? (
-            <div className="relative h-48 overflow-hidden bg-black/30">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={previewUrl}
-                alt={file.name}
-                className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
-              {/* Overlay actions */}
-              <div className="absolute right-2 top-2 flex gap-1.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+            <>
+              <div
+                className="relative h-36 cursor-pointer overflow-hidden bg-black/40"
+                onClick={(e) => { e.stopPropagation(); setIsLightboxOpen(true); }}
+                title="点击查看大图"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={previewUrl}
+                  alt={file.name}
+                  className="h-full w-full object-contain p-2"
+                />
+                {/* Zoom hint on hover */}
+                <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-sm">
+                    <Maximize2 className="h-4 w-4" />
+                  </div>
+                </div>
+                {/* Bottom bar */}
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2">
+                  <div className="flex items-center gap-2 text-xs font-medium text-white">
+                    {icon}
+                    <span>{label}</span>
+                    <CheckCircle2 className="ml-auto h-3.5 w-3.5 text-success" />
+                  </div>
+                </div>
+              </div>
+              {/* Action buttons row */}
+              <div className="flex items-center justify-end gap-1.5 px-3 py-1.5">
                 <button
                   type="button"
                   onClick={handleClick}
-                  className="flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-white/90 backdrop-blur-md transition-colors hover:bg-accent/80"
+                  className="flex h-7 w-7 items-center justify-center rounded-full bg-surface-hover text-text-secondary transition-colors hover:bg-accent/20 hover:text-accent"
                   title="更换文件"
                 >
-                  <RefreshCw className="h-3.5 w-3.5" />
+                  <RefreshCw className="h-3 w-3" />
                 </button>
                 <button
                   type="button"
                   onClick={handleRemove}
-                  className="flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-white/90 backdrop-blur-md transition-colors hover:bg-danger/80"
+                  className="flex h-7 w-7 items-center justify-center rounded-full bg-surface-hover text-text-secondary transition-colors hover:bg-danger/20 hover:text-danger"
                   title="删除文件"
                 >
-                  <X className="h-3.5 w-3.5" />
+                  <X className="h-3 w-3" />
                 </button>
               </div>
-              {/* File info at bottom */}
-              <div className="absolute bottom-0 left-0 right-0 px-4 py-3">
-                <div className="flex items-center gap-2 text-sm font-medium text-white">
-                  {icon}
-                  <span>{label}</span>
-                  <CheckCircle2 className="ml-auto h-4 w-4 text-success" />
+              {/* Lightbox modal */}
+              {isLightboxOpen && (
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+                  onClick={() => setIsLightboxOpen(false)}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setIsLightboxOpen(false)}
+                    className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={previewUrl}
+                    alt={file.name}
+                    className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain shadow-2xl"
+                    onClick={(e) => e.stopPropagation()}
+                  />
                 </div>
-              </div>
-            </div>
+              )}
+            </>
           ) : (
             <div className="px-4 py-3">
               <div className="flex items-center gap-2">
