@@ -26,6 +26,14 @@ const digitalHumanTaskSelectColumns = `
 	result_asset,
 	goods_title,
 	goods_text,
+	estimated_duration_seconds,
+	estimated_credits,
+	estimated_credits_millis,
+	actual_duration_seconds,
+	final_credits,
+	final_credits_millis,
+	billing_status,
+	billing_payload,
 	progress,
 	request_payload,
 	remote_response_payload,
@@ -75,6 +83,13 @@ func scanDigitalHumanTask(row pgx.Row) (*domain.DigitalHumanTask, error) {
 	var refAudioAsset []byte
 	var resultAsset []byte
 	var goodsTitle *string
+	var estimatedCreditsLegacy int64
+	var estimatedCreditsMillis int64
+	var actualDurationSeconds *int
+	var finalCreditsLegacy *int64
+	var finalCreditsMillis *int64
+	var billingStatus string
+	var billingPayload []byte
 	var progress []byte
 	var requestPayload []byte
 	var remoteResponsePayload []byte
@@ -98,6 +113,14 @@ func scanDigitalHumanTask(row pgx.Row) (*domain.DigitalHumanTask, error) {
 		&resultAsset,
 		&goodsTitle,
 		&task.GoodsText,
+		&task.EstimatedDurationSeconds,
+		&estimatedCreditsLegacy,
+		&estimatedCreditsMillis,
+		&actualDurationSeconds,
+		&finalCreditsLegacy,
+		&finalCreditsMillis,
+		&billingStatus,
+		&billingPayload,
 		&progress,
 		&requestPayload,
 		&remoteResponsePayload,
@@ -146,6 +169,20 @@ func scanDigitalHumanTask(row pgx.Row) (*domain.DigitalHumanTask, error) {
 	task.RefAudioAsset = *refAudio
 	task.ResultAsset = result
 	task.GoodsTitle = normalizeOptionalString(goodsTitle)
+	if estimatedCreditsMillis <= 0 && estimatedCreditsLegacy > 0 {
+		estimatedCreditsMillis = estimatedCreditsLegacy * DigitalHumanCreditMillisScale
+	}
+	task.EstimatedCreditsMillis = estimatedCreditsMillis
+	task.EstimatedCredits = DigitalHumanCreditsFromMillis(estimatedCreditsMillis)
+	task.ActualDurationSeconds = actualDurationSeconds
+	task.FinalCreditsMillis = finalCreditsMillis
+	if task.FinalCreditsMillis == nil && finalCreditsLegacy != nil {
+		fallbackMillis := *finalCreditsLegacy * DigitalHumanCreditMillisScale
+		task.FinalCreditsMillis = &fallbackMillis
+	}
+	task.FinalCredits = DigitalHumanCreditsPtrFromMillis(task.FinalCreditsMillis)
+	task.BillingStatus = billingStatus
+	task.BillingPayload = bytesOrNil(billingPayload)
 	task.Progress = progressValue
 	task.RequestPayload = bytesOrNil(requestPayload)
 	task.RemoteResponsePayload = bytesOrNil(remoteResponsePayload)
@@ -159,6 +196,7 @@ func scanDigitalHumanTask(row pgx.Row) (*domain.DigitalHumanTask, error) {
 }
 
 func (s *Store) CreateDigitalHumanTask(ctx context.Context, input CreateDigitalHumanTaskInput) (*domain.DigitalHumanTask, error) {
+	estimatedCreditsLegacy := DigitalHumanRoundMillisToWholeCredits(input.EstimatedCreditsMillis)
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO digital_human_tasks (
 			id,
@@ -171,12 +209,17 @@ func (s *Store) CreateDigitalHumanTask(ctx context.Context, input CreateDigitalH
 			ref_audio_asset,
 			goods_title,
 			goods_text,
+			estimated_duration_seconds,
+			estimated_credits,
+			estimated_credits_millis,
+			billing_status,
+			billing_payload,
 			progress,
 			request_payload
 		)
-		VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10, $11::jsonb, $12::jsonb)
+		VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb, $17::jsonb)
 		RETURNING `+digitalHumanTaskSelectColumns+`
-	`, input.ID, input.OwnerUserID, input.Mode, input.Source, input.Status, input.CharacterAsset, nullableJSON(input.GoodsAsset), input.RefAudioAsset, input.GoodsTitle, input.GoodsText, nullableJSON(input.Progress), nullableJSON(input.RequestPayload))
+	`, input.ID, input.OwnerUserID, input.Mode, input.Source, input.Status, input.CharacterAsset, nullableJSON(input.GoodsAsset), input.RefAudioAsset, input.GoodsTitle, input.GoodsText, input.EstimatedDurationSeconds, estimatedCreditsLegacy, input.EstimatedCreditsMillis, input.BillingStatus, nullableJSON(input.BillingPayload), nullableJSON(input.Progress), nullableJSON(input.RequestPayload))
 
 	return scanDigitalHumanTask(row)
 }
@@ -260,9 +303,12 @@ func (s *Store) ListExecutableDigitalHumanTasks(ctx context.Context, limit int) 
 	query := `
 		SELECT ` + digitalHumanTaskSelectColumns + `
 		FROM digital_human_tasks
-		WHERE status IN ('queued', 'running')
+		WHERE (
+		    status IN ('queued', 'running')
+		    OR (status = 'completed' AND billing_status = 'settlement_pending')
+		)
 		  AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
-		ORDER BY CASE WHEN status = 'queued' THEN 0 ELSE 1 END, created_at ASC, id ASC
+		ORDER BY CASE WHEN status = 'queued' THEN 0 WHEN status = 'running' THEN 1 ELSE 2 END, created_at ASC, id ASC
 	`
 	args := []any{}
 	if limit > 0 {
@@ -294,7 +340,10 @@ func (s *Store) ClaimDigitalHumanTaskLease(ctx context.Context, taskID string, l
 		    lease_expires_at = $3,
 		    updated_at = NOW()
 		WHERE id = $1
-		  AND status IN ('queued', 'running')
+		  AND (
+		      status IN ('queued', 'running')
+		      OR (status = 'completed' AND billing_status = 'settlement_pending')
+		  )
 		  AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
 		RETURNING `+digitalHumanTaskSelectColumns+`
 	`, taskID, leaseToken, leaseExpiresAt.UTC())
@@ -338,6 +387,18 @@ func (s *Store) SyncDigitalHumanTaskExecution(ctx context.Context, taskID string
 	if input.ResultAssetTouched {
 		resultAsset = nullableJSON(input.ResultAsset)
 	}
+	var actualDurationSeconds any
+	if input.ActualDurationTouched {
+		actualDurationSeconds = input.ActualDurationSeconds
+	}
+	var finalCreditsMillis any
+	if input.FinalCreditsTouched {
+		finalCreditsMillis = input.FinalCreditsMillis
+	}
+	var billingPayload any
+	if input.BillingPayloadTouched {
+		billingPayload = nullableJSON(input.BillingPayload)
+	}
 	var progress any
 	if input.ProgressTouched {
 		progress = nullableJSON(input.Progress)
@@ -358,6 +419,14 @@ func (s *Store) SyncDigitalHumanTaskExecution(ctx context.Context, taskID string
 	if input.WorkingDirTouched {
 		workingDir = input.WorkingDir
 	}
+	var billingStatus any
+	if input.BillingStatusTouched {
+		billingStatus = input.BillingStatus
+	}
+	finalCreditsLegacy := int64(0)
+	if input.FinalCreditsTouched && input.FinalCreditsMillis != nil {
+		finalCreditsLegacy = DigitalHumanRoundMillisToWholeCredits(*input.FinalCreditsMillis)
+	}
 
 	row := s.pool.QueryRow(ctx, `
 		UPDATE digital_human_tasks
@@ -370,25 +439,45 @@ func (s *Store) SyncDigitalHumanTaskExecution(ctx context.Context, taskID string
 		        WHEN $6 = TRUE THEN $7::jsonb
 		        ELSE result_asset
 		    END,
+		    actual_duration_seconds = CASE
+		        WHEN $8 = TRUE THEN $9::int
+		        ELSE actual_duration_seconds
+		    END,
+		    final_credits = CASE
+		        WHEN $10 = TRUE THEN $11::bigint
+		        ELSE final_credits
+		    END,
+		    final_credits_millis = CASE
+		        WHEN $10 = TRUE THEN $12::bigint
+		        ELSE final_credits_millis
+		    END,
+		    billing_status = CASE
+		        WHEN $13 = TRUE THEN $14::text
+		        ELSE billing_status
+		    END,
+		    billing_payload = CASE
+		        WHEN $15 = TRUE THEN $16::jsonb
+		        ELSE billing_payload
+		    END,
 		    progress = CASE
-		        WHEN $8 = TRUE THEN $9::jsonb
+		        WHEN $17 = TRUE THEN $18::jsonb
 		        ELSE progress
 		    END,
 		    remote_response_payload = CASE
-		        WHEN $10 = TRUE THEN $11::jsonb
+		        WHEN $19 = TRUE THEN $20::jsonb
 		        ELSE remote_response_payload
 		    END,
-		    error_message = COALESCE($12::text, error_message),
+		    error_message = COALESCE($21::text, error_message),
 		    started_at = CASE
-		        WHEN $13 = TRUE THEN $14::timestamptz
+		        WHEN $22 = TRUE THEN $23::timestamptz
 		        ELSE started_at
 		    END,
 		    completed_at = CASE
-		        WHEN $15 = TRUE THEN $16::timestamptz
+		        WHEN $24 = TRUE THEN $25::timestamptz
 		        ELSE completed_at
 		    END,
 		    working_dir = CASE
-		        WHEN $17 = TRUE THEN $18::text
+		        WHEN $26 = TRUE THEN $27::text
 		        ELSE working_dir
 		    END,
 		    lease_token = CASE
@@ -403,7 +492,7 @@ func (s *Store) SyncDigitalHumanTaskExecution(ctx context.Context, taskID string
 		WHERE id = $1
 		  AND lease_token = $2
 		RETURNING `+digitalHumanTaskSelectColumns+`
-	`, taskID, leaseToken, input.Status, input.RemoteTaskTouched, remoteTaskID, input.ResultAssetTouched, resultAsset, input.ProgressTouched, progress, input.RemotePayloadTouched, remotePayload, input.ErrorMessage, input.StartedTouched, startedAt, input.CompletedTouched, completedAt, input.WorkingDirTouched, workingDir)
+	`, taskID, leaseToken, input.Status, input.RemoteTaskTouched, remoteTaskID, input.ResultAssetTouched, resultAsset, input.ActualDurationTouched, actualDurationSeconds, input.FinalCreditsTouched, finalCreditsLegacy, finalCreditsMillis, input.BillingStatusTouched, billingStatus, input.BillingPayloadTouched, billingPayload, input.ProgressTouched, progress, input.RemotePayloadTouched, remotePayload, input.ErrorMessage, input.StartedTouched, startedAt, input.CompletedTouched, completedAt, input.WorkingDirTouched, workingDir)
 
 	task, err := scanDigitalHumanTask(row)
 	if err != nil {

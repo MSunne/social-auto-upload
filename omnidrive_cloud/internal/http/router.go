@@ -150,6 +150,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 			})
 
 			private.Route("/digital-human", func(digitalHuman chi.Router) {
+				digitalHuman.Get("/billing-preview", digitalHumanHandler.BillingPreview)
 				digitalHuman.Get("/tasks", digitalHumanHandler.List)
 				digitalHuman.Post("/tasks", digitalHumanHandler.Create)
 				digitalHuman.Get("/tasks/{taskId}", digitalHumanHandler.Detail)
@@ -279,6 +280,8 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 			private.With(authmiddleware.RequireAdminPermission("task.operate")).Post("/ai-jobs/{jobId}/cancel", adminConsoleHandler.CancelAIJob)
 			private.With(authmiddleware.RequireAdminPermission("task.operate")).Post("/ai-jobs/{jobId}/retry", adminConsoleHandler.RetryAIJob)
 			private.With(authmiddleware.RequireAdminPermission("task.operate")).Post("/ai-jobs/{jobId}/force-release", adminConsoleHandler.ForceReleaseAIJob)
+			private.With(authmiddleware.RequireAdminPermission("task.read")).Get("/digital-human/tasks", adminConsoleHandler.ListDigitalHumanTasks)
+			private.With(authmiddleware.RequireAdminPermission("task.read")).Get("/digital-human/tasks/{taskId}", adminConsoleHandler.DetailDigitalHumanTask)
 			private.With(authmiddleware.RequireAdminPermission("finance.read")).Get("/pricing/packages", adminConsoleHandler.ListPricingPackages)
 			private.With(authmiddleware.RequireAdminPermission("finance.read")).Get("/pricing/rules", adminConsoleHandler.ListPricingRules)
 			private.With(authmiddleware.RequireAdminPermission("finance.read")).Get("/pricing/workflow-duration-rules", adminConsoleHandler.ListWorkflowDurationRules)

@@ -50,6 +50,14 @@ type AdminAuditListFilter struct {
 	AdminPageFilter
 }
 
+type AdminDigitalHumanTaskListFilter struct {
+	Query  string
+	Status string
+	Mode   string
+	UserID string
+	AdminPageFilter
+}
+
 // 规范化管理端Page，统一存储层链路的输入格式和后续处理行为。
 func normalizeAdminPage(page int, pageSize int) (int, int, int) {
 	if page <= 0 {

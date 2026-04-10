@@ -32,8 +32,13 @@ import {
   isTerminalDigitalHumanTask,
   validateDigitalHumanFile,
 } from "@/lib/digital-human";
-import { createDigitalHumanTask, getDigitalHumanTask, listDigitalHumanTasks } from "@/lib/services";
-import type { DigitalHumanTask } from "@/lib/types";
+import {
+  createDigitalHumanTask,
+  getDigitalHumanBillingPreview,
+  getDigitalHumanTask,
+  listDigitalHumanTasks,
+} from "@/lib/services";
+import type { DigitalHumanBillingPreview, DigitalHumanTask } from "@/lib/types";
 import { formatDateTime } from "@/lib/workflow";
 
 type FormErrors = Partial<Record<"characterImage" | "goodsImage" | "refAudio" | "goodsTitle" | "goodsText", string>>;
@@ -69,6 +74,16 @@ function formatFileSize(bytes: number) {
     return `${(bytes / 1024).toFixed(1)} KB`;
   }
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatCreditValue(value?: number | null) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "0";
+  }
+  return value.toLocaleString("zh-CN", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 3,
+  });
 }
 
 function clampProgress(task?: DigitalHumanTask | null) {
@@ -343,6 +358,7 @@ export default function DigitalHumanCreationPage() {
   const [errors, setErrors] = useState<FormErrors>({});
   const [submitError, setSubmitError] = useState("");
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [debouncedGoodsText, setDebouncedGoodsText] = useState("");
 
   const characterPreview = useObjectUrl(characterImage);
   const goodsPreview = useObjectUrl(goodsImage);
@@ -350,6 +366,23 @@ export default function DigitalHumanCreationPage() {
 
   const titleLength = countUnicodeCharacters(goodsTitle);
   const textLength = countUnicodeCharacters(goodsText);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedGoodsText(goodsText.trim());
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [goodsText]);
+
+  const {
+    data: billingPreview,
+    error: billingPreviewError,
+    isFetching: isBillingPreviewFetching,
+  } = useQuery<DigitalHumanBillingPreview>({
+    queryKey: ["digitalHumanBillingPreview", debouncedGoodsText],
+    queryFn: () => getDigitalHumanBillingPreview(debouncedGoodsText),
+    refetchOnWindowFocus: false,
+  });
 
   const { data: recentTasks = [] } = useQuery<DigitalHumanTask[]>({
     queryKey: ["digitalHumanTasks", "recent"],
@@ -393,6 +426,15 @@ export default function DigitalHumanCreationPage() {
     () => recentTasks.slice(0, 3),
     [recentTasks],
   );
+  const hasGoodsText = goodsText.trim().length > 0;
+  const billingDisabled = Boolean(billingPreview && billingPreview.creditsPerSecond <= 0);
+  const billingInsufficient = Boolean(
+    hasGoodsText &&
+      billingPreview &&
+      billingPreview.creditsPerSecond > 0 &&
+      !billingPreview.canAfford,
+  );
+  const submitDisabled = createMutation.isPending || billingDisabled || billingInsufficient;
 
   function handleModeChange(nextMode: "digital" | "customize") {
     setMode(nextMode);
@@ -492,6 +534,14 @@ export default function DigitalHumanCreationPage() {
     if (!validateForm()) {
       return;
     }
+    if (billingDisabled) {
+      setSubmitError("数字人计费暂未开放，请稍后再试");
+      return;
+    }
+    if (billingPreview && !billingPreview.canAfford) {
+      setSubmitError(`当前积分不足，预计需要 ${formatCreditValue(billingPreview.estimatedCredits)} 积分，还差 ${formatCreditValue(billingPreview.shortfallCredits)} 积分`);
+      return;
+    }
 
     const formData = new FormData();
     formData.append("mode", mode);
@@ -513,6 +563,13 @@ export default function DigitalHumanCreationPage() {
 
   const shouldShowReminder = createMutation.isPending || Boolean(activeTask);
   const progressValue = clampProgress(activeTask);
+  const submitButtonText = createMutation.isPending
+    ? "正在提交中..."
+    : billingDisabled
+      ? "计费未开放"
+      : billingInsufficient
+        ? "积分不足"
+        : "开始制作";
 
   const modeOptions = [
     {
@@ -687,6 +744,50 @@ export default function DigitalHumanCreationPage() {
               <p className="mt-1.5 text-xs text-text-muted">
                 文案越长，生成的视频越长。建议精心撰写文案以获得最佳效果。
               </p>
+              <div className="mt-3 rounded-2xl border border-accent/15 bg-accent/[0.04] px-4 py-3">
+                {billingPreviewError ? (
+                  <p className="text-xs text-warning">
+                    预计消耗读取失败，提交时服务端仍会重新校验积分。
+                  </p>
+                ) : billingDisabled ? (
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-warning">暂未开放计费配置</p>
+                    <p className="text-xs text-text-muted">
+                      管理后台尚未设置数字人视频每秒积分，当前无法提交任务。
+                    </p>
+                  </div>
+                ) : hasGoodsText && billingPreview ? (
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-text-secondary">
+                    <span>
+                      预计时长 <span className="font-semibold text-text-primary">{billingPreview.estimatedDurationSeconds}</span> 秒
+                    </span>
+                    <span>
+                      预计消耗 <span className="font-semibold text-accent">{formatCreditValue(billingPreview.estimatedCredits)}</span> 积分
+                    </span>
+                    <span>
+                      当前余额 <span className="font-semibold text-text-primary">{formatCreditValue(billingPreview.creditBalance)}</span> 积分
+                    </span>
+                    <span className="text-xs text-text-muted">按 4 字/秒估算，实际结算以成品视频时长为准</span>
+                    {billingInsufficient ? (
+                      <span className="rounded-full bg-danger/10 px-2 py-0.5 text-xs font-medium text-danger">
+                        余额不足，还差 {formatCreditValue(billingPreview.shortfallCredits)} 积分
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success">
+                        积分充足
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-3 text-xs text-text-muted">
+                    <span>
+                      当前费率 {formatCreditValue(billingPreview?.creditsPerSecond ?? 0)} 积分/秒
+                    </span>
+                    <span>按 4 字/秒估算，输入文案后将展示预计消耗</span>
+                    {isBillingPreviewFetching ? <span className="text-accent">正在计算...</span> : null}
+                  </div>
+                )}
+              </div>
               {errors.goodsText ? <p className="mt-1.5 text-xs text-danger">{errors.goodsText}</p> : null}
             </div>
           </motion.section>
@@ -695,9 +796,9 @@ export default function DigitalHumanCreationPage() {
           <motion.div variants={fadeUp} className="flex flex-wrap items-center gap-4">
             <button
               type="submit"
-              disabled={createMutation.isPending}
+              disabled={submitDisabled}
               className={`group relative inline-flex items-center gap-2.5 overflow-hidden rounded-2xl px-6 py-3.5 text-sm font-semibold text-white transition-all duration-300 ${
-                createMutation.isPending
+                submitDisabled
                   ? "bg-gradient-to-r from-accent/60 to-[#7c3aed]/60 cursor-not-allowed shadow-none"
                   : "bg-gradient-to-r from-accent to-[#7c3aed] shadow-[0_0_24px_rgba(177,73,255,0.25)] hover:shadow-[0_0_36px_rgba(177,73,255,0.35)] hover:brightness-110"
               }`}
@@ -716,12 +817,20 @@ export default function DigitalHumanCreationPage() {
                 ) : (
                   <Video className="h-4.5 w-4.5" />
                 )}
-                {createMutation.isPending ? "正在提交中..." : "开始制作"}
+                {submitButtonText}
               </span>
             </button>
             {createMutation.isPending ? (
               <span className="text-xs text-accent animate-pulse">
                 正在上传素材并启动任务，请勿关闭页面...
+              </span>
+            ) : billingDisabled ? (
+              <span className="text-xs text-warning">
+                后台尚未配置数字人视频每秒积分，暂时无法提交。
+              </span>
+            ) : billingInsufficient && billingPreview ? (
+              <span className="text-xs text-danger">
+                当前积分不足，还差 {formatCreditValue(billingPreview.shortfallCredits)} 积分。
               </span>
             ) : (
               <span className="text-xs text-text-muted">

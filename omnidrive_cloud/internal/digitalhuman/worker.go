@@ -4,10 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"math"
 	"mime"
+	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,12 +28,20 @@ import (
 const digitalHumanLeaseTTL = 90 * time.Second
 
 type Worker struct {
-	app          *appstate.App
-	client       *Client
-	pollInterval time.Duration
-	concurrency  int
-	sem          chan struct{}
-	activeTasks  sync.Map
+	app           *appstate.App
+	client        *Client
+	pollInterval  time.Duration
+	concurrency   int
+	sem           chan struct{}
+	activeTasks   sync.Map
+	downloadVideo func(ctx context.Context, rawURL string, targetPath string) error
+	probeDuration func(ctx context.Context, path string) (float64, error)
+}
+
+type resultSaveOutcome struct {
+	asset                 *domain.DigitalHumanAsset
+	actualDurationSeconds *int
+	probeErr              error
 }
 
 func NewWorker(app *appstate.App) (*Worker, error) {
@@ -146,7 +160,15 @@ func (w *Worker) processTask(ctx context.Context, task domain.DigitalHumanTask) 
 		}
 	}
 
-	if claimed == nil || !strings.EqualFold(strings.TrimSpace(claimed.Status), "running") {
+	if claimed == nil {
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(claimed.Status), "completed") &&
+		strings.EqualFold(strings.TrimSpace(claimed.BillingStatus), "settlement_pending") {
+		w.resumeSettlement(ctx, claimed)
+		return
+	}
+	if !strings.EqualFold(strings.TrimSpace(claimed.Status), "running") {
 		return
 	}
 	if strings.TrimSpace(valueOrEmptyString(claimed.RemoteTaskID)) == "" {
@@ -175,56 +197,13 @@ func (w *Worker) processTask(ctx context.Context, task domain.DigitalHumanTask) 
 
 		switch normalizeRemoteStatus(remoteTask.Status) {
 		case "completed":
-			resultAsset, resultErr := w.saveResultAsset(ctx, claimed, remoteTask)
-			if resultErr != nil {
-				w.failTask(ctx, claimed, leaseToken, buildFailureMessage(resultErr), claimed.WorkingDir, rawResponse)
-				w.app.Logger.Error("digital human worker failed to mirror result", "task_id", claimed.ID, "error", resultErr)
-				return
-			}
-			if claimed.WorkingDir != nil {
-				cleanupWorkingDir(w.app.Logger, *claimed.WorkingDir)
-			}
-			updated, syncErr := w.app.Store.SyncDigitalHumanTaskExecution(ctx, claimed.ID, leaseToken, store.UpdateDigitalHumanTaskExecutionInput{
-				Status:                stringPtr("completed"),
-				ResultAsset:           mustJSON(resultAsset),
-				ResultAssetTouched:    true,
-				Progress:              progressJSON,
-				ProgressTouched:       true,
-				RemoteResponsePayload: rawResponse,
-				RemotePayloadTouched:  true,
-				CompletedAt:           timePtr(time.Now().UTC()),
-				CompletedTouched:      true,
-				WorkingDir:            nil,
-				WorkingDirTouched:     true,
-			})
-			if syncErr != nil {
-				w.app.Logger.Error("digital human worker failed to mark task complete", "task_id", claimed.ID, "error", syncErr)
-			}
-			if updated != nil {
-				claimed = updated
-			}
+			w.completeTask(ctx, claimed, leaseToken, remoteTask, rawResponse, progressJSON)
 			return
 		case "failed":
 			w.failTask(ctx, claimed, leaseToken, firstNonEmptyString(valueOrEmptyString(remoteTask.Error), "数字人视频生成失败"), claimed.WorkingDir, rawResponse)
 			return
 		case "cancelled":
-			if claimed.WorkingDir != nil {
-				cleanupWorkingDir(w.app.Logger, *claimed.WorkingDir)
-			}
-			if _, err := w.app.Store.SyncDigitalHumanTaskExecution(ctx, claimed.ID, leaseToken, store.UpdateDigitalHumanTaskExecutionInput{
-				Status:                stringPtr("cancelled"),
-				Progress:              progressJSON,
-				ProgressTouched:       true,
-				RemoteResponsePayload: rawResponse,
-				RemotePayloadTouched:  true,
-				ErrorMessage:          stringPtr("数字人任务已取消"),
-				CompletedAt:           timePtr(time.Now().UTC()),
-				CompletedTouched:      true,
-				WorkingDir:            nil,
-				WorkingDirTouched:     true,
-			}); err != nil {
-				w.app.Logger.Error("digital human worker failed to mark task cancelled", "task_id", claimed.ID, "error", err)
-			}
+			w.cancelTask(ctx, claimed, leaseToken, progressJSON, rawResponse)
 			return
 		default:
 			updated, syncErr := w.app.Store.SyncDigitalHumanTaskExecution(ctx, claimed.ID, leaseToken, store.UpdateDigitalHumanTaskExecutionInput{
@@ -249,6 +228,139 @@ func (w *Worker) processTask(ctx context.Context, task domain.DigitalHumanTask) 
 		case <-time.After(w.pollInterval):
 		}
 	}
+}
+
+func (w *Worker) completeTask(
+	ctx context.Context,
+	task *domain.DigitalHumanTask,
+	leaseToken string,
+	remoteTask *RemoteTask,
+	rawResponse []byte,
+	progressJSON []byte,
+) {
+	outcome, err := w.saveResultAsset(ctx, task, remoteTask)
+	if err != nil {
+		w.failTask(ctx, task, leaseToken, buildFailureMessage(err), task.WorkingDir, rawResponse)
+		w.app.Logger.Error("digital human worker failed to mirror result", "task_id", task.ID, "error", err)
+		return
+	}
+	if task.WorkingDir != nil {
+		cleanupWorkingDir(w.app.Logger, *task.WorkingDir)
+	}
+
+	input := store.UpdateDigitalHumanTaskExecutionInput{
+		Status:                stringPtr("completed"),
+		ResultAsset:           mustJSON(outcome.asset),
+		ResultAssetTouched:    true,
+		Progress:              progressJSON,
+		ProgressTouched:       true,
+		RemoteResponsePayload: rawResponse,
+		RemotePayloadTouched:  true,
+		CompletedAt:           timePtr(time.Now().UTC()),
+		CompletedTouched:      true,
+		WorkingDir:            nil,
+		WorkingDirTouched:     true,
+		BillingStatus:         stringPtr("settlement_pending"),
+		BillingStatusTouched:  true,
+	}
+	if outcome.actualDurationSeconds != nil {
+		input.ActualDurationSeconds = outcome.actualDurationSeconds
+		input.ActualDurationTouched = true
+	}
+
+	updated, syncErr := w.app.Store.SyncDigitalHumanTaskExecution(ctx, task.ID, leaseToken, input)
+	if syncErr != nil {
+		w.app.Logger.Error("digital human worker failed to mark task complete", "task_id", task.ID, "error", syncErr)
+		return
+	}
+	if updated != nil {
+		task = updated
+	}
+
+	if outcome.probeErr != nil {
+		message := fmt.Sprintf("成品已生成，但读取视频时长失败：%s，系统稍后会自动重试结算", buildFailureMessage(outcome.probeErr))
+		if _, markErr := w.app.Store.MarkDigitalHumanTaskSettlementPending(ctx, task.ID, nil, nil, message); markErr != nil {
+			w.app.Logger.Error("digital human worker failed to mark settlement pending after probe failure", "task_id", task.ID, "error", markErr)
+		}
+		return
+	}
+	if outcome.actualDurationSeconds == nil {
+		if _, markErr := w.app.Store.MarkDigitalHumanTaskSettlementPending(ctx, task.ID, nil, nil, "成品已生成，但缺少实际时长，系统稍后会自动重试结算"); markErr != nil {
+			w.app.Logger.Error("digital human worker failed to mark settlement pending without duration", "task_id", task.ID, "error", markErr)
+		}
+		return
+	}
+
+	w.settleCompletedTask(ctx, task, *outcome.actualDurationSeconds)
+}
+
+func (w *Worker) cancelTask(
+	ctx context.Context,
+	task *domain.DigitalHumanTask,
+	leaseToken string,
+	progressJSON []byte,
+	rawResponse []byte,
+) {
+	if task.WorkingDir != nil {
+		cleanupWorkingDir(w.app.Logger, *task.WorkingDir)
+	}
+	updated, err := w.app.Store.SyncDigitalHumanTaskExecution(ctx, task.ID, leaseToken, store.UpdateDigitalHumanTaskExecutionInput{
+		Status:                stringPtr("cancelled"),
+		Progress:              progressJSON,
+		ProgressTouched:       true,
+		RemoteResponsePayload: rawResponse,
+		RemotePayloadTouched:  true,
+		ErrorMessage:          stringPtr("数字人任务已取消"),
+		CompletedAt:           timePtr(time.Now().UTC()),
+		CompletedTouched:      true,
+		WorkingDir:            nil,
+		WorkingDirTouched:     true,
+	})
+	if err != nil {
+		w.app.Logger.Error("digital human worker failed to mark task cancelled", "task_id", task.ID, "error", err)
+		return
+	}
+	if updated != nil {
+		task = updated
+	}
+	if _, refundErr := w.app.Store.RefundDigitalHumanTaskOnFailure(ctx, task.ID, "数字人任务已取消，已退回预扣积分"); refundErr != nil {
+		w.app.Logger.Error("digital human worker failed to refund cancelled task", "task_id", task.ID, "error", refundErr)
+	}
+}
+
+func (w *Worker) resumeSettlement(ctx context.Context, task *domain.DigitalHumanTask) {
+	actualDurationSeconds := task.ActualDurationSeconds
+	if actualDurationSeconds == nil {
+		probedDuration, err := w.probeStoredResultDuration(ctx, task)
+		if err != nil {
+			message := fmt.Sprintf("成品已生成，但读取视频时长失败：%s，系统稍后会自动重试结算", buildFailureMessage(err))
+			if _, markErr := w.app.Store.MarkDigitalHumanTaskSettlementPending(ctx, task.ID, nil, nil, message); markErr != nil {
+				w.app.Logger.Error("digital human worker failed to refresh settlement pending state", "task_id", task.ID, "error", markErr)
+			}
+			return
+		}
+		actualDurationSeconds = probedDuration
+	}
+
+	w.settleCompletedTask(ctx, task, *actualDurationSeconds)
+}
+
+func (w *Worker) settleCompletedTask(ctx context.Context, task *domain.DigitalHumanTask, actualDurationSeconds int) {
+	updated, err := w.app.Store.SettleDigitalHumanTask(ctx, task.ID, actualDurationSeconds)
+	if err == nil {
+		if updated != nil {
+			task = updated
+		}
+		return
+	}
+
+	finalCredits := w.finalCreditsForTask(task, actualDurationSeconds)
+	message := fmt.Sprintf("成品已生成，但积分结算失败：%s，系统稍后会自动重试结算", buildFailureMessage(err))
+	if _, markErr := w.app.Store.MarkDigitalHumanTaskSettlementPending(ctx, task.ID, &actualDurationSeconds, finalCredits, message); markErr != nil {
+		w.app.Logger.Error("digital human worker failed to keep task in settlement pending state", "task_id", task.ID, "error", markErr)
+		return
+	}
+	w.app.Logger.Warn("digital human worker deferred task settlement", "task_id", task.ID, "error", err)
 }
 
 func (w *Worker) submitTask(ctx context.Context, task *domain.DigitalHumanTask, leaseToken string) (*domain.DigitalHumanTask, error) {
@@ -344,27 +456,62 @@ func (w *Worker) writeTempAsset(ctx context.Context, tempDir string, prefix stri
 	return targetPath, nil
 }
 
-func (w *Worker) saveResultAsset(ctx context.Context, task *domain.DigitalHumanTask, remoteTask *RemoteTask) (*domain.DigitalHumanAsset, error) {
+func (w *Worker) saveResultAsset(ctx context.Context, task *domain.DigitalHumanTask, remoteTask *RemoteTask) (*resultSaveOutcome, error) {
 	videoURL := strings.TrimSpace(extractResultVideoURL(remoteTask.Result))
 	if videoURL == "" {
 		return nil, fmt.Errorf("digital human result missing video_url")
 	}
-	object, err := w.app.Storage.SaveRemoteURL(
+
+	workingDir := valueOrEmptyString(task.WorkingDir)
+	cleanupTempDir := false
+	if workingDir == "" {
+		tempDir, err := os.MkdirTemp("", "omnidrive-digital-human-result-*")
+		if err != nil {
+			return nil, err
+		}
+		workingDir = tempDir
+		cleanupTempDir = true
+	}
+	if cleanupTempDir {
+		defer cleanupWorkingDir(w.app.Logger, workingDir)
+	}
+
+	targetPath := filepath.Join(workingDir, fmt.Sprintf("result-%s.mp4", uuid.NewString()))
+	if err := w.downloadResultVideo(ctx, videoURL, targetPath); err != nil {
+		return nil, err
+	}
+
+	durationSeconds, probeErr := w.probeVideoDurationSeconds(ctx, targetPath)
+	actualDurationSeconds := normalizeDurationSeconds(durationSeconds)
+
+	data, err := os.ReadFile(targetPath)
+	if err != nil {
+		return nil, err
+	}
+	contentType := strings.TrimSpace(http.DetectContentType(data))
+	if contentType == "" || contentType == "application/octet-stream" {
+		contentType = "video/mp4"
+	}
+	fileName := resultFileName(videoURL)
+	object, err := w.app.Storage.SaveBytes(
 		ctx,
-		fmt.Sprintf("digital-human/%s/%s/result/%s-result.mp4", task.OwnerUserID, task.ID, uuid.NewString()),
-		"video/mp4",
-		videoURL,
+		fmt.Sprintf("digital-human/%s/%s/result/%s-%s", task.OwnerUserID, task.ID, uuid.NewString(), fileName),
+		contentType,
+		data,
 	)
 	if err != nil {
 		return nil, err
 	}
-	fileName := filepath.Base(strings.TrimSpace(object.StorageKey))
-	return &domain.DigitalHumanAsset{
-		StorageKey: object.StorageKey,
-		PublicURL:  object.PublicURL,
-		FileName:   fileName,
-		MimeType:   object.ContentType,
-		SizeBytes:  int64Ptr(object.SizeBytes),
+	return &resultSaveOutcome{
+		asset: &domain.DigitalHumanAsset{
+			StorageKey: object.StorageKey,
+			PublicURL:  object.PublicURL,
+			FileName:   fileName,
+			MimeType:   object.ContentType,
+			SizeBytes:  int64Ptr(object.SizeBytes),
+		},
+		actualDurationSeconds: actualDurationSeconds,
+		probeErr:              probeErr,
 	}, nil
 }
 
@@ -372,7 +519,7 @@ func (w *Worker) failTask(ctx context.Context, task *domain.DigitalHumanTask, le
 	if workingDir != nil {
 		cleanupWorkingDir(w.app.Logger, *workingDir)
 	}
-	_, err := w.app.Store.SyncDigitalHumanTaskExecution(ctx, task.ID, leaseToken, store.UpdateDigitalHumanTaskExecutionInput{
+	updated, err := w.app.Store.SyncDigitalHumanTaskExecution(ctx, task.ID, leaseToken, store.UpdateDigitalHumanTaskExecutionInput{
 		Status:                stringPtr("failed"),
 		RemoteResponsePayload: rawResponse,
 		RemotePayloadTouched:  rawResponse != nil,
@@ -384,7 +531,175 @@ func (w *Worker) failTask(ctx context.Context, task *domain.DigitalHumanTask, le
 	})
 	if err != nil {
 		w.app.Logger.Error("digital human worker failed to mark task failed", "task_id", task.ID, "error", err)
+		return
 	}
+	if updated != nil {
+		task = updated
+	}
+	if _, refundErr := w.app.Store.RefundDigitalHumanTaskOnFailure(ctx, task.ID, strings.TrimSpace(message)); refundErr != nil {
+		w.app.Logger.Error("digital human worker failed to refund failed task", "task_id", task.ID, "error", refundErr)
+	}
+}
+
+func (w *Worker) probeStoredResultDuration(ctx context.Context, task *domain.DigitalHumanTask) (*int, error) {
+	if task == nil || task.ResultAsset == nil {
+		return nil, fmt.Errorf("result asset is missing")
+	}
+
+	tempDir, err := os.MkdirTemp("", "omnidrive-digital-human-settlement-*")
+	if err != nil {
+		return nil, err
+	}
+	defer cleanupWorkingDir(w.app.Logger, tempDir)
+
+	resultPath, err := w.writeTempAsset(ctx, tempDir, "result", *task.ResultAsset)
+	if err != nil {
+		return nil, err
+	}
+	durationSeconds, err := w.probeVideoDurationSeconds(ctx, resultPath)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeDurationSeconds(durationSeconds), nil
+}
+
+func (w *Worker) downloadResultVideo(ctx context.Context, rawURL string, targetPath string) error {
+	if w.downloadVideo != nil {
+		return w.downloadVideo(ctx, rawURL, targetPath)
+	}
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSpace(rawURL), nil)
+	if err != nil {
+		return err
+	}
+
+	httpClient := http.DefaultClient
+	if w.client != nil && w.client.httpClient != nil {
+		httpClient = w.client.httpClient
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("download result video returned %d", resp.StatusCode)
+	}
+
+	file, err := os.Create(targetPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if _, err := io.Copy(file, resp.Body); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (w *Worker) probeVideoDurationSeconds(ctx context.Context, path string) (float64, error) {
+	if w.probeDuration != nil {
+		return w.probeDuration(ctx, path)
+	}
+	cmd := exec.CommandContext(ctx, "ffprobe",
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		path,
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("ffprobe failed: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	parsed, err := strconv.ParseFloat(strings.TrimSpace(string(output)), 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse ffprobe duration: %w", err)
+	}
+	if parsed <= 0 {
+		return 0, fmt.Errorf("ffprobe returned non-positive duration")
+	}
+	return parsed, nil
+}
+
+func (w *Worker) finalCreditsForTask(task *domain.DigitalHumanTask, actualDurationSeconds int) *int64 {
+	creditsPerSecondMillis := int64(0)
+	if task != nil && len(task.BillingPayload) > 0 {
+		var payload map[string]any
+		if err := json.Unmarshal(task.BillingPayload, &payload); err == nil {
+			if rawMillis, ok := payload["creditsPerSecondMillis"]; ok {
+				switch value := rawMillis.(type) {
+				case float64:
+					creditsPerSecondMillis = int64(value)
+				case int64:
+					creditsPerSecondMillis = value
+				case int:
+					creditsPerSecondMillis = int64(value)
+				case string:
+					if parsed, parseErr := strconv.ParseInt(strings.TrimSpace(value), 10, 64); parseErr == nil {
+						creditsPerSecondMillis = parsed
+					}
+				}
+			}
+			if creditsPerSecondMillis <= 0 {
+				switch value := payload["creditsPerSecond"].(type) {
+				case float64:
+					parsed, parseErr := store.DigitalHumanCreditsToMillis(value)
+					if parseErr == nil {
+						creditsPerSecondMillis = parsed
+					}
+				case int64:
+					parsed, parseErr := store.DigitalHumanCreditsToMillis(float64(value))
+					if parseErr == nil {
+						creditsPerSecondMillis = parsed
+					}
+				case int:
+					parsed, parseErr := store.DigitalHumanCreditsToMillis(float64(value))
+					if parseErr == nil {
+						creditsPerSecondMillis = parsed
+					}
+				case string:
+					if parsedFloat, parseErr := strconv.ParseFloat(strings.TrimSpace(value), 64); parseErr == nil {
+						if parsed, convertErr := store.DigitalHumanCreditsToMillis(parsedFloat); convertErr == nil {
+							creditsPerSecondMillis = parsed
+						}
+					}
+				}
+			}
+		}
+	}
+	if creditsPerSecondMillis <= 0 && task != nil && task.EstimatedDurationSeconds > 0 && task.EstimatedCreditsMillis > 0 {
+		creditsPerSecondMillis = task.EstimatedCreditsMillis / int64(task.EstimatedDurationSeconds)
+	}
+	if creditsPerSecondMillis <= 0 || actualDurationSeconds <= 0 {
+		return nil
+	}
+	finalCredits := int64(actualDurationSeconds) * creditsPerSecondMillis
+	return &finalCredits
+}
+
+func normalizeDurationSeconds(durationSeconds float64) *int {
+	if durationSeconds <= 0 || math.IsNaN(durationSeconds) || math.IsInf(durationSeconds, 0) {
+		return nil
+	}
+	seconds := int(math.Ceil(durationSeconds))
+	if seconds <= 0 {
+		seconds = 1
+	}
+	return &seconds
+}
+
+func resultFileName(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err == nil {
+		base := sanitizeFileName(filepath.Base(parsed.Path), "result")
+		if strings.Contains(base, ".") {
+			return base
+		}
+	}
+	return "result.mp4"
 }
 
 func (w *Worker) startLeaseHeartbeat(parent context.Context, taskID string, leaseToken string) func() {

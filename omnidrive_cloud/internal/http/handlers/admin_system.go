@@ -23,20 +23,21 @@ import (
 )
 
 type adminSystemConfigPatchRequest struct {
-	AIWorkerEnabled           *bool                             `json:"aiWorkerEnabled"`
-	PaymentChannels           []string                          `json:"paymentChannels"`
-	BillingManualSupport      *adminManualSupportPatchRequest   `json:"billingManualSupport"`
-	SMSRegistration           *adminSMSRegistrationPatchRequest `json:"smsRegistration"`
-	DefaultChatModel          *string                           `json:"defaultChatModel"`
-	DefaultImageModel         *string                           `json:"defaultImageModel"`
-	DefaultVideoModel         *string                           `json:"defaultVideoModel"`
-	VideoCoverPrompt          *string                           `json:"videoCoverPrompt"`
-	StoryboardPrompt          *string                           `json:"storyboardPrompt"`
-	StoryboardModel           *string                           `json:"storyboardModel"`
-	StoryboardReferences      []map[string]any                  `json:"storyboardReferences"`
-	ImageStoryboardPrompt     *string                           `json:"imageStoryboardPrompt"`
-	ImageStoryboardModel      *string                           `json:"imageStoryboardModel"`
-	ImageStoryboardReferences []map[string]any                  `json:"imageStoryboardReferences"`
+	AIWorkerEnabled              *bool                             `json:"aiWorkerEnabled"`
+	PaymentChannels              []string                          `json:"paymentChannels"`
+	BillingManualSupport         *adminManualSupportPatchRequest   `json:"billingManualSupport"`
+	SMSRegistration              *adminSMSRegistrationPatchRequest `json:"smsRegistration"`
+	DigitalHumanCreditsPerSecond *float64                          `json:"digitalHumanCreditsPerSecond"`
+	DefaultChatModel             *string                           `json:"defaultChatModel"`
+	DefaultImageModel            *string                           `json:"defaultImageModel"`
+	DefaultVideoModel            *string                           `json:"defaultVideoModel"`
+	VideoCoverPrompt             *string                           `json:"videoCoverPrompt"`
+	StoryboardPrompt             *string                           `json:"storyboardPrompt"`
+	StoryboardModel              *string                           `json:"storyboardModel"`
+	StoryboardReferences         []map[string]any                  `json:"storyboardReferences"`
+	ImageStoryboardPrompt        *string                           `json:"imageStoryboardPrompt"`
+	ImageStoryboardModel         *string                           `json:"imageStoryboardModel"`
+	ImageStoryboardReferences    []map[string]any                  `json:"imageStoryboardReferences"`
 }
 
 type adminManualSupportPatchRequest struct {
@@ -64,21 +65,22 @@ type adminSMSRegistrationPatchRequest struct {
 }
 
 type effectiveAdminSystemSettings struct {
-	AIWorkerEnabled           bool
-	PaymentChannels           []string
-	BillingManualSupport      domain.AdminManualSupportConfig
-	SMSRegistration           domain.AdminSMSRegistrationConfig
-	DefaultChatModel          string
-	DefaultImageModel         string
-	DefaultVideoModel         string
-	VideoCoverPrompt          string
-	StoryboardPrompt          string
-	StoryboardModel           string
-	StoryboardReferences      json.RawMessage
-	ImageStoryboardPrompt     string
-	ImageStoryboardModel      string
-	ImageStoryboardReferences json.RawMessage
-	UpdatedAt                 *time.Time
+	AIWorkerEnabled                    bool
+	PaymentChannels                    []string
+	BillingManualSupport               domain.AdminManualSupportConfig
+	SMSRegistration                    domain.AdminSMSRegistrationConfig
+	DigitalHumanCreditsPerSecondMillis int64
+	DefaultChatModel                   string
+	DefaultImageModel                  string
+	DefaultVideoModel                  string
+	VideoCoverPrompt                   string
+	StoryboardPrompt                   string
+	StoryboardModel                    string
+	StoryboardReferences               json.RawMessage
+	ImageStoryboardPrompt              string
+	ImageStoryboardModel               string
+	ImageStoryboardReferences          json.RawMessage
+	UpdatedAt                          *time.Time
 }
 
 // 处理默认管理端系统Settings相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
@@ -103,16 +105,17 @@ func defaultAdminSystemSettings(cfg config.Config) effectiveAdminSystemSettings 
 			DailyLimit:         10,
 			CodeLength:         6,
 		},
-		DefaultChatModel:          strings.TrimSpace(cfg.DefaultChatModel),
-		DefaultImageModel:         strings.TrimSpace(cfg.DefaultImageModel),
-		DefaultVideoModel:         strings.TrimSpace(cfg.DefaultVideoModel),
-		VideoCoverPrompt:          strings.TrimSpace(ai.DefaultSkillVideoCoverPromptTemplate),
-		StoryboardPrompt:          strings.TrimSpace(ai.DefaultVideoStoryboardSystemPrompt),
-		StoryboardModel:           strings.TrimSpace(ai.DefaultVideoStoryboardModelName),
-		StoryboardReferences:      []byte("[]"),
-		ImageStoryboardPrompt:     "",
-		ImageStoryboardModel:      strings.TrimSpace(cfg.DefaultChatModel),
-		ImageStoryboardReferences: []byte("[]"),
+		DigitalHumanCreditsPerSecondMillis: 0,
+		DefaultChatModel:                   strings.TrimSpace(cfg.DefaultChatModel),
+		DefaultImageModel:                  strings.TrimSpace(cfg.DefaultImageModel),
+		DefaultVideoModel:                  strings.TrimSpace(cfg.DefaultVideoModel),
+		VideoCoverPrompt:                   strings.TrimSpace(ai.DefaultSkillVideoCoverPromptTemplate),
+		StoryboardPrompt:                   strings.TrimSpace(ai.DefaultVideoStoryboardSystemPrompt),
+		StoryboardModel:                    strings.TrimSpace(ai.DefaultVideoStoryboardModelName),
+		StoryboardReferences:               []byte("[]"),
+		ImageStoryboardPrompt:              "",
+		ImageStoryboardModel:               strings.TrimSpace(cfg.DefaultChatModel),
+		ImageStoryboardReferences:          []byte("[]"),
 	}
 }
 
@@ -220,6 +223,10 @@ func loadEffectiveAdminSystemSettings(ctx context.Context, app *appstate.App) (e
 	settings.PaymentChannels = append([]string(nil), record.PaymentChannels...)
 	settings.BillingManualSupport = record.BillingManualSupport
 	settings.SMSRegistration = record.SMSRegistration
+	settings.DigitalHumanCreditsPerSecondMillis = record.DigitalHumanCreditsPerSecondMillis
+	if settings.DigitalHumanCreditsPerSecondMillis <= 0 && record.DigitalHumanCreditsPerSecond > 0 {
+		settings.DigitalHumanCreditsPerSecondMillis = record.DigitalHumanCreditsPerSecond * store.DigitalHumanCreditMillisScale
+	}
 	settings.DefaultChatModel = strings.TrimSpace(record.DefaultChatModel)
 	settings.DefaultImageModel = strings.TrimSpace(record.DefaultImageModel)
 	settings.DefaultVideoModel = strings.TrimSpace(record.DefaultVideoModel)
@@ -256,27 +263,28 @@ func buildAdminSystemConfigPayload(app *appstate.App, settings effectiveAdminSys
 	}
 
 	return domain.AdminSystemConfig{
-		AuthMode:                  "database_rbac",
-		AdminEmail:                app.Config.AdminEmail,
-		S3Configured:              app.Config.S3Bucket != "" && app.Config.S3Endpoint != "" && app.Config.S3AccessKey != "" && app.Config.S3SecretKey != "",
-		S3Endpoint:                app.Config.S3Endpoint,
-		S3Bucket:                  app.Config.S3Bucket,
-		AIWorkerEnabled:           settings.AIWorkerEnabled,
-		PaymentChannels:           append([]string(nil), settings.PaymentChannels...),
-		BillingManualSupport:      settings.BillingManualSupport,
-		SMSRegistration:           settings.SMSRegistration,
-		DefaultChatModel:          settings.DefaultChatModel,
-		DefaultImageModel:         settings.DefaultImageModel,
-		DefaultVideoModel:         settings.DefaultVideoModel,
-		VideoCoverPrompt:          settings.VideoCoverPrompt,
-		StoryboardPrompt:          settings.StoryboardPrompt,
-		StoryboardModel:           settings.StoryboardModel,
-		StoryboardReferences:      settings.StoryboardReferences,
-		ImageStoryboardPrompt:     settings.ImageStoryboardPrompt,
-		ImageStoryboardModel:      settings.ImageStoryboardModel,
-		ImageStoryboardReferences: settings.ImageStoryboardReferences,
-		Notes:                     notes,
-		UpdatedAt:                 settings.UpdatedAt,
+		AuthMode:                     "database_rbac",
+		AdminEmail:                   app.Config.AdminEmail,
+		S3Configured:                 app.Config.S3Bucket != "" && app.Config.S3Endpoint != "" && app.Config.S3AccessKey != "" && app.Config.S3SecretKey != "",
+		S3Endpoint:                   app.Config.S3Endpoint,
+		S3Bucket:                     app.Config.S3Bucket,
+		AIWorkerEnabled:              settings.AIWorkerEnabled,
+		PaymentChannels:              append([]string(nil), settings.PaymentChannels...),
+		BillingManualSupport:         settings.BillingManualSupport,
+		SMSRegistration:              settings.SMSRegistration,
+		DigitalHumanCreditsPerSecond: store.DigitalHumanCreditsFromMillis(settings.DigitalHumanCreditsPerSecondMillis),
+		DefaultChatModel:             settings.DefaultChatModel,
+		DefaultImageModel:            settings.DefaultImageModel,
+		DefaultVideoModel:            settings.DefaultVideoModel,
+		VideoCoverPrompt:             settings.VideoCoverPrompt,
+		StoryboardPrompt:             settings.StoryboardPrompt,
+		StoryboardModel:              settings.StoryboardModel,
+		StoryboardReferences:         settings.StoryboardReferences,
+		ImageStoryboardPrompt:        settings.ImageStoryboardPrompt,
+		ImageStoryboardModel:         settings.ImageStoryboardModel,
+		ImageStoryboardReferences:    settings.ImageStoryboardReferences,
+		Notes:                        notes,
+		UpdatedAt:                    settings.UpdatedAt,
 	}
 }
 
@@ -599,6 +607,18 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 			settings.SMSRegistration.CodeLength = normalizePatchedInt(payload.SMSRegistration.CodeLength, settings.SMSRegistration.CodeLength)
 		}
 	}
+	if nestedFieldTouched(raw, "digitalHumanCreditsPerSecond") {
+		if payload.DigitalHumanCreditsPerSecond == nil {
+			render.Error(w, http.StatusBadRequest, "digitalHumanCreditsPerSecond must be a number")
+			return
+		}
+		millis, err := store.DigitalHumanCreditsToMillis(*payload.DigitalHumanCreditsPerSecond)
+		if err != nil {
+			render.Error(w, http.StatusBadRequest, "digitalHumanCreditsPerSecond "+err.Error())
+			return
+		}
+		settings.DigitalHumanCreditsPerSecondMillis = millis
+	}
 
 	if nestedFieldTouched(raw, "defaultChatModel") {
 		settings.DefaultChatModel = normalizePatchedString(payload.DefaultChatModel)
@@ -738,36 +758,38 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 	}
 
 	record, err := h.app.Store.UpsertAdminSystemSettings(r.Context(), store.UpsertAdminSystemSettingsInput{
-		AIWorkerEnabled:                   settings.AIWorkerEnabled,
-		PaymentChannels:                   settings.PaymentChannels,
-		BillingManualSupportName:          settings.BillingManualSupport.Name,
-		BillingManualSupportContact:       settings.BillingManualSupport.Contact,
-		BillingManualSupportQRCodeURL:     settings.BillingManualSupport.QRCodeURL,
-		BillingManualSupportNote:          settings.BillingManualSupport.Note,
-		SMSRegistrationEnabled:            settings.SMSRegistration.Enabled,
-		SMSRegistrationProvider:           settings.SMSRegistration.Provider,
-		SMSRegistrationEndpoint:           settings.SMSRegistration.Endpoint,
-		SMSRegistrationAccessKeyID:        settings.SMSRegistration.AccessKeyID,
-		SMSRegistrationAccessKeySecret:    settings.SMSRegistration.AccessKeySecret,
-		SMSRegistrationSignName:           settings.SMSRegistration.SignName,
-		SMSRegistrationTemplateCode:       settings.SMSRegistration.TemplateCode,
-		SMSRegistrationTemplateParam:      settings.SMSRegistration.TemplateParam,
-		SMSRegistrationSchemeName:         settings.SMSRegistration.SchemeName,
-		SMSRegistrationDefaultCountryCode: settings.SMSRegistration.DefaultCountryCode,
-		SMSRegistrationValidMinutes:       settings.SMSRegistration.ValidMinutes,
-		SMSRegistrationCooldownSeconds:    settings.SMSRegistration.CooldownSeconds,
-		SMSRegistrationDailyLimit:         settings.SMSRegistration.DailyLimit,
-		SMSRegistrationCodeLength:         settings.SMSRegistration.CodeLength,
-		DefaultChatModel:                  settings.DefaultChatModel,
-		DefaultImageModel:                 settings.DefaultImageModel,
-		DefaultVideoModel:                 settings.DefaultVideoModel,
-		VideoCoverPrompt:                  settings.VideoCoverPrompt,
-		StoryboardPrompt:                  settings.StoryboardPrompt,
-		StoryboardModel:                   settings.StoryboardModel,
-		StoryboardReferences:              settings.StoryboardReferences,
-		ImageStoryboardPrompt:             settings.ImageStoryboardPrompt,
-		ImageStoryboardModel:              settings.ImageStoryboardModel,
-		ImageStoryboardReferences:         settings.ImageStoryboardReferences,
+		AIWorkerEnabled:                    settings.AIWorkerEnabled,
+		PaymentChannels:                    settings.PaymentChannels,
+		BillingManualSupportName:           settings.BillingManualSupport.Name,
+		BillingManualSupportContact:        settings.BillingManualSupport.Contact,
+		BillingManualSupportQRCodeURL:      settings.BillingManualSupport.QRCodeURL,
+		BillingManualSupportNote:           settings.BillingManualSupport.Note,
+		SMSRegistrationEnabled:             settings.SMSRegistration.Enabled,
+		SMSRegistrationProvider:            settings.SMSRegistration.Provider,
+		SMSRegistrationEndpoint:            settings.SMSRegistration.Endpoint,
+		SMSRegistrationAccessKeyID:         settings.SMSRegistration.AccessKeyID,
+		SMSRegistrationAccessKeySecret:     settings.SMSRegistration.AccessKeySecret,
+		SMSRegistrationSignName:            settings.SMSRegistration.SignName,
+		SMSRegistrationTemplateCode:        settings.SMSRegistration.TemplateCode,
+		SMSRegistrationTemplateParam:       settings.SMSRegistration.TemplateParam,
+		SMSRegistrationSchemeName:          settings.SMSRegistration.SchemeName,
+		SMSRegistrationDefaultCountryCode:  settings.SMSRegistration.DefaultCountryCode,
+		SMSRegistrationValidMinutes:        settings.SMSRegistration.ValidMinutes,
+		SMSRegistrationCooldownSeconds:     settings.SMSRegistration.CooldownSeconds,
+		SMSRegistrationDailyLimit:          settings.SMSRegistration.DailyLimit,
+		SMSRegistrationCodeLength:          settings.SMSRegistration.CodeLength,
+		DigitalHumanCreditsPerSecond:       store.DigitalHumanRoundMillisToWholeCredits(settings.DigitalHumanCreditsPerSecondMillis),
+		DigitalHumanCreditsPerSecondMillis: settings.DigitalHumanCreditsPerSecondMillis,
+		DefaultChatModel:                   settings.DefaultChatModel,
+		DefaultImageModel:                  settings.DefaultImageModel,
+		DefaultVideoModel:                  settings.DefaultVideoModel,
+		VideoCoverPrompt:                   settings.VideoCoverPrompt,
+		StoryboardPrompt:                   settings.StoryboardPrompt,
+		StoryboardModel:                    settings.StoryboardModel,
+		StoryboardReferences:               settings.StoryboardReferences,
+		ImageStoryboardPrompt:              settings.ImageStoryboardPrompt,
+		ImageStoryboardModel:               settings.ImageStoryboardModel,
+		ImageStoryboardReferences:          settings.ImageStoryboardReferences,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to update system config")
@@ -788,9 +810,10 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 		Status:       "success",
 		Message:      auditStringPtr("系统配置已更新"),
 		Payload: mustJSONBytes(map[string]any{
-			"aiWorkerEnabled":      settings.AIWorkerEnabled,
-			"paymentChannels":      settings.PaymentChannels,
-			"billingManualSupport": settings.BillingManualSupport,
+			"aiWorkerEnabled":              settings.AIWorkerEnabled,
+			"paymentChannels":              settings.PaymentChannels,
+			"billingManualSupport":         settings.BillingManualSupport,
+			"digitalHumanCreditsPerSecond": store.DigitalHumanCreditsFromMillis(settings.DigitalHumanCreditsPerSecondMillis),
 			"smsRegistration": map[string]any{
 				"enabled":            settings.SMSRegistration.Enabled,
 				"provider":           settings.SMSRegistration.Provider,

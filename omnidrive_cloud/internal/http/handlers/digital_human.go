@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"mime"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
@@ -21,9 +23,10 @@ import (
 )
 
 const (
-	digitalHumanSource       = "runninghub"
-	digitalHumanMultipartCap = 96 << 20
-	digitalHumanAssetCap     = 64 << 20
+	digitalHumanSource                 = "runninghub"
+	digitalHumanMultipartCap           = 96 << 20
+	digitalHumanAssetCap               = 64 << 20
+	digitalHumanEstimateCharsPerSecond = 4
 )
 
 var (
@@ -66,6 +69,22 @@ func NewDigitalHumanTaskHandler(app *appstate.App) *DigitalHumanTaskHandler {
 	return &DigitalHumanTaskHandler{app: app}
 }
 
+func (h *DigitalHumanTaskHandler) BillingPreview(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	settings, err := loadEffectiveAdminSystemSettings(r.Context(), h.app)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load digital human billing config")
+		return
+	}
+
+	preview, err := h.buildBillingPreview(r.Context(), user.ID, strings.TrimSpace(r.URL.Query().Get("goodsText")), settings.DigitalHumanCreditsPerSecondMillis)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to preview digital human billing")
+		return
+	}
+	render.JSON(w, http.StatusOK, preview)
+}
+
 func (h *DigitalHumanTaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
 	if err := r.ParseMultipartForm(digitalHumanMultipartCap); err != nil {
@@ -86,6 +105,25 @@ func (h *DigitalHumanTaskHandler) Create(w http.ResponseWriter, r *http.Request)
 	}
 	if utf8.RuneCountInString(goodsText) > 1000 {
 		render.Error(w, http.StatusBadRequest, "goodsText must be within 1000 characters")
+		return
+	}
+
+	settings, err := loadEffectiveAdminSystemSettings(r.Context(), h.app)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load digital human billing config")
+		return
+	}
+	if settings.DigitalHumanCreditsPerSecondMillis <= 0 {
+		render.Error(w, http.StatusConflict, "数字人计费暂未开放，请稍后再试")
+		return
+	}
+	preview, err := h.buildBillingPreview(r.Context(), user.ID, goodsText, settings.DigitalHumanCreditsPerSecondMillis)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to preview digital human billing")
+		return
+	}
+	if !preview.CanAfford {
+		render.Error(w, http.StatusConflict, fmt.Sprintf("当前积分不足，预计需要 %s 积分，还差 %s 积分", formatDigitalHumanCredits(preview.EstimatedCredits), formatDigitalHumanCredits(preview.ShortfallCredits)))
 		return
 	}
 
@@ -140,6 +178,7 @@ func (h *DigitalHumanTaskHandler) Create(w http.ResponseWriter, r *http.Request)
 		"mode":           mode,
 		"source":         digitalHumanSource,
 		"goodsText":      goodsText,
+		"billingPreview": preview,
 		"characterAsset": characterAsset,
 		"refAudioAsset":  refAudioAsset,
 	}
@@ -151,16 +190,25 @@ func (h *DigitalHumanTaskHandler) Create(w http.ResponseWriter, r *http.Request)
 	}
 
 	task, err := h.app.Store.CreateDigitalHumanTask(r.Context(), store.CreateDigitalHumanTaskInput{
-		ID:             taskID,
-		OwnerUserID:    user.ID,
-		Mode:           mode,
-		Source:         digitalHumanSource,
-		Status:         "queued",
-		CharacterAsset: mustJSONBytes(characterAsset),
-		GoodsAsset:     mustJSONBytes(goodsAsset),
-		RefAudioAsset:  mustJSONBytes(refAudioAsset),
-		GoodsTitle:     stringPtr(goodsTitle),
-		GoodsText:      goodsText,
+		ID:                       taskID,
+		OwnerUserID:              user.ID,
+		Mode:                     mode,
+		Source:                   digitalHumanSource,
+		Status:                   "queued",
+		CharacterAsset:           mustJSONBytes(characterAsset),
+		GoodsAsset:               mustJSONBytes(goodsAsset),
+		RefAudioAsset:            mustJSONBytes(refAudioAsset),
+		GoodsTitle:               stringPtr(goodsTitle),
+		GoodsText:                goodsText,
+		EstimatedDurationSeconds: preview.EstimatedDurationSeconds,
+		EstimatedCreditsMillis:   mustCreditMillis(preview.EstimatedCredits),
+		BillingStatus:            "pending",
+		BillingPayload: mustJSONBytes(map[string]any{
+			"creditsPerSecond":       preview.CreditsPerSecond,
+			"creditsPerSecondMillis": settings.DigitalHumanCreditsPerSecondMillis,
+			"estimateCharsPerSecond": digitalHumanEstimateCharsPerSecond,
+			"billingMessage":         "数字人任务待预扣积分",
+		}),
 		RequestPayload: mustJSONBytes(requestPayload),
 		Progress: mustJSONBytes(domain.DigitalHumanProgress{
 			Current:    0,
@@ -170,7 +218,19 @@ func (h *DigitalHumanTaskHandler) Create(w http.ResponseWriter, r *http.Request)
 		}),
 	})
 	if err != nil {
+		h.cleanupAssets(r.Context(), characterAsset, goodsAsset, refAudioAsset)
 		render.Error(w, http.StatusInternalServerError, "Failed to create digital human task")
+		return
+	}
+	task, err = h.app.Store.PrechargeDigitalHumanTask(r.Context(), task.ID)
+	if err != nil {
+		h.cleanupAssets(r.Context(), characterAsset, goodsAsset, refAudioAsset)
+		_ = h.app.Store.DeleteDigitalHumanTask(r.Context(), taskID, user.ID)
+		if err == store.ErrDigitalHumanBillingInsufficientBalance {
+			render.Error(w, http.StatusConflict, fmt.Sprintf("当前积分不足，预计需要 %s 积分，还差 %s 积分", formatDigitalHumanCredits(preview.EstimatedCredits), formatDigitalHumanCredits(preview.ShortfallCredits)))
+			return
+		}
+		render.Error(w, http.StatusInternalServerError, "Failed to precharge digital human task")
 		return
 	}
 	render.JSON(w, http.StatusCreated, task)
@@ -302,4 +362,68 @@ func validateDigitalHumanMime(fileName string, headerContentType string, data []
 		return "", fmt.Errorf("mime type is missing")
 	}
 	return "", fmt.Errorf("mime type is not supported")
+}
+
+func (h *DigitalHumanTaskHandler) buildBillingPreview(ctx context.Context, userID string, goodsText string, creditsPerSecondMillis int64) (domain.DigitalHumanBillingPreview, error) {
+	estimatedDurationSeconds := estimateDigitalHumanDurationSeconds(goodsText)
+	if creditsPerSecondMillis < 0 {
+		creditsPerSecondMillis = 0
+	}
+	estimatedCreditsMillis := int64(estimatedDurationSeconds) * creditsPerSecondMillis
+	creditBalanceMillis, err := h.app.Store.GetWalletCreditBalanceMillisByUser(ctx, userID)
+	if err != nil {
+		return domain.DigitalHumanBillingPreview{}, err
+	}
+	shortfallCreditsMillis := estimatedCreditsMillis - creditBalanceMillis
+	if shortfallCreditsMillis < 0 {
+		shortfallCreditsMillis = 0
+	}
+	canAfford := creditsPerSecondMillis > 0 && creditBalanceMillis >= estimatedCreditsMillis
+	return domain.DigitalHumanBillingPreview{
+		CreditsPerSecond:         store.DigitalHumanCreditsFromMillis(creditsPerSecondMillis),
+		EstimatedDurationSeconds: estimatedDurationSeconds,
+		EstimatedCredits:         store.DigitalHumanCreditsFromMillis(estimatedCreditsMillis),
+		CanAfford:                canAfford,
+		CreditBalance:            store.DigitalHumanCreditsFromMillis(creditBalanceMillis),
+		ShortfallCredits:         store.DigitalHumanCreditsFromMillis(shortfallCreditsMillis),
+	}, nil
+}
+
+func estimateDigitalHumanDurationSeconds(goodsText string) int {
+	nonWhitespaceRunes := 0
+	for _, value := range goodsText {
+		if unicode.IsSpace(value) {
+			continue
+		}
+		nonWhitespaceRunes++
+	}
+	estimated := (nonWhitespaceRunes + digitalHumanEstimateCharsPerSecond - 1) / digitalHumanEstimateCharsPerSecond
+	if estimated <= 0 {
+		return 1
+	}
+	return estimated
+}
+
+func (h *DigitalHumanTaskHandler) cleanupAssets(ctx context.Context, assets ...*domain.DigitalHumanAsset) {
+	if h.app == nil || h.app.Storage == nil {
+		return
+	}
+	for _, asset := range assets {
+		if asset == nil || strings.TrimSpace(asset.StorageKey) == "" {
+			continue
+		}
+		_ = h.app.Storage.DeleteObject(ctx, asset.StorageKey)
+	}
+}
+
+func formatDigitalHumanCredits(value float64) string {
+	return strconv.FormatFloat(value, 'f', -1, 64)
+}
+
+func mustCreditMillis(value float64) int64 {
+	millis, err := store.DigitalHumanCreditsToMillis(value)
+	if err != nil {
+		panic(err)
+	}
+	return millis
 }

@@ -13,36 +13,38 @@ import (
 const adminSystemConfigID = "global"
 
 type UpsertAdminSystemSettingsInput struct {
-	AIWorkerEnabled                   bool
-	PaymentChannels                   []string
-	BillingManualSupportName          string
-	BillingManualSupportContact       string
-	BillingManualSupportQRCodeURL     string
-	BillingManualSupportNote          string
-	SMSRegistrationEnabled            bool
-	SMSRegistrationProvider           string
-	SMSRegistrationEndpoint           string
-	SMSRegistrationAccessKeyID        string
-	SMSRegistrationAccessKeySecret    string
-	SMSRegistrationSignName           string
-	SMSRegistrationTemplateCode       string
-	SMSRegistrationTemplateParam      string
-	SMSRegistrationSchemeName         string
-	SMSRegistrationDefaultCountryCode string
-	SMSRegistrationValidMinutes       int
-	SMSRegistrationCooldownSeconds    int
-	SMSRegistrationDailyLimit         int
-	SMSRegistrationCodeLength         int
-	DefaultChatModel                  string
-	DefaultImageModel                 string
-	DefaultVideoModel                 string
-	VideoCoverPrompt                  string
-	StoryboardPrompt                  string
-	StoryboardModel                   string
-	StoryboardReferences              []byte
-	ImageStoryboardPrompt             string
-	ImageStoryboardModel              string
-	ImageStoryboardReferences         []byte
+	AIWorkerEnabled                    bool
+	PaymentChannels                    []string
+	BillingManualSupportName           string
+	BillingManualSupportContact        string
+	BillingManualSupportQRCodeURL      string
+	BillingManualSupportNote           string
+	SMSRegistrationEnabled             bool
+	SMSRegistrationProvider            string
+	SMSRegistrationEndpoint            string
+	SMSRegistrationAccessKeyID         string
+	SMSRegistrationAccessKeySecret     string
+	SMSRegistrationSignName            string
+	SMSRegistrationTemplateCode        string
+	SMSRegistrationTemplateParam       string
+	SMSRegistrationSchemeName          string
+	SMSRegistrationDefaultCountryCode  string
+	SMSRegistrationValidMinutes        int
+	SMSRegistrationCooldownSeconds     int
+	SMSRegistrationDailyLimit          int
+	SMSRegistrationCodeLength          int
+	DigitalHumanCreditsPerSecond       int64
+	DigitalHumanCreditsPerSecondMillis int64
+	DefaultChatModel                   string
+	DefaultImageModel                  string
+	DefaultVideoModel                  string
+	VideoCoverPrompt                   string
+	StoryboardPrompt                   string
+	StoryboardModel                    string
+	StoryboardReferences               []byte
+	ImageStoryboardPrompt              string
+	ImageStoryboardModel               string
+	ImageStoryboardReferences          []byte
 }
 
 // 处理扫描管理端系统Settings相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
@@ -72,6 +74,8 @@ func scanAdminSystemSettings(scan scanFn) (*domain.AdminSystemSettingsRecord, er
 		&item.SMSRegistration.CooldownSeconds,
 		&item.SMSRegistration.DailyLimit,
 		&item.SMSRegistration.CodeLength,
+		&item.DigitalHumanCreditsPerSecond,
+		&item.DigitalHumanCreditsPerSecondMillis,
 		&item.DefaultChatModel,
 		&item.DefaultImageModel,
 		&item.DefaultVideoModel,
@@ -125,6 +129,8 @@ func (s *Store) GetAdminSystemSettings(ctx context.Context) (*domain.AdminSystem
 			sms_registration_cooldown_seconds,
 			sms_registration_daily_limit,
 			sms_registration_code_length,
+			digital_human_credits_per_second,
+			digital_human_credits_per_second_millis,
 			default_chat_model,
 			default_image_model,
 			default_video_model,
@@ -189,6 +195,8 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 			sms_registration_cooldown_seconds,
 			sms_registration_daily_limit,
 			sms_registration_code_length,
+			digital_human_credits_per_second,
+			digital_human_credits_per_second_millis,
 			default_chat_model,
 			default_image_model,
 			default_video_model,
@@ -200,7 +208,7 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 			image_storyboard_model,
 			image_storyboard_reference_payload
 		)
-		VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28::jsonb, $29, $30, $31::jsonb)
+		VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30::jsonb, $31, $32, $33::jsonb)
 		ON CONFLICT (id) DO UPDATE
 		SET
 			ai_worker_enabled = EXCLUDED.ai_worker_enabled,
@@ -223,6 +231,8 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 			sms_registration_cooldown_seconds = EXCLUDED.sms_registration_cooldown_seconds,
 			sms_registration_daily_limit = EXCLUDED.sms_registration_daily_limit,
 			sms_registration_code_length = EXCLUDED.sms_registration_code_length,
+			digital_human_credits_per_second = EXCLUDED.digital_human_credits_per_second,
+			digital_human_credits_per_second_millis = EXCLUDED.digital_human_credits_per_second_millis,
 			default_chat_model = EXCLUDED.default_chat_model,
 			default_image_model = EXCLUDED.default_image_model,
 			default_video_model = EXCLUDED.default_video_model,
@@ -256,6 +266,8 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 			sms_registration_cooldown_seconds,
 			sms_registration_daily_limit,
 			sms_registration_code_length,
+			digital_human_credits_per_second,
+			digital_human_credits_per_second_millis,
 			default_chat_model,
 			default_image_model,
 			default_video_model,
@@ -290,6 +302,8 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 		input.SMSRegistrationCooldownSeconds,
 		input.SMSRegistrationDailyLimit,
 		input.SMSRegistrationCodeLength,
+		input.DigitalHumanCreditsPerSecond,
+		input.DigitalHumanCreditsPerSecondMillis,
 		input.DefaultChatModel,
 		input.DefaultImageModel,
 		input.DefaultVideoModel,

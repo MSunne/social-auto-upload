@@ -5,6 +5,24 @@ import (
 	"testing"
 )
 
+func TestEstimateDigitalHumanDurationSeconds(t *testing.T) {
+	cases := []struct {
+		name      string
+		goodsText string
+		expected  int
+	}{
+		{name: "empty text still reserves one second", goodsText: "", expected: 1},
+		{name: "ignore whitespace runes", goodsText: "你 好 \n 世\t界", expected: 1},
+		{name: "round up every four runes", goodsText: "一二三四五", expected: 2},
+	}
+
+	for _, tc := range cases {
+		if actual := estimateDigitalHumanDurationSeconds(tc.goodsText); actual != tc.expected {
+			t.Fatalf("%s: expected %d, got %d", tc.name, tc.expected, actual)
+		}
+	}
+}
+
 func TestValidateDigitalHumanMimeAcceptsSupportedTypes(t *testing.T) {
 	jpegData := []byte{
 		0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46,

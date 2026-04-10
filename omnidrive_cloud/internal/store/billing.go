@@ -457,6 +457,26 @@ func (s *Store) GetBillingSummaryByUser(ctx context.Context, userID string) (*do
 	return summary, nil
 }
 
+func (s *Store) GetWalletCreditBalanceMillisByUser(ctx context.Context, userID string) (int64, error) {
+	var (
+		wholeCredits     int64
+		fractionalMillis int64
+	)
+	if err := s.pool.QueryRow(ctx, `
+		SELECT
+			COALESCE(credit_balance, 0)::BIGINT,
+			COALESCE(credit_balance_millis, 0)::BIGINT
+		FROM billing_wallets
+		WHERE user_id = $1
+	`, userID).Scan(&wholeCredits, &fractionalMillis); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return DigitalHumanCombineWalletBalanceMillis(wholeCredits, fractionalMillis), nil
+}
+
 // 应用充值告警，把外部输入转换为当前链路的最终状态变更。
 func applyRechargeAlert(summary *domain.BillingSummary, hasQuotaBalance bool, waitingRechargeCount int64, lastWaitingMessage *string, lastWaitingAt *time.Time) {
 	if summary == nil {

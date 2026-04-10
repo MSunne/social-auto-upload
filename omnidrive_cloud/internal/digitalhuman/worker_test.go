@@ -1,6 +1,7 @@
 package digitalhuman
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -125,6 +126,10 @@ func TestWorkerSaveResultAssetMirrorsRemoteVideo(t *testing.T) {
 			Logger:  slog.Default(),
 			Storage: storageService,
 		},
+		client: NewClient(config.Config{}),
+		probeDuration: func(ctx context.Context, path string) (float64, error) {
+			return 4.2, nil
+		},
 	}
 
 	task := &domain.DigitalHumanTask{
@@ -132,7 +137,7 @@ func TestWorkerSaveResultAssetMirrorsRemoteVideo(t *testing.T) {
 		OwnerUserID: "test-user",
 	}
 
-	asset, err := worker.saveResultAsset(t.Context(), task, &RemoteTask{
+	result, err := worker.saveResultAsset(t.Context(), task, &RemoteTask{
 		Result: map[string]any{
 			"video_url": videoServer.URL + "/result.mp4",
 		},
@@ -140,13 +145,16 @@ func TestWorkerSaveResultAssetMirrorsRemoteVideo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("saveResultAsset returned error: %v", err)
 	}
-	if asset == nil {
+	if result == nil || result.asset == nil {
 		t.Fatal("expected result asset")
 	}
-	if asset.StorageKey == "" || asset.PublicURL == "" {
-		t.Fatalf("expected mirrored storage metadata, got %+v", asset)
+	if result.actualDurationSeconds == nil || *result.actualDurationSeconds != 5 {
+		t.Fatalf("expected rounded actual duration, got %+v", result.actualDurationSeconds)
 	}
-	data, contentType, err := storageService.ReadBytes(t.Context(), asset.StorageKey)
+	if result.asset.StorageKey == "" || result.asset.PublicURL == "" {
+		t.Fatalf("expected mirrored storage metadata, got %+v", result.asset)
+	}
+	data, contentType, err := storageService.ReadBytes(t.Context(), result.asset.StorageKey)
 	if err != nil {
 		t.Fatalf("ReadBytes returned error: %v", err)
 	}

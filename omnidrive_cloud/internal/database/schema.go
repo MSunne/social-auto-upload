@@ -104,6 +104,8 @@ CREATE TABLE IF NOT EXISTS admin_system_configs (
     billing_manual_support_contact TEXT NOT NULL DEFAULT '',
     billing_manual_support_qr_code_url TEXT NOT NULL DEFAULT '',
     billing_manual_support_note TEXT NOT NULL DEFAULT '请联系客服完成转账，并在订单内补充转账说明或凭证。',
+    digital_human_credits_per_second BIGINT NOT NULL DEFAULT 0,
+    digital_human_credits_per_second_millis BIGINT NOT NULL DEFAULT 0,
     default_chat_model TEXT NOT NULL DEFAULT 'gemini-3.1-pro-preview',
     default_image_model TEXT NOT NULL DEFAULT 'gemini-3-pro-image-preview',
     default_video_model TEXT NOT NULL DEFAULT 'veo-3.1-fast-fl',
@@ -470,6 +472,8 @@ ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_valid
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_cooldown_seconds INT NOT NULL DEFAULT 60;
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_daily_limit INT NOT NULL DEFAULT 10;
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_code_length INT NOT NULL DEFAULT 6;
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS digital_human_credits_per_second BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS digital_human_credits_per_second_millis BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE phone_verification_codes ADD COLUMN IF NOT EXISTS verification_code_hash TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_chat_model TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_image_model TEXT;
@@ -637,6 +641,14 @@ CREATE TABLE IF NOT EXISTS digital_human_tasks (
     result_asset JSONB,
     goods_title TEXT,
     goods_text TEXT NOT NULL,
+    estimated_duration_seconds INT NOT NULL DEFAULT 0,
+    estimated_credits BIGINT NOT NULL DEFAULT 0,
+    estimated_credits_millis BIGINT NOT NULL DEFAULT 0,
+    actual_duration_seconds INT,
+    final_credits BIGINT,
+    final_credits_millis BIGINT,
+    billing_status TEXT NOT NULL DEFAULT 'pending',
+    billing_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     progress JSONB,
     request_payload JSONB,
     remote_response_payload JSONB,
@@ -658,6 +670,15 @@ CREATE INDEX IF NOT EXISTS idx_digital_human_tasks_status_lease
 
 CREATE INDEX IF NOT EXISTS idx_digital_human_tasks_remote_task
     ON digital_human_tasks (remote_task_id);
+
+ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS estimated_duration_seconds INT NOT NULL DEFAULT 0;
+ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS estimated_credits BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS estimated_credits_millis BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS actual_duration_seconds INT;
+ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS final_credits BIGINT;
+ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS final_credits_millis BIGINT;
+ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS billing_status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS billing_payload JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE TABLE IF NOT EXISTS ai_job_publish_links (
     job_id TEXT NOT NULL REFERENCES ai_jobs(id) ON DELETE CASCADE,
@@ -803,10 +824,12 @@ CREATE TABLE IF NOT EXISTS ai_billing_items (
 CREATE TABLE IF NOT EXISTS billing_wallets (
     user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     credit_balance BIGINT NOT NULL DEFAULT 0,
+    credit_balance_millis BIGINT NOT NULL DEFAULT 0,
     frozen_credit_balance BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE billing_wallets ADD COLUMN IF NOT EXISTS credit_balance_millis BIGINT NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS billing_wallet_lots (
     id TEXT PRIMARY KEY,
@@ -830,12 +853,16 @@ CREATE TABLE IF NOT EXISTS wallet_ledgers (
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     entry_type TEXT NOT NULL,
     amount_delta BIGINT NOT NULL,
+    amount_delta_millis BIGINT,
     balance_before BIGINT NOT NULL DEFAULT 0,
+    balance_before_millis BIGINT,
     balance_after BIGINT NOT NULL,
+    balance_after_millis BIGINT,
     meter_code TEXT,
     quantity BIGINT,
     unit TEXT,
     unit_price_credits BIGINT,
+    unit_price_credit_millis BIGINT,
     description TEXT,
     reference_type TEXT,
     reference_id TEXT,
@@ -844,10 +871,14 @@ CREATE TABLE IF NOT EXISTS wallet_ledgers (
 );
 
 ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS balance_before BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS amount_delta_millis BIGINT;
+ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS balance_before_millis BIGINT;
 ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS meter_code TEXT;
 ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS quantity BIGINT;
 ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS unit TEXT;
 ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS unit_price_credits BIGINT;
+ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS balance_after_millis BIGINT;
+ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS unit_price_credit_millis BIGINT;
 ALTER TABLE wallet_ledgers ADD COLUMN IF NOT EXISTS metadata JSONB;
 
 CREATE TABLE IF NOT EXISTS recharge_orders (
