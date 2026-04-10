@@ -35,3 +35,29 @@ func TestAgentLoginRoutesAreRegistered(t *testing.T) {
 		}
 	}
 }
+
+func TestDigitalHumanRoutesAreRegistered(t *testing.T) {
+	app := &appstate.App{
+		Config: config.Config{},
+		Logger: slog.Default(),
+	}
+	router := NewRouter(app)
+
+	cases := []struct {
+		method string
+		path   string
+	}{
+		{method: stdhttp.MethodGet, path: "/api/v1/digital-human/tasks"},
+		{method: stdhttp.MethodPost, path: "/api/v1/digital-human/tasks"},
+		{method: stdhttp.MethodGet, path: "/api/v1/digital-human/tasks/task-1"},
+	}
+
+	for _, tc := range cases {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+		if resp.Code == stdhttp.StatusNotFound {
+			t.Fatalf("%s %s returned 404, route is not registered", tc.method, tc.path)
+		}
+	}
+}

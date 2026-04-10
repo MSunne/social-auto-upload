@@ -624,6 +624,41 @@ CREATE TABLE IF NOT EXISTS ai_job_artifacts (
     UNIQUE (job_id, artifact_key)
 );
 
+CREATE TABLE IF NOT EXISTS digital_human_tasks (
+    id TEXT PRIMARY KEY,
+    owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    mode TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'runninghub',
+    status TEXT NOT NULL DEFAULT 'queued',
+    remote_task_id TEXT,
+    character_asset JSONB NOT NULL,
+    goods_asset JSONB,
+    ref_audio_asset JSONB NOT NULL,
+    result_asset JSONB,
+    goods_title TEXT,
+    goods_text TEXT NOT NULL,
+    progress JSONB,
+    request_payload JSONB,
+    remote_response_payload JSONB,
+    error_message TEXT,
+    lease_token TEXT,
+    lease_expires_at TIMESTAMPTZ,
+    working_dir TEXT,
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_digital_human_tasks_owner_updated
+    ON digital_human_tasks (owner_user_id, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_digital_human_tasks_status_lease
+    ON digital_human_tasks (status, lease_expires_at, created_at ASC);
+
+CREATE INDEX IF NOT EXISTS idx_digital_human_tasks_remote_task
+    ON digital_human_tasks (remote_task_id);
+
 CREATE TABLE IF NOT EXISTS ai_job_publish_links (
     job_id TEXT NOT NULL REFERENCES ai_jobs(id) ON DELETE CASCADE,
     task_id TEXT NOT NULL REFERENCES publish_tasks(id) ON DELETE CASCADE,

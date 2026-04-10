@@ -27,6 +27,8 @@ type Config struct {
 	S3VideoStorePath              string
 	APIYIBaseURL                  string
 	APIYIApiKey                   string
+	DigitalHumanBaseURL           string
+	DigitalHumanPollSeconds       int
 	AIWorkerEnabled               bool
 	AIWorkerPollSeconds           int
 	AIWorkerConcurrency           int
@@ -86,6 +88,8 @@ func Load() Config {
 		S3VideoStorePath:              envFirst("", "OMNIDRIVE_S3_VIDEO_STORE_PATH", "VIDEO_STORE_PATH"),
 		APIYIBaseURL:                  envOrDefault("OMNIDRIVE_APIYI_BASE_URL", "https://api.apiyi.com"),
 		APIYIApiKey:                   envFirst("", "OMNIDRIVE_APIYI_API_KEY", "APIYI_API_KEY"),
+		DigitalHumanBaseURL:           envOrDefault("OMNIDRIVE_DIGITAL_HUMAN_BASE_URL", "http://127.0.0.1:8000"),
+		DigitalHumanPollSeconds:       envAsInt("OMNIDRIVE_DIGITAL_HUMAN_POLL_SECONDS", 5),
 		AIWorkerEnabled:               envAsBool("OMNIDRIVE_AI_WORKER_ENABLED", true),
 		AIWorkerPollSeconds:           envAsInt("OMNIDRIVE_AI_WORKER_POLL_SECONDS", 5),
 		AIWorkerConcurrency:           envAsInt("OMNIDRIVE_AI_WORKER_CONCURRENCY", 2),

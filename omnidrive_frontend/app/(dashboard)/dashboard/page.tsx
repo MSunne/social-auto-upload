@@ -222,6 +222,21 @@ export default function DashboardPage() {
               </div>
             </div>
           </Link>
+          <Link href="/creation/digital-human">
+            <div className="flex items-center gap-3 rounded-xl border border-border p-4 transition-all hover:border-pink/30 hover:bg-pink/5">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-pink/10">
+                <Zap className="h-5 w-5 text-pink" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-text-primary">
+                  数字人视频
+                </p>
+                <p className="text-xs text-text-muted">
+                  上传人物、音频和产品素材快速生成口播视频
+                </p>
+              </div>
+            </div>
+          </Link>
           <Link href="/creation/image">
             <div className="flex items-center gap-3 rounded-xl border border-border p-4 transition-all hover:border-cyan/30 hover:bg-cyan/5">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan/10">

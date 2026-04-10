@@ -697,6 +697,47 @@ type AIJobWorkspace struct {
 	Actions            AIJobActionState    `json:"actions"`
 }
 
+type DigitalHumanAsset struct {
+	StorageKey string `json:"storageKey"`
+	PublicURL  string `json:"publicUrl"`
+	FileName   string `json:"fileName"`
+	MimeType   string `json:"mimeType"`
+	SizeBytes  *int64 `json:"sizeBytes,omitempty"`
+}
+
+type DigitalHumanProgress struct {
+	Current    int     `json:"current"`
+	Total      int     `json:"total"`
+	Percentage float64 `json:"percentage"`
+	Message    string  `json:"message,omitempty"`
+}
+
+type DigitalHumanTask struct {
+	ID                    string                `json:"id"`
+	OwnerUserID           string                `json:"ownerUserId"`
+	Mode                  string                `json:"mode"`
+	Source                string                `json:"source"`
+	Status                string                `json:"status"`
+	RemoteTaskID          *string               `json:"remoteTaskId,omitempty"`
+	CharacterAsset        DigitalHumanAsset     `json:"characterAsset"`
+	GoodsAsset            *DigitalHumanAsset    `json:"goodsAsset,omitempty"`
+	RefAudioAsset         DigitalHumanAsset     `json:"refAudioAsset"`
+	ResultAsset           *DigitalHumanAsset    `json:"resultAsset,omitempty"`
+	GoodsTitle            *string               `json:"goodsTitle,omitempty"`
+	GoodsText             string                `json:"goodsText"`
+	Progress              *DigitalHumanProgress `json:"progress,omitempty"`
+	RequestPayload        json.RawMessage       `json:"requestPayload,omitempty"`
+	RemoteResponsePayload json.RawMessage       `json:"remoteResponsePayload,omitempty"`
+	ErrorMessage          *string               `json:"errorMessage,omitempty"`
+	StartedAt             *time.Time            `json:"startedAt,omitempty"`
+	CompletedAt           *time.Time            `json:"completedAt,omitempty"`
+	CreatedAt             time.Time             `json:"createdAt"`
+	UpdatedAt             time.Time             `json:"updatedAt"`
+	LeaseToken            *string               `json:"-"`
+	LeaseExpiresAt        *time.Time            `json:"-"`
+	WorkingDir            *string               `json:"-"`
+}
+
 type AgentAIJobPackage struct {
 	Job         AIJob               `json:"job"`
 	Skill       *ProductSkill       `json:"skill,omitempty"`

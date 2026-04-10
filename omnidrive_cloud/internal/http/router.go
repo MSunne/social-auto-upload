@@ -29,6 +29,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 	skillHandler := handlers.NewSkillHandler(app)
 	taskHandler := handlers.NewTaskHandler(app)
 	aiHandler := handlers.NewAIHandler(app)
+	digitalHumanHandler := handlers.NewDigitalHumanTaskHandler(app)
 	billingHandler := handlers.NewBillingHandler(app)
 	partnerHandler := handlers.NewPartnerHandler(app)
 	agentHandler := handlers.NewAgentHandler(app)
@@ -146,6 +147,12 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 				ai.Post("/jobs/{jobId}/cancel", aiHandler.CancelJob)
 				ai.Post("/jobs/{jobId}/retry", aiHandler.RetryJob)
 				ai.Post("/jobs/{jobId}/force-release", aiHandler.ForceReleaseJob)
+			})
+
+			private.Route("/digital-human", func(digitalHuman chi.Router) {
+				digitalHuman.Get("/tasks", digitalHumanHandler.List)
+				digitalHuman.Post("/tasks", digitalHumanHandler.Create)
+				digitalHuman.Get("/tasks/{taskId}", digitalHumanHandler.Detail)
 			})
 
 			private.Route("/billing", func(billing chi.Router) {

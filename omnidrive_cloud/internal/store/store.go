@@ -724,6 +724,46 @@ type UpsertAIJobArtifactInput struct {
 	Payload      []byte
 }
 
+type CreateDigitalHumanTaskInput struct {
+	ID             string
+	OwnerUserID    string
+	Mode           string
+	Source         string
+	Status         string
+	CharacterAsset []byte
+	GoodsAsset     []byte
+	RefAudioAsset  []byte
+	GoodsTitle     *string
+	GoodsText      string
+	Progress       []byte
+	RequestPayload []byte
+}
+
+type UpdateDigitalHumanTaskExecutionInput struct {
+	Status                *string
+	RemoteTaskID          *string
+	RemoteTaskTouched     bool
+	ResultAsset           []byte
+	ResultAssetTouched    bool
+	Progress              []byte
+	ProgressTouched       bool
+	RemoteResponsePayload []byte
+	RemotePayloadTouched  bool
+	ErrorMessage          *string
+	StartedAt             *time.Time
+	StartedTouched        bool
+	CompletedAt           *time.Time
+	CompletedTouched      bool
+	WorkingDir            *string
+	WorkingDirTouched     bool
+}
+
+type ListDigitalHumanTasksFilter struct {
+	Mode   string
+	Status string
+	Limit  int
+}
+
 type LinkAIJobPublishTaskInput struct {
 	JobID       string
 	TaskID      string

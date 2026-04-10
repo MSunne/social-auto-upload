@@ -12,6 +12,7 @@ import (
 	appstate "omnidrive_cloud/internal/app"
 	"omnidrive_cloud/internal/config"
 	"omnidrive_cloud/internal/database"
+	"omnidrive_cloud/internal/digitalhuman"
 	apphttp "omnidrive_cloud/internal/http"
 	"omnidrive_cloud/internal/storage"
 	"omnidrive_cloud/internal/workflow"
@@ -77,6 +78,14 @@ func New(cfg config.Config, logger *slog.Logger) (*http.Server, func(), error) {
 	} else {
 		logger.Info("ai worker disabled")
 	}
+
+	digitalHumanWorker, err := digitalhuman.NewWorker(app)
+	if err != nil {
+		db.Close()
+		return nil, nil, fmt.Errorf("init digital human worker: %w", err)
+	}
+	stopDigitalHumanWorker := digitalHumanWorker.Start(context.Background())
+	cleanupFns = append(cleanupFns, stopDigitalHumanWorker)
 
 	skillScheduler, err := workflow.NewSkillScheduler(app)
 	if err != nil {
