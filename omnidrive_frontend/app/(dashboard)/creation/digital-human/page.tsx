@@ -15,13 +15,12 @@ import {
   Package,
   RefreshCw,
   ShoppingBag,
-  Sparkles,
   Upload,
   UserRound,
   Video,
   X,
 } from "lucide-react";
-import { PageHeader, StatusBadge } from "@/components/ui/common";
+import { StatusBadge } from "@/components/ui/common";
 import {
   DIGITAL_HUMAN_AUDIO_ACCEPT,
   DIGITAL_HUMAN_IMAGE_ACCEPT,
@@ -223,12 +222,15 @@ function DropZone({
               </div>
             </div>
           ) : (
-            <div className="p-4">
-              <div className="mb-3 flex items-center gap-2 text-sm font-medium text-text-primary">
-                {icon}
-                <span>{label}</span>
-                <CheckCircle2 className="ml-auto h-4 w-4 text-success" />
-                <div className="flex gap-1.5">
+            <div className="px-4 py-3">
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 text-sm font-medium text-text-primary">
+                  {icon}
+                  <span>{label}</span>
+                  <CheckCircle2 className="h-3.5 w-3.5 text-success" />
+                </div>
+                <audio controls src={previewUrl} className="mx-2 h-8 flex-1" style={{ minWidth: 0 }} />
+                <div className="flex shrink-0 gap-1">
                   <button
                     type="button"
                     onClick={handleClick}
@@ -246,9 +248,6 @@ function DropZone({
                     <X className="h-3 w-3" />
                   </button>
                 </div>
-              </div>
-              <div className="rounded-xl border border-border bg-background/30 p-3">
-                <audio controls src={previewUrl} className="w-full" />
               </div>
             </div>
           )}
@@ -439,9 +438,9 @@ export default function DigitalHumanCreationPage() {
         }
       }
       if (!goodsTitle.trim()) {
-        nextErrors.goodsTitle = "请填写产品简介";
+        nextErrors.goodsTitle = "请填写产品标题";
       } else if (titleLength > 20) {
-        nextErrors.goodsTitle = "产品简介最多 20 个字";
+        nextErrors.goodsTitle = "产品标题最多 20 个字";
       }
     }
 
@@ -530,20 +529,6 @@ export default function DigitalHumanCreationPage() {
 
   return (
     <>
-      <PageHeader
-        title="数字人视频"
-        subtitle="上传人物照片、参考语音和产品素材，一键生成数字人口播视频。"
-        actions={
-          <Link
-            href="/creation/digital-human/history"
-            className="btn-neon inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2 text-sm font-medium text-text-primary transition-all hover:border-accent hover:text-accent"
-          >
-            <History className="h-4 w-4" />
-            查看历史
-          </Link>
-        }
-      />
-
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_420px]">
         {/* ─── Left: Form ─── */}
         <motion.form
@@ -590,7 +575,8 @@ export default function DigitalHumanCreationPage() {
               素材上传
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-2">
+            {/* Images row: character + goods side by side */}
+            <div className={`grid gap-4 ${mode === "digital" ? "lg:grid-cols-2" : ""}`}>
               <DropZone
                 label="人物照片"
                 icon={<UserRound className="h-4 w-4 text-accent" />}
@@ -603,6 +589,23 @@ export default function DigitalHumanCreationPage() {
                 onSelect={(f) => handleImageSelect(f, "characterImage")}
               />
 
+              {mode === "digital" ? (
+                <DropZone
+                  label="参考产品图"
+                  icon={<Package className="h-4 w-4 text-accent" />}
+                  accept={DIGITAL_HUMAN_IMAGE_ACCEPT}
+                  hint="带货模式必填，展示产品外观"
+                  kind="image"
+                  file={goodsImage}
+                  previewUrl={goodsPreview}
+                  error={errors.goodsImage}
+                  onSelect={(f) => handleImageSelect(f, "goodsImage")}
+                />
+              ) : null}
+            </div>
+
+            {/* Audio: compact single-row */}
+            <div className="mt-4">
               <DropZone
                 label="参考语音"
                 icon={<AudioLines className="h-4 w-4 text-accent" />}
@@ -615,85 +618,77 @@ export default function DigitalHumanCreationPage() {
                 onSelect={handleAudioSelect}
               />
             </div>
-
-            {mode === "digital" ? (
-              <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                <DropZone
-                  label="参考产品图"
-                  icon={<Package className="h-4 w-4 text-accent" />}
-                  accept={DIGITAL_HUMAN_IMAGE_ACCEPT}
-                  hint="带货模式必填，展示产品外观"
-                  kind="image"
-                  file={goodsImage}
-                  previewUrl={goodsPreview}
-                  error={errors.goodsImage}
-                  onSelect={(f) => handleImageSelect(f, "goodsImage")}
-                />
-
-                <div>
-                  <label className="flex items-center justify-between text-sm font-medium text-text-primary">
-                    <span>产品简介</span>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs ${
-                        titleLength > 20
-                          ? "bg-danger/15 text-danger"
-                          : "bg-surface-hover text-text-muted"
-                      }`}
-                    >
-                      {titleLength}/20
-                    </span>
-                  </label>
-                  <input
-                    type="text"
-                    value={goodsTitle}
-                    onChange={(event) => {
-                      setGoodsTitle(event.target.value);
-                      setErrors((current) => ({ ...current, goodsTitle: "" }));
-                    }}
-                    placeholder="例如：老廖牌香薰"
-                    className="mt-2 w-full rounded-2xl border border-accent/20 bg-accent/[0.03] px-4 py-3 text-sm text-text-primary outline-none transition-all duration-300 focus:border-accent/50 focus:bg-accent/[0.05] focus:shadow-[0_0_16px_rgba(177,73,255,0.1)] placeholder:text-text-muted/50"
-                  />
-                  <p className="mt-2 text-xs text-text-muted">一句话描述产品，帮助AI理解带货重点。</p>
-                  {errors.goodsTitle ? (
-                    <p className="mt-2 text-xs text-danger">{errors.goodsTitle}</p>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
           </motion.section>
 
-          {/* ─── Script / Text Section ─── */}
-          <motion.section variants={fadeUp} className="glass-card p-5">
-            <label className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
-                <Upload className="h-4 w-4 text-accent" />
-                口播文案
+          {/* ─── Product Title + Script Section (grouped) ─── */}
+          <motion.section variants={fadeUp} className="glass-card p-5 space-y-4">
+            {mode === "digital" ? (
+              <div>
+                <label className="flex items-center justify-between text-sm font-medium text-text-primary">
+                  <div className="flex items-center gap-2">
+                    <Package className="h-4 w-4 text-accent" />
+                    <span>产品标题</span>
+                  </div>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs ${
+                      titleLength > 20
+                        ? "bg-danger/15 text-danger"
+                        : "bg-surface-hover text-text-muted"
+                    }`}
+                  >
+                    {titleLength}/20
+                  </span>
+                </label>
+                <input
+                  type="text"
+                  value={goodsTitle}
+                  onChange={(event) => {
+                    setGoodsTitle(event.target.value);
+                    setErrors((current) => ({ ...current, goodsTitle: "" }));
+                  }}
+                  placeholder="例如：老廖牌香薰"
+                  className="mt-2 w-full rounded-2xl border border-accent/20 bg-accent/[0.03] px-4 py-3 text-sm text-text-primary outline-none transition-all duration-300 focus:border-accent/50 focus:bg-accent/[0.05] focus:shadow-[0_0_16px_rgba(177,73,255,0.1)] placeholder:text-text-muted/50"
+                />
+                <p className="mt-1.5 text-xs text-text-muted">一句话描述产品，帮助AI理解带货重点。</p>
+                {errors.goodsTitle ? (
+                  <p className="mt-1.5 text-xs text-danger">{errors.goodsTitle}</p>
+                ) : null}
               </div>
-              <span
-                className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                  textLength > 1000
-                    ? "bg-danger/15 text-danger"
-                    : "bg-surface-hover text-text-muted"
-                }`}
-              >
-                {textLength}/1000
-              </span>
-            </label>
-            <textarea
-              value={goodsText}
-              onChange={(event) => {
-                setGoodsText(event.target.value);
-                setErrors((current) => ({ ...current, goodsText: "" }));
-              }}
-              rows={5}
-              placeholder="请输入数字人口播文案，系统将根据文案内容生成对应时长的口播视频..."
-              className="mt-3 w-full resize-y rounded-2xl border border-accent/20 bg-accent/[0.03] px-4 py-3 text-sm leading-7 text-text-primary outline-none transition-all duration-300 focus:border-accent/50 focus:bg-accent/[0.05] focus:shadow-[0_0_16px_rgba(177,73,255,0.1)] placeholder:text-text-muted/50"
-              style={{ minHeight: "120px" }}
-            />
-            <p className="mt-2 text-xs text-text-muted">
-              文案越长，生成的视频越长。建议精心撰写文案以获得最佳效果。
-            </p>
-            {errors.goodsText ? <p className="mt-2 text-xs text-danger">{errors.goodsText}</p> : null}
+            ) : null}
+
+          {/* ─── Script / Text Section (same card as 产品标题 to keep them grouped) ─── */}
+            <div>
+              <label className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+                  <Upload className="h-4 w-4 text-accent" />
+                  口播文案
+                </div>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                    textLength > 1000
+                      ? "bg-danger/15 text-danger"
+                      : "bg-surface-hover text-text-muted"
+                  }`}
+                >
+                  {textLength}/1000
+                </span>
+              </label>
+              <textarea
+                value={goodsText}
+                onChange={(event) => {
+                  setGoodsText(event.target.value);
+                  setErrors((current) => ({ ...current, goodsText: "" }));
+                }}
+                rows={5}
+                placeholder="请输入数字人口播文案，系统将根据文案内容生成对应时长的口播视频..."
+                className="mt-2 w-full resize-y rounded-2xl border border-accent/20 bg-accent/[0.03] px-4 py-3 text-sm leading-7 text-text-primary outline-none transition-all duration-300 focus:border-accent/50 focus:bg-accent/[0.05] focus:shadow-[0_0_16px_rgba(177,73,255,0.1)] placeholder:text-text-muted/50"
+                style={{ minHeight: "120px" }}
+              />
+              <p className="mt-1.5 text-xs text-text-muted">
+                文案越长，生成的视频越长。建议精心撰写文案以获得最佳效果。
+              </p>
+              {errors.goodsText ? <p className="mt-1.5 text-xs text-danger">{errors.goodsText}</p> : null}
+            </div>
           </motion.section>
 
           {/* ─── Submit ─── */}
@@ -701,21 +696,38 @@ export default function DigitalHumanCreationPage() {
             <button
               type="submit"
               disabled={createMutation.isPending}
-              className="group relative inline-flex items-center gap-2.5 overflow-hidden rounded-2xl bg-gradient-to-r from-accent to-[#7c3aed] px-6 py-3.5 text-sm font-semibold text-white shadow-[0_0_24px_rgba(177,73,255,0.25)] transition-all duration-300 hover:shadow-[0_0_36px_rgba(177,73,255,0.35)] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none"
+              className={`group relative inline-flex items-center gap-2.5 overflow-hidden rounded-2xl px-6 py-3.5 text-sm font-semibold text-white transition-all duration-300 ${
+                createMutation.isPending
+                  ? "bg-gradient-to-r from-accent/60 to-[#7c3aed]/60 cursor-not-allowed shadow-none"
+                  : "bg-gradient-to-r from-accent to-[#7c3aed] shadow-[0_0_24px_rgba(177,73,255,0.25)] hover:shadow-[0_0_36px_rgba(177,73,255,0.35)] hover:brightness-110"
+              }`}
             >
-              <div className="absolute inset-0 bg-gradient-to-r from-cyan/20 to-accent/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+              {/* Shimmer animation while loading */}
+              {createMutation.isPending ? (
+                <div className="absolute inset-0 overflow-hidden">
+                  <div className="absolute inset-0 -translate-x-full animate-[shimmer_1.5s_infinite] bg-gradient-to-r from-transparent via-white/15 to-transparent" />
+                </div>
+              ) : (
+                <div className="absolute inset-0 bg-gradient-to-r from-cyan/20 to-accent/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+              )}
               <span className="relative flex items-center gap-2">
                 {createMutation.isPending ? (
                   <LoaderCircle className="h-4.5 w-4.5 animate-spin" />
                 ) : (
                   <Video className="h-4.5 w-4.5" />
                 )}
-                {createMutation.isPending ? "正在提交..." : "开始制作"}
+                {createMutation.isPending ? "正在提交中..." : "开始制作"}
               </span>
             </button>
-            <span className="text-xs text-text-muted">
-              素材将上传至云端后自动启动数字人视频生成
-            </span>
+            {createMutation.isPending ? (
+              <span className="text-xs text-accent animate-pulse">
+                正在上传素材并启动任务，请勿关闭页面...
+              </span>
+            ) : (
+              <span className="text-xs text-text-muted">
+                素材将上传至云端后自动启动数字人视频生成
+              </span>
+            )}
           </motion.div>
 
           {submitError ? (
