@@ -72,3 +72,27 @@ func TestAIJobSelectColumnsForSummaryOmitsHeavyPayloads(t *testing.T) {
 		t.Fatalf("expected summary columns to omit raw output payload, got %q", columns)
 	}
 }
+
+func TestAdminAIJobListSelectColumnsStayLightweight(t *testing.T) {
+	if strings.Contains(adminAIJobListSelectColumns, "input_payload") {
+		t.Fatalf("expected admin AI job list columns to omit input payload, got %q", adminAIJobListSelectColumns)
+	}
+	if strings.Contains(adminAIJobListSelectColumns, "output_payload") {
+		t.Fatalf("expected admin AI job list columns to omit output payload, got %q", adminAIJobListSelectColumns)
+	}
+	if strings.Contains(adminAIJobListSelectColumns, "prompt") {
+		t.Fatalf("expected admin AI job list columns to omit prompt, got %q", adminAIJobListSelectColumns)
+	}
+	if strings.Contains(adminAIJobListSelectColumns, "notes") {
+		t.Fatalf("expected admin AI job list columns to omit notes, got %q", adminAIJobListSelectColumns)
+	}
+}
+
+func TestNextPrefixBoundary(t *testing.T) {
+	if got, ok := nextPrefixBoundary("user"); !ok || got != "uses" {
+		t.Fatalf("expected prefix boundary to increment final byte, got %q ok=%v", got, ok)
+	}
+	if got, ok := nextPrefixBoundary(""); ok || got != "" {
+		t.Fatalf("expected empty prefix to have no boundary, got %q ok=%v", got, ok)
+	}
+}

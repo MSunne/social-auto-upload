@@ -342,6 +342,9 @@ export default function DigitalHumanTaskDetailPage() {
                     <span className="rounded-full bg-surface-hover px-2 py-0.5 text-[11px] text-text-muted">
                       {formatDigitalHumanMode(task.mode)}
                     </span>
+                    <span className="rounded-full bg-surface-hover px-2 py-0.5 text-[11px] text-text-muted">
+                      {task.modelName || "未记录模型"}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -412,6 +415,11 @@ export default function DigitalHumanTaskDetailPage() {
                   icon={<Hash className="h-3 w-3" />}
                   label="任务 ID"
                   value={task.id}
+                />
+                <InfoRow
+                  icon={<Sparkles className="h-3 w-3" />}
+                  label="执行模型"
+                  value={task.modelName}
                 />
                 <InfoRow
                   icon={<Hash className="h-3 w-3" />}

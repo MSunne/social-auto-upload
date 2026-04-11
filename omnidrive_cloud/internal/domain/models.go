@@ -724,9 +724,11 @@ type DigitalHumanBillingPreview struct {
 type DigitalHumanTask struct {
 	ID                       string                `json:"id"`
 	OwnerUserID              string                `json:"ownerUserId"`
+	AIJobID                  *string               `json:"aiJobId,omitempty"`
 	Mode                     string                `json:"mode"`
 	Source                   string                `json:"source"`
 	Status                   string                `json:"status"`
+	ModelName                string                `json:"modelName"`
 	RemoteTaskID             *string               `json:"remoteTaskId,omitempty"`
 	CharacterAsset           DigitalHumanAsset     `json:"characterAsset"`
 	GoodsAsset               *DigitalHumanAsset    `json:"goodsAsset,omitempty"`

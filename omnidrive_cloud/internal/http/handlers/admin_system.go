@@ -23,21 +23,23 @@ import (
 )
 
 type adminSystemConfigPatchRequest struct {
-	AIWorkerEnabled              *bool                             `json:"aiWorkerEnabled"`
-	PaymentChannels              []string                          `json:"paymentChannels"`
-	BillingManualSupport         *adminManualSupportPatchRequest   `json:"billingManualSupport"`
-	SMSRegistration              *adminSMSRegistrationPatchRequest `json:"smsRegistration"`
-	DigitalHumanCreditsPerSecond *float64                          `json:"digitalHumanCreditsPerSecond"`
-	DefaultChatModel             *string                           `json:"defaultChatModel"`
-	DefaultImageModel            *string                           `json:"defaultImageModel"`
-	DefaultVideoModel            *string                           `json:"defaultVideoModel"`
-	VideoCoverPrompt             *string                           `json:"videoCoverPrompt"`
-	StoryboardPrompt             *string                           `json:"storyboardPrompt"`
-	StoryboardModel              *string                           `json:"storyboardModel"`
-	StoryboardReferences         []map[string]any                  `json:"storyboardReferences"`
-	ImageStoryboardPrompt        *string                           `json:"imageStoryboardPrompt"`
-	ImageStoryboardModel         *string                           `json:"imageStoryboardModel"`
-	ImageStoryboardReferences    []map[string]any                  `json:"imageStoryboardReferences"`
+	AIWorkerEnabled                  *bool                             `json:"aiWorkerEnabled"`
+	PaymentChannels                  []string                          `json:"paymentChannels"`
+	BillingManualSupport             *adminManualSupportPatchRequest   `json:"billingManualSupport"`
+	SMSRegistration                  *adminSMSRegistrationPatchRequest `json:"smsRegistration"`
+	DigitalHumanCreditsPerSecond     *float64                          `json:"digitalHumanCreditsPerSecond"`
+	DigitalHumanShoppingDefaultModel *string                           `json:"digitalHumanShoppingDefaultModel"`
+	DigitalHumanSpeechDefaultModel   *string                           `json:"digitalHumanSpeechDefaultModel"`
+	DefaultChatModel                 *string                           `json:"defaultChatModel"`
+	DefaultImageModel                *string                           `json:"defaultImageModel"`
+	DefaultVideoModel                *string                           `json:"defaultVideoModel"`
+	VideoCoverPrompt                 *string                           `json:"videoCoverPrompt"`
+	StoryboardPrompt                 *string                           `json:"storyboardPrompt"`
+	StoryboardModel                  *string                           `json:"storyboardModel"`
+	StoryboardReferences             []map[string]any                  `json:"storyboardReferences"`
+	ImageStoryboardPrompt            *string                           `json:"imageStoryboardPrompt"`
+	ImageStoryboardModel             *string                           `json:"imageStoryboardModel"`
+	ImageStoryboardReferences        []map[string]any                  `json:"imageStoryboardReferences"`
 }
 
 type adminManualSupportPatchRequest struct {
@@ -70,6 +72,8 @@ type effectiveAdminSystemSettings struct {
 	BillingManualSupport               domain.AdminManualSupportConfig
 	SMSRegistration                    domain.AdminSMSRegistrationConfig
 	DigitalHumanCreditsPerSecondMillis int64
+	DigitalHumanShoppingDefaultModel   string
+	DigitalHumanSpeechDefaultModel     string
 	DefaultChatModel                   string
 	DefaultImageModel                  string
 	DefaultVideoModel                  string
@@ -106,6 +110,8 @@ func defaultAdminSystemSettings(cfg config.Config) effectiveAdminSystemSettings 
 			CodeLength:         6,
 		},
 		DigitalHumanCreditsPerSecondMillis: 0,
+		DigitalHumanShoppingDefaultModel:   digitalHumanRecommendedModelID,
+		DigitalHumanSpeechDefaultModel:     digitalHumanRecommendedModelID,
 		DefaultChatModel:                   strings.TrimSpace(cfg.DefaultChatModel),
 		DefaultImageModel:                  strings.TrimSpace(cfg.DefaultImageModel),
 		DefaultVideoModel:                  strings.TrimSpace(cfg.DefaultVideoModel),
@@ -227,6 +233,12 @@ func loadEffectiveAdminSystemSettings(ctx context.Context, app *appstate.App) (e
 	if settings.DigitalHumanCreditsPerSecondMillis <= 0 && record.DigitalHumanCreditsPerSecond > 0 {
 		settings.DigitalHumanCreditsPerSecondMillis = record.DigitalHumanCreditsPerSecond * store.DigitalHumanCreditMillisScale
 	}
+	if value := strings.TrimSpace(record.DigitalHumanShoppingDefaultModel); value != "" {
+		settings.DigitalHumanShoppingDefaultModel = value
+	}
+	if value := strings.TrimSpace(record.DigitalHumanSpeechDefaultModel); value != "" {
+		settings.DigitalHumanSpeechDefaultModel = value
+	}
 	settings.DefaultChatModel = strings.TrimSpace(record.DefaultChatModel)
 	settings.DefaultImageModel = strings.TrimSpace(record.DefaultImageModel)
 	settings.DefaultVideoModel = strings.TrimSpace(record.DefaultVideoModel)
@@ -263,28 +275,30 @@ func buildAdminSystemConfigPayload(app *appstate.App, settings effectiveAdminSys
 	}
 
 	return domain.AdminSystemConfig{
-		AuthMode:                     "database_rbac",
-		AdminEmail:                   app.Config.AdminEmail,
-		S3Configured:                 app.Config.S3Bucket != "" && app.Config.S3Endpoint != "" && app.Config.S3AccessKey != "" && app.Config.S3SecretKey != "",
-		S3Endpoint:                   app.Config.S3Endpoint,
-		S3Bucket:                     app.Config.S3Bucket,
-		AIWorkerEnabled:              settings.AIWorkerEnabled,
-		PaymentChannels:              append([]string(nil), settings.PaymentChannels...),
-		BillingManualSupport:         settings.BillingManualSupport,
-		SMSRegistration:              settings.SMSRegistration,
-		DigitalHumanCreditsPerSecond: store.DigitalHumanCreditsFromMillis(settings.DigitalHumanCreditsPerSecondMillis),
-		DefaultChatModel:             settings.DefaultChatModel,
-		DefaultImageModel:            settings.DefaultImageModel,
-		DefaultVideoModel:            settings.DefaultVideoModel,
-		VideoCoverPrompt:             settings.VideoCoverPrompt,
-		StoryboardPrompt:             settings.StoryboardPrompt,
-		StoryboardModel:              settings.StoryboardModel,
-		StoryboardReferences:         settings.StoryboardReferences,
-		ImageStoryboardPrompt:        settings.ImageStoryboardPrompt,
-		ImageStoryboardModel:         settings.ImageStoryboardModel,
-		ImageStoryboardReferences:    settings.ImageStoryboardReferences,
-		Notes:                        notes,
-		UpdatedAt:                    settings.UpdatedAt,
+		AuthMode:                         "database_rbac",
+		AdminEmail:                       app.Config.AdminEmail,
+		S3Configured:                     app.Config.S3Bucket != "" && app.Config.S3Endpoint != "" && app.Config.S3AccessKey != "" && app.Config.S3SecretKey != "",
+		S3Endpoint:                       app.Config.S3Endpoint,
+		S3Bucket:                         app.Config.S3Bucket,
+		AIWorkerEnabled:                  settings.AIWorkerEnabled,
+		PaymentChannels:                  append([]string(nil), settings.PaymentChannels...),
+		BillingManualSupport:             settings.BillingManualSupport,
+		SMSRegistration:                  settings.SMSRegistration,
+		DigitalHumanCreditsPerSecond:     store.DigitalHumanCreditsFromMillis(settings.DigitalHumanCreditsPerSecondMillis),
+		DigitalHumanShoppingDefaultModel: settings.DigitalHumanShoppingDefaultModel,
+		DigitalHumanSpeechDefaultModel:   settings.DigitalHumanSpeechDefaultModel,
+		DefaultChatModel:                 settings.DefaultChatModel,
+		DefaultImageModel:                settings.DefaultImageModel,
+		DefaultVideoModel:                settings.DefaultVideoModel,
+		VideoCoverPrompt:                 settings.VideoCoverPrompt,
+		StoryboardPrompt:                 settings.StoryboardPrompt,
+		StoryboardModel:                  settings.StoryboardModel,
+		StoryboardReferences:             settings.StoryboardReferences,
+		ImageStoryboardPrompt:            settings.ImageStoryboardPrompt,
+		ImageStoryboardModel:             settings.ImageStoryboardModel,
+		ImageStoryboardReferences:        settings.ImageStoryboardReferences,
+		Notes:                            notes,
+		UpdatedAt:                        settings.UpdatedAt,
 	}
 }
 
@@ -619,6 +633,12 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 		}
 		settings.DigitalHumanCreditsPerSecondMillis = millis
 	}
+	if nestedFieldTouched(raw, "digitalHumanShoppingDefaultModel") {
+		settings.DigitalHumanShoppingDefaultModel = normalizePatchedString(payload.DigitalHumanShoppingDefaultModel)
+	}
+	if nestedFieldTouched(raw, "digitalHumanSpeechDefaultModel") {
+		settings.DigitalHumanSpeechDefaultModel = normalizePatchedString(payload.DigitalHumanSpeechDefaultModel)
+	}
 
 	if nestedFieldTouched(raw, "defaultChatModel") {
 		settings.DefaultChatModel = normalizePatchedString(payload.DefaultChatModel)
@@ -679,6 +699,22 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 	if len(settings.PaymentChannels) == 0 {
 		render.Error(w, http.StatusBadRequest, "paymentChannels must contain at least one channel")
 		return
+	}
+	if strings.TrimSpace(settings.DigitalHumanShoppingDefaultModel) == "" {
+		settings.DigitalHumanShoppingDefaultModel = digitalHumanRecommendedModelID
+	}
+	if strings.TrimSpace(settings.DigitalHumanSpeechDefaultModel) == "" {
+		settings.DigitalHumanSpeechDefaultModel = digitalHumanRecommendedModelID
+	}
+	if nestedFieldTouched(raw, "digitalHumanShoppingDefaultModel") || nestedFieldTouched(raw, "digitalHumanSpeechDefaultModel") {
+		if err := validateDigitalHumanModelName(r.Context(), h.app, settings.DigitalHumanShoppingDefaultModel); err != nil {
+			render.Error(w, http.StatusBadRequest, "digitalHumanShoppingDefaultModel "+err.Error())
+			return
+		}
+		if err := validateDigitalHumanModelName(r.Context(), h.app, settings.DigitalHumanSpeechDefaultModel); err != nil {
+			render.Error(w, http.StatusBadRequest, "digitalHumanSpeechDefaultModel "+err.Error())
+			return
+		}
 	}
 	if strings.TrimSpace(settings.DefaultChatModel) == "" {
 		render.Error(w, http.StatusBadRequest, "defaultChatModel is required")
@@ -780,6 +816,8 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 		SMSRegistrationCodeLength:          settings.SMSRegistration.CodeLength,
 		DigitalHumanCreditsPerSecond:       store.DigitalHumanRoundMillisToWholeCredits(settings.DigitalHumanCreditsPerSecondMillis),
 		DigitalHumanCreditsPerSecondMillis: settings.DigitalHumanCreditsPerSecondMillis,
+		DigitalHumanShoppingDefaultModel:   settings.DigitalHumanShoppingDefaultModel,
+		DigitalHumanSpeechDefaultModel:     settings.DigitalHumanSpeechDefaultModel,
 		DefaultChatModel:                   settings.DefaultChatModel,
 		DefaultImageModel:                  settings.DefaultImageModel,
 		DefaultVideoModel:                  settings.DefaultVideoModel,
@@ -810,10 +848,12 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 		Status:       "success",
 		Message:      auditStringPtr("系统配置已更新"),
 		Payload: mustJSONBytes(map[string]any{
-			"aiWorkerEnabled":              settings.AIWorkerEnabled,
-			"paymentChannels":              settings.PaymentChannels,
-			"billingManualSupport":         settings.BillingManualSupport,
-			"digitalHumanCreditsPerSecond": store.DigitalHumanCreditsFromMillis(settings.DigitalHumanCreditsPerSecondMillis),
+			"aiWorkerEnabled":                  settings.AIWorkerEnabled,
+			"paymentChannels":                  settings.PaymentChannels,
+			"billingManualSupport":             settings.BillingManualSupport,
+			"digitalHumanCreditsPerSecond":     store.DigitalHumanCreditsFromMillis(settings.DigitalHumanCreditsPerSecondMillis),
+			"digitalHumanShoppingDefaultModel": settings.DigitalHumanShoppingDefaultModel,
+			"digitalHumanSpeechDefaultModel":   settings.DigitalHumanSpeechDefaultModel,
 			"smsRegistration": map[string]any{
 				"enabled":            settings.SMSRegistration.Enabled,
 				"provider":           settings.SMSRegistration.Provider,

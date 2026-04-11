@@ -16,9 +16,11 @@ import (
 const digitalHumanTaskSelectColumns = `
 	id,
 	owner_user_id,
+	ai_job_id,
 	mode,
 	source,
 	status,
+	model_name,
 	remote_task_id,
 	character_asset,
 	goods_asset,
@@ -77,6 +79,7 @@ func decodeDigitalHumanProgress(raw []byte) (*domain.DigitalHumanProgress, error
 
 func scanDigitalHumanTask(row pgx.Row) (*domain.DigitalHumanTask, error) {
 	var task domain.DigitalHumanTask
+	var aiJobID *string
 	var remoteTaskID *string
 	var characterAsset []byte
 	var goodsAsset []byte
@@ -103,9 +106,11 @@ func scanDigitalHumanTask(row pgx.Row) (*domain.DigitalHumanTask, error) {
 	if err := row.Scan(
 		&task.ID,
 		&task.OwnerUserID,
+		&aiJobID,
 		&task.Mode,
 		&task.Source,
 		&task.Status,
+		&task.ModelName,
 		&remoteTaskID,
 		&characterAsset,
 		&goodsAsset,
@@ -163,6 +168,7 @@ func scanDigitalHumanTask(row pgx.Row) (*domain.DigitalHumanTask, error) {
 		return nil, err
 	}
 
+	task.AIJobID = normalizeOptionalString(aiJobID)
 	task.RemoteTaskID = normalizeOptionalString(remoteTaskID)
 	task.CharacterAsset = *character
 	task.GoodsAsset = goods
@@ -201,9 +207,11 @@ func (s *Store) CreateDigitalHumanTask(ctx context.Context, input CreateDigitalH
 		INSERT INTO digital_human_tasks (
 			id,
 			owner_user_id,
+			ai_job_id,
 			mode,
 			source,
 			status,
+			model_name,
 			character_asset,
 			goods_asset,
 			ref_audio_asset,
@@ -217,9 +225,9 @@ func (s *Store) CreateDigitalHumanTask(ctx context.Context, input CreateDigitalH
 			progress,
 			request_payload
 		)
-		VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb, $17::jsonb)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11, $12, $13, $14, $15, $16::jsonb, $17::jsonb, $18::jsonb)
 		RETURNING `+digitalHumanTaskSelectColumns+`
-	`, input.ID, input.OwnerUserID, input.Mode, input.Source, input.Status, input.CharacterAsset, nullableJSON(input.GoodsAsset), input.RefAudioAsset, input.GoodsTitle, input.GoodsText, input.EstimatedDurationSeconds, estimatedCreditsLegacy, input.EstimatedCreditsMillis, input.BillingStatus, nullableJSON(input.BillingPayload), nullableJSON(input.Progress), nullableJSON(input.RequestPayload))
+	`, input.ID, input.OwnerUserID, input.AIJobID, input.Mode, input.Source, input.Status, strings.TrimSpace(input.ModelName), input.CharacterAsset, nullableJSON(input.GoodsAsset), input.RefAudioAsset, input.GoodsTitle, input.GoodsText, input.EstimatedDurationSeconds, estimatedCreditsLegacy, input.EstimatedCreditsMillis, input.BillingStatus, nullableJSON(input.BillingPayload), nullableJSON(input.Progress), nullableJSON(input.RequestPayload))
 
 	return scanDigitalHumanTask(row)
 }
@@ -234,6 +242,11 @@ func (s *Store) ListDigitalHumanTasksByOwner(ctx context.Context, ownerUserID st
 	argIndex := 2
 	if trimmed := strings.TrimSpace(filter.Mode); trimmed != "" {
 		query += fmt.Sprintf(" AND mode = $%d", argIndex)
+		args = append(args, trimmed)
+		argIndex++
+	}
+	if trimmed := strings.TrimSpace(filter.AIJobID); trimmed != "" {
+		query += fmt.Sprintf(" AND ai_job_id = $%d", argIndex)
 		args = append(args, trimmed)
 		argIndex++
 	}
@@ -263,6 +276,25 @@ func (s *Store) ListDigitalHumanTasksByOwner(ctx context.Context, ownerUserID st
 		items = append(items, *task)
 	}
 	return items, rows.Err()
+}
+
+func (s *Store) GetDigitalHumanTaskByAIJobID(ctx context.Context, aiJobID string) (*domain.DigitalHumanTask, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT `+digitalHumanTaskSelectColumns+`
+		FROM digital_human_tasks
+		WHERE ai_job_id = $1
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, strings.TrimSpace(aiJobID))
+
+	task, err := scanDigitalHumanTask(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return task, nil
 }
 
 func (s *Store) GetDigitalHumanTaskByOwner(ctx context.Context, taskID string, ownerUserID string) (*domain.DigitalHumanTask, error) {

@@ -69,15 +69,13 @@ func NewDigitalHumanTaskHandler(app *appstate.App) *DigitalHumanTaskHandler {
 	return &DigitalHumanTaskHandler{app: app}
 }
 
+func (h *DigitalHumanTaskHandler) Models(w http.ResponseWriter, r *http.Request) {
+	renderDigitalHumanModels(w, r, h.app)
+}
+
 func (h *DigitalHumanTaskHandler) BillingPreview(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
-	settings, err := loadEffectiveAdminSystemSettings(r.Context(), h.app)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load digital human billing config")
-		return
-	}
-
-	preview, err := h.buildBillingPreview(r.Context(), user.ID, strings.TrimSpace(r.URL.Query().Get("goodsText")), settings.DigitalHumanCreditsPerSecondMillis)
+	preview, err := h.buildBillingPreviewFromSettings(r.Context(), user.ID, strings.TrimSpace(r.URL.Query().Get("goodsText")))
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to preview digital human billing")
 		return
@@ -97,6 +95,7 @@ func (h *DigitalHumanTaskHandler) Create(w http.ResponseWriter, r *http.Request)
 		render.Error(w, http.StatusBadRequest, "mode must be digital or customize")
 		return
 	}
+	modelName := strings.TrimSpace(r.FormValue("modelName"))
 
 	goodsText := strings.TrimSpace(r.FormValue("goodsText"))
 	if goodsText == "" {
@@ -115,6 +114,18 @@ func (h *DigitalHumanTaskHandler) Create(w http.ResponseWriter, r *http.Request)
 	}
 	if settings.DigitalHumanCreditsPerSecondMillis <= 0 {
 		render.Error(w, http.StatusConflict, "数字人计费暂未开放，请稍后再试")
+		return
+	}
+	modelConfig, err := loadDigitalHumanModelsResponse(r.Context(), h.app)
+	if err != nil {
+		render.Error(w, http.StatusBadGateway, "Failed to load digital human models")
+		return
+	}
+	if modelName == "" {
+		modelName = resolveDigitalHumanDefaultModelByMode(modelConfig, mode)
+	}
+	if !containsDigitalHumanModel(modelConfig.Models, modelName) {
+		render.Error(w, http.StatusBadRequest, "modelName must reference an available digital human model")
 		return
 	}
 	preview, err := h.buildBillingPreview(r.Context(), user.ID, goodsText, settings.DigitalHumanCreditsPerSecondMillis)
@@ -176,6 +187,7 @@ func (h *DigitalHumanTaskHandler) Create(w http.ResponseWriter, r *http.Request)
 
 	requestPayload := map[string]any{
 		"mode":           mode,
+		"modelName":      modelName,
 		"source":         digitalHumanSource,
 		"goodsText":      goodsText,
 		"billingPreview": preview,
@@ -195,6 +207,7 @@ func (h *DigitalHumanTaskHandler) Create(w http.ResponseWriter, r *http.Request)
 		Mode:                     mode,
 		Source:                   digitalHumanSource,
 		Status:                   "queued",
+		ModelName:                modelName,
 		CharacterAsset:           mustJSONBytes(characterAsset),
 		GoodsAsset:               mustJSONBytes(goodsAsset),
 		RefAudioAsset:            mustJSONBytes(refAudioAsset),
@@ -387,6 +400,14 @@ func (h *DigitalHumanTaskHandler) buildBillingPreview(ctx context.Context, userI
 		CreditBalance:            store.DigitalHumanCreditsFromMillis(creditBalanceMillis),
 		ShortfallCredits:         store.DigitalHumanCreditsFromMillis(shortfallCreditsMillis),
 	}, nil
+}
+
+func (h *DigitalHumanTaskHandler) buildBillingPreviewFromSettings(ctx context.Context, userID string, goodsText string) (domain.DigitalHumanBillingPreview, error) {
+	settings, err := loadEffectiveAdminSystemSettings(ctx, h.app)
+	if err != nil {
+		return domain.DigitalHumanBillingPreview{}, err
+	}
+	return h.buildBillingPreview(ctx, userID, goodsText, settings.DigitalHumanCreditsPerSecondMillis)
 }
 
 func estimateDigitalHumanDurationSeconds(goodsText string) int {

@@ -5,9 +5,8 @@ import { Cpu, Loader2, RefreshCw, RotateCcw, Search, XCircle } from "lucide-reac
 import { PageHeader } from "@/components/ui/common";
 import { useAdminAIJobs, useBulkActionAIJobs } from "@/lib/hooks/useAdminAIJobs";
 import { getModelDisplayName } from "@/lib/model-display";
-import type { AdminAIJobRow } from "@/lib/types";
+import type { AdminAIJobListItem } from "@/lib/types";
 import { AIJobDetailDrawer } from "./ai-job-detail-drawer";
-import { describeJobSchedule, extractJobScheduleMeta } from "./schedule-meta";
 
 const STATUS_OPTIONS = [
   { value: "", label: "全部" },
@@ -52,30 +51,12 @@ function formatCompactTime(value?: string | null) {
   });
 }
 
-function getCategoryColor(category?: string) {
-  switch (category) {
-    case "image":
-      return "text-blue-600";
-    case "video":
-      return "text-purple-600";
-    case "chat":
-      return "text-emerald-600";
-    case "music":
-      return "text-amber-600";
-    default:
-      return "text-[var(--color-text-secondary)]";
-  }
-}
-
 function getJobMessageTone(status: string, message?: string | null) {
   if (!message) {
     return "text-[var(--color-text-secondary)]";
   }
   if (status === "failed" || status === "cancelled") {
     return "text-red-600";
-  }
-  if (status === "scheduled") {
-    return "text-cyan-700";
   }
   if (status === "success" || status === "completed") {
     return message.includes("计费待处理") ? "text-amber-700" : "text-emerald-700";
@@ -98,14 +79,12 @@ function JobRow({
   onToggleSelect,
   onOpenDetail,
 }: {
-  row: AdminAIJobRow;
+  row: AdminAIJobListItem;
   selected: boolean;
   onToggleSelect: () => void;
   onOpenDetail: () => void;
 }) {
-  const scheduleMeta = extractJobScheduleMeta(row.job);
-  const scheduleDescription = describeJobSchedule(scheduleMeta);
-  const messageTone = getJobMessageTone(row.job.status, row.job.message);
+  const messageTone = getJobMessageTone(row.status, row.messagePreview);
 
   return (
     <tr className={selected ? "bg-[var(--color-primary)]/5" : "hover:bg-[var(--color-bg-secondary)]/35"}>
@@ -115,17 +94,17 @@ function JobRow({
       <td className="px-3 py-3 align-top">
         <div className="flex items-start gap-3">
           <div className="mt-0.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-panel-muted)] p-2">
-            <Cpu className={`h-4 w-4 ${getCategoryColor(row.model?.category)}`} />
+            <Cpu className="h-4 w-4 text-[var(--color-text-secondary)]" />
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <p className="font-medium text-[var(--color-text-primary)]">{getModelDisplayName(row.job)}</p>
-              <StatusPill status={row.job.status} />
+              <p className="font-medium text-[var(--color-text-primary)]">{getModelDisplayName(row)}</p>
+              <StatusPill status={row.status} />
             </div>
             <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
-              {row.job.jobType} · {row.job.source}
+              {row.jobType} · {row.source}
             </p>
-            <p className="mt-1 truncate font-mono text-[11px] text-[var(--color-text-secondary)]">{row.job.id}</p>
+            <p className="mt-1 truncate font-mono text-[11px] text-[var(--color-text-secondary)]">{row.id}</p>
           </div>
         </div>
       </td>
@@ -139,33 +118,21 @@ function JobRow({
       <td className="px-3 py-3 align-top">
         <div className="space-y-1">
           <p className="text-sm text-[var(--color-text-primary)]">{row.skill?.name || "未绑定技能"}</p>
-          <p className="text-xs text-[var(--color-text-secondary)]">
-            积分 {row.job.costCredits.toLocaleString()} · 产物 {row.artifactCount} · 关联发布任务 {row.publishTaskCount}
-          </p>
-          {scheduleDescription ? (
-            <p className="text-xs text-cyan-700">{scheduleDescription}</p>
-          ) : null}
-          <p className="text-xs text-[var(--color-text-secondary)]">投递 {row.job.deliveryStatus || "—"}</p>
+          <p className="text-xs text-[var(--color-text-secondary)]">积分 {row.costCredits.toLocaleString()}</p>
+          <p className="text-xs text-[var(--color-text-secondary)]">投递 {row.deliveryStatus || "—"}</p>
         </div>
       </td>
       <td className="px-3 py-3 align-top">
         <div className="space-y-1">
-          <p className="text-sm text-[var(--color-text-primary)]">{formatCompactTime(row.job.createdAt)}</p>
-          {scheduleMeta.generateAt ? (
-            <p className="text-xs text-[var(--color-text-secondary)]">
-              计划生成 {formatCompactTime(scheduleMeta.generateAt)}
-            </p>
+          <p className="text-sm text-[var(--color-text-primary)]">{formatCompactTime(row.createdAt)}</p>
+          {row.runAt ? (
+            <p className="text-xs text-[var(--color-text-secondary)]">计划生成 {formatCompactTime(row.runAt)}</p>
           ) : (
-            <p className="text-xs text-[var(--color-text-secondary)]">更新 {formatCompactTime(row.job.updatedAt)}</p>
+            <p className="text-xs text-[var(--color-text-secondary)]">更新 {formatCompactTime(row.updatedAt)}</p>
           )}
-          {scheduleMeta.publishAt ? (
-            <p className="text-xs text-[var(--color-text-secondary)]">
-              计划发布 {formatCompactTime(scheduleMeta.publishAt)}
-            </p>
-          ) : null}
-          {row.job.message ? (
-            <p className={`line-clamp-2 max-w-[240px] text-xs leading-5 ${messageTone}`} title={row.job.message}>
-              {row.job.message}
+          {row.messagePreview ? (
+            <p className={`line-clamp-2 max-w-[240px] text-xs leading-5 ${messageTone}`} title={row.messagePreview}>
+              {row.messagePreview}
             </p>
           ) : null}
         </div>
@@ -184,32 +151,23 @@ function JobRow({
 }
 
 export function AIJobsView() {
-  const [page, setPage] = useState(1);
   const [query, setQuery] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [status, setStatus] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
 
-  const { data, isLoading, error, refetch, isFetching } = useAdminAIJobs({
-    page,
-    pageSize: 20,
+  const { data, isLoading, error, refetch, isFetching, fetchNextPage, hasNextPage, isFetchingNextPage } = useAdminAIJobs({
+    limit: 20,
     query: query || undefined,
     status: status || undefined,
   });
   const bulkAction = useBulkActionAIJobs();
-  const rows = useMemo(() => {
-    return [...(data?.items || [])].sort((left, right) => {
-      const leftTime = new Date(left.job.createdAt || 0).getTime();
-      const rightTime = new Date(right.job.createdAt || 0).getTime();
-      return rightTime - leftTime;
-    });
-  }, [data?.items]);
+  const rows = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data?.pages]);
 
   const handleSearch = (event: React.FormEvent) => {
     event.preventDefault();
     setQuery(searchInput.trim());
-    setPage(1);
     setSelected(new Set());
   };
 
@@ -228,7 +186,7 @@ export function AIJobsView() {
     if (!rows.length) {
       return;
     }
-    const ids = rows.map((item) => item.job.id);
+    const ids = rows.map((item) => item.id);
     setSelected(selected.size === ids.length ? new Set() : new Set(ids));
   };
 
@@ -251,14 +209,18 @@ export function AIJobsView() {
     <div className="space-y-5">
       <PageHeader
         title="AI 作业管理"
-        subtitle="列表保持紧凑，重点问题直接点开看完整执行时间线、参数负载、产物和发布衔接。"
+        subtitle="列表只保留最核心的作业摘要，详细执行内容进入单条作业查看。"
         actions={
           <button
             type="button"
             onClick={() => refetch()}
             className="inline-flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-secondary)]"
           >
-            {isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {isFetching && !isFetchingNextPage ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
             刷新
           </button>
         }
@@ -272,7 +234,7 @@ export function AIJobsView() {
               type="text"
               value={searchInput}
               onChange={(event) => setSearchInput(event.target.value)}
-              placeholder="搜索作业 ID、模型名称、用户邮箱"
+              placeholder="搜索作业 ID / 用户邮箱"
               className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)] py-2 pl-9 pr-4 text-sm focus:border-[var(--color-primary)] focus:outline-none"
             />
           </form>
@@ -284,7 +246,6 @@ export function AIJobsView() {
                 type="button"
                 onClick={() => {
                   setStatus(option.value);
-                  setPage(1);
                   setSelected(new Set());
                 }}
                 className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
@@ -356,7 +317,7 @@ export function AIJobsView() {
                     读取失败，请刷新后重试。
                   </td>
                 </tr>
-              ) : data && rows.length === 0 ? (
+              ) : rows.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-14 text-center text-sm text-[var(--color-text-secondary)]">
                     当前没有匹配的 AI 作业。
@@ -365,11 +326,11 @@ export function AIJobsView() {
               ) : (
                 rows.map((row) => (
                   <JobRow
-                    key={row.job.id}
+                    key={row.id}
                     row={row}
-                    selected={selected.has(row.job.id)}
-                    onToggleSelect={() => toggleSelect(row.job.id)}
-                    onOpenDetail={() => setSelectedJobId(row.job.id)}
+                    selected={selected.has(row.id)}
+                    onToggleSelect={() => toggleSelect(row.id)}
+                    onOpenDetail={() => setSelectedJobId(row.id)}
                   />
                 ))
               )}
@@ -378,29 +339,20 @@ export function AIJobsView() {
         </div>
       </div>
 
-      {data && data.pagination.totalPages > 1 ? (
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-[var(--color-text-secondary)]">
-            共 <span className="font-medium text-[var(--color-text-primary)]">{data.pagination.total}</span> 个 AI 作业
-          </p>
-          <div className="flex gap-2">
+      {rows.length > 0 ? (
+        <div className="flex items-center justify-end gap-3">
+          {hasNextPage ? (
             <button
               type="button"
-              onClick={() => setPage((current) => Math.max(1, current - 1))}
-              disabled={page === 1}
+              onClick={() => fetchNextPage()}
+              disabled={isFetchingNextPage}
               className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm transition-colors hover:bg-[var(--color-bg-secondary)] disabled:opacity-50"
             >
-              上一页
+              {isFetchingNextPage ? "加载中..." : "加载更多"}
             </button>
-            <button
-              type="button"
-              onClick={() => setPage((current) => Math.min(data.pagination.totalPages, current + 1))}
-              disabled={page >= data.pagination.totalPages}
-              className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm transition-colors hover:bg-[var(--color-bg-secondary)] disabled:opacity-50"
-            >
-              下一页
-            </button>
-          </div>
+          ) : (
+            <p className="text-sm text-[var(--color-text-secondary)]">已加载全部结果</p>
+          )}
         </div>
       ) : null}
 

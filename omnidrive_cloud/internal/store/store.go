@@ -727,9 +727,11 @@ type UpsertAIJobArtifactInput struct {
 type CreateDigitalHumanTaskInput struct {
 	ID                       string
 	OwnerUserID              string
+	AIJobID                  *string
 	Mode                     string
 	Source                   string
 	Status                   string
+	ModelName                string
 	CharacterAsset           []byte
 	GoodsAsset               []byte
 	RefAudioAsset            []byte
@@ -771,9 +773,10 @@ type UpdateDigitalHumanTaskExecutionInput struct {
 }
 
 type ListDigitalHumanTasksFilter struct {
-	Mode   string
-	Status string
-	Limit  int
+	AIJobID string
+	Mode    string
+	Status  string
+	Limit   int
 }
 
 type LinkAIJobPublishTaskInput struct {

@@ -129,6 +129,39 @@ func TestScanAdminDeviceRowIncludesPlatformCapabilityColumns(t *testing.T) {
 	}
 }
 
+func TestScanAdminAIJobListItemIncludesOnlyLightweightFields(t *testing.T) {
+	now := time.Now().UTC()
+	runAt := now.Add(15 * time.Minute)
+	messagePreview := "作业执行摘要"
+
+	item, err := scanAdminAIJobListItem(fakeScan(
+		"job-1",
+		"running",
+		"video",
+		"omnidrive_cloud",
+		"veo-3.1-fast-fl",
+		int64(3200),
+		"pending",
+		&runAt,
+		now,
+		now,
+		&messagePreview,
+	))
+	if err != nil {
+		t.Fatalf("scanAdminAIJobListItem returned error: %v", err)
+	}
+
+	if item.ID != "job-1" || item.Status != "running" {
+		t.Fatalf("expected lightweight AI job list fields to be scanned, got %#v", item)
+	}
+	if item.RunAt == nil || !item.RunAt.Equal(runAt) {
+		t.Fatalf("expected runAt to be preserved, got %#v", item.RunAt)
+	}
+	if item.MessagePreview == nil || *item.MessagePreview != messagePreview {
+		t.Fatalf("expected message preview to be preserved, got %#v", item.MessagePreview)
+	}
+}
+
 func fakeScan(values ...any) scanFn {
 	return func(dest ...any) error {
 		if len(dest) != len(values) {

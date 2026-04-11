@@ -151,6 +151,7 @@ function TaskCard({ task }: { task: DigitalHumanTask }) {
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-text-muted">
             <span>创建：{formatDateTime(task.createdAt)}</span>
             <span>更新：{formatDateTime(task.updatedAt)}</span>
+            <span>模型：{task.modelName || "未记录模型"}</span>
           </div>
 
           {/* Inline progress for running tasks */}
@@ -230,6 +231,7 @@ export default function DigitalHumanHistoryPage() {
         task.goodsText,
         task.id,
         task.mode,
+        task.modelName,
         task.status,
       ]
         .join(" ")

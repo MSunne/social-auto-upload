@@ -166,15 +166,23 @@ func PrepareAccountSkillRun(
 	if !ok {
 		return nil, fmt.Errorf("skill outputType is not supported")
 	}
-	model, err := app.Store.GetAIModelByName(ctx, strings.TrimSpace(skill.ModelName))
-	if err != nil {
-		return nil, fmt.Errorf("failed to validate skill model: %w", err)
-	}
-	if model == nil || !model.IsEnabled {
-		return nil, fmt.Errorf("skill model is disabled or missing")
-	}
-	if model.Category != jobType {
-		return nil, fmt.Errorf("skill model category does not match skill output type")
+	var model *domain.AIModel
+	var err error
+	if IsDigitalHumanSkillOutput(skill.OutputType) {
+		if strings.TrimSpace(skill.ModelName) == "" {
+			return nil, fmt.Errorf("digital human skill model is required")
+		}
+	} else {
+		model, err = app.Store.GetAIModelByName(ctx, strings.TrimSpace(skill.ModelName))
+		if err != nil {
+			return nil, fmt.Errorf("failed to validate skill model: %w", err)
+		}
+		if model == nil || !model.IsEnabled {
+			return nil, fmt.Errorf("skill model is disabled or missing")
+		}
+		if model.Category != jobType {
+			return nil, fmt.Errorf("skill model category does not match skill output type")
+		}
 	}
 
 	publishAt = publishAt.UTC()

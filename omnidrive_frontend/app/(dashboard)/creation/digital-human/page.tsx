@@ -37,12 +37,19 @@ import {
   createDigitalHumanTask,
   getDigitalHumanBillingPreview,
   getDigitalHumanTask,
+  listDigitalHumanModels,
   listDigitalHumanTasks,
 } from "@/lib/services";
-import type { DigitalHumanBillingPreview, DigitalHumanTask } from "@/lib/types";
+import type {
+  DigitalHumanBillingPreview,
+  DigitalHumanModelsResponse,
+  DigitalHumanTask,
+} from "@/lib/types";
 import { formatDateTime } from "@/lib/workflow";
 
-type FormErrors = Partial<Record<"characterImage" | "goodsImage" | "refAudio" | "goodsTitle" | "goodsText", string>>;
+type FormErrors = Partial<
+  Record<"characterImage" | "goodsImage" | "refAudio" | "goodsTitle" | "goodsText" | "modelName", string>
+>;
 
 /* ─── Hooks ─── */
 
@@ -102,6 +109,26 @@ function clampProgress(task?: DigitalHumanTask | null) {
     return 12;
   }
   return 0;
+}
+
+function resolveDefaultDigitalHumanModel(
+  modelCatalog: DigitalHumanModelsResponse | undefined,
+  mode: "digital" | "customize",
+) {
+  if (!modelCatalog) {
+    return "";
+  }
+  const adminDefault = (modelCatalog.defaultModelByMode?.[mode] || "").trim();
+  if (adminDefault) {
+    return adminDefault;
+  }
+  if (modelCatalog.recommendedModelId?.trim()) {
+    return modelCatalog.recommendedModelId.trim();
+  }
+  if (modelCatalog.currentModelId?.trim()) {
+    return modelCatalog.currentModelId.trim();
+  }
+  return modelCatalog.models[0]?.id || "";
 }
 
 /* ─── Animation variants ─── */
@@ -390,6 +417,10 @@ export default function DigitalHumanCreationPage() {
   const [refAudio, setRefAudio] = useState<File | null>(null);
   const [goodsTitle, setGoodsTitle] = useState("");
   const [goodsText, setGoodsText] = useState("");
+  const [selectedModelByMode, setSelectedModelByMode] = useState<Record<"digital" | "customize", string>>({
+    digital: "",
+    customize: "",
+  });
   const [errors, setErrors] = useState<FormErrors>({});
   const [submitError, setSubmitError] = useState("");
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
@@ -408,6 +439,11 @@ export default function DigitalHumanCreationPage() {
     }, 400);
     return () => window.clearTimeout(timer);
   }, [goodsText]);
+
+  const { data: digitalHumanModels, isLoading: digitalHumanModelsLoading } = useQuery<DigitalHumanModelsResponse>({
+    queryKey: ["digitalHumanModels"],
+    queryFn: () => listDigitalHumanModels(),
+  });
 
   const {
     data: billingPreview,
@@ -462,6 +498,9 @@ export default function DigitalHumanCreationPage() {
     [recentTasks],
   );
   const hasGoodsText = goodsText.trim().length > 0;
+  const selectedModelName =
+    selectedModelByMode[mode] || resolveDefaultDigitalHumanModel(digitalHumanModels, mode);
+  const selectedModelOption = digitalHumanModels?.models.find((item) => item.id === selectedModelName) ?? null;
   const billingDisabled = Boolean(billingPreview && billingPreview.creditsPerSecond <= 0);
   const billingInsufficient = Boolean(
     hasGoodsText &&
@@ -469,7 +508,7 @@ export default function DigitalHumanCreationPage() {
       billingPreview.creditsPerSecond > 0 &&
       !billingPreview.canAfford,
   );
-  const submitDisabled = createMutation.isPending || billingDisabled || billingInsufficient;
+  const submitDisabled = createMutation.isPending || billingDisabled || billingInsufficient || !selectedModelName.trim();
 
   function handleModeChange(nextMode: "digital" | "customize") {
     setMode(nextMode);
@@ -482,10 +521,24 @@ export default function DigitalHumanCreationPage() {
         goodsTitle: "",
       }));
     }
+    setErrors((current) => ({
+      ...current,
+      modelName: "",
+    }));
   }
 
   function validateForm() {
     const nextErrors: FormErrors = {};
+    const currentModelName = selectedModelName.trim();
+
+    if (!currentModelName) {
+      nextErrors.modelName = "请选择执行模型";
+    } else if (
+      digitalHumanModels &&
+      !digitalHumanModels.models.some((item) => item.id === currentModelName)
+    ) {
+      nextErrors.modelName = "当前模型已不可用，请重新选择";
+    }
 
     if (!characterImage) {
       nextErrors.characterImage = "请上传人物照片";
@@ -580,6 +633,7 @@ export default function DigitalHumanCreationPage() {
 
     const formData = new FormData();
     formData.append("mode", mode);
+    formData.append("modelName", selectedModelName.trim());
     formData.append("goodsText", goodsText.trim());
     formData.append("characterImage", characterImage as File);
     formData.append("refAudio", refAudio as File);
@@ -659,6 +713,59 @@ export default function DigitalHumanCreationPage() {
               ))}
             </div>
           </motion.div>
+
+          <motion.section variants={fadeUp} className="glass-card p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-text-primary">执行模型</div>
+                <p className="mt-1 text-xs text-text-muted">
+                  {mode === "digital" ? "带货模式默认模型来自后台设置" : "口播模式默认模型来自后台设置"}
+                </p>
+              </div>
+              {selectedModelOption?.isRecommended ? (
+                <span className="rounded-full bg-emerald-400/12 px-2.5 py-1 text-xs font-medium text-emerald-300">
+                  推荐模型
+                </span>
+              ) : null}
+            </div>
+            <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+              <select
+                value={selectedModelName}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  setSelectedModelByMode((current) => ({
+                    ...current,
+                    [mode]: nextValue,
+                  }));
+                  setErrors((current) => ({ ...current, modelName: "" }));
+                }}
+                className="w-full rounded-2xl border border-border bg-surface/50 px-4 py-3 text-sm text-text-primary outline-none transition-all focus:border-accent focus:shadow-[0_0_16px_rgba(177,73,255,0.1)]"
+                disabled={digitalHumanModelsLoading}
+              >
+                {!digitalHumanModels?.models.length ? <option value="">暂无可用模型</option> : null}
+                {digitalHumanModels?.models.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.id}
+                    {item.isRecommended ? "（推荐）" : ""}
+                    {item.isCurrent ? "（当前）" : ""}
+                  </option>
+                ))}
+              </select>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-text-muted">
+                {digitalHumanModels?.provider ? (
+                  <span className="rounded-full bg-surface-hover px-2.5 py-1">
+                    {digitalHumanModels.provider}
+                  </span>
+                ) : null}
+                {selectedModelOption?.isCurrent ? (
+                  <span className="rounded-full bg-cyan/10 px-2.5 py-1 text-cyan">
+                    当前服务模型
+                  </span>
+                ) : null}
+              </div>
+            </div>
+            {errors.modelName ? <p className="mt-2 text-xs text-danger">{errors.modelName}</p> : null}
+          </motion.section>
 
           {/* ─── Upload Section ─── */}
           <motion.section variants={fadeUp} className="glass-card p-5">
@@ -914,7 +1021,7 @@ export default function DigitalHumanCreationPage() {
                       {activeTask.goodsTitle?.trim() || "自定义口播任务"}
                     </p>
                     <p className="mt-1 text-xs text-text-muted">
-                      {formatDigitalHumanMode(activeTask.mode)} · {formatDateTime(activeTask.updatedAt)}
+                      {formatDigitalHumanMode(activeTask.mode)} · {activeTask.modelName || "未记录模型"} · {formatDateTime(activeTask.updatedAt)}
                     </p>
                   </div>
                   <StatusBadge status={activeTask.status} />
@@ -1015,7 +1122,7 @@ export default function DigitalHumanCreationPage() {
                           {task.goodsTitle?.trim() || "自定义口播任务"}
                         </p>
                         <p className="mt-0.5 truncate text-xs text-text-muted">
-                          {formatDigitalHumanMode(task.mode)} · {formatDateTime(task.updatedAt)}
+                          {formatDigitalHumanMode(task.mode)} · {task.modelName || "未记录模型"} · {formatDateTime(task.updatedAt)}
                         </p>
                       </div>
                       <StatusBadge status={task.status} />

@@ -106,6 +106,8 @@ CREATE TABLE IF NOT EXISTS admin_system_configs (
     billing_manual_support_note TEXT NOT NULL DEFAULT '请联系客服完成转账，并在订单内补充转账说明或凭证。',
     digital_human_credits_per_second BIGINT NOT NULL DEFAULT 0,
     digital_human_credits_per_second_millis BIGINT NOT NULL DEFAULT 0,
+    digital_human_shopping_default_model TEXT NOT NULL DEFAULT 'qvq-max',
+    digital_human_speech_default_model TEXT NOT NULL DEFAULT 'qvq-max',
     default_chat_model TEXT NOT NULL DEFAULT 'gemini-3.1-pro-preview',
     default_image_model TEXT NOT NULL DEFAULT 'gemini-3-pro-image-preview',
     default_video_model TEXT NOT NULL DEFAULT 'veo-3.1-fast-fl',
@@ -474,6 +476,8 @@ ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_daily
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_code_length INT NOT NULL DEFAULT 6;
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS digital_human_credits_per_second BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS digital_human_credits_per_second_millis BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS digital_human_shopping_default_model TEXT NOT NULL DEFAULT 'qvq-max';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS digital_human_speech_default_model TEXT NOT NULL DEFAULT 'qvq-max';
 ALTER TABLE phone_verification_codes ADD COLUMN IF NOT EXISTS verification_code_hash TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_chat_model TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_image_model TEXT;
@@ -631,9 +635,11 @@ CREATE TABLE IF NOT EXISTS ai_job_artifacts (
 CREATE TABLE IF NOT EXISTS digital_human_tasks (
     id TEXT PRIMARY KEY,
     owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ai_job_id TEXT REFERENCES ai_jobs(id) ON DELETE SET NULL,
     mode TEXT NOT NULL,
     source TEXT NOT NULL DEFAULT 'runninghub',
     status TEXT NOT NULL DEFAULT 'queued',
+    model_name TEXT NOT NULL DEFAULT 'qvq-max',
     remote_task_id TEXT,
     character_asset JSONB NOT NULL,
     goods_asset JSONB,
@@ -671,6 +677,9 @@ CREATE INDEX IF NOT EXISTS idx_digital_human_tasks_status_lease
 CREATE INDEX IF NOT EXISTS idx_digital_human_tasks_remote_task
     ON digital_human_tasks (remote_task_id);
 
+CREATE INDEX IF NOT EXISTS idx_digital_human_tasks_ai_job
+    ON digital_human_tasks (ai_job_id);
+
 ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS estimated_duration_seconds INT NOT NULL DEFAULT 0;
 ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS estimated_credits BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS estimated_credits_millis BIGINT NOT NULL DEFAULT 0;
@@ -679,6 +688,9 @@ ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS final_credits BIGINT;
 ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS final_credits_millis BIGINT;
 ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS billing_status TEXT NOT NULL DEFAULT 'pending';
 ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS billing_payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS ai_job_id TEXT REFERENCES ai_jobs(id) ON DELETE SET NULL;
+ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS model_name TEXT NOT NULL DEFAULT 'qvq-max';
+CREATE INDEX IF NOT EXISTS idx_digital_human_tasks_ai_job ON digital_human_tasks (ai_job_id);
 
 CREATE TABLE IF NOT EXISTS ai_job_publish_links (
     job_id TEXT NOT NULL REFERENCES ai_jobs(id) ON DELETE CASCADE,
@@ -1301,6 +1313,8 @@ CREATE INDEX IF NOT EXISTS idx_ai_jobs_owner_job_type_updated_at ON ai_jobs(owne
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_device_id ON ai_jobs(device_id);
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_source ON ai_jobs(source);
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_lease_expires_at ON ai_jobs(lease_expires_at);
+CREATE INDEX IF NOT EXISTS idx_ai_jobs_created_id ON ai_jobs(created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_jobs_status_created_id ON ai_jobs(status, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_job_artifacts_job_id ON ai_job_artifacts(job_id);
 CREATE INDEX IF NOT EXISTS idx_ai_job_publish_links_job_id ON ai_job_publish_links(job_id);
 CREATE INDEX IF NOT EXISTS idx_billing_package_entitlements_package_id ON billing_package_entitlements(package_id);
@@ -1353,6 +1367,7 @@ CREATE INDEX IF NOT EXISTS idx_distribution_settlement_items_promoter_user_id ON
 CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_promoter_user_id ON withdrawal_requests(promoter_user_id);
 CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_status ON withdrawal_requests(status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_lower_email ON users(LOWER(email));
 CREATE INDEX IF NOT EXISTS idx_admin_users_email ON admin_users(email);
 CREATE INDEX IF NOT EXISTS idx_admin_user_roles_admin_user_id ON admin_user_roles(admin_user_id);
 CREATE INDEX IF NOT EXISTS idx_admin_user_roles_role_id ON admin_user_roles(role_id);

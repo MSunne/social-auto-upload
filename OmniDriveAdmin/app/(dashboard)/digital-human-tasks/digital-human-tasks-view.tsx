@@ -146,6 +146,10 @@ function DetailDrawer({ taskId, onClose }: { taskId: string | null; onClose: () 
                     <p className="mt-1 text-sm font-medium">{task.mode} / {task.source}</p>
                     <p className="text-xs text-[var(--color-text-secondary)]">远端任务 ID {task.remoteTaskId || "—"}</p>
                   </div>
+                  <div>
+                    <p className="text-xs text-[var(--color-text-secondary)]">执行模型</p>
+                    <p className="mt-1 text-sm font-medium">{task.modelName || "—"}</p>
+                  </div>
                 </div>
               </section>
 
@@ -183,11 +187,13 @@ function DetailDrawer({ taskId, onClose }: { taskId: string | null; onClose: () 
                   <div className="space-y-4">
                     <div>
                       <p className="mb-2 text-xs text-[var(--color-text-secondary)]">人物照片</p>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={task.characterAsset.publicUrl} alt="人物照片" className="h-56 w-full rounded-xl border border-[var(--color-border)] object-cover" />
                     </div>
                     {task.goodsAsset ? (
                       <div>
                         <p className="mb-2 text-xs text-[var(--color-text-secondary)]">商品素材</p>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={task.goodsAsset.publicUrl} alt="商品素材" className="h-56 w-full rounded-xl border border-[var(--color-border)] object-cover" />
                       </div>
                     ) : null}
@@ -407,6 +413,7 @@ export function DigitalHumanTasksView() {
                           <StatusPill value={row.task.billingStatus} toneMap={BILLING_STATUS_CLASS} />
                         </div>
                         <p className="mt-2 text-xs text-[var(--color-text-secondary)]">{row.task.mode} / {row.task.source}</p>
+                        <p className="mt-1 text-xs text-[var(--color-text-secondary)]">模型 {row.task.modelName || "—"}</p>
                         <p className="mt-1 truncate font-mono text-[11px] text-[var(--color-text-secondary)]">{row.task.id}</p>
                       </div>
                     </div>

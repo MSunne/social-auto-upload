@@ -25,6 +25,10 @@ const (
 	defaultSkillVideoDurationSeconds = 8
 	defaultSkillVideoSubtitleRule    = "默认不要字幕"
 	defaultSkillStoryboardPrompt     = "你是内容创作分镜与脚本优化助手。请结合用户目标、参考图片和参考文本，输出适合继续交给图片、视频或文本模型执行的精炼脚本。输出中需要保留主体、场景、镜头、风格、文案和节奏等关键信息。"
+	skillOutputDigitalHuman          = "数字人口播"
+	skillAssetCharacterImage         = "digital_human_character_image"
+	skillAssetGoodsImage             = "digital_human_goods_image"
+	skillAssetRefAudio               = "digital_human_ref_audio"
 )
 
 type skillVideoGenerationOptions struct {
@@ -84,11 +88,17 @@ func MapSkillOutputTypeToJobType(outputType string) (string, bool) {
 		return "image", true
 	case "video", "video_text", "视文模式":
 		return "video", true
+	case skillOutputDigitalHuman:
+		return "video", true
 	case "chat", "text", "text_only", "文本格式":
 		return "chat", true
 	default:
 		return "", false
 	}
+}
+
+func IsDigitalHumanSkillOutput(outputType string) bool {
+	return strings.TrimSpace(outputType) == skillOutputDigitalHuman
 }
 
 // 根据Auto发布计算账号Allowed，供技能作业helpers链路复用关键派生结果。
@@ -119,6 +129,9 @@ func BuildSkillAIJobPayload(
 	assets, err := app.Store.ListSkillAssets(ctx, skill.ID, skill.OwnerUserID)
 	if err != nil {
 		return nil, err
+	}
+	if IsDigitalHumanSkillOutput(skill.OutputType) {
+		return buildDigitalHumanSkillAIJobPayload(skill, assets, generateAt, publishAt, targets)
 	}
 
 	referenceMediaAssets := collectOrderedSkillReferenceMediaAssets(assets, skill.ReferencePayload)
@@ -284,6 +297,140 @@ func isVideoTextSkillOutput(outputType string) bool {
 	default:
 		return false
 	}
+}
+
+type digitalHumanSkillConfig struct {
+	Mode       string `json:"mode"`
+	GoodsTitle string `json:"goodsTitle"`
+	GoodsText  string `json:"goodsText"`
+}
+
+func buildDigitalHumanSkillAIJobPayload(
+	skill domain.ProductSkill,
+	assets []domain.ProductSkillAsset,
+	generateAt time.Time,
+	publishAt time.Time,
+	targets []PublishTarget,
+) ([]byte, error) {
+	config, err := parseDigitalHumanSkillConfig(skill.ReferencePayload)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(config.Mode) == "" {
+		return nil, fmt.Errorf("digital human skill mode is required")
+	}
+	if strings.TrimSpace(config.GoodsText) == "" {
+		return nil, fmt.Errorf("digital human skill goodsText is required")
+	}
+	characterAsset, goodsAsset, refAudioAsset, err := collectDigitalHumanSkillAssets(assets, config.Mode)
+	if err != nil {
+		return nil, err
+	}
+
+	payload := map[string]any{
+		"workflowKind":          "digital_human",
+		"prompt":                BuildSkillJobPrompt(skill, "video"),
+		"skillName":             skill.Name,
+		"skillDescription":      skill.Description,
+		"publishPromptTemplate": BuildSkillPublishPromptTemplate(skill),
+		"publishIntroEnabled":   skill.PublishIntroEnabled,
+		"skillTags":             normalizeSkillTopics(skill.Topics),
+		"runAt":                 generateAt.UTC().Format(time.RFC3339),
+		"publishAt":             publishAt.UTC().Format(time.RFC3339),
+		"digitalHumanConfig": map[string]any{
+			"mode":           strings.TrimSpace(config.Mode),
+			"goodsTitle":     strings.TrimSpace(config.GoodsTitle),
+			"goodsText":      strings.TrimSpace(config.GoodsText),
+			"characterAsset": buildDigitalHumanSkillAssetPayload(characterAsset),
+			"refAudioAsset":  buildDigitalHumanSkillAssetPayload(refAudioAsset),
+		},
+	}
+	if goodsAsset != nil {
+		payload["digitalHumanConfig"].(map[string]any)["goodsAsset"] = buildDigitalHumanSkillAssetPayload(*goodsAsset)
+	}
+	if len(targets) > 0 {
+		publishTargets := make([]map[string]any, 0, len(targets))
+		for _, target := range targets {
+			publishTargets = append(publishTargets, map[string]any{
+				"accountId":   target.AccountID,
+				"platform":    target.Platform,
+				"accountName": target.AccountName,
+			})
+		}
+		payload["publishPayload"] = map[string]any{
+			"targets":               publishTargets,
+			"contentPromptTemplate": BuildSkillPublishPromptTemplate(skill),
+		}
+	}
+	return json.Marshal(payload)
+}
+
+func parseDigitalHumanSkillConfig(raw []byte) (*digitalHumanSkillConfig, error) {
+	if len(raw) == 0 {
+		return &digitalHumanSkillConfig{}, nil
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, err
+	}
+	config := &digitalHumanSkillConfig{}
+	digitalHumanRaw, ok := payload["digitalHuman"]
+	if ok && len(digitalHumanRaw) > 0 {
+		if err := json.Unmarshal(digitalHumanRaw, config); err != nil {
+			return nil, fmt.Errorf("digitalHuman config must be valid json: %w", err)
+		}
+		return config, nil
+	}
+	if err := json.Unmarshal(raw, config); err == nil {
+		return config, nil
+	}
+	return &digitalHumanSkillConfig{}, nil
+}
+
+func collectDigitalHumanSkillAssets(assets []domain.ProductSkillAsset, mode string) (domain.ProductSkillAsset, *domain.ProductSkillAsset, domain.ProductSkillAsset, error) {
+	var characterAsset *domain.ProductSkillAsset
+	var goodsAsset *domain.ProductSkillAsset
+	var refAudioAsset *domain.ProductSkillAsset
+	for index := range assets {
+		asset := assets[index]
+		switch strings.TrimSpace(asset.AssetType) {
+		case skillAssetCharacterImage:
+			if characterAsset == nil || asset.CreatedAt.After(characterAsset.CreatedAt) {
+				characterAsset = &asset
+			}
+		case skillAssetGoodsImage:
+			if goodsAsset == nil || asset.CreatedAt.After(goodsAsset.CreatedAt) {
+				goodsAsset = &asset
+			}
+		case skillAssetRefAudio:
+			if refAudioAsset == nil || asset.CreatedAt.After(refAudioAsset.CreatedAt) {
+				refAudioAsset = &asset
+			}
+		}
+	}
+	if characterAsset == nil {
+		return domain.ProductSkillAsset{}, nil, domain.ProductSkillAsset{}, fmt.Errorf("digital human skill is missing character image asset")
+	}
+	if refAudioAsset == nil {
+		return domain.ProductSkillAsset{}, nil, domain.ProductSkillAsset{}, fmt.Errorf("digital human skill is missing reference audio asset")
+	}
+	if strings.EqualFold(strings.TrimSpace(mode), "digital") && goodsAsset == nil {
+		return domain.ProductSkillAsset{}, nil, domain.ProductSkillAsset{}, fmt.Errorf("digital human skill digital mode requires goods image asset")
+	}
+	return *characterAsset, goodsAsset, *refAudioAsset, nil
+}
+
+func buildDigitalHumanSkillAssetPayload(asset domain.ProductSkillAsset) map[string]any {
+	payload := map[string]any{
+		"fileName":   asset.FileName,
+		"mimeType":   optionalStringValue(asset.MimeType),
+		"storageKey": optionalStringValue(asset.StorageKey),
+		"publicUrl":  optionalStringValue(asset.PublicURL),
+	}
+	if asset.SizeBytes != nil {
+		payload["sizeBytes"] = *asset.SizeBytes
+	}
+	return payload
 }
 
 // 加载技能分镜配置，供技能作业helpers继续处理当前业务状态。

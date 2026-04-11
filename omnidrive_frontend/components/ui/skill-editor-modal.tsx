@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AudioLines,
   ArrowDown,
   ArrowUp,
   Check,
@@ -11,9 +12,12 @@ import {
   Image as ImageIcon,
   Loader2,
   MessageSquareText,
+  Mic,
+  Package,
   Sparkles,
   Trash2,
   Upload,
+  UserRound,
   Video,
   Wand2,
   X,
@@ -24,16 +28,24 @@ import {
   deleteSkillAsset,
   getSkillEditorDefaults,
   listAIModels,
+  listDigitalHumanModels,
   listSkillAssets,
   updateSkill,
   uploadSkillAsset,
 } from "@/lib/services";
-import type { AIModel, Skill, SkillAsset, SkillEditorDefaults } from "@/lib/types";
+import type {
+  AIModel,
+  DigitalHumanModelsResponse,
+  Skill,
+  SkillAsset,
+  SkillEditorDefaults,
+} from "@/lib/types";
 import { getModelDisplayName } from "@/lib/model-display";
 import { buildFileAccept, resolveSupportedFileTypes } from "@/lib/ai-file-types";
 import { cn } from "@/lib/utils";
 import {
   getModelReferenceLimit,
+  isDigitalHumanSkillOutput,
   mapSkillOutputToModelCategory,
   normalizeSkillOutputLabel,
 } from "@/lib/workflow";
@@ -57,11 +69,20 @@ type SkillFormState = {
   coverPromptUsesSystemDefault: boolean;
   outputType: string;
   modelName: string;
+  digitalHumanMode: "digital" | "customize";
+  digitalHumanGoodsTitle: string;
+  digitalHumanGoodsText: string;
   storyboardEnabled: boolean;
   isEnabled: boolean;
 };
 
-type UploadAssetType = "reference_image" | "reference_video" | "reference_text";
+type UploadAssetType =
+  | "reference_image"
+  | "reference_video"
+  | "reference_text"
+  | "digital_human_character_image"
+  | "digital_human_goods_image"
+  | "digital_human_ref_audio";
 
 type UploadingAsset = {
   id: string;
@@ -105,6 +126,13 @@ const OUTPUT_OPTIONS: OutputOption[] = [
     icon: MessageSquareText,
     tone: "text-amber-200",
   },
+  {
+    value: "数字人口播",
+    label: "数字人口播",
+    hint: "带货口播、人物口播视频",
+    icon: Mic,
+    tone: "text-emerald-300",
+  },
 ];
 
 const EMPTY_FORM: SkillFormState = {
@@ -118,9 +146,25 @@ const EMPTY_FORM: SkillFormState = {
   coverPromptUsesSystemDefault: true,
   outputType: "图文模式",
   modelName: "",
+  digitalHumanMode: "digital",
+  digitalHumanGoodsTitle: "",
+  digitalHumanGoodsText: "",
   storyboardEnabled: true,
   isEnabled: true,
 };
+
+function parseDigitalHumanConfig(referencePayload: Record<string, unknown> | null | undefined) {
+  const base =
+    referencePayload?.digitalHuman && typeof referencePayload.digitalHuman === "object"
+      ? (referencePayload.digitalHuman as Record<string, unknown>)
+      : referencePayload || {};
+  const rawMode = typeof base.mode === "string" ? base.mode.trim() : "";
+  return {
+    mode: rawMode === "customize" ? "customize" : "digital",
+    goodsTitle: typeof base.goodsTitle === "string" ? base.goodsTitle : "",
+    goodsText: typeof base.goodsText === "string" ? base.goodsText : "",
+  } as const;
+}
 
 function buildSkillFormState(skill?: Skill | null, coverPromptDefault = ""): SkillFormState {
   if (!skill) {
@@ -131,6 +175,7 @@ function buildSkillFormState(skill?: Skill | null, coverPromptDefault = ""): Ski
     };
   }
   const customCoverPrompt = (skill.coverPromptTemplate || "").trim();
+  const digitalHumanConfig = parseDigitalHumanConfig(skill.referencePayload);
   return {
     name: skill.name || "",
     description: skill.description || "",
@@ -145,6 +190,9 @@ function buildSkillFormState(skill?: Skill | null, coverPromptDefault = ""): Ski
     coverPromptUsesSystemDefault: customCoverPrompt.length === 0,
     outputType: normalizeSkillOutputLabel(skill.outputType),
     modelName: skill.modelName || "",
+    digitalHumanMode: digitalHumanConfig.mode,
+    digitalHumanGoodsTitle: digitalHumanConfig.goodsTitle,
+    digitalHumanGoodsText: digitalHumanConfig.goodsText,
     storyboardEnabled: skill.storyboardEnabled !== false,
     isEnabled: Boolean(skill.isEnabled),
   };
@@ -167,8 +215,8 @@ function isVideoAsset(asset: SkillAsset) {
   return (asset.mimeType || "").startsWith("video/") || asset.assetType.includes("video");
 }
 
-function isMediaAsset(asset: SkillAsset) {
-  return isImageAsset(asset) || isVideoAsset(asset);
+function isReferenceMediaAsset(asset: SkillAsset) {
+  return asset.assetType === "reference_image" || asset.assetType === "reference_video";
 }
 
 function hasSupportedFilePrefix(values: string[], prefix: string) {
@@ -236,14 +284,32 @@ function sortMediaAssetsByOrder(assets: SkillAsset[], order: string[]) {
 function buildReferencePayload(
   basePayload: Record<string, unknown> | null | undefined,
   referenceMediaOrder: string[],
+  digitalHumanConfig?: {
+    mode: "digital" | "customize";
+    goodsTitle: string;
+    goodsText: string;
+  } | null,
 ) {
   const nextPayload: Record<string, unknown> = {
     ...(basePayload || {}),
   };
-  if (referenceMediaOrder.length > 0) {
-    nextPayload.referenceMediaOrder = referenceMediaOrder;
-  } else {
+  delete nextPayload.mode;
+  delete nextPayload.goodsTitle;
+  delete nextPayload.goodsText;
+  if (digitalHumanConfig) {
     delete nextPayload.referenceMediaOrder;
+    nextPayload.digitalHuman = {
+      mode: digitalHumanConfig.mode,
+      goodsTitle: digitalHumanConfig.goodsTitle.trim(),
+      goodsText: digitalHumanConfig.goodsText.trim(),
+    };
+  } else {
+    delete nextPayload.digitalHuman;
+    if (referenceMediaOrder.length > 0) {
+      nextPayload.referenceMediaOrder = referenceMediaOrder;
+    } else {
+      delete nextPayload.referenceMediaOrder;
+    }
   }
   return Object.keys(nextPayload).length > 0 ? nextPayload : null;
 }
@@ -300,6 +366,30 @@ function getVendorColor(vendor?: string | null) {
 
 function isVideoTextOutput(outputType: string) {
   return normalizeSkillOutputLabel(outputType) === "视文模式";
+}
+
+function isDigitalHumanOutput(outputType: string) {
+  return isDigitalHumanSkillOutput(outputType);
+}
+
+function resolveDigitalHumanDefaultModel(
+  modelCatalog: DigitalHumanModelsResponse | undefined,
+  mode: "digital" | "customize",
+) {
+  if (!modelCatalog) {
+    return "";
+  }
+  const defaultModel = (modelCatalog.defaultModelByMode?.[mode] || "").trim();
+  if (defaultModel) {
+    return defaultModel;
+  }
+  if (modelCatalog.recommendedModelId?.trim()) {
+    return modelCatalog.recommendedModelId.trim();
+  }
+  if (modelCatalog.currentModelId?.trim()) {
+    return modelCatalog.currentModelId.trim();
+  }
+  return modelCatalog.models[0]?.id || "";
 }
 
 function parseSkillVideoDurationSeconds(value: string) {
@@ -372,12 +462,18 @@ export function SkillEditorModal({
   const [coverPromptUnlocked, setCoverPromptUnlocked] = useState(false);
   const draftCreationRef = useRef<Promise<Skill> | null>(null);
   const currentSkillId = skill?.id ?? draftSkillId;
+  const isDigitalHumanOutputType = isDigitalHumanOutput(form.outputType);
 
   const modelCategory = mapSkillOutputToModelCategory(form.outputType);
   const { data: models = [], isLoading: modelsLoading } = useQuery<AIModel[]>({
     queryKey: ["aiModels", modelCategory],
     queryFn: () => listAIModels({ modelType: modelCategory }),
-    enabled: isOpen,
+    enabled: isOpen && !isDigitalHumanOutputType,
+  });
+  const { data: digitalHumanModels, isLoading: digitalHumanModelsLoading } = useQuery<DigitalHumanModelsResponse>({
+    queryKey: ["digitalHumanModels"],
+    queryFn: () => listDigitalHumanModels(),
+    enabled: isOpen && isDigitalHumanOutputType,
   });
 
   const { data: assets = [], isLoading: assetsLoading } = useQuery<SkillAsset[]>({
@@ -400,9 +496,17 @@ export function SkillEditorModal({
     () => models.filter((item) => item.isEnabled && item.category === modelCategory),
     [modelCategory, models],
   );
+  const availableDigitalHumanModels = useMemo(
+    () => digitalHumanModels?.models || [],
+    [digitalHumanModels?.models],
+  );
   const selectedModel = useMemo(
     () => availableModels.find((item) => item.modelName === form.modelName) ?? null,
     [availableModels, form.modelName],
+  );
+  const selectedDigitalHumanModel = useMemo(
+    () => availableDigitalHumanModels.find((item) => item.id === form.modelName) ?? null,
+    [availableDigitalHumanModels, form.modelName],
   );
   const selectedOutput = useMemo(
     () => OUTPUT_OPTIONS.find((item) => item.value === form.outputType) ?? OUTPUT_OPTIONS[0],
@@ -424,10 +528,22 @@ export function SkillEditorModal({
     return videoTextDurationOptions.find((item) => item.durationSeconds === durationSeconds) ?? null;
   }, [form.fixedDurationSeconds, videoTextDurationOptions]);
 
-  const mediaAssets = useMemo(() => assets.filter(isMediaAsset), [assets]);
+  const mediaAssets = useMemo(() => assets.filter(isReferenceMediaAsset), [assets]);
   const imageAssets = useMemo(() => mediaAssets.filter(isImageAsset), [mediaAssets]);
   const videoAssets = useMemo(() => mediaAssets.filter(isVideoAsset), [mediaAssets]);
-  const textAssets = useMemo(() => assets.filter(isTextAsset), [assets]);
+  const textAssets = useMemo(() => assets.filter((asset) => asset.assetType === "reference_text" || isTextAsset(asset)), [assets]);
+  const digitalHumanCharacterAssets = useMemo(
+    () => assets.filter((asset) => asset.assetType === "digital_human_character_image"),
+    [assets],
+  );
+  const digitalHumanGoodsAssets = useMemo(
+    () => assets.filter((asset) => asset.assetType === "digital_human_goods_image"),
+    [assets],
+  );
+  const digitalHumanAudioAssets = useMemo(
+    () => assets.filter((asset) => asset.assetType === "digital_human_ref_audio"),
+    [assets],
+  );
   const uploadingImages = useMemo(
     () => uploadingAssets.filter((item) => item.assetType === "reference_image"),
     [uploadingAssets],
@@ -442,6 +558,18 @@ export function SkillEditorModal({
   );
   const uploadingTexts = useMemo(
     () => uploadingAssets.filter((item) => item.assetType === "reference_text"),
+    [uploadingAssets],
+  );
+  const uploadingDigitalHumanCharacters = useMemo(
+    () => uploadingAssets.filter((item) => item.assetType === "digital_human_character_image"),
+    [uploadingAssets],
+  );
+  const uploadingDigitalHumanGoods = useMemo(
+    () => uploadingAssets.filter((item) => item.assetType === "digital_human_goods_image"),
+    [uploadingAssets],
+  );
+  const uploadingDigitalHumanAudios = useMemo(
+    () => uploadingAssets.filter((item) => item.assetType === "digital_human_ref_audio"),
     [uploadingAssets],
   );
   const orderedMediaAssets = useMemo(
@@ -461,6 +589,9 @@ export function SkillEditorModal({
   const totalVideoCount = videoAssets.length + uploadingVideos.length;
   const totalMediaCount = orderedMediaAssets.length + uploadingMedia.length;
   const totalTextCount = textAssets.length + uploadingTexts.length;
+  const visibleModelName = isDigitalHumanOutputType
+    ? selectedDigitalHumanModel?.id || form.modelName || "未选择"
+    : getModelDisplayName(selectedModel, "未选择");
 
   useEffect(() => {
     if (!isOpen) {
@@ -530,6 +661,39 @@ export function SkillEditorModal({
   }, [form.outputType, isOpen, selectedVideoBaseSeconds]);
 
   useEffect(() => {
+    if (!isOpen || !isDigitalHumanOutputType || !digitalHumanModels) {
+      return;
+    }
+    const nextModelName = resolveDigitalHumanDefaultModel(digitalHumanModels, form.digitalHumanMode);
+    const modelExists = availableDigitalHumanModels.some((item) => item.id === form.modelName);
+    if (!nextModelName || (form.modelName && modelExists)) {
+      return;
+    }
+    setForm((current) => {
+      if (!isDigitalHumanOutput(current.outputType)) {
+        return current;
+      }
+      if (current.modelName.trim()) {
+        const exists = availableDigitalHumanModels.some((item) => item.id === current.modelName);
+        if (exists) {
+          return current;
+        }
+      }
+      return {
+        ...current,
+        modelName: nextModelName,
+      };
+    });
+  }, [
+    availableDigitalHumanModels,
+    digitalHumanModels,
+    form.digitalHumanMode,
+    form.modelName,
+    isDigitalHumanOutputType,
+    isOpen,
+  ]);
+
+  useEffect(() => {
     if (!coverPromptWarningOpen) {
       setCoverPromptUnlockCountdown(0);
       return;
@@ -563,14 +727,48 @@ export function SkillEditorModal({
       .split(/[\n,，#\s]+/)
       .map((item) => item.trim())
       .filter(Boolean),
-    referencePayload: buildReferencePayload(skill?.referencePayload, referenceMediaOrder),
+    referencePayload: buildReferencePayload(
+      skill?.referencePayload,
+      referenceMediaOrder,
+      isDigitalHumanOutput(form.outputType)
+        ? {
+            mode: form.digitalHumanMode,
+            goodsTitle: form.digitalHumanGoodsTitle,
+            goodsText: form.digitalHumanGoodsText,
+          }
+        : null,
+    ),
     storyboardEnabled: form.storyboardEnabled,
     isEnabled: form.isEnabled,
   });
 
-  const ensureSkillPayloadReady = (payload: ReturnType<typeof buildSkillPayload>) => {
+  const ensureSkillPayloadReady = (
+    payload: ReturnType<typeof buildSkillPayload>,
+    options?: { requireDigitalHumanAssets?: boolean },
+  ) => {
     if (!payload.name || !payload.description || !payload.outputType || !payload.modelName) {
       throw new Error("请先填写完整的技能名称、简介、输出格式和模型，再上传素材");
+    }
+    if (isDigitalHumanOutput(payload.outputType)) {
+      const goodsText = form.digitalHumanGoodsText.trim();
+      if (!goodsText) {
+        throw new Error("请先填写数字人口播文案");
+      }
+      if (form.digitalHumanMode === "digital" && !form.digitalHumanGoodsTitle.trim()) {
+        throw new Error("带货模式请先填写产品标题");
+      }
+      if (options?.requireDigitalHumanAssets) {
+        if (digitalHumanCharacterAssets.length === 0) {
+          throw new Error("请先上传人物主图");
+        }
+        if (digitalHumanAudioAssets.length === 0) {
+          throw new Error("请先上传参考音频");
+        }
+        if (form.digitalHumanMode === "digital" && digitalHumanGoodsAssets.length === 0) {
+          throw new Error("带货模式请先上传商品主图");
+        }
+      }
+      return;
     }
     if (isVideoTextOutput(payload.outputType)) {
       const durationSeconds = Number(payload.fixedDurationSeconds || 0);
@@ -644,7 +842,7 @@ export function SkillEditorModal({
   const saveMutation = useMutation({
     mutationFn: async () => {
       const payload = buildSkillPayload();
-      ensureSkillPayloadReady(payload);
+      ensureSkillPayloadReady(payload, { requireDigitalHumanAssets: true });
       return currentSkillId
         ? updateSkill(currentSkillId, payload)
         : createSkill(payload);
@@ -704,6 +902,10 @@ export function SkillEditorModal({
 
   const handleOutputChange = (nextOutputType: string) => {
     const nextCategory = mapSkillOutputToModelCategory(nextOutputType);
+    const nextIsDigitalHuman = isDigitalHumanOutput(nextOutputType);
+    const nextDefaultDigitalHumanModel = nextIsDigitalHuman
+      ? resolveDigitalHumanDefaultModel(digitalHumanModels, form.digitalHumanMode)
+      : "";
     setForm((current) => ({
       ...current,
       outputType: nextOutputType,
@@ -716,7 +918,19 @@ export function SkillEditorModal({
           ? current.fixedDurationSeconds || String(selectedVideoBaseSeconds)
           : "",
       modelName:
-        mapSkillOutputToModelCategory(current.outputType) === nextCategory ? current.modelName : "",
+        mapSkillOutputToModelCategory(current.outputType) === nextCategory
+          ? current.modelName
+          : nextDefaultDigitalHumanModel,
+    }));
+  };
+
+  const handleDigitalHumanModeChange = (nextMode: "digital" | "customize") => {
+    const nextModelName = resolveDigitalHumanDefaultModel(digitalHumanModels, nextMode);
+    setForm((current) => ({
+      ...current,
+      digitalHumanMode: nextMode,
+      modelName: nextModelName || current.modelName,
+      digitalHumanGoodsTitle: nextMode === "customize" ? "" : current.digitalHumanGoodsTitle,
     }));
   };
 
@@ -786,6 +1000,20 @@ export function SkillEditorModal({
     void uploadFiles(nextFiles, "reference_text");
   };
 
+  const handleDigitalHumanAssetSelection = (
+    fileList: FileList | null,
+    assetType: Extract<
+      UploadAssetType,
+      "digital_human_character_image" | "digital_human_goods_image" | "digital_human_ref_audio"
+    >,
+  ) => {
+    const nextFile = Array.from(fileList || [])[0];
+    if (!nextFile) {
+      return;
+    }
+    void uploadFiles([nextFile], assetType);
+  };
+
   const requestCoverPromptEditing = () => {
     if (coverPromptUnlocked) {
       return;
@@ -802,17 +1030,23 @@ export function SkillEditorModal({
     setCoverPromptUnlocked(false);
   };
 
-  const flowSteps = form.storyboardEnabled
+  const flowSteps = isDigitalHumanOutputType
     ? [
-      "客户输入素材、任务说明和简介",
-      "系统先做分镜优化",
-      getModelDisplayName(selectedModel, "最终模型待选择"),
-    ]
-    : [
-      "客户输入素材、任务说明和简介",
-      "跳过分镜，直接执行",
-      getModelDisplayName(selectedModel, "最终模型待选择"),
-    ];
+        "账号执行技能时自动复用人物主图、商品主图和参考音频",
+        form.digitalHumanMode === "digital" ? "按带货模式创建数字人任务" : "按口播模式创建数字人任务",
+        visibleModelName || "最终模型待选择",
+      ]
+    : form.storyboardEnabled
+      ? [
+          "客户输入素材、任务说明和简介",
+          "系统先做分镜优化",
+          getModelDisplayName(selectedModel, "最终模型待选择"),
+        ]
+      : [
+          "客户输入素材、任务说明和简介",
+          "跳过分镜，直接执行",
+          getModelDisplayName(selectedModel, "最终模型待选择"),
+        ];
 
   return (
     <div className="fixed inset-0 z-[90] bg-[#050814]/85 px-4 py-4 backdrop-blur-xl sm:px-6 sm:py-6">
@@ -880,7 +1114,7 @@ export function SkillEditorModal({
 
                     <div className="space-y-2.5">
                       <span className="text-sm font-medium text-white">输出类型</span>
-                      <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                         {OUTPUT_OPTIONS.map((option) => {
                           const Icon = option.icon;
                           const selected = option.value === form.outputType;
@@ -954,70 +1188,176 @@ export function SkillEditorModal({
                       </p>
                     </label>
 
-                    <div className="space-y-3 rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
+                    {isDigitalHumanOutputType ? (
+                      <div className="space-y-4 rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
                         <div className="space-y-1">
-                          <span className="text-sm font-medium text-white">封面提示词</span>
+                          <span className="text-sm font-medium text-white">数字人口播配置</span>
                           <p className="text-xs leading-5 text-text-secondary">
-                            仅视文模式生效。系统会把这段话和客户原始图片、参考资料一起交给
-                            {" "}系统封面模型重新设计视频封面首帧；客户上传多张图时会补做尾帧。
+                            素材和文案将保存在技能自身，账号执行时会直接按当前配置创建数字人任务。
                           </p>
                         </div>
-                        {form.coverPromptUsesSystemDefault ? (
-                          <MiniPill>当前使用系统默认</MiniPill>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={resetCoverPromptToDefault}
-                            className="rounded-full border border-white/10 px-3 py-1 text-xs font-medium text-text-secondary transition-all hover:border-white/20 hover:text-white"
-                          >
-                            恢复系统默认
-                          </button>
-                        )}
-                      </div>
-                      <textarea
-                        value={form.coverPromptTemplate}
-                        readOnly={!coverPromptUnlocked}
-                        onClick={requestCoverPromptEditing}
-                        onFocus={requestCoverPromptEditing}
-                        onChange={(event) =>
-                          setForm((current) => ({
-                            ...current,
-                            coverPromptTemplate: event.target.value,
-                            coverPromptUsesSystemDefault: false,
-                          }))
-                        }
-                        rows={7}
-                        placeholder="描述希望系统如何围绕真实产品重新设计封面。"
-                        className={cn(
-                          "w-full rounded-2xl border px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted",
-                          coverPromptUnlocked
-                            ? "border-white/10 bg-white/6 focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
-                            : "cursor-pointer border-white/8 bg-white/[0.03]",
-                        )}
-                      />
-                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs leading-5 text-text-secondary">
-                        <p>
-                          不修改时不会把默认值固化到当前技能；后续 Admin 更新系统默认值后，这里会自动跟随。
-                        </p>
-                        {!coverPromptUnlocked ? (
-                          <button
-                            type="button"
-                            onClick={requestCoverPromptEditing}
-                            className="rounded-full border border-accent/30 px-3 py-1 font-medium text-accent transition-all hover:border-accent/50"
-                          >
-                            修改封面提示词
-                          </button>
+                        <div className="flex flex-wrap gap-2">
+                          {[
+                            { value: "digital" as const, label: "带货模式", icon: <Package className="h-3.5 w-3.5" /> },
+                            { value: "customize" as const, label: "口播模式", icon: <Mic className="h-3.5 w-3.5" /> },
+                          ].map((option) => (
+                            <button
+                              key={option.value}
+                              type="button"
+                              onClick={() => handleDigitalHumanModeChange(option.value)}
+                              className={cn(
+                                "inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-sm transition-all",
+                                form.digitalHumanMode === option.value
+                                  ? "border-emerald-400/35 bg-emerald-400/12 text-white"
+                                  : "border-white/10 bg-white/[0.04] text-text-secondary hover:border-white/20 hover:text-white",
+                              )}
+                            >
+                              {option.icon}
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+
+                        {form.digitalHumanMode === "digital" ? (
+                          <label className="space-y-2.5">
+                            <span className="text-sm font-medium text-white">产品标题</span>
+                            <input
+                              value={form.digitalHumanGoodsTitle}
+                              onChange={(event) =>
+                                setForm((current) => ({ ...current, digitalHumanGoodsTitle: event.target.value }))
+                              }
+                              placeholder="例如：老廖牌香薰"
+                              className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
+                            />
+                          </label>
                         ) : null}
+
+                        <label className="space-y-2.5">
+                          <span className="text-sm font-medium text-white">口播文案</span>
+                          <textarea
+                            value={form.digitalHumanGoodsText}
+                            onChange={(event) =>
+                              setForm((current) => ({ ...current, digitalHumanGoodsText: event.target.value }))
+                            }
+                            rows={5}
+                            placeholder="填写数字人口播文案，系统会按这段文案生成最终视频。"
+                            className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
+                          />
+                        </label>
                       </div>
-                    </div>
+                    ) : null}
+
+                    {isVideoTextOutput(form.outputType) ? (
+                      <div className="space-y-3 rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="space-y-1">
+                            <span className="text-sm font-medium text-white">封面提示词</span>
+                            <p className="text-xs leading-5 text-text-secondary">
+                              仅视文模式生效。系统会把这段话和客户原始图片、参考资料一起交给
+                              {" "}系统封面模型重新设计视频封面首帧；客户上传多张图时会补做尾帧。
+                            </p>
+                          </div>
+                          {form.coverPromptUsesSystemDefault ? (
+                            <MiniPill>当前使用系统默认</MiniPill>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={resetCoverPromptToDefault}
+                              className="rounded-full border border-white/10 px-3 py-1 text-xs font-medium text-text-secondary transition-all hover:border-white/20 hover:text-white"
+                            >
+                              恢复系统默认
+                            </button>
+                          )}
+                        </div>
+                        <textarea
+                          value={form.coverPromptTemplate}
+                          readOnly={!coverPromptUnlocked}
+                          onClick={requestCoverPromptEditing}
+                          onFocus={requestCoverPromptEditing}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              coverPromptTemplate: event.target.value,
+                              coverPromptUsesSystemDefault: false,
+                            }))
+                          }
+                          rows={7}
+                          placeholder="描述希望系统如何围绕真实产品重新设计封面。"
+                          className={cn(
+                            "w-full rounded-2xl border px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted",
+                            coverPromptUnlocked
+                              ? "border-white/10 bg-white/6 focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
+                              : "cursor-pointer border-white/8 bg-white/[0.03]",
+                          )}
+                        />
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-xs leading-5 text-text-secondary">
+                          <p>
+                            不修改时不会把默认值固化到当前技能；后续 Admin 更新系统默认值后，这里会自动跟随。
+                          </p>
+                          {!coverPromptUnlocked ? (
+                            <button
+                              type="button"
+                              onClick={requestCoverPromptEditing}
+                              className="rounded-full border border-accent/30 px-3 py-1 font-medium text-accent transition-all hover:border-accent/50"
+                            >
+                              修改封面提示词
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : null}
                   </SectionCard>
 
                   <SectionCard
                     title="模型与时长"
                     description="选择最终执行模型并设置视频时长。模型和时长紧密耦合，在同一区域方便对照。"
                   >
-                    {modelsLoading ? (
+                    {isDigitalHumanOutputType ? (
+                      digitalHumanModelsLoading ? (
+                        <InlineLoading label="正在读取数字人模型..." />
+                      ) : availableDigitalHumanModels.length === 0 ? (
+                        <div className="rounded-[24px] border border-dashed border-white/10 bg-white/[0.03] px-5 py-12 text-center text-sm text-text-secondary">
+                          当前没有可用的数字人模型。
+                        </div>
+                      ) : (
+                        <div className="grid gap-4 lg:grid-cols-2">
+                          {availableDigitalHumanModels.map((model) => {
+                            const selected = model.id === form.modelName;
+                            return (
+                              <button
+                                key={model.id}
+                                type="button"
+                                onClick={() =>
+                                  setForm((current) => ({ ...current, modelName: model.id }))
+                                }
+                                className={cn(
+                                  "group relative rounded-[26px] border p-5 text-left transition-all duration-200",
+                                  selected
+                                    ? "border-emerald-400/45 bg-[linear-gradient(160deg,rgba(16,185,129,0.14),rgba(12,18,32,0.08))] shadow-[0_0_0_1px_rgba(16,185,129,0.18),0_18px_45px_rgba(16,185,129,0.12)]"
+                                    : "border-white/10 bg-white/[0.04] hover:border-white/18 hover:bg-white/[0.06]",
+                                )}
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <p className="text-base font-semibold text-white">{model.id}</p>
+                                      {model.isRecommended ? <MiniPill>推荐</MiniPill> : null}
+                                      {model.isCurrent ? <MiniPill>当前服务模型</MiniPill> : null}
+                                    </div>
+                                    <p className="mt-2 text-sm leading-6 text-text-secondary">
+                                      {model.isRecommended
+                                        ? "推荐模型，适合作为数字人口播默认执行模型。"
+                                        : "可作为数字人口播执行模型，由技能在保存时固定。"}
+                                    </p>
+                                  </div>
+                                  <SelectionBadge selected={selected} />
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )
+                    ) : modelsLoading ? (
                       <InlineLoading label="正在读取可用模型..." />
                     ) : availableModels.length === 0 ? (
                       <div className="rounded-[24px] border border-dashed border-white/10 bg-white/[0.03] px-5 py-12 text-center text-sm text-text-secondary">
@@ -1097,15 +1437,23 @@ export function SkillEditorModal({
                       <div className="mt-3 grid gap-3 sm:grid-cols-2">
                         <SummaryLine
                           label="当前模型"
-                          value={selectedModel ? getModelDisplayName(selectedModel) : "请选择模型"}
+                          value={visibleModelName}
                         />
                         <SummaryLine
-                          label="单次扣费"
-                          value={formatSkillBillingAmount(selectedModel)}
+                          label={isDigitalHumanOutputType ? "默认模式" : "单次扣费"}
+                          value={
+                            isDigitalHumanOutputType
+                              ? form.digitalHumanMode === "digital"
+                                ? "带货模式"
+                                : "口播模式"
+                              : formatSkillBillingAmount(selectedModel)
+                          }
                         />
                       </div>
                       <p className="mt-3 text-xs leading-5 text-text-secondary">
-                        创建前即可看到当前技能单次预计扣费，实际扣费以任务入账结果为准。
+                        {isDigitalHumanOutputType
+                          ? "默认模型由 Admin 配置提供，技能保存后仍可以固定为你当前选择的数字人模型。"
+                          : "创建前即可看到当前技能单次预计扣费，实际扣费以任务入账结果为准。"}
                       </p>
                     </div>
 
@@ -1213,172 +1561,330 @@ export function SkillEditorModal({
 
                   <SectionCard
                     title="参考素材"
-                    description="图片和视频共用一条有序参考链，文本继续补充结构、卖点和限制条件。"
+                    description={
+                      isDigitalHumanOutputType
+                        ? "数字人口播会把人物主图、商品主图和参考音频保存在技能资产中，执行时自动复用。"
+                        : "图片和视频共用一条有序参考链，文本继续补充结构、卖点和限制条件。"
+                    }
                   >
-                    <div className="grid gap-4 lg:grid-cols-2">
-                      <UploadCard
-                        title="参考媒体"
-                        hint={
-                          !selectedModel
-                            ? "先选择最终模型，系统才知道你可以上传图片、视频还是两者都支持。"
-                            : mediaLimit > 0
-                              ? `当前模型支持 ${describeSupportedMediaTypes(supportsReferenceImages, supportsReferenceVideos)}，最多 ${mediaLimit} 个参考媒体，已准备 ${totalMediaCount} 个。`
-                              : `当前模型支持 ${describeSupportedMediaTypes(supportsReferenceImages, supportsReferenceVideos)}，已准备 ${totalMediaCount} 个参考媒体。`
-                        }
-                        icon={<Video className="h-5 w-5 text-cyan" />}
-                      >
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          {supportsReferenceImages ? (
-                            <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-cyan/30 bg-cyan/10 px-4 py-5 text-center transition-all hover:border-cyan/50 hover:bg-cyan/14">
-                              <div>
-                                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan/15 text-cyan">
-                                  <Upload className="h-5 w-5" />
-                                </div>
-                                <p className="mt-3 text-sm font-semibold text-white">上传参考图片</p>
-                                <p className="mt-1 text-xs text-text-secondary">支持多张，选中后立即上传到云端。</p>
+                    {isDigitalHumanOutputType ? (
+                      <div className="grid gap-4 lg:grid-cols-3">
+                        <UploadCard
+                          title="人物主图"
+                          hint="口播模式和带货模式都必填，用于生成数字人形象。"
+                          icon={<UserRound className="h-5 w-5 text-emerald-300" />}
+                        >
+                          <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-emerald-400/30 bg-emerald-400/10 px-4 py-5 text-center transition-all hover:border-emerald-400/50 hover:bg-emerald-400/14">
+                            <div>
+                              <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-400/15 text-emerald-300">
+                                <Upload className="h-5 w-5" />
                               </div>
-                              <input
-                                type="file"
-                                accept={imageAccept || "image/*"}
-                                multiple
-                                className="hidden"
-                                onChange={(event) => {
-                                  handleImageSelection(event.target.files);
-                                  event.target.value = "";
-                                }}
-                              />
-                            </label>
-                          ) : (
-                            <DisabledUploadState label="当前模型不支持参考图片" />
-                          )}
-
-                          {supportsReferenceVideos ? (
-                            <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-cyan/30 bg-cyan/10 px-4 py-5 text-center transition-all hover:border-cyan/50 hover:bg-cyan/14">
-                              <div>
-                                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan/15 text-cyan">
-                                  <Upload className="h-5 w-5" />
-                                </div>
-                                <p className="mt-3 text-sm font-semibold text-white">上传参考视频</p>
-                                <p className="mt-1 text-xs text-text-secondary">仅支持当前模型允许的视频格式，顺序会原样保留。</p>
-                              </div>
-                              <input
-                                type="file"
-                                accept={videoAccept || "video/*"}
-                                multiple
-                                className="hidden"
-                                onChange={(event) => {
-                                  handleVideoSelection(event.target.files);
-                                  event.target.value = "";
-                                }}
-                              />
-                            </label>
-                          ) : (
-                            <DisabledUploadState label="当前模型不支持参考视频" />
-                          )}
-                        </div>
-
-                        <div className="mt-4 space-y-3">
-                          {assetsLoading ? <InlineLoading label="正在读取参考媒体..." /> : null}
-                          {orderedMediaAssets.map((asset, index) => (
-                            <AssetRow
-                              key={asset.id}
-                              asset={asset}
-                              icon={
-                                isVideoAsset(asset) ? (
-                                  <Video className="h-4 w-4 text-cyan" />
-                                ) : (
-                                  <ImageIcon className="h-4 w-4 text-cyan" />
-                                )
-                              }
-                              sequence={index + 1}
-                              deleting={deleteAssetMutation.isPending}
-                              moveUpDisabled={index === 0}
-                              moveDownDisabled={index === orderedMediaAssets.length - 1}
-                              onMoveUp={() => moveMediaAsset(asset.id, -1)}
-                              onMoveDown={() => moveMediaAsset(asset.id, 1)}
-                              onDelete={() => deleteAssetMutation.mutate(asset)}
-                            />
-                          ))}
-                          {uploadingMedia.map((item, index) => (
-                            <PendingRow
-                              key={item.id}
-                              label={item.file.name}
-                              icon={
-                                item.assetType === "reference_video" ? (
-                                  <Video className="h-4 w-4 text-cyan" />
-                                ) : (
-                                  <ImageIcon className="h-4 w-4 text-cyan" />
-                                )
-                              }
-                              file={item.file}
-                              sequence={orderedMediaAssets.length + index + 1}
-                              helperText="正在上传到云端..."
-                              onDelete={() => undefined}
-                              hideDelete
-                            />
-                          ))}
-                          {!orderedMediaAssets.length && !uploadingMedia.length ? (
-                            <EmptyUploadState label="还没有参考媒体。" />
-                          ) : null}
-                        </div>
-                      </UploadCard>
-
-                      <UploadCard
-                        title="参考文本"
-                        hint={
-                          form.storyboardEnabled
-                            ? "这些文本会先参与分镜优化，再进入最终模型。"
-                            : "这些文本会直接进入最终模型。"
-                        }
-                        icon={<FileText className="h-5 w-5 text-amber-200" />}
-                      >
-                        <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-amber-300/30 bg-amber-300/10 px-4 py-5 text-center transition-all hover:border-amber-300/50 hover:bg-amber-300/14">
-                          <div>
-                            <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-300/15 text-amber-200">
-                              <Upload className="h-5 w-5" />
+                              <p className="mt-3 text-sm font-semibold text-white">上传人物主图</p>
+                              <p className="mt-1 text-xs text-text-secondary">单张上传，替换前请先删除旧素材。</p>
                             </div>
-                            <p className="mt-3 text-sm font-semibold text-white">上传文本</p>
-                            <p className="mt-1 text-xs text-text-secondary">支持 txt、md、json、csv、xml。</p>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(event) => {
+                                handleDigitalHumanAssetSelection(event.target.files, "digital_human_character_image");
+                                event.target.value = "";
+                              }}
+                            />
+                          </label>
+                          <div className="mt-4 space-y-3">
+                            {digitalHumanCharacterAssets.map((asset) => (
+                              <AssetRow
+                                key={asset.id}
+                                asset={asset}
+                                icon={<UserRound className="h-4 w-4 text-emerald-300" />}
+                                deleting={deleteAssetMutation.isPending}
+                                onDelete={() => deleteAssetMutation.mutate(asset)}
+                              />
+                            ))}
+                            {uploadingDigitalHumanCharacters.map((item) => (
+                              <PendingRow
+                                key={item.id}
+                                label={item.file.name}
+                                icon={<UserRound className="h-4 w-4 text-emerald-300" />}
+                                file={item.file}
+                                helperText="正在上传到云端..."
+                                onDelete={() => undefined}
+                                hideDelete
+                              />
+                            ))}
+                            {!digitalHumanCharacterAssets.length && !uploadingDigitalHumanCharacters.length ? (
+                              <EmptyUploadState label="还没有人物主图。" />
+                            ) : null}
                           </div>
-                          <input
-                            type="file"
-                            accept=".txt,.md,.json,.csv,.xml,text/plain,text/markdown,application/json"
-                            multiple
-                            className="hidden"
-                            onChange={(event) => {
-                              handleTextSelection(event.target.files);
-                              event.target.value = "";
-                            }}
-                          />
-                        </label>
+                        </UploadCard>
 
-                        <div className="mt-4 space-y-3">
-                          {textAssets.map((asset) => (
-                            <AssetRow
-                              key={asset.id}
-                              asset={asset}
-                              icon={<FileText className="h-4 w-4 text-amber-200" />}
-                              deleting={deleteAssetMutation.isPending}
-                              onDelete={() => deleteAssetMutation.mutate(asset)}
+                        <UploadCard
+                          title="商品主图"
+                          hint={form.digitalHumanMode === "digital" ? "带货模式必填，用于商品展示。" : "口播模式可留空。"}
+                          icon={<Package className="h-5 w-5 text-cyan" />}
+                        >
+                          <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-cyan/30 bg-cyan/10 px-4 py-5 text-center transition-all hover:border-cyan/50 hover:bg-cyan/14">
+                            <div>
+                              <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan/15 text-cyan">
+                                <Upload className="h-5 w-5" />
+                              </div>
+                              <p className="mt-3 text-sm font-semibold text-white">上传商品主图</p>
+                              <p className="mt-1 text-xs text-text-secondary">仅带货模式会真正执行到成片。</p>
+                            </div>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(event) => {
+                                handleDigitalHumanAssetSelection(event.target.files, "digital_human_goods_image");
+                                event.target.value = "";
+                              }}
                             />
-                          ))}
-                          {uploadingTexts.map((item) => (
-                            <PendingRow
-                              key={item.id}
-                              label={item.file.name}
-                              icon={<FileText className="h-4 w-4 text-amber-200" />}
-                              file={item.file}
-                              helperText="正在上传到云端..."
-                              onDelete={() => undefined}
-                              hideDelete
+                          </label>
+                          <div className="mt-4 space-y-3">
+                            {digitalHumanGoodsAssets.map((asset) => (
+                              <AssetRow
+                                key={asset.id}
+                                asset={asset}
+                                icon={<Package className="h-4 w-4 text-cyan" />}
+                                deleting={deleteAssetMutation.isPending}
+                                onDelete={() => deleteAssetMutation.mutate(asset)}
+                              />
+                            ))}
+                            {uploadingDigitalHumanGoods.map((item) => (
+                              <PendingRow
+                                key={item.id}
+                                label={item.file.name}
+                                icon={<Package className="h-4 w-4 text-cyan" />}
+                                file={item.file}
+                                helperText="正在上传到云端..."
+                                onDelete={() => undefined}
+                                hideDelete
+                              />
+                            ))}
+                            {!digitalHumanGoodsAssets.length && !uploadingDigitalHumanGoods.length ? (
+                              <EmptyUploadState label="还没有商品主图。" />
+                            ) : null}
+                          </div>
+                        </UploadCard>
+
+                        <UploadCard
+                          title="参考音频"
+                          hint="口播模式和带货模式都必填，用于拟合音色。"
+                          icon={<AudioLines className="h-5 w-5 text-amber-200" />}
+                        >
+                          <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-amber-300/30 bg-amber-300/10 px-4 py-5 text-center transition-all hover:border-amber-300/50 hover:bg-amber-300/14">
+                            <div>
+                              <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-300/15 text-amber-200">
+                                <Upload className="h-5 w-5" />
+                              </div>
+                              <p className="mt-3 text-sm font-semibold text-white">上传参考音频</p>
+                              <p className="mt-1 text-xs text-text-secondary">支持 mp3、wav、m4a、aac。</p>
+                            </div>
+                            <input
+                              type="file"
+                              accept="audio/*,.m4a,.mp3,.wav,.aac"
+                              className="hidden"
+                              onChange={(event) => {
+                                handleDigitalHumanAssetSelection(event.target.files, "digital_human_ref_audio");
+                                event.target.value = "";
+                              }}
                             />
-                          ))}
-                          {!textAssets.length && !uploadingTexts.length ? (
-                            <EmptyUploadState label="还没有文本资料。" />
-                          ) : null}
-                        </div>
-                      </UploadCard>
-                    </div>
+                          </label>
+                          <div className="mt-4 space-y-3">
+                            {digitalHumanAudioAssets.map((asset) => (
+                              <AssetRow
+                                key={asset.id}
+                                asset={asset}
+                                icon={<AudioLines className="h-4 w-4 text-amber-200" />}
+                                deleting={deleteAssetMutation.isPending}
+                                onDelete={() => deleteAssetMutation.mutate(asset)}
+                              />
+                            ))}
+                            {uploadingDigitalHumanAudios.map((item) => (
+                              <PendingRow
+                                key={item.id}
+                                label={item.file.name}
+                                icon={<AudioLines className="h-4 w-4 text-amber-200" />}
+                                file={item.file}
+                                helperText="正在上传到云端..."
+                                onDelete={() => undefined}
+                                hideDelete
+                              />
+                            ))}
+                            {!digitalHumanAudioAssets.length && !uploadingDigitalHumanAudios.length ? (
+                              <EmptyUploadState label="还没有参考音频。" />
+                            ) : null}
+                          </div>
+                        </UploadCard>
+                      </div>
+                    ) : (
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        <UploadCard
+                          title="参考媒体"
+                          hint={
+                            !selectedModel
+                              ? "先选择最终模型，系统才知道你可以上传图片、视频还是两者都支持。"
+                              : mediaLimit > 0
+                                ? `当前模型支持 ${describeSupportedMediaTypes(supportsReferenceImages, supportsReferenceVideos)}，最多 ${mediaLimit} 个参考媒体，已准备 ${totalMediaCount} 个。`
+                                : `当前模型支持 ${describeSupportedMediaTypes(supportsReferenceImages, supportsReferenceVideos)}，已准备 ${totalMediaCount} 个参考媒体。`
+                          }
+                          icon={<Video className="h-5 w-5 text-cyan" />}
+                        >
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            {supportsReferenceImages ? (
+                              <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-cyan/30 bg-cyan/10 px-4 py-5 text-center transition-all hover:border-cyan/50 hover:bg-cyan/14">
+                                <div>
+                                  <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan/15 text-cyan">
+                                    <Upload className="h-5 w-5" />
+                                  </div>
+                                  <p className="mt-3 text-sm font-semibold text-white">上传参考图片</p>
+                                  <p className="mt-1 text-xs text-text-secondary">支持多张，选中后立即上传到云端。</p>
+                                </div>
+                                <input
+                                  type="file"
+                                  accept={imageAccept || "image/*"}
+                                  multiple
+                                  className="hidden"
+                                  onChange={(event) => {
+                                    handleImageSelection(event.target.files);
+                                    event.target.value = "";
+                                  }}
+                                />
+                              </label>
+                            ) : (
+                              <DisabledUploadState label="当前模型不支持参考图片" />
+                            )}
+
+                            {supportsReferenceVideos ? (
+                              <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-cyan/30 bg-cyan/10 px-4 py-5 text-center transition-all hover:border-cyan/50 hover:bg-cyan/14">
+                                <div>
+                                  <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan/15 text-cyan">
+                                    <Upload className="h-5 w-5" />
+                                  </div>
+                                  <p className="mt-3 text-sm font-semibold text-white">上传参考视频</p>
+                                  <p className="mt-1 text-xs text-text-secondary">仅支持当前模型允许的视频格式，顺序会原样保留。</p>
+                                </div>
+                                <input
+                                  type="file"
+                                  accept={videoAccept || "video/*"}
+                                  multiple
+                                  className="hidden"
+                                  onChange={(event) => {
+                                    handleVideoSelection(event.target.files);
+                                    event.target.value = "";
+                                  }}
+                                />
+                              </label>
+                            ) : (
+                              <DisabledUploadState label="当前模型不支持参考视频" />
+                            )}
+                          </div>
+
+                          <div className="mt-4 space-y-3">
+                            {assetsLoading ? <InlineLoading label="正在读取参考媒体..." /> : null}
+                            {orderedMediaAssets.map((asset, index) => (
+                              <AssetRow
+                                key={asset.id}
+                                asset={asset}
+                                icon={
+                                  isVideoAsset(asset) ? (
+                                    <Video className="h-4 w-4 text-cyan" />
+                                  ) : (
+                                    <ImageIcon className="h-4 w-4 text-cyan" />
+                                  )
+                                }
+                                sequence={index + 1}
+                                deleting={deleteAssetMutation.isPending}
+                                moveUpDisabled={index === 0}
+                                moveDownDisabled={index === orderedMediaAssets.length - 1}
+                                onMoveUp={() => moveMediaAsset(asset.id, -1)}
+                                onMoveDown={() => moveMediaAsset(asset.id, 1)}
+                                onDelete={() => deleteAssetMutation.mutate(asset)}
+                              />
+                            ))}
+                            {uploadingMedia.map((item, index) => (
+                              <PendingRow
+                                key={item.id}
+                                label={item.file.name}
+                                icon={
+                                  item.assetType === "reference_video" ? (
+                                    <Video className="h-4 w-4 text-cyan" />
+                                  ) : (
+                                    <ImageIcon className="h-4 w-4 text-cyan" />
+                                  )
+                                }
+                                file={item.file}
+                                sequence={orderedMediaAssets.length + index + 1}
+                                helperText="正在上传到云端..."
+                                onDelete={() => undefined}
+                                hideDelete
+                              />
+                            ))}
+                            {!orderedMediaAssets.length && !uploadingMedia.length ? (
+                              <EmptyUploadState label="还没有参考媒体。" />
+                            ) : null}
+                          </div>
+                        </UploadCard>
+
+                        <UploadCard
+                          title="参考文本"
+                          hint={
+                            form.storyboardEnabled
+                              ? "这些文本会先参与分镜优化，再进入最终模型。"
+                              : "这些文本会直接进入最终模型。"
+                          }
+                          icon={<FileText className="h-5 w-5 text-amber-200" />}
+                        >
+                          <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-amber-300/30 bg-amber-300/10 px-4 py-5 text-center transition-all hover:border-amber-300/50 hover:bg-amber-300/14">
+                            <div>
+                              <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-300/15 text-amber-200">
+                                <Upload className="h-5 w-5" />
+                              </div>
+                              <p className="mt-3 text-sm font-semibold text-white">上传文本</p>
+                              <p className="mt-1 text-xs text-text-secondary">支持 txt、md、json、csv、xml。</p>
+                            </div>
+                            <input
+                              type="file"
+                              accept=".txt,.md,.json,.csv,.xml,text/plain,text/markdown,application/json"
+                              multiple
+                              className="hidden"
+                              onChange={(event) => {
+                                handleTextSelection(event.target.files);
+                                event.target.value = "";
+                              }}
+                            />
+                          </label>
+
+                          <div className="mt-4 space-y-3">
+                            {textAssets.map((asset) => (
+                              <AssetRow
+                                key={asset.id}
+                                asset={asset}
+                                icon={<FileText className="h-4 w-4 text-amber-200" />}
+                                deleting={deleteAssetMutation.isPending}
+                                onDelete={() => deleteAssetMutation.mutate(asset)}
+                              />
+                            ))}
+                            {uploadingTexts.map((item) => (
+                              <PendingRow
+                                key={item.id}
+                                label={item.file.name}
+                                icon={<FileText className="h-4 w-4 text-amber-200" />}
+                                file={item.file}
+                                helperText="正在上传到云端..."
+                                onDelete={() => undefined}
+                                hideDelete
+                              />
+                            ))}
+                            {!textAssets.length && !uploadingTexts.length ? (
+                              <EmptyUploadState label="还没有文本资料。" />
+                            ) : null}
+                          </div>
+                        </UploadCard>
+                      </div>
+                    )}
                   </SectionCard>
                 </div>
               </div>
@@ -1388,9 +1894,25 @@ export function SkillEditorModal({
                   <SidebarCard title="执行概览" icon={<Sparkles className="h-4 w-4 text-accent" />}>
                     <div className="grid gap-3">
                       <SummaryLine label="输出类型" value={selectedOutput.label} />
-                      <SummaryLine label="最终模型" value={getModelDisplayName(selectedModel, "未选择")} />
-                      <SummaryLine label="参考素材" value={`${totalMediaCount} 媒体 / ${totalTextCount} 文`} />
-                      <SummaryLine label="媒体构成" value={`${totalImageCount} 图 / ${totalVideoCount} 视频`} />
+                      <SummaryLine label="最终模型" value={visibleModelName} />
+                      <SummaryLine
+                        label="参考素材"
+                        value={
+                          isDigitalHumanOutputType
+                            ? `${digitalHumanCharacterAssets.length} 人物 / ${digitalHumanGoodsAssets.length} 商品 / ${digitalHumanAudioAssets.length} 音频`
+                            : `${totalMediaCount} 媒体 / ${totalTextCount} 文`
+                        }
+                      />
+                      <SummaryLine
+                        label={isDigitalHumanOutputType ? "当前模式" : "媒体构成"}
+                        value={
+                          isDigitalHumanOutputType
+                            ? form.digitalHumanMode === "digital"
+                              ? "带货模式"
+                              : "口播模式"
+                            : `${totalImageCount} 图 / ${totalVideoCount} 视频`
+                        }
+                      />
                     </div>
                     <div className="mt-4 space-y-3">
                       {flowSteps.map((step, index) => (
@@ -1668,21 +2190,6 @@ function MiniPill({ children }: { children: React.ReactNode }) {
     <span className="inline-flex items-center rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-[11px] font-medium text-text-secondary">
       {children}
     </span>
-  );
-}
-
-function MetricBlock({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
-      <p className="text-[11px] uppercase tracking-[0.2em] text-white/45">{label}</p>
-      <p className="mt-1 text-sm font-medium text-white">{value}</p>
-    </div>
   );
 }
 

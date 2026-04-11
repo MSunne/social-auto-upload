@@ -3,11 +3,13 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -3042,39 +3044,110 @@ func (h *AdminConsoleHandler) BulkActionPublishTasks(w http.ResponseWriter, r *h
 	})
 }
 
+type adminAIJobListCursorPayload struct {
+	CreatedAt string `json:"createdAt"`
+	ID        string `json:"id"`
+}
+
+type adminAIJobListResponse struct {
+	Items      []domain.AdminAIJobListItem `json:"items"`
+	NextCursor *string                     `json:"nextCursor,omitempty"`
+	HasMore    bool                        `json:"hasMore"`
+}
+
+func parseAdminAIJobListLimit(r *http.Request) int {
+	limit := 20
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			limit = parsed
+		}
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	return limit
+}
+
+func decodeAdminAIJobListCursor(raw string) (*store.AdminAIJobListCursor, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, nil
+	}
+
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(trimmed)
+	if err != nil {
+		return nil, fmt.Errorf("invalid cursor")
+	}
+
+	var payload adminAIJobListCursorPayload
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		return nil, fmt.Errorf("invalid cursor")
+	}
+
+	createdAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(payload.CreatedAt))
+	if err != nil {
+		return nil, fmt.Errorf("invalid cursor")
+	}
+	cursorID := strings.TrimSpace(payload.ID)
+	if cursorID == "" {
+		return nil, fmt.Errorf("invalid cursor")
+	}
+
+	return &store.AdminAIJobListCursor{
+		CreatedAt: createdAt,
+		ID:        cursorID,
+	}, nil
+}
+
+func encodeAdminAIJobListCursor(cursor *store.AdminAIJobListCursor) (*string, error) {
+	if cursor == nil {
+		return nil, nil
+	}
+
+	payloadBytes, err := json.Marshal(adminAIJobListCursorPayload{
+		CreatedAt: cursor.CreatedAt.UTC().Format(time.RFC3339Nano),
+		ID:        strings.TrimSpace(cursor.ID),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	encoded := base64.RawURLEncoding.EncodeToString(payloadBytes)
+	return &encoded, nil
+}
+
 // 处理管理端ConsoleAI作业列表接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AdminConsoleHandler) ListAIJobs(w http.ResponseWriter, r *http.Request) {
-	page := parseAdminPageQuery(r)
-	items, total, summary, err := h.app.Store.ListAdminAIJobs(r.Context(), store.AdminAIJobListFilter{
-		Query:    strings.TrimSpace(r.URL.Query().Get("query")),
-		Status:   strings.TrimSpace(r.URL.Query().Get("status")),
-		JobType:  strings.TrimSpace(r.URL.Query().Get("jobType")),
-		Source:   strings.TrimSpace(r.URL.Query().Get("source")),
-		UserID:   strings.TrimSpace(r.URL.Query().Get("userId")),
-		DeviceID: strings.TrimSpace(r.URL.Query().Get("deviceId")),
-		SkillID:  strings.TrimSpace(r.URL.Query().Get("skillId")),
-		AdminPageFilter: store.AdminPageFilter{
-			Page:     page.Page,
-			PageSize: page.PageSize,
-		},
+	cursor, err := decodeAdminAIJobListCursor(r.URL.Query().Get("cursor"))
+	if err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	items, nextCursor, hasMore, err := h.app.Store.ListAdminAIJobs(r.Context(), store.AdminAIJobListFilter{
+		Query:  strings.TrimSpace(r.URL.Query().Get("query")),
+		Status: strings.TrimSpace(r.URL.Query().Get("status")),
+		Limit:  parseAdminAIJobListLimit(r),
+		Cursor: cursor,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load admin AI jobs")
 		return
 	}
 
-	for index := range items {
-		h.decorateAdminAIJobRow(&items[index])
+	encodedCursor, err := encodeAdminAIJobListCursor(nextCursor)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to encode admin AI job cursor")
+		return
 	}
 
-	renderAdminList(w, page, total, items, summary, map[string]any{
-		"query":    strings.TrimSpace(r.URL.Query().Get("query")),
-		"status":   strings.TrimSpace(r.URL.Query().Get("status")),
-		"jobType":  strings.TrimSpace(r.URL.Query().Get("jobType")),
-		"source":   strings.TrimSpace(r.URL.Query().Get("source")),
-		"userId":   strings.TrimSpace(r.URL.Query().Get("userId")),
-		"deviceId": strings.TrimSpace(r.URL.Query().Get("deviceId")),
-		"skillId":  strings.TrimSpace(r.URL.Query().Get("skillId")),
+	render.JSON(w, http.StatusOK, adminAIJobListResponse{
+		Items:      items,
+		NextCursor: encodedCursor,
+		HasMore:    hasMore,
 	})
 }
 

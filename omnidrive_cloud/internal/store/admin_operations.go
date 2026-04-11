@@ -33,14 +33,15 @@ type AdminTaskListFilter struct {
 }
 
 type AdminAIJobListFilter struct {
-	Query    string
-	Status   string
-	JobType  string
-	Source   string
-	UserID   string
-	DeviceID string
-	SkillID  string
-	AdminPageFilter
+	Query  string
+	Status string
+	Limit  int
+	Cursor *AdminAIJobListCursor
+}
+
+type AdminAIJobListCursor struct {
+	CreatedAt time.Time
+	ID        string
 }
 
 // 处理管理端设备Summary相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
@@ -91,6 +92,24 @@ const adminAIJobSelectColumns = `
 	aj.message, aj.notes, aj.exception_reason, aj.risk_tags, aj.cost_credits, aj.lease_owner_device_id, aj.lease_token,
 	aj.lease_expires_at, aj.delivery_status, aj.delivery_message, aj.local_publish_task_id,
 	aj.run_at, aj.created_at, aj.updated_at, aj.delivered_at, aj.finished_at
+`
+
+const adminAIJobListSelectColumns = `
+	aj.id,
+	aj.status,
+	aj.job_type,
+	aj.source,
+	aj.model_name,
+	aj.cost_credits,
+	aj.delivery_status,
+	aj.run_at,
+	aj.created_at,
+	aj.updated_at,
+	CASE
+		WHEN aj.message IS NULL OR BTRIM(aj.message) = '' THEN NULL
+		WHEN CHAR_LENGTH(aj.message) <= 160 THEN aj.message
+		ELSE SUBSTRING(aj.message FROM 1 FOR 160) || '...'
+	END AS message_preview
 `
 
 // 处理扫描管理端用户行相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
@@ -624,6 +643,33 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 	return &item, nil
 }
 
+// 处理扫描管理端AI作业列表项相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
+func scanAdminAIJobListItem(scan scanFn) (*domain.AdminAIJobListItem, error) {
+	var item domain.AdminAIJobListItem
+	var runAt *time.Time
+	var messagePreview *string
+
+	if err := scan(
+		&item.ID,
+		&item.Status,
+		&item.JobType,
+		&item.Source,
+		&item.ModelName,
+		&item.CostCredits,
+		&item.DeliveryStatus,
+		&runAt,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+		&messagePreview,
+	); err != nil {
+		return nil, err
+	}
+
+	item.RunAt = runAt
+	item.MessagePreview = trimOptionalString(messagePreview)
+	return &item, nil
+}
+
 // 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAdminUserByID(ctx context.Context, userID string) (*domain.AdminUserRow, error) {
 	row := s.pool.QueryRow(ctx, `
@@ -980,119 +1026,250 @@ func (s *Store) GetAdminTaskByID(ctx context.Context, taskID string) (*domain.Ad
 }
 
 // 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
-func (s *Store) ListAdminAIJobs(ctx context.Context, filter AdminAIJobListFilter) ([]domain.AdminAIJobRow, int64, domain.AdminAIJobListSummary, error) {
-	page, pageSize, offset := normalizeAdminPage(filter.Page, filter.PageSize)
-	_ = page
-
-	whereParts := []string{"1=1"}
-	args := []any{}
-	argIndex := 1
-
-	if query := strings.TrimSpace(filter.Query); query != "" {
-		whereParts = append(whereParts, fmt.Sprintf("(aj.id ILIKE $%[1]d OR aj.job_type ILIKE $%[1]d OR aj.model_name ILIKE $%[1]d OR COALESCE(aj.prompt, '') ILIKE $%[1]d OR COALESCE(aj.message, '') ILIKE $%[1]d OR COALESCE(aj.notes, '') ILIKE $%[1]d OR COALESCE(aj.exception_reason, '') ILIKE $%[1]d OR COALESCE(aj.risk_tags::text, '') ILIKE $%[1]d OR COALESCE(u.email, '') ILIKE $%[1]d OR COALESCE(u.name, '') ILIKE $%[1]d OR COALESCE(d.name, '') ILIKE $%[1]d OR COALESCE(d.device_code, '') ILIKE $%[1]d)", argIndex))
-		args = append(args, ilikePattern(query))
-		argIndex++
+func normalizeAdminAIJobListLimit(limit int) int {
+	if limit <= 0 {
+		return 20
 	}
-	if status := strings.TrimSpace(filter.Status); status != "" {
-		whereParts = append(whereParts, fmt.Sprintf("aj.status = $%d", argIndex))
+	if limit > 50 {
+		return 50
+	}
+	return limit
+}
+
+func nextPrefixBoundary(prefix string) (string, bool) {
+	if prefix == "" {
+		return "", false
+	}
+	bytes := []byte(prefix)
+	for index := len(bytes) - 1; index >= 0; index-- {
+		if bytes[index] == 0xFF {
+			continue
+		}
+		next := append([]byte(nil), bytes[:index+1]...)
+		next[index]++
+		return string(next), true
+	}
+	return "", false
+}
+
+func (s *Store) getAdminAIJobListItemByID(ctx context.Context, jobID string, status string) (*domain.AdminAIJobListItem, error) {
+	trimmedJobID := strings.TrimSpace(jobID)
+	if trimmedJobID == "" {
+		return nil, nil
+	}
+
+	query := fmt.Sprintf(`
+		SELECT %s
+		FROM ai_jobs aj
+		WHERE aj.id = $1
+	`, adminAIJobListSelectColumns)
+	args := []any{trimmedJobID}
+	if status != "" {
+		query += ` AND aj.status = $2`
 		args = append(args, status)
-		argIndex++
-	}
-	if jobType := strings.TrimSpace(filter.JobType); jobType != "" {
-		whereParts = append(whereParts, fmt.Sprintf("aj.job_type = $%d", argIndex))
-		args = append(args, jobType)
-		argIndex++
-	}
-	if source := strings.TrimSpace(filter.Source); source != "" {
-		whereParts = append(whereParts, fmt.Sprintf("aj.source = $%d", argIndex))
-		args = append(args, source)
-		argIndex++
-	}
-	if userID := strings.TrimSpace(filter.UserID); userID != "" {
-		whereParts = append(whereParts, fmt.Sprintf("aj.owner_user_id = $%d", argIndex))
-		args = append(args, userID)
-		argIndex++
-	}
-	if deviceID := strings.TrimSpace(filter.DeviceID); deviceID != "" {
-		whereParts = append(whereParts, fmt.Sprintf("aj.device_id = $%d", argIndex))
-		args = append(args, deviceID)
-		argIndex++
-	}
-	if skillID := strings.TrimSpace(filter.SkillID); skillID != "" {
-		whereParts = append(whereParts, fmt.Sprintf("aj.skill_id = $%d", argIndex))
-		args = append(args, skillID)
-		argIndex++
 	}
 
-	whereClause := "WHERE " + strings.Join(whereParts, " AND ")
-	fromClause := `
+	row := s.pool.QueryRow(ctx, query, args...)
+	item, err := scanAdminAIJobListItem(row.Scan)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	items := []domain.AdminAIJobListItem{*item}
+	if err := s.populateAdminAIJobListRelations(ctx, items); err != nil {
+		return nil, err
+	}
+	return &items[0], nil
+}
+
+func (s *Store) populateAdminAIJobListRelations(ctx context.Context, items []domain.AdminAIJobListItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	jobIDs := make([]string, 0, len(items))
+	indexByID := make(map[string]int, len(items))
+	for index := range items {
+		jobIDs = append(jobIDs, items[index].ID)
+		indexByID[items[index].ID] = index
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT
+			aj.id,
+			u.id, u.email, u.name,
+			d.id, d.name,
+			ps.id, ps.name,
+			COALESCE(am.model_alias, '')
 		FROM ai_jobs aj
 		LEFT JOIN users u ON u.id = aj.owner_user_id
 		LEFT JOIN devices d ON d.id = aj.device_id
 		LEFT JOIN product_skills ps ON ps.id = aj.skill_id AND ps.owner_user_id = aj.owner_user_id
 		LEFT JOIN ai_models am ON am.model_name = aj.model_name
-	`
-
-	var total int64
-	if err := s.pool.QueryRow(ctx, fmt.Sprintf(`SELECT COUNT(*) %s %s`, fromClause, whereClause), args...).Scan(&total); err != nil {
-		return nil, 0, domain.AdminAIJobListSummary{}, err
-	}
-
-	var summary domain.AdminAIJobListSummary
-	if err := s.pool.QueryRow(ctx, fmt.Sprintf(`
-		SELECT
-			COUNT(*)::BIGINT,
-			COUNT(*) FILTER (WHERE aj.status = 'queued')::BIGINT,
-			COUNT(*) FILTER (WHERE aj.status = 'running')::BIGINT,
-			COUNT(*) FILTER (WHERE aj.status IN ('success', 'completed'))::BIGINT,
-			COUNT(*) FILTER (WHERE aj.status = 'failed')::BIGINT,
-			COUNT(*) FILTER (WHERE aj.status = 'cancelled')::BIGINT,
-			COUNT(*) FILTER (WHERE COALESCE(aj.delivery_status, '') IN ('pending', 'queued', 'importing', 'publishing', 'publish_queued'))::BIGINT
-		%s
-		%s
-	`, fromClause, whereClause), args...).Scan(
-		&summary.TotalJobCount,
-		&summary.QueuedCount,
-		&summary.RunningCount,
-		&summary.CompletedCount,
-		&summary.FailedCount,
-		&summary.CancelledCount,
-		&summary.PendingDeliveryCount,
-	); err != nil {
-		return nil, 0, domain.AdminAIJobListSummary{}, err
-	}
-
-	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
-		SELECT
-			%s,
-			u.id, u.email, u.name,
-			d.id, d.device_code, d.name, d.is_enabled, d.last_seen_at,
-			ps.id, ps.name, ps.output_type, ps.model_name,
-			COALESCE((SELECT am.model_alias FROM ai_models am WHERE am.model_name = ps.model_name LIMIT 1), ps.model_name),
-			ps.is_enabled,
-			am.id, am.vendor, am.model_alias, am.category, am.is_enabled,
-			COALESCE((SELECT COUNT(*) FROM ai_job_artifacts a WHERE a.job_id = aj.id), 0)::BIGINT,
-			COALESCE((SELECT COUNT(*) FROM ai_job_artifacts a WHERE a.job_id = aj.id AND a.device_id IS NOT NULL AND a.root_name IS NOT NULL AND a.relative_path IS NOT NULL), 0)::BIGINT,
-			COALESCE((SELECT COUNT(*) FROM publish_tasks pt WHERE pt.id = aj.local_publish_task_id OR (pt.media_payload ->> 'aiJobId') = aj.id), 0)::BIGINT
-		%s
-		%s
-		ORDER BY aj.created_at DESC
-		LIMIT $%d OFFSET $%d
-	`, adminAIJobSelectColumns, fromClause, whereClause, argIndex, argIndex+1), append(args, pageSize, offset)...)
+		WHERE aj.id = ANY($1)
+	`, jobIDs)
 	if err != nil {
-		return nil, 0, domain.AdminAIJobListSummary{}, err
+		return err
 	}
 	defer rows.Close()
 
-	items := make([]domain.AdminAIJobRow, 0)
 	for rows.Next() {
-		item, scanErr := scanAdminAIJobRow(rows.Scan)
+		var jobID string
+		var ownerID *string
+		var ownerEmail *string
+		var ownerName *string
+		var deviceID *string
+		var deviceName *string
+		var skillID *string
+		var skillName *string
+		var modelAlias *string
+
+		if scanErr := rows.Scan(
+			&jobID,
+			&ownerID,
+			&ownerEmail,
+			&ownerName,
+			&deviceID,
+			&deviceName,
+			&skillID,
+			&skillName,
+			&modelAlias,
+		); scanErr != nil {
+			return scanErr
+		}
+
+		index, ok := indexByID[jobID]
+		if !ok {
+			continue
+		}
+		item := &items[index]
+		if ownerID != nil {
+			item.Owner = &domain.AdminUserSummary{
+				ID:    strings.TrimSpace(*ownerID),
+				Email: stringOrEmpty(ownerEmail),
+				Name:  stringOrEmpty(ownerName),
+			}
+		}
+		if deviceID != nil {
+			item.Device = &domain.AdminAIJobListDeviceSummary{
+				ID:   strings.TrimSpace(*deviceID),
+				Name: stringOrEmpty(deviceName),
+			}
+		}
+		if skillID != nil {
+			item.Skill = &domain.AdminAIJobListSkillSummary{
+				ID:   strings.TrimSpace(*skillID),
+				Name: stringOrEmpty(skillName),
+			}
+		}
+		if alias := stringOrEmpty(modelAlias); alias != "" && alias != item.ModelName {
+			item.ModelAlias = alias
+		}
+	}
+
+	return rows.Err()
+}
+
+// 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。
+func (s *Store) ListAdminAIJobs(ctx context.Context, filter AdminAIJobListFilter) ([]domain.AdminAIJobListItem, *AdminAIJobListCursor, bool, error) {
+	limit := normalizeAdminAIJobListLimit(filter.Limit)
+	status := strings.TrimSpace(filter.Status)
+	query := strings.TrimSpace(filter.Query)
+
+	if query != "" && filter.Cursor == nil {
+		exactMatch, err := s.getAdminAIJobListItemByID(ctx, query, status)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if exactMatch != nil {
+			return []domain.AdminAIJobListItem{*exactMatch}, nil, false, nil
+		}
+	}
+
+	whereParts := []string{"1=1"}
+	args := []any{}
+	argIndex := 1
+
+	if status != "" {
+		whereParts = append(whereParts, fmt.Sprintf("aj.status = $%d", argIndex))
+		args = append(args, status)
+		argIndex++
+	}
+
+	if query != "" {
+		prefix := strings.ToLower(query)
+		if upperBound, ok := nextPrefixBoundary(prefix); ok {
+			whereParts = append(whereParts, fmt.Sprintf(`aj.owner_user_id IN (
+				SELECT u.id
+				FROM users u
+				WHERE LOWER(u.email) >= $%d AND LOWER(u.email) < $%d
+			)`, argIndex, argIndex+1))
+			args = append(args, prefix, upperBound)
+			argIndex += 2
+		} else {
+			whereParts = append(whereParts, fmt.Sprintf(`aj.owner_user_id IN (
+				SELECT u.id
+				FROM users u
+				WHERE LOWER(u.email) LIKE $%d
+			)`, argIndex))
+			args = append(args, prefix+"%")
+			argIndex++
+		}
+	}
+
+	if filter.Cursor != nil {
+		whereParts = append(whereParts, fmt.Sprintf("(aj.created_at < $%d OR (aj.created_at = $%d AND aj.id < $%d))", argIndex, argIndex, argIndex+1))
+		args = append(args, filter.Cursor.CreatedAt, strings.TrimSpace(filter.Cursor.ID))
+		argIndex += 2
+	}
+
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
+		SELECT %s
+		FROM ai_jobs aj
+		WHERE %s
+		ORDER BY aj.created_at DESC, aj.id DESC
+		LIMIT $%d
+	`, adminAIJobListSelectColumns, strings.Join(whereParts, " AND "), argIndex), append(args, limit+1)...)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.AdminAIJobListItem, 0, limit+1)
+	for rows.Next() {
+		item, scanErr := scanAdminAIJobListItem(rows.Scan)
 		if scanErr != nil {
-			return nil, 0, domain.AdminAIJobListSummary{}, scanErr
+			return nil, nil, false, scanErr
 		}
 		items = append(items, *item)
 	}
-	return items, total, summary, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, nil, false, err
+	}
+
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+	if err := s.populateAdminAIJobListRelations(ctx, items); err != nil {
+		return nil, nil, false, err
+	}
+	if len(items) == 0 {
+		return items, nil, false, nil
+	}
+
+	var nextCursor *AdminAIJobListCursor
+	if hasMore {
+		last := items[len(items)-1]
+		nextCursor = &AdminAIJobListCursor{
+			CreatedAt: last.CreatedAt,
+			ID:        last.ID,
+		}
+	}
+
+	return items, nextCursor, hasMore, nil
 }
 
 // 执行存储层相关的数据库查询，依赖上下文和连接池返回当前业务状态。

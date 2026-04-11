@@ -24,6 +24,7 @@ type GenerateRequest struct {
 	GoodsAssetPath     *string `json:"goods_asset_path,omitempty"`
 	GoodsText          string  `json:"goods_text"`
 	GoodsTitle         *string `json:"goods_title,omitempty"`
+	LLMModel           *string `json:"llm_model,omitempty"`
 	Source             string  `json:"source"`
 	RefAudio           string  `json:"ref_audio"`
 }
@@ -49,6 +50,19 @@ type RemoteTask struct {
 	Result        map[string]any `json:"result"`
 	Error         *string        `json:"error"`
 	RequestParams map[string]any `json:"request_params"`
+}
+
+type LLMModel struct {
+	ID        string `json:"id"`
+	IsCurrent bool   `json:"is_current"`
+}
+
+type LLMModelsResponse struct {
+	Success      bool       `json:"success"`
+	Message      string     `json:"message"`
+	CurrentModel string     `json:"current_model"`
+	Provider     string     `json:"provider"`
+	Models       []LLMModel `json:"models"`
 }
 
 func NewClient(cfg config.Config) *Client {
@@ -101,6 +115,19 @@ func (c *Client) GetTask(ctx context.Context, taskID string) (*RemoteTask, []byt
 		task.TaskID = strings.TrimSpace(taskID)
 	}
 	return &task, respBody, nil
+}
+
+func (c *Client) ListModels(ctx context.Context) (*LLMModelsResponse, []byte, error) {
+	respBody, err := c.doJSON(ctx, http.MethodGet, "/api/llm/models", nil)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var resp LLMModelsResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, respBody, fmt.Errorf("decode digital human llm models response: %w", err)
+	}
+	return &resp, respBody, nil
 }
 
 func (c *Client) doJSON(ctx context.Context, method string, endpoint string, body []byte) ([]byte, error) {

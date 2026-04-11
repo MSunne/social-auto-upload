@@ -427,6 +427,9 @@ func (w *Worker) materializeTaskAssets(ctx context.Context, task *domain.Digital
 		Source:             task.Source,
 		RefAudio:           audioPath,
 	}
+	if strings.TrimSpace(task.ModelName) != "" {
+		request.LLMModel = stringPtr(strings.TrimSpace(task.ModelName))
+	}
 	if task.GoodsTitle != nil {
 		request.GoodsTitle = stringPtr(strings.TrimSpace(*task.GoodsTitle))
 	}

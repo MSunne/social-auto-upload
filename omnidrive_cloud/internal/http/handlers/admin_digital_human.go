@@ -10,6 +10,10 @@ import (
 	"omnidrive_cloud/internal/store"
 )
 
+func (h *AdminConsoleHandler) ListDigitalHumanModels(w http.ResponseWriter, r *http.Request) {
+	renderDigitalHumanModels(w, r, h.app)
+}
+
 func (h *AdminConsoleHandler) ListDigitalHumanTasks(w http.ResponseWriter, r *http.Request) {
 	page := parseAdminPageQuery(r)
 	items, total, summary, err := h.app.Store.ListAdminDigitalHumanTasks(r.Context(), store.AdminDigitalHumanTaskListFilter{

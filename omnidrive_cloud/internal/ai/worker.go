@@ -520,6 +520,9 @@ func (w *Worker) executeImage(ctx context.Context, job *domain.AIJob, leaseToken
 
 // 处理 AI 作业执行中的执行视频流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken string, leaseExpiresAt time.Time) error {
+	if isDigitalHumanWorkflowJob(job) {
+		return w.executeDigitalHumanVideo(ctx, job, leaseToken)
+	}
 	if snapshot := parseWorkflowPricingSnapshot(job); snapshot != nil {
 		return w.executeWorkflowVideo(ctx, job, leaseToken, leaseExpiresAt, snapshot)
 	}
@@ -1403,6 +1406,9 @@ func (w *Worker) applyUsageBilling(ctx context.Context, job *domain.AIJob, input
 
 // 处理 AI 作业执行中的确保Execution计费流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) ensureExecutionBilling(ctx context.Context, job *domain.AIJob) error {
+	if isDigitalHumanWorkflowJob(job) {
+		return nil
+	}
 	if plan, planErr := BuildWorkflowBillingPlan(ctx, w.app, job); planErr != nil {
 		return planErr
 	} else if plan != nil {
@@ -1471,6 +1477,9 @@ func (w *Worker) ensureExecutionBilling(ctx context.Context, job *domain.AIJob) 
 
 // 处理 AI 作业执行中的返还用量额度Failure流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) returnUsageCreditsForFailure(ctx context.Context, job *domain.AIJob, failureMessage string) {
+	if isDigitalHumanWorkflowJob(job) {
+		return
+	}
 	if plan, err := BuildWorkflowBillingPlan(ctx, w.app, job); err == nil && plan != nil {
 		if refundErr := w.app.Store.RefundAIBillingSessionBySource(ctx, "ai_job", job.ID, failureMessage); refundErr != nil {
 			w.app.Logger.Error("ai worker failed to refund workflow billing session", "job_id", job.ID, "error", refundErr)
