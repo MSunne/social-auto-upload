@@ -147,12 +147,22 @@ func (s *SkillScheduler) ensureRecurringAccountSkillRun(ctx context.Context, see
 	var createdJob *domain.AIJob
 	lockKey := storeKeyForRecurringAccountSkillRun(seed.OwnerUserID, config.ScheduleKey)
 	if err := s.app.Store.WithAdvisoryLock(ctx, lockKey, func() error {
-		activeJob, err := s.app.Store.FindActiveAccountSkillJobByScheduleKey(ctx, seed.OwnerUserID, config.ScheduleKey)
-		if err != nil {
-			return err
-		}
-		if activeJob != nil {
-			return nil
+		if strings.TrimSpace(config.ScheduleKey) != "" {
+			existingJob, err := s.app.Store.FindAccountSkillJobByScheduleSlot(ctx, seed.OwnerUserID, account.ID, config.ScheduleKey, prepared.GenerateAt)
+			if err != nil {
+				return err
+			}
+			if existingJob != nil {
+				return nil
+			}
+		} else {
+			activeJob, err := s.app.Store.FindActiveAccountSkillJobByRun(ctx, seed.OwnerUserID, skill.ID, account.DeviceID, account.ID, prepared.GenerateAt)
+			if err != nil {
+				return err
+			}
+			if activeJob != nil {
+				return nil
+			}
 		}
 
 		job, err := s.app.Store.CreateAIJob(ctx, store.CreateAIJobInput{

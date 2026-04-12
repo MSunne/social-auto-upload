@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -14,11 +14,21 @@ import {
   X,
   Server as ServerIcon,
   PencilLine,
+  LoaderCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { listDevices, claimDevice, updateDevice } from "@/lib/services";
 import type { Device } from "@/lib/types";
 import { EmptyState } from "@/components/ui/common";
+import {
+  BRIDGE_CHECK_POLL_MS,
+  getBridgeDisplayStatus,
+  getBridgeStatusMeta,
+  markPendingBridgeCheck,
+  prunePendingBridgeChecks,
+  readPendingBridgeChecks,
+  type PendingBridgeChecks,
+} from "@/lib/bridge-status";
 
 const PAGE_SIZE = 5;
 
@@ -53,36 +63,6 @@ const statusConfig: Record<
       "bg-gray-500/15 text-gray-400 border-gray-500/30",
   },
 };
-
-const bridgeStatusConfig: Record<
-  string,
-  { label: string; className: string }
-> = {
-  healthy: {
-    label: "云桥正常",
-    className: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
-  },
-  degraded: {
-    label: "云桥异常",
-    className: "bg-rose-500/15 text-rose-300 border-rose-500/30",
-  },
-  unknown: {
-    label: "云桥未知",
-    className: "bg-gray-500/15 text-gray-300 border-gray-500/30",
-  },
-  offline: {
-    label: "等待恢复",
-    className: "bg-gray-500/15 text-gray-300 border-gray-500/30",
-  },
-};
-
-function summarizeBridgeError(device: Device) {
-  const runtime = device.runtimePayload;
-  const raw = String(runtime?.bridgeLastError || runtime?.lastError || "").replace(/\s+/g, " ").trim();
-  if (!raw) return "";
-  if (raw.length <= 64) return raw;
-  return `${raw.slice(0, 61)}...`;
-}
 
 /* ── Toggle Switch component ── */
 function Toggle({
@@ -121,10 +101,20 @@ function Toggle({
 
 export default function NodesPage() {
   const queryClient = useQueryClient();
+  const [pendingBridgeChecks, setPendingBridgeChecks] = useState<PendingBridgeChecks>(() =>
+    readPendingBridgeChecks(),
+  );
+  const hasStoredPendingBridgeChecks = Object.keys(pendingBridgeChecks).length > 0;
   const { data: devices = [], refetch } = useQuery<Device[]>({
     queryKey: ["devices"],
     queryFn: listDevices,
+    refetchInterval: hasStoredPendingBridgeChecks ? BRIDGE_CHECK_POLL_MS : false,
+    refetchIntervalInBackground: true,
   });
+  const effectivePendingBridgeChecks = useMemo(
+    () => prunePendingBridgeChecks(pendingBridgeChecks, devices),
+    [pendingBridgeChecks, devices],
+  );
 
   const [page, setPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState("");
@@ -138,6 +128,16 @@ export default function NodesPage() {
   // Modal State
   const [isClaimModalOpen, setIsClaimModalOpen] = useState(false);
   const [claimActivationCode, setClaimActivationCode] = useState("");
+
+  useEffect(() => {
+    if (!hasStoredPendingBridgeChecks) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setPendingBridgeChecks(prunePendingBridgeChecks(readPendingBridgeChecks(), devices));
+    }, BRIDGE_CHECK_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [devices, hasStoredPendingBridgeChecks]);
 
   const renameMutation = useMutation({
     mutationFn: async ({ deviceId, name }: { deviceId: string; name: string }) =>
@@ -170,10 +170,12 @@ export default function NodesPage() {
     setClaiming(true);
     setError("");
     try {
-      await claimDevice(claimActivationCode.trim());
+      const device = await claimDevice(claimActivationCode.trim());
+      setPendingBridgeChecks(markPendingBridgeCheck(device.id));
       setIsClaimModalOpen(false);
       setClaimActivationCode("");
-      refetch();
+      await queryClient.invalidateQueries({ queryKey: ["devices"] });
+      await refetch();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "激活失败，请检查激活码");
     } finally {
@@ -310,9 +312,8 @@ export default function NodesPage() {
                 {pagedDevices.map((device) => {
                   const cfg =
                     statusConfig[device.status] ?? statusConfig.unknown;
-                  const bridgeCfg =
-                    bridgeStatusConfig[device.bridgeStatus || "unknown"] ?? bridgeStatusConfig.unknown;
-                  const bridgeError = summarizeBridgeError(device);
+                  const bridgeState = getBridgeDisplayStatus(device, effectivePendingBridgeChecks);
+                  const bridgeCfg = getBridgeStatusMeta(bridgeState);
                   return (
                     <tr
                       key={device.id}
@@ -343,14 +344,17 @@ export default function NodesPage() {
                           </span>
                           <div>
                             <span
-                              className={`inline-flex items-center rounded-md border px-2.5 py-1 text-xs font-semibold ${bridgeCfg.className}`}
+                              className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold ${bridgeCfg.className}`}
                             >
+                              {bridgeState === "checking" ? (
+                                <LoaderCircle className="h-3 w-3 animate-spin" />
+                              ) : null}
                               {bridgeCfg.label}
                             </span>
                           </div>
-                          {bridgeError ? (
-                            <div className="max-w-xs text-xs text-rose-300/90">
-                              {bridgeError}
+                          {bridgeState === "checking" ? (
+                            <div className="max-w-xs text-xs text-amber-300/90">
+                              绑定完成后正在检查云桥状态
                             </div>
                           ) : null}
                         </div>

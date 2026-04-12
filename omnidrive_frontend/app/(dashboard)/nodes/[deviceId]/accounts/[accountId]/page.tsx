@@ -56,6 +56,7 @@ type TimelineItem = {
   subtitle: string;
   status: string;
   scheduledAt?: string | null;
+  createdAt: string;
   updatedAt: string;
   href?: string;
   label: string;
@@ -383,7 +384,24 @@ export default function AccountTaskPage({
       skillId: string;
       scheduleSlots: AccountSkillScheduleSlot[];
     }) => createAccountSkillRun(accountId, payload),
-    onSuccess: async () => {
+    onSuccess: async (createdJobs) => {
+      if (Array.isArray(createdJobs) && createdJobs.length > 0) {
+        queryClient.setQueryData<AIJob[]>(
+          ["aiJobs", "account", accountId],
+          (current = []) => {
+            const merged = new Map<string, AIJob>();
+            createdJobs.forEach((job) => {
+              merged.set(job.id, job);
+            });
+            current.forEach((job) => {
+              if (!merged.has(job.id)) {
+                merged.set(job.id, job);
+              }
+            });
+            return Array.from(merged.values());
+          },
+        );
+      }
       await Promise.all([
         queryClient.invalidateQueries({
           queryKey: ["aiJobs", "account", accountId],
@@ -399,7 +417,7 @@ export default function AccountTaskPage({
     },
     onError: (error) => {
       window.alert(
-        error instanceof Error ? error.message : "创建账号任务失败，请稍后重试",
+        error instanceof Error ? error.message : "创建账号计划失败，请稍后重试",
       );
     },
   });
@@ -498,6 +516,7 @@ export default function AccountTaskPage({
           : getModelDisplayName(job),
         status: toTimelineStatus(job, "ai_job"),
         scheduledAt: getAIJobPublishAt(job),
+        createdAt: job.createdAt,
         updatedAt: job.updatedAt,
         href: `/tasks/ai/${job.id}`,
         label: "技能生成",
@@ -510,6 +529,7 @@ export default function AccountTaskPage({
       subtitle: task.accountName,
       status: toTimelineStatus(task, "publish_task"),
       scheduledAt: task.runAt,
+      createdAt: task.createdAt,
       updatedAt: task.updatedAt,
       href: `/tasks/${task.id}`,
       label: "发布任务",
@@ -653,7 +673,7 @@ export default function AccountTaskPage({
             className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-accent to-cyan px-4 py-2 text-sm font-semibold text-background"
           >
             <Plus className="h-4 w-4" />
-            新增任务
+            新增账号计划
           </button>
         }
       />
@@ -708,7 +728,7 @@ export default function AccountTaskPage({
               title="还没有账号专属技能计划"
               description={
                 enabledSkills.length > 0
-                  ? "先为当前账号创建一条技能任务，再按发布时间进入生成和发布链路。"
+                  ? "先为当前账号创建一条 AI 生成计划，系统生成内容后才会继续进入发布链路。"
                   : "当前没有可用技能，请先去技能中心创建并启用技能。"
               }
               action={
@@ -794,6 +814,9 @@ export default function AccountTaskPage({
                           : ""}
                       </span>
                       <span className="text-[11px] text-text-muted">
+                        创建 {formatDateTime(plan.job.createdAt)}
+                      </span>
+                      <span className="text-[11px] text-text-muted">
                         更新 {formatDateTime(plan.job.updatedAt)}
                       </span>
                       <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -861,7 +884,7 @@ export default function AccountTaskPage({
               title="当前账号还没有任务"
               description={
                 enabledSkills.length > 0
-                  ? "先从一个技能创建账号专属任务，它会先生成，再进入发布链路。"
+                  ? "先创建账号专属 AI 生成计划。发布任务会在生成产物进入分发链路后出现。"
                   : "当前没有可用技能，请先去技能中心创建并启用技能。"
               }
               action={
@@ -871,7 +894,7 @@ export default function AccountTaskPage({
                     onClick={() => setIsCreateOpen(true)}
                     className="rounded-xl bg-gradient-to-r from-accent to-cyan px-4 py-2 text-sm font-semibold text-background"
                   >
-                    创建第一条任务
+                    创建第一条账号计划
                   </button>
                 ) : (
                   <Link
@@ -917,6 +940,9 @@ export default function AccountTaskPage({
                           {item.scheduledAt
                             ? formatDateTime(item.scheduledAt)
                             : "未设置"}
+                        </span>
+                        <span className="text-[11px] text-text-muted">
+                          创建 {formatDateTime(item.createdAt)}
                         </span>
                         <span className="text-[11px] text-text-muted">
                           更新 {formatDateTime(item.updatedAt)}

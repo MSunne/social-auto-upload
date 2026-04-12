@@ -92,6 +92,12 @@ type chatStreamResponse struct {
 	Error        string         `json:"error,omitempty"`
 }
 
+type aiJobPrimaryTarget struct {
+	AccountID   string
+	Platform    string
+	AccountName string
+}
+
 type chatAttachmentDraft struct {
 	FileName    string  `json:"fileName"`
 	MimeType    string  `json:"mimeType"`
@@ -2283,6 +2289,7 @@ func (h *AIHandler) CreatePublishTask(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	jobTarget := extractAIJobPrimaryTarget(job.InputPayload)
 
 	deviceID := firstNonEmptyString(payload.DeviceID, job.DeviceID)
 	if deviceID == nil {
@@ -2303,14 +2310,15 @@ func (h *AIHandler) CreatePublishTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	accountID := firstNonEmptyString(normalizeTrimmedString(payload.AccountID), normalizeTrimmedStringPtr(jobTarget.AccountID))
 	payload.Platform = strings.TrimSpace(payload.Platform)
-	payload.AccountName = strings.TrimSpace(payload.AccountName)
-	if payload.Platform == "" || payload.AccountName == "" {
-		render.Error(w, http.StatusBadRequest, "platform and accountName are required")
-		return
+	if payload.Platform == "" {
+		payload.Platform = jobTarget.Platform
 	}
-
-	accountID := normalizeTrimmedString(payload.AccountID)
+	payload.AccountName = strings.TrimSpace(payload.AccountName)
+	if payload.AccountName == "" {
+		payload.AccountName = jobTarget.AccountName
+	}
 	var account *domain.PlatformAccount
 	if accountID != nil {
 		account, err = h.app.Store.GetOwnedAccountByID(r.Context(), *accountID, user.ID)
@@ -2322,10 +2330,20 @@ func (h *AIHandler) CreatePublishTask(w http.ResponseWriter, r *http.Request) {
 			render.Error(w, http.StatusNotFound, "Account not found")
 			return
 		}
+		if payload.Platform == "" {
+			payload.Platform = account.Platform
+		}
+		if payload.AccountName == "" {
+			payload.AccountName = account.AccountName
+		}
 		if account.DeviceID != device.ID || account.Platform != payload.Platform || account.AccountName != payload.AccountName {
 			render.Error(w, http.StatusConflict, "Account does not match device/platform/accountName")
 			return
 		}
+	}
+	if payload.Platform == "" || payload.AccountName == "" {
+		render.Error(w, http.StatusBadRequest, "platform and accountName are required")
+		return
 	}
 
 	artifacts, err := h.app.Store.ListAIJobArtifactsByOwner(r.Context(), jobID, user.ID)
@@ -2984,6 +3002,28 @@ func decodeRawPayloadMap(raw []byte) map[string]any {
 		return map[string]any{}
 	}
 	return payload
+}
+
+func extractAIJobPrimaryTarget(raw []byte) aiJobPrimaryTarget {
+	payload := decodeRawPayloadMap(raw)
+	target := aiJobPrimaryTarget{
+		AccountID: readPayloadString(payload, "accountId"),
+	}
+	publishPayload, _ := payload["publishPayload"].(map[string]any)
+	targets, _ := publishPayload["targets"].([]any)
+	if len(targets) == 0 {
+		return target
+	}
+	firstTarget, _ := targets[0].(map[string]any)
+	if firstTarget == nil {
+		return target
+	}
+	if target.AccountID == "" {
+		target.AccountID = readPayloadString(firstTarget, "accountId")
+	}
+	target.Platform = readPayloadString(firstTarget, "platform")
+	target.AccountName = readPayloadString(firstTarget, "accountName")
+	return target
 }
 
 // 读取载荷String，按当前存储模式返回后续流程需要的数据内容。

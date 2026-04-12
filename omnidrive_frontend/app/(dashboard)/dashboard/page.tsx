@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
@@ -10,11 +11,19 @@ import {
   ArrowUpRight,
   Zap,
   Clock,
+  LoaderCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { listDevices, listTasks } from "@/lib/services";
 import type { Device, Task } from "@/lib/types";
 import { PageHeader, StatCard, StatusBadge, EmptyState } from "@/components/ui/common";
+import {
+  BRIDGE_CHECK_POLL_MS,
+  getBridgeDisplayStatus,
+  prunePendingBridgeChecks,
+  readPendingBridgeChecks,
+  type PendingBridgeChecks,
+} from "@/lib/bridge-status";
 
 const fadeUp = {
   initial: { opacity: 0, y: 16 },
@@ -22,9 +31,15 @@ const fadeUp = {
 };
 
 export default function DashboardPage() {
+  const [pendingBridgeChecks, setPendingBridgeChecks] = useState<PendingBridgeChecks>(() =>
+    readPendingBridgeChecks(),
+  );
+  const hasStoredPendingBridgeChecks = Object.keys(pendingBridgeChecks).length > 0;
   const { data: devices = [] } = useQuery<Device[]>({
     queryKey: ["devices"],
     queryFn: listDevices,
+    refetchInterval: hasStoredPendingBridgeChecks ? BRIDGE_CHECK_POLL_MS : false,
+    refetchIntervalInBackground: true,
   });
 
   const { data: tasks = [] } = useQuery<Task[]>({
@@ -32,8 +47,20 @@ export default function DashboardPage() {
     queryFn: () => listTasks(),
   });
 
+  useEffect(() => {
+    if (!hasStoredPendingBridgeChecks) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setPendingBridgeChecks(prunePendingBridgeChecks(readPendingBridgeChecks(), devices));
+    }, BRIDGE_CHECK_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [devices, hasStoredPendingBridgeChecks]);
+
+  const effectivePendingBridgeChecks = prunePendingBridgeChecks(pendingBridgeChecks, devices);
+
   const onlineDevices = devices.filter(
-    (d) => d.status === "online" && d.bridgeStatus === "healthy",
+    (d) => d.status === "online" && getBridgeDisplayStatus(d, effectivePendingBridgeChecks) === "healthy",
   ).length;
   const pendingTasks = tasks.filter(
     (t) => t.status === "pending" || t.status === "running",
@@ -105,34 +132,43 @@ export default function DashboardPage() {
 
           {devices.length > 0 ? (
             <div className="space-y-3">
-              {devices.slice(0, 5).map((device) => (
-                <div
-                  key={device.id}
-                  className="flex items-center justify-between rounded-xl bg-surface-hover/50 px-4 py-3 transition-colors hover:bg-surface-hover"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/10">
-                      <Server className="h-4 w-4 text-accent" />
+              {devices.slice(0, 5).map((device) => {
+                const bridgeState = getBridgeDisplayStatus(device, effectivePendingBridgeChecks);
+                return (
+                  <div
+                    key={device.id}
+                    className="flex items-center justify-between rounded-xl bg-surface-hover/50 px-4 py-3 transition-colors hover:bg-surface-hover"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/10">
+                        <Server className="h-4 w-4 text-accent" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-text-primary">
+                          {device.name}
+                        </p>
+                        <p className="text-xs text-text-muted">
+                          {device.deviceCode}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-sm font-medium text-text-primary">
-                        {device.name}
-                      </p>
-                      <p className="text-xs text-text-muted">
-                        {device.deviceCode}
-                      </p>
+                    <div className="flex items-center gap-2">
+                      <StatusBadge status={device.status} />
+                      {device.status === "online" && bridgeState === "checking" ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-300">
+                          <LoaderCircle className="h-3 w-3 animate-spin" />
+                          云桥检查中
+                        </span>
+                      ) : null}
+                      {device.status === "online" && bridgeState === "degraded" ? (
+                        <span className="rounded-full bg-danger/10 px-2 py-1 text-[10px] font-semibold text-danger">
+                          云桥异常
+                        </span>
+                      ) : null}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <StatusBadge status={device.status} />
-                    {device.status === "online" && device.bridgeStatus === "degraded" ? (
-                      <span className="rounded-full bg-danger/10 px-2 py-1 text-[10px] font-semibold text-danger">
-                        云桥异常
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <EmptyState

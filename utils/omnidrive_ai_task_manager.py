@@ -279,6 +279,7 @@ class OmniDriveAITaskManager:
         skill_id=None,
         prompt=None,
         payload=None,
+        linked_publish_task_uuid=None,
     ):
         current_task = self.get_task(task_uuid)
         current_status = str((current_task or {}).get("status") or "queued_cloud").strip() or "queued_cloud"
@@ -304,7 +305,7 @@ class OmniDriveAITaskManager:
                     status = ?,
                     linked_publish_task_uuid = CASE
                         WHEN ? THEN NULL
-                        ELSE linked_publish_task_uuid
+                        ELSE COALESCE(?, linked_publish_task_uuid)
                     END,
                     artifact_refs_json = CASE
                         WHEN ? THEN '[]'
@@ -317,6 +318,12 @@ class OmniDriveAITaskManager:
                           OR cloud_status IS NOT ?
                           OR message IS NOT COALESCE(?, message)
                           OR cloud_job_id IS NOT ?
+                          OR linked_publish_task_uuid IS NOT (
+                              CASE
+                                  WHEN ? THEN NULL
+                                  ELSE COALESCE(?, linked_publish_task_uuid)
+                              END
+                          )
                         THEN CURRENT_TIMESTAMP
                         ELSE updated_at
                     END
@@ -333,6 +340,7 @@ class OmniDriveAITaskManager:
                     cloud_status,
                     local_status,
                     1 if reset_delivery_state else 0,
+                    linked_publish_task_uuid,
                     1 if reset_delivery_state else 0,
                     message,
                     finished_at,
@@ -340,6 +348,8 @@ class OmniDriveAITaskManager:
                     cloud_status,
                     message,
                     cloud_job_id,
+                    1 if reset_delivery_state else 0,
+                    linked_publish_task_uuid,
                     task_uuid,
                 ),
             )
@@ -578,7 +588,8 @@ class OmniDriveAITaskManager:
         if row is None:
             return None
         item = dict(row)
-        item["payload"] = json.loads(item.pop("payload_json") or "{}")
+        payload = json.loads(item.pop("payload_json") or "{}")
+        item["payload"] = payload
         item["artifactRefs"] = json.loads(item.pop("artifact_refs_json") or "[]")
         item["taskUuid"] = item.pop("task_uuid")
         item["jobType"] = item.pop("job_type")
@@ -587,8 +598,29 @@ class OmniDriveAITaskManager:
         item["cloudJobId"] = item.pop("cloud_job_id")
         item["cloudStatus"] = item.pop("cloud_status")
         item["linkedPublishTaskUuid"] = item.pop("linked_publish_task_uuid")
-        item["createdAt"] = item.pop("created_at")
-        item["updatedAt"] = item.pop("updated_at")
+        local_created_at = item.pop("created_at")
+        local_updated_at = item.pop("updated_at")
+        schedule_times = payload.get("scheduleTimes") if isinstance(payload, dict) else None
+        if not isinstance(schedule_times, dict):
+            schedule_times = None
+        item["scheduleTimes"] = schedule_times
+        item["localCreatedAt"] = local_created_at
+        item["localUpdatedAt"] = local_updated_at
+        item["createdAt"] = (
+            str(schedule_times.get("createdAt") or "").strip() if schedule_times else ""
+        ) or local_created_at
+        item["updatedAt"] = (
+            str(schedule_times.get("updatedAt") or "").strip() if schedule_times else ""
+        ) or local_updated_at
+        item["generateAt"] = (
+            str(schedule_times.get("generateAt") or "").strip() if schedule_times else ""
+        ) or str(payload.get("runAt") or "").strip() or None
+        publish_payload = payload.get("publishPayload") if isinstance(payload, dict) else None
+        item["publishAt"] = (
+            str(schedule_times.get("publishAt") or "").strip() if schedule_times else ""
+        ) or str(payload.get("publishAt") or "").strip() or str(
+            (publish_payload or {}).get("runAt") or (publish_payload or {}).get("requestedRun") or ""
+        ).strip() or None
         item["finishedAt"] = item.pop("finished_at")
         return item
 

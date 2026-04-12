@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useMemo, useState } from "react";
+import { use, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -8,6 +8,7 @@ import {
   Cpu,
   FileText,
   Image as ImageIcon,
+  LoaderCircle,
   Pencil,
   Plus,
   Trash2,
@@ -19,43 +20,18 @@ import { SkillEditorModal } from "@/components/ui/skill-editor-modal";
 import { deleteSkill, getDevice, listSkillAssets, listSkills } from "@/lib/services";
 import type { Device, Skill, SkillAsset } from "@/lib/types";
 import {
+  BRIDGE_CHECK_POLL_MS,
+  getBridgeDisplayStatus,
+  getBridgeStatusMeta,
+  getBridgeSummary,
+  prunePendingBridgeChecks,
+  readPendingBridgeChecks,
+  type PendingBridgeChecks,
+} from "@/lib/bridge-status";
+import {
   formatSkillSchedule,
   normalizeSkillOutputLabel,
 } from "@/lib/workflow";
-
-function formatBridgeStatus(status: string | null | undefined) {
-  switch (status) {
-    case "healthy":
-      return {
-        label: "云桥正常",
-        className: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
-      };
-    case "degraded":
-      return {
-        label: "云桥异常",
-        className: "bg-rose-500/15 text-rose-300 border-rose-500/30",
-      };
-    case "offline":
-      return {
-        label: "等待恢复",
-        className: "bg-gray-500/15 text-gray-300 border-gray-500/30",
-      };
-    default:
-      return {
-        label: "云桥未知",
-        className: "bg-gray-500/15 text-gray-300 border-gray-500/30",
-      };
-  }
-}
-
-function summarizeBridgeError(device: Device) {
-  const raw = String(
-    device.runtimePayload?.bridgeLastError || device.runtimePayload?.lastError || "",
-  )
-    .replace(/\s+/g, " ")
-    .trim();
-  return raw || "暂无桥接异常";
-}
 
 function asLowerString(value: unknown) {
   return typeof value === "string" ? value.toLowerCase() : "";
@@ -91,12 +67,18 @@ export default function NodeDetailPage({
 }) {
   const { deviceId } = use(params);
   const queryClient = useQueryClient();
+  const [pendingBridgeChecks, setPendingBridgeChecks] = useState<PendingBridgeChecks>(() =>
+    readPendingBridgeChecks(),
+  );
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
   const [creating, setCreating] = useState(false);
+  const hasStoredPendingBridgeCheck = Boolean(pendingBridgeChecks[deviceId]);
 
   const { data: device, isLoading: deviceLoading } = useQuery<Device>({
     queryKey: ["device", deviceId],
     queryFn: () => getDevice(deviceId),
+    refetchInterval: hasStoredPendingBridgeCheck ? BRIDGE_CHECK_POLL_MS : false,
+    refetchIntervalInBackground: true,
   });
 
   const { data: skills = [], isLoading: skillsLoading } = useQuery<Skill[]>({
@@ -147,6 +129,23 @@ export default function NodeDetailPage({
     setCreating(false);
   };
 
+  useEffect(() => {
+    if (!hasStoredPendingBridgeCheck) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setPendingBridgeChecks(
+        prunePendingBridgeChecks(readPendingBridgeChecks(), device ? [device] : []),
+      );
+    }, BRIDGE_CHECK_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [device, hasStoredPendingBridgeCheck]);
+
+  const effectivePendingBridgeChecks = useMemo(
+    () => prunePendingBridgeChecks(pendingBridgeChecks, device ? [device] : []),
+    [device, pendingBridgeChecks],
+  );
+
   if (deviceLoading || skillsLoading) {
     return (
       <div className="flex h-72 items-center justify-center">
@@ -168,7 +167,9 @@ export default function NodeDetailPage({
     );
   }
 
-  const bridgeMeta = formatBridgeStatus(device.bridgeStatus);
+  const bridgeState = getBridgeDisplayStatus(device, effectivePendingBridgeChecks);
+  const bridgeMeta = getBridgeStatusMeta(bridgeState);
+  const bridgeSummary = getBridgeSummary(bridgeState);
 
   return (
     <>
@@ -202,7 +203,12 @@ export default function NodeDetailPage({
           <div className="text-xs uppercase tracking-wider text-text-muted">设备状态</div>
           <div className="mt-2 flex items-center gap-2">
             <StatusBadge status={device.status} />
-            <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${bridgeMeta.className}`}>
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${bridgeMeta.className}`}
+            >
+              {bridgeState === "checking" ? (
+                <LoaderCircle className="h-3 w-3 animate-spin" />
+              ) : null}
               {bridgeMeta.label}
             </span>
           </div>
@@ -216,8 +222,13 @@ export default function NodeDetailPage({
         <div className="rounded-2xl border border-border bg-surface p-4">
           <div className="text-xs uppercase tracking-wider text-text-muted">云桥诊断</div>
           <div className="mt-2 text-sm text-text-primary">
-            {summarizeBridgeError(device)}
+            {bridgeSummary}
           </div>
+          {bridgeState === "checking" ? (
+            <div className="mt-2 text-xs text-amber-300">
+              绑定完成后正在检查云桥状态
+            </div>
+          ) : null}
           {device.runtimePayload?.bridgeLastSuccessAt ? (
             <div className="mt-2 text-xs text-text-secondary">
               最近恢复 {new Date(device.runtimePayload.bridgeLastSuccessAt).toLocaleString("zh-CN")}

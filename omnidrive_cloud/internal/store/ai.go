@@ -23,6 +23,15 @@ func aiJobQualifiedColumn(alias string, column string) string {
 	return trimmedAlias + "." + column
 }
 
+func aiJobAccountIDExpression(alias string) string {
+	qualified := aiJobQualifiedColumn(alias, "input_payload")
+	return fmt.Sprintf(
+		"COALESCE(NULLIF(TRIM(%s->>'accountId'), ''), NULLIF(TRIM(%s->'publishPayload'->'targets'->0->>'accountId'), ''))",
+		qualified,
+		qualified,
+	)
+}
+
 const (
 	aiJobPayloadModeFull    = "full"
 	aiJobPayloadModeSummary = "summary"
@@ -474,7 +483,7 @@ func (s *Store) ListAIJobsByOwner(ctx context.Context, ownerUserID string, filte
 		argIndex++
 	}
 	if strings.TrimSpace(filter.AccountID) != "" {
-		query += fmt.Sprintf(" AND COALESCE(input_payload->>'accountId', '') = $%d", argIndex)
+		query += fmt.Sprintf(" AND %s = $%d", aiJobAccountIDExpression(""), argIndex)
 		args = append(args, filter.AccountID)
 		argIndex++
 	}
@@ -1004,6 +1013,30 @@ func (s *Store) FindActiveAccountSkillJobByScheduleKey(ctx context.Context, owne
 	return job, nil
 }
 
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回指定账号计划时段的最新任务状态。
+func (s *Store) FindAccountSkillJobByScheduleSlot(ctx context.Context, ownerUserID string, accountID string, scheduleKey string, runAt time.Time) (*domain.AIJob, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT `+aiJobSelectColumns+`
+		FROM ai_jobs
+		WHERE owner_user_id = $1
+		  AND source = 'account_skill_binding'
+		  AND COALESCE(input_payload->'scheduleConfig'->>'scheduleKey', '') = $2
+		  AND `+aiJobAccountIDExpression("")+` = $3
+		  AND run_at = $4
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, ownerUserID, strings.TrimSpace(scheduleKey), strings.TrimSpace(accountID), runAt.UTC())
+
+	job, err := scanAIJob(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return job, nil
+}
+
 // 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) FindActiveAccountSkillJobByRun(ctx context.Context, ownerUserID string, skillID string, deviceID string, accountID string, runAt time.Time) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
@@ -1015,10 +1048,7 @@ func (s *Store) FindActiveAccountSkillJobByRun(ctx context.Context, ownerUserID 
 		  AND device_id = $3
 		  AND run_at = $4
 		  AND status IN ('scheduled', 'queued', 'running', 'waiting_recharge')
-		  AND COALESCE(
-		      NULLIF(TRIM(input_payload->>'accountId'), ''),
-		      NULLIF(TRIM(input_payload->'publishPayload'->'targets'->0->>'accountId'), '')
-		  ) = $5
+		  AND `+aiJobAccountIDExpression("")+` = $5
 		ORDER BY created_at DESC
 		LIMIT 1
 	`, ownerUserID, skillID, deviceID, runAt.UTC(), strings.TrimSpace(accountID))

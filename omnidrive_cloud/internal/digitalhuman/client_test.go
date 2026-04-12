@@ -15,7 +15,7 @@ func TestClientGenerateVideoEncodesRequestPayload(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("expected POST, got %s", r.Method)
 		}
-		if r.URL.Path != "/api/digital-human-flow/step3-generate-video" {
+		if r.URL.Path != "/api/video/generate/async" {
 			t.Fatalf("unexpected path %q", r.URL.Path)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
@@ -31,41 +31,42 @@ func TestClientGenerateVideoEncodesRequestPayload(t *testing.T) {
 		httpClient: server.Client(),
 	}
 
-	goodsAssetPath := "/tmp/goods.jpg"
 	goodsTitle := "老廖牌香薰"
-	resp, rawBody, err := client.GenerateVideo(t.Context(), GenerateRequest{
-		CharacterAssetPath: "/tmp/character.jpg",
-		Mode:               "digital",
-		GoodsAssetPath:     &goodsAssetPath,
-		GoodsText:          "大家好，今天给大家推荐一款超好用的香薰",
-		GoodsTitle:         &goodsTitle,
-		Source:             "runninghub",
-		RefAudio:           "/tmp/ref.m4a",
+	resp, rawBody, err := client.GenerateVideoAsync(t.Context(), GenerateRequest{
+		Text:     "大家好，今天给大家推荐一款超好用的香薰",
+		Mode:     "fixed",
+		Title:    &goodsTitle,
+		RefAudio: stringPtr("/tmp/ref.m4a"),
+		TemplateParams: map[string]any{
+			"character_asset_path": "/tmp/character.jpg",
+			"goods_asset_path":     "/tmp/goods.jpg",
+			"source":               "omnidrive_cloud",
+		},
 	})
 	if err != nil {
-		t.Fatalf("GenerateVideo returned error: %v", err)
+		t.Fatalf("GenerateVideoAsync returned error: %v", err)
 	}
 
-	if captured.CharacterAssetPath != "/tmp/character.jpg" {
-		t.Fatalf("unexpected character path %q", captured.CharacterAssetPath)
+	if captured.Text == "" {
+		t.Fatal("expected text to be populated")
 	}
-	if captured.Mode != "digital" {
+	if captured.Mode != "fixed" {
 		t.Fatalf("unexpected mode %q", captured.Mode)
 	}
-	if captured.GoodsAssetPath == nil || *captured.GoodsAssetPath != goodsAssetPath {
-		t.Fatalf("unexpected goods asset path %+v", captured.GoodsAssetPath)
+	if captured.Title == nil || *captured.Title != goodsTitle {
+		t.Fatalf("unexpected title %+v", captured.Title)
 	}
-	if captured.GoodsTitle == nil || *captured.GoodsTitle != goodsTitle {
-		t.Fatalf("unexpected goods title %+v", captured.GoodsTitle)
+	if captured.RefAudio == nil || *captured.RefAudio != "/tmp/ref.m4a" {
+		t.Fatalf("unexpected ref audio %v", captured.RefAudio)
 	}
-	if captured.GoodsText == "" {
-		t.Fatal("expected goods text to be populated")
+	if captured.TemplateParams["character_asset_path"] != "/tmp/character.jpg" {
+		t.Fatalf("unexpected character asset path %#v", captured.TemplateParams["character_asset_path"])
 	}
-	if captured.Source != "runninghub" {
-		t.Fatalf("unexpected source %q", captured.Source)
+	if captured.TemplateParams["goods_asset_path"] != "/tmp/goods.jpg" {
+		t.Fatalf("unexpected goods asset path %#v", captured.TemplateParams["goods_asset_path"])
 	}
-	if captured.RefAudio != "/tmp/ref.m4a" {
-		t.Fatalf("unexpected ref audio %q", captured.RefAudio)
+	if captured.TemplateParams["source"] != "omnidrive_cloud" {
+		t.Fatalf("unexpected source %#v", captured.TemplateParams["source"])
 	}
 	if resp.TaskID != "remote-123" {
 		t.Fatalf("unexpected task id %q", resp.TaskID)
@@ -80,16 +81,16 @@ func TestClientGetTaskDecodesResponse(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Fatalf("expected GET, got %s", r.Method)
 		}
-		if r.URL.Path != "/api/digital-human-flow/step4-check-status/remote-123" {
+		if r.URL.Path != "/api/tasks/remote-123" {
 			t.Fatalf("unexpected path %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"task_id":"remote-123",
-			"task_type":"digital_human",
+			"task_type":"video_generate",
 			"status":"completed",
 			"progress":{"current":4,"total":4,"percentage":100,"message":"done"},
-			"result":{"video_url":"https://example.com/result.mp4"},
+			"result":{"output":{"video_url":"https://example.com/result.mp4"}},
 			"request_params":{"mode":"digital"}
 		}`))
 	}))

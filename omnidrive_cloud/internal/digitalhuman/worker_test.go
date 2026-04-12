@@ -76,27 +76,34 @@ func TestWorkerMaterializeTaskAssetsBuildsGenerateRequest(t *testing.T) {
 	}
 	defer cleanupWorkingDir(slog.Default(), tempDir)
 
-	if request.Mode != "digital" {
+	if request.Mode != "fixed" {
 		t.Fatalf("unexpected mode %q", request.Mode)
 	}
-	if request.Source != "runninghub" {
-		t.Fatalf("unexpected source %q", request.Source)
+	if request.TemplateParams["source"] != "omnidrive_cloud" {
+		t.Fatalf("unexpected source %#v", request.TemplateParams["source"])
 	}
-	if request.GoodsTitle == nil || *request.GoodsTitle != goodsTitle {
-		t.Fatalf("unexpected goods title %+v", request.GoodsTitle)
+	if request.Text != task.GoodsText {
+		t.Fatalf("unexpected text %q", request.Text)
 	}
-	if request.GoodsAssetPath == nil || *request.GoodsAssetPath == "" {
-		t.Fatalf("expected goods asset path, got %+v", request.GoodsAssetPath)
+	if request.Title == nil || *request.Title != goodsTitle {
+		t.Fatalf("unexpected goods title %+v", request.Title)
+	}
+	if request.TemplateParams["goods_asset_path"] == "" {
+		t.Fatalf("expected goods asset path, got %+v", request.TemplateParams["goods_asset_path"])
 	}
 
-	characterBytes, err := os.ReadFile(request.CharacterAssetPath)
+	characterPath, _ := request.TemplateParams["character_asset_path"].(string)
+	characterBytes, err := os.ReadFile(characterPath)
 	if err != nil {
 		t.Fatalf("ReadFile character returned error: %v", err)
 	}
 	if string(characterBytes) != "character-bytes" {
 		t.Fatalf("unexpected character temp file content %q", string(characterBytes))
 	}
-	audioBytes, err := os.ReadFile(request.RefAudio)
+	if request.RefAudio == nil {
+		t.Fatal("expected ref audio path")
+	}
+	audioBytes, err := os.ReadFile(*request.RefAudio)
 	if err != nil {
 		t.Fatalf("ReadFile audio returned error: %v", err)
 	}

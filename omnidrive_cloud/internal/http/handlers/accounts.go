@@ -445,7 +445,7 @@ func (h *AccountHandler) CreateSkillRun(w http.ResponseWriter, r *http.Request) 
 				err      error
 			)
 			if strings.TrimSpace(pending.scheduleKey) != "" {
-				existing, err = h.app.Store.FindActiveAccountSkillJobByScheduleKey(r.Context(), user.ID, pending.scheduleKey)
+				existing, err = h.app.Store.FindAccountSkillJobByScheduleSlot(r.Context(), user.ID, account.ID, pending.scheduleKey, pending.generateAt)
 			} else {
 				existing, err = h.app.Store.FindActiveAccountSkillJobByRun(r.Context(), user.ID, skill.ID, account.DeviceID, account.ID, pending.generateAt)
 			}

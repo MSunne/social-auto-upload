@@ -85,6 +85,124 @@ func TestBuildSkillReferenceMediaMarksVideoKind(t *testing.T) {
 	}
 }
 
+func TestApplyPublishTargetAccountIDsSetsSingleRootAccountID(t *testing.T) {
+	accountID := "acc-1"
+	publishTargets, accountIDs := buildPublishTargets([]PublishTarget{{
+		AccountID:   &accountID,
+		Platform:    "抖音",
+		AccountName: "测试账号",
+	}})
+	if len(publishTargets) != 1 {
+		t.Fatalf("expected one publish target, got %d", len(publishTargets))
+	}
+	if publishTargets[0]["accountId"] != accountID {
+		t.Fatalf("expected nested accountId %q, got %#v", accountID, publishTargets[0]["accountId"])
+	}
+
+	payload := map[string]any{}
+	applyPublishTargetAccountIDs(payload, accountIDs)
+	if payload["accountId"] != accountID {
+		t.Fatalf("expected root accountId %q, got %#v", accountID, payload["accountId"])
+	}
+	if _, exists := payload["accountIds"]; exists {
+		t.Fatalf("expected single target payload to skip accountIds array")
+	}
+}
+
+func TestApplyPublishTargetAccountIDsSetsMultipleAccountIDs(t *testing.T) {
+	accountID1 := "acc-1"
+	accountID2 := "acc-2"
+	_, accountIDs := buildPublishTargets([]PublishTarget{
+		{
+			AccountID:   &accountID1,
+			Platform:    "抖音",
+			AccountName: "账号一",
+		},
+		{
+			AccountID:   &accountID2,
+			Platform:    "小红书",
+			AccountName: "账号二",
+		},
+	})
+
+	payload := map[string]any{}
+	applyPublishTargetAccountIDs(payload, accountIDs)
+	if _, exists := payload["accountId"]; exists {
+		t.Fatalf("expected multiple target payload to skip single accountId")
+	}
+	rawAccountIDs, ok := payload["accountIds"].([]string)
+	if !ok {
+		t.Fatalf("expected accountIds slice, got %#v", payload["accountIds"])
+	}
+	if len(rawAccountIDs) != 2 || rawAccountIDs[0] != accountID1 || rawAccountIDs[1] != accountID2 {
+		t.Fatalf("unexpected accountIds: %#v", rawAccountIDs)
+	}
+}
+
+func TestBuildDigitalHumanSkillAIJobPayloadIncludesRootAccountID(t *testing.T) {
+	accountID := "acc-dh-1"
+	rawConfig, err := json.Marshal(map[string]any{
+		"digitalHuman": map[string]any{
+			"mode":       "digital",
+			"goodsTitle": "测试商品",
+			"goodsText":  "测试商品文案",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+
+	now := time.Now().UTC()
+	raw, err := buildDigitalHumanSkillAIJobPayload(
+		domain.ProductSkill{
+			Name:                "数字人口播计划",
+			Description:         "测试数字人口播",
+			OutputType:          "数字人口播",
+			PublishIntroEnabled: true,
+			Topics:              []string{"口播"},
+			ReferencePayload:    rawConfig,
+		},
+		[]domain.ProductSkillAsset{
+			{ID: "char-1", AssetType: skillAssetCharacterImage, FileName: "character.png", CreatedAt: now},
+			{ID: "goods-1", AssetType: skillAssetGoodsImage, FileName: "goods.png", CreatedAt: now.Add(time.Second)},
+			{ID: "audio-1", AssetType: skillAssetRefAudio, FileName: "voice.wav", CreatedAt: now.Add(2 * time.Second)},
+		},
+		now,
+		now.Add(30*time.Minute),
+		[]PublishTarget{{
+			AccountID:   &accountID,
+			Platform:    "抖音",
+			AccountName: "数字人账号",
+		}},
+	)
+	if err != nil {
+		t.Fatalf("buildDigitalHumanSkillAIJobPayload returned error: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload["accountId"] != accountID {
+		t.Fatalf("expected root accountId %q, got %#v", accountID, payload["accountId"])
+	}
+	publishPayload, ok := payload["publishPayload"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected publishPayload, got %#v", payload["publishPayload"])
+	}
+	targets, ok := publishPayload["targets"].([]any)
+	if !ok || len(targets) != 1 {
+		t.Fatalf("expected one publish target, got %#v", publishPayload["targets"])
+	}
+	firstTarget, ok := targets[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected target object, got %#v", targets[0])
+	}
+	if firstTarget["accountId"] != accountID {
+		t.Fatalf("expected nested accountId %q, got %#v", accountID, firstTarget["accountId"])
+	}
+}
+
 func testStringPtr(value string) *string {
 	return &value
 }

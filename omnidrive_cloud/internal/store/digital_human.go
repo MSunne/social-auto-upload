@@ -225,7 +225,7 @@ func (s *Store) CreateDigitalHumanTask(ctx context.Context, input CreateDigitalH
 			progress,
 			request_payload
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11, $12, $13, $14, $15, $16::jsonb, $17::jsonb, $18::jsonb)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11, $12, $13, $14, $15, $16, $17::jsonb, $18::jsonb, $19::jsonb)
 		RETURNING `+digitalHumanTaskSelectColumns+`
 	`, input.ID, input.OwnerUserID, input.AIJobID, input.Mode, input.Source, input.Status, strings.TrimSpace(input.ModelName), input.CharacterAsset, nullableJSON(input.GoodsAsset), input.RefAudioAsset, input.GoodsTitle, input.GoodsText, input.EstimatedDurationSeconds, estimatedCreditsLegacy, input.EstimatedCreditsMillis, input.BillingStatus, nullableJSON(input.BillingPayload), nullableJSON(input.Progress), nullableJSON(input.RequestPayload))
 

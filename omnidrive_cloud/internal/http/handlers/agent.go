@@ -17,6 +17,7 @@ import (
 	"omnidrive_cloud/internal/domain"
 	"omnidrive_cloud/internal/http/render"
 	"omnidrive_cloud/internal/store"
+	"omnidrive_cloud/internal/workflow"
 )
 
 type AgentHandler struct {
@@ -1110,10 +1111,11 @@ func (h *AgentHandler) ListAIJobs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result = append(result, domain.AgentAIJobDeliveryItem{
-			Job:       job,
-			Artifacts: artifacts,
-			Bridge:    buildAIJobBridgeState(&job, artifacts, publishTasks),
-			Actions:   computeAIJobActions(&job, len(artifacts)),
+			Job:           job,
+			Artifacts:     artifacts,
+			Bridge:        buildAIJobBridgeState(&job, artifacts, publishTasks),
+			Actions:       computeAIJobActions(&job, len(artifacts)),
+			ScheduleTimes: buildAIJobScheduleTimes(&job),
 		})
 	}
 	render.JSON(w, http.StatusOK, result)
@@ -1201,6 +1203,11 @@ func (h *AgentHandler) SyncAIJob(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	runAt, err := parseSyncAIJobRunAt(payload)
+	if err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	lockKey := "agent-ai-local-task:" + strings.TrimSpace(*device.OwnerUserID) + ":" + strings.TrimSpace(device.ID) + ":" + strings.TrimSpace(payload.ID)
 	var (
@@ -1231,6 +1238,7 @@ func (h *AgentHandler) SyncAIJob(w http.ResponseWriter, r *http.Request) {
 				InputPayload: inputPayload,
 				Status:       "queued",
 				Message:      message,
+				RunAt:        runAt,
 			})
 			if createErr != nil {
 				return createErr
@@ -1255,6 +1263,8 @@ func (h *AgentHandler) SyncAIJob(w http.ResponseWriter, r *http.Request) {
 			InputPayload:     inputPayload,
 			InputTouched:     true,
 			Message:          message,
+			RunAt:            runAt,
+			RunAtTouched:     payload.RunAt != nil && strings.TrimSpace(*payload.RunAt) != "",
 		})
 		if updateErr != nil {
 			return updateErr
@@ -2279,6 +2289,78 @@ func (h *AgentHandler) buildAgentAIJobInputPayload(payload syncAIJobRequest) ([]
 		result["localStatus"] = strings.TrimSpace(*payload.Status)
 	}
 	return json.Marshal(result)
+}
+
+func buildAIJobScheduleTimes(job *domain.AIJob) *domain.AIJobScheduleTimes {
+	if job == nil {
+		return nil
+	}
+	scheduleTimes := &domain.AIJobScheduleTimes{
+		CreatedAt:  job.CreatedAt.UTC(),
+		UpdatedAt:  job.UpdatedAt.UTC(),
+		GenerateAt: normalizeUTCOptionalTime(job.RunAt),
+	}
+	payload := decodeRawPayloadMap(job.InputPayload)
+	if scheduleConfig, ok := workflow.ParseAccountSkillScheduleConfig(job.InputPayload); ok && scheduleConfig != nil {
+		if trimmed := strings.TrimSpace(scheduleConfig.TimeOfDay); trimmed != "" {
+			scheduleTimes.TimeOfDay = auditStringPtr(trimmed)
+		}
+		if trimmed := strings.TrimSpace(scheduleConfig.Timezone); trimmed != "" {
+			scheduleTimes.Timezone = auditStringPtr(trimmed)
+		}
+		scheduleTimes.RepeatDaily = scheduleConfig.RepeatDaily
+		leadMinutes := scheduleConfig.GenerationLeadMinutes
+		scheduleTimes.GenerationLeadMinutes = &leadMinutes
+	}
+	if publishAt := parseAIJobScheduleTime(payload, "publishAt"); publishAt != nil {
+		scheduleTimes.PublishAt = publishAt
+	} else if publishPayload, _ := payload["publishPayload"].(map[string]any); publishPayload != nil {
+		scheduleTimes.PublishAt = parseAIJobScheduleTime(publishPayload, "runAt", "requestedRun")
+	}
+	if scheduleTimes.GenerateAt == nil {
+		scheduleTimes.GenerateAt = parseAIJobScheduleTime(payload, "runAt")
+	}
+	return scheduleTimes
+}
+
+func parseAIJobScheduleTime(payload map[string]any, keys ...string) *time.Time {
+	for _, key := range keys {
+		raw, ok := payload[key]
+		if !ok {
+			continue
+		}
+		text := strings.TrimSpace(fmt.Sprintf("%v", raw))
+		if text == "" || text == "<nil>" {
+			continue
+		}
+		parsed, err := time.Parse(time.RFC3339, text)
+		if err != nil {
+			continue
+		}
+		utc := parsed.UTC()
+		return &utc
+	}
+	return nil
+}
+
+func normalizeUTCOptionalTime(value *time.Time) *time.Time {
+	if value == nil || value.IsZero() {
+		return nil
+	}
+	utc := value.UTC()
+	return &utc
+}
+
+func parseSyncAIJobRunAt(payload syncAIJobRequest) (*time.Time, error) {
+	if payload.RunAt == nil || strings.TrimSpace(*payload.RunAt) == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(*payload.RunAt))
+	if err != nil {
+		return nil, fmt.Errorf("runAt must be RFC3339")
+	}
+	utc := parsed.UTC()
+	return &utc, nil
 }
 
 // 处理Agentinspect发布任务Readiness接口，解析请求参数并调用应用状态或存储层完成业务动作。

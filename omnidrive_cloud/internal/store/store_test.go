@@ -73,6 +73,16 @@ func TestAIJobSelectColumnsForSummaryOmitsHeavyPayloads(t *testing.T) {
 	}
 }
 
+func TestAIJobAccountIDExpressionUsesRootAndNestedFallback(t *testing.T) {
+	expression := aiJobAccountIDExpression("ai_jobs")
+	if !strings.Contains(expression, "ai_jobs.input_payload->>'accountId'") {
+		t.Fatalf("expected root accountId lookup, got %q", expression)
+	}
+	if !strings.Contains(expression, "ai_jobs.input_payload->'publishPayload'->'targets'->0->>'accountId'") {
+		t.Fatalf("expected nested publish target fallback, got %q", expression)
+	}
+}
+
 func TestAdminAIJobListSelectColumnsStayLightweight(t *testing.T) {
 	if strings.Contains(adminAIJobListSelectColumns, "input_payload") {
 		t.Fatalf("expected admin AI job list columns to omit input payload, got %q", adminAIJobListSelectColumns)

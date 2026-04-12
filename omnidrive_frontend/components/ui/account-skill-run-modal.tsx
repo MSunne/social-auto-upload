@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 import {
   CalendarClock,
   Check,
@@ -8,8 +8,6 @@ import {
   Clock,
   Loader2,
   Plus,
-  Repeat,
-  Repeat1,
   Search,
   Sparkles,
   Trash2,
@@ -156,12 +154,6 @@ function TimeInput({
   const [hours, setHours] = useState(initialParts[0] || "00");
   const [minutes, setMinutes] = useState(initialParts[1] || "00");
 
-  useEffect(() => {
-    const parts = (normalizeTimeOfDay(value) || "00:00").slice(0, 5).split(":");
-    setHours(parts[0] || "00");
-    setMinutes(parts[1] || "00");
-  }, [value]);
-
   const handleHourBlur = () => {
     let num = parseInt(hours, 10);
     if (isNaN(num)) num = 0;
@@ -262,14 +254,14 @@ export function AccountSkillRunModal({
               Account Skill Run
             </p>
             <h3 className="mt-3 text-2xl font-semibold text-white">
-              {isEditing ? "修改发布时间" : "为账号创建任务"}
+              {isEditing ? "修改发布时间" : "为账号创建计划"}
             </h3>
             <p className="mt-2 text-sm leading-6 text-text-secondary">
               当前账号是{" "}
               <span className="font-medium text-white">@{accountName}</span>。
               {isEditing
-                ? " 这次只修改当前账号任务的发布时间，不会影响别的账号。"
-                : " 先选技能，再给这次任务一个发布时间。"}
+                ? " 这次只修改当前账号计划的发布时间，不会影响别的账号。"
+                : " 先选技能，再给这次 AI 生成计划一个发布时间。"}
             </p>
           </div>
           <button
@@ -430,7 +422,7 @@ export function AccountSkillRunModal({
                           <div className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan/15 text-xs font-bold text-cyan">
                             {index + 1}
                           </div>
-                          <span className="text-[15px] font-semibold text-white">任务时段配置</span>
+                          <span className="text-[15px] font-semibold text-white">计划时段配置</span>
                         </div>
                         {!isEditing && scheduleSlots.length > 1 ? (
                           <button
@@ -452,7 +444,7 @@ export function AccountSkillRunModal({
                         <div className="flex items-center justify-between gap-4 p-4 transition-all hover:bg-white/[0.02]">
                           <div>
                             <p className="text-sm font-medium text-white">预期发布时间</p>
-                            <p className="mt-0.5 text-xs text-text-muted">指定任务计划发布的具体时刻</p>
+                            <p className="mt-0.5 text-xs text-text-muted">指定账号计划发布的具体时刻</p>
                           </div>
                           <TimeInput
                             value={slot.timeOfDay}

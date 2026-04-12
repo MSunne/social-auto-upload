@@ -147,6 +147,38 @@ func TestBuildVideoOutputPayloadPreservesExecutionState(t *testing.T) {
 	}
 }
 
+func TestDigitalHumanAutoRetryCountFromPayload(t *testing.T) {
+	raw := mustJSON(map[string]any{
+		"digitalHumanRetryCount": 1,
+	})
+
+	if got := digitalHumanAutoRetryCountFromPayload(raw); got != 1 {
+		t.Fatalf("expected digitalHumanRetryCount=1, got %d", got)
+	}
+}
+
+func TestShouldAutoRetryDigitalHumanFailureStopsAfterOneRetry(t *testing.T) {
+	job := &domain.AIJob{
+		OutputPayload: mustJSON(map[string]any{
+			"digitalHumanRetryCount": 1,
+		}),
+	}
+	task := &domain.DigitalHumanTask{Status: "failed"}
+
+	if shouldAutoRetryDigitalHumanFailure(job, task, "digital human api POST /api/video/generate/async returned 503") {
+		t.Fatalf("expected digital human auto retry to stop after one retry")
+	}
+}
+
+func TestShouldAutoRetryDigitalHumanFailureRejectsValidationErrors(t *testing.T) {
+	job := &domain.AIJob{}
+	task := &domain.DigitalHumanTask{Status: "failed"}
+
+	if shouldAutoRetryDigitalHumanFailure(job, task, "digital human api POST /api/video/generate/async returned 422: invalid params") {
+		t.Fatalf("expected validation failure to stop auto retry")
+	}
+}
+
 func TestVideoPreprocessEnabled(t *testing.T) {
 	if !videoPreprocessEnabled(nil) {
 		t.Fatalf("expected preprocess enabled by default")

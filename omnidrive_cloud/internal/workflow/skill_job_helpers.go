@@ -19,6 +19,36 @@ type PublishTarget struct {
 	AccountName string
 }
 
+func buildPublishTargets(targets []PublishTarget) ([]map[string]any, []string) {
+	publishTargets := make([]map[string]any, 0, len(targets))
+	accountIDs := make([]string, 0, len(targets))
+	for _, target := range targets {
+		item := map[string]any{
+			"platform":    strings.TrimSpace(target.Platform),
+			"accountName": strings.TrimSpace(target.AccountName),
+		}
+		if target.AccountID != nil {
+			if accountID := strings.TrimSpace(*target.AccountID); accountID != "" {
+				item["accountId"] = accountID
+				accountIDs = append(accountIDs, accountID)
+			}
+		}
+		publishTargets = append(publishTargets, item)
+	}
+	return publishTargets, accountIDs
+}
+
+func applyPublishTargetAccountIDs(payload map[string]any, accountIDs []string) {
+	switch len(accountIDs) {
+	case 0:
+		return
+	case 1:
+		payload["accountId"] = accountIDs[0]
+	default:
+		payload["accountIds"] = accountIDs
+	}
+}
+
 const (
 	defaultSkillVideoAspectRatio     = "16:9"
 	defaultSkillVideoResolution      = "1280x720"
@@ -232,20 +262,11 @@ func BuildSkillAIJobPayload(
 		}
 	}
 
-	if jobType != "chat" && len(targets) > 0 {
-		publishTargets := make([]map[string]any, 0, len(targets))
-		accountIDs := make([]string, 0, len(targets))
-		for _, target := range targets {
-			item := map[string]any{
-				"platform":    strings.TrimSpace(target.Platform),
-				"accountName": strings.TrimSpace(target.AccountName),
-			}
-			if target.AccountID != nil && strings.TrimSpace(*target.AccountID) != "" {
-				accountID := strings.TrimSpace(*target.AccountID)
-				item["accountId"] = accountID
-				accountIDs = append(accountIDs, accountID)
-			}
-			publishTargets = append(publishTargets, item)
+	if len(targets) > 0 {
+		publishTargets, accountIDs := buildPublishTargets(targets)
+		applyPublishTargetAccountIDs(payload, accountIDs)
+		if jobType == "chat" {
+			return json.Marshal(payload)
 		}
 		payload["publishPayload"] = map[string]any{
 			"title":                 skill.Name,
@@ -256,11 +277,6 @@ func BuildSkillAIJobPayload(
 			"targets":               publishTargets,
 			"runAt":                 publishAt.UTC().Format(time.RFC3339),
 			"requestedRun":          publishAt.UTC().Format(time.RFC3339),
-		}
-		if len(accountIDs) == 1 {
-			payload["accountId"] = accountIDs[0]
-		} else if len(accountIDs) > 1 {
-			payload["accountIds"] = accountIDs
 		}
 	}
 
@@ -349,14 +365,8 @@ func buildDigitalHumanSkillAIJobPayload(
 		payload["digitalHumanConfig"].(map[string]any)["goodsAsset"] = buildDigitalHumanSkillAssetPayload(*goodsAsset)
 	}
 	if len(targets) > 0 {
-		publishTargets := make([]map[string]any, 0, len(targets))
-		for _, target := range targets {
-			publishTargets = append(publishTargets, map[string]any{
-				"accountId":   target.AccountID,
-				"platform":    target.Platform,
-				"accountName": target.AccountName,
-			})
-		}
+		publishTargets, accountIDs := buildPublishTargets(targets)
+		applyPublishTargetAccountIDs(payload, accountIDs)
 		payload["publishPayload"] = map[string]any{
 			"targets":               publishTargets,
 			"contentPromptTemplate": BuildSkillPublishPromptTemplate(skill),

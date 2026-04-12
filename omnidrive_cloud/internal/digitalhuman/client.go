@@ -19,14 +19,12 @@ type Client struct {
 }
 
 type GenerateRequest struct {
-	CharacterAssetPath string  `json:"character_asset_path"`
-	Mode               string  `json:"mode"`
-	GoodsAssetPath     *string `json:"goods_asset_path,omitempty"`
-	GoodsText          string  `json:"goods_text"`
-	GoodsTitle         *string `json:"goods_title,omitempty"`
-	LLMModel           *string `json:"llm_model,omitempty"`
-	Source             string  `json:"source"`
-	RefAudio           string  `json:"ref_audio"`
+	Text           string         `json:"text"`
+	LLMModel       *string        `json:"llm_model,omitempty"`
+	Mode           string         `json:"mode"`
+	Title          *string        `json:"title,omitempty"`
+	RefAudio       *string        `json:"ref_audio,omitempty"`
+	TemplateParams map[string]any `json:"template_params,omitempty"`
 }
 
 type GenerateResponse struct {
@@ -47,7 +45,7 @@ type RemoteTask struct {
 	TaskType      string         `json:"task_type"`
 	Status        string         `json:"status"`
 	Progress      *TaskProgress  `json:"progress"`
-	Result        map[string]any `json:"result"`
+	Result        any            `json:"result"`
 	Error         *string        `json:"error"`
 	RequestParams map[string]any `json:"request_params"`
 }
@@ -78,12 +76,12 @@ func NewClient(cfg config.Config) *Client {
 	}
 }
 
-func (c *Client) GenerateVideo(ctx context.Context, req GenerateRequest) (*GenerateResponse, []byte, error) {
+func (c *Client) GenerateVideoAsync(ctx context.Context, req GenerateRequest) (*GenerateResponse, []byte, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, nil, err
 	}
-	respBody, err := c.doJSON(ctx, http.MethodPost, "/api/digital-human-flow/step3-generate-video", body)
+	respBody, err := c.doJSON(ctx, http.MethodPost, "/api/video/generate/async", body)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -102,7 +100,7 @@ func (c *Client) GetTask(ctx context.Context, taskID string) (*RemoteTask, []byt
 	if strings.TrimSpace(taskID) == "" {
 		return nil, nil, fmt.Errorf("task id is required")
 	}
-	respBody, err := c.doJSON(ctx, http.MethodGet, "/api/digital-human-flow/step4-check-status/"+url.PathEscape(strings.TrimSpace(taskID)), nil)
+	respBody, err := c.doJSON(ctx, http.MethodGet, "/api/tasks/"+url.PathEscape(strings.TrimSpace(taskID)), nil)
 	if err != nil {
 		return nil, nil, err
 	}

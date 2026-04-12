@@ -103,6 +103,8 @@ class DummyAITaskManager:
             task["prompt"] = kwargs["prompt"]
         if "payload" in kwargs and kwargs["payload"] is not None:
             task["payload"] = kwargs["payload"]
+        if "linked_publish_task_uuid" in kwargs and kwargs["linked_publish_task_uuid"] is not None:
+            task["linkedPublishTaskUuid"] = kwargs["linked_publish_task_uuid"]
         if message:
             task["message"] = message
         return task
@@ -878,6 +880,90 @@ class OmniDriveBridgeTests(unittest.TestCase):
         )
         self.assertEqual(
             publish_task_manager.tasks["publish-task-1"]["platformPublishAt"],
+            "2099-01-01 19:48:19",
+        )
+
+    def test_import_remote_ai_jobs_uses_cloud_publish_binding_and_schedule_times(self):
+        publish_task_manager = DummyPublishTaskManager(worker_count=2)
+        ai_task_manager = DummyAITaskManager()
+        bridge = self.make_bridge(
+            publish_task_manager=publish_task_manager,
+            ai_task_manager=ai_task_manager,
+        )
+
+        ai_task_manager.tasks["cloud-job-bound"] = {
+            "taskUuid": "cloud-job-bound",
+            "source": "account_skill_binding",
+            "jobType": "video",
+            "modelName": "veo",
+            "skillId": "skill-old",
+            "prompt": "旧任务",
+            "status": "generating",
+            "message": "执行中",
+            "payload": {"publishPayload": {"title": "旧标题"}},
+            "cloudJobId": "cloud-job-bound",
+            "cloudStatus": "running",
+            "linkedPublishTaskUuid": None,
+            "artifactRefs": [],
+        }
+        publish_task_manager.tasks["publish-task-cloud"] = {
+            "taskUuid": "publish-task-cloud",
+            "source": "omnidrive_ai",
+            "status": "scheduled",
+            "message": "等待 AI 产物定时发布",
+            "runAt": "2099-01-02 17:30:01",
+            "platformPublishAt": "2099-01-02 17:30:01",
+        }
+
+        def fake_request(method, path, *, params=None, payload=None):
+            if method == "GET" and path == "/api/v1/agent/ai-jobs/device-1":
+                return [
+                    {
+                        "job": {
+                            "id": "cloud-job-bound",
+                            "status": "success",
+                            "source": "account_skill_binding",
+                            "jobType": "video",
+                            "modelName": "veo-updated",
+                            "skillId": "skill-new",
+                            "prompt": "新任务",
+                            "message": "AI 视频生成完成",
+                            "inputPayload": {
+                                "publishPayload": {
+                                    "title": "酒馆的介绍视频",
+                                    "targets": [{"platform": "抖音", "accountName": "光001"}],
+                                }
+                            },
+                            "localPublishTaskId": "publish-task-cloud",
+                        },
+                        "artifacts": [{"artifactKey": "video-1", "artifactType": "video"}],
+                        "scheduleTimes": {
+                            "createdAt": "2099-01-01T11:00:00Z",
+                            "updatedAt": "2099-01-01T11:45:19Z",
+                            "generateAt": "2099-01-01T11:45:19Z",
+                            "publishAt": "2099-01-01T11:48:19Z",
+                            "timezone": "Asia/Shanghai",
+                            "timeOfDay": "19:48:19",
+                            "repeatDaily": False,
+                            "generationLeadMinutes": 3,
+                        },
+                    }
+                ]
+            raise AssertionError(f"unexpected request {method} {path}")
+
+        with mock.patch.object(bridge, "_request", side_effect=fake_request), \
+             mock.patch.object(bridge, "_download_ai_artifacts", side_effect=AssertionError("should not download artifacts when cloud publish task exists")), \
+             mock.patch.object(bridge, "_enqueue_publish_from_ai_task", side_effect=AssertionError("should not enqueue local publish when cloud publish task exists")):
+            imported = bridge._import_remote_ai_jobs()
+
+        self.assertEqual(imported, 0)
+        updated = ai_task_manager.tasks["cloud-job-bound"]
+        self.assertEqual(updated["linkedPublishTaskUuid"], "publish-task-cloud")
+        self.assertEqual(updated["payload"]["scheduleTimes"]["publishAt"], "2099-01-01T11:48:19Z")
+        self.assertEqual(updated["payload"]["publishAt"], "2099-01-01T11:48:19Z")
+        self.assertEqual(updated["payload"]["publishPayload"]["runAt"], "2099-01-01T11:48:19Z")
+        self.assertEqual(
+            publish_task_manager.tasks["publish-task-cloud"]["runAt"],
             "2099-01-01 19:48:19",
         )
 
@@ -1830,6 +1916,53 @@ class OmniDriveAITaskManagerRecoveryTests(unittest.TestCase):
 
         self.assertEqual(updated["status"], "publish_pending")
         self.assertEqual(updated["cloudStatus"], "success")
+
+    def test_ai_task_manager_serializes_cloud_schedule_times(self):
+        temp_dir = Path(tempfile.mkdtemp(prefix="ai-task-manager-schedule-times-"))
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "database.db"
+        manager = OmniDriveAITaskManager(db_path)
+        manager.init_db()
+
+        schedule_times = {
+            "createdAt": "2099-01-01T11:00:00Z",
+            "updatedAt": "2099-01-01T11:45:19Z",
+            "generateAt": "2099-01-01T11:45:19Z",
+            "publishAt": "2099-01-01T11:48:19Z",
+            "timezone": "Asia/Shanghai",
+            "timeOfDay": "19:48:19",
+            "repeatDaily": False,
+            "generationLeadMinutes": 3,
+        }
+        manager.import_remote_task(
+            {
+                "taskUuid": "cloud-ai-schedule-times",
+                "source": "account_skill_binding",
+                "jobType": "video",
+                "modelName": "veo-3.1-fast-fl",
+                "prompt": "生成玩具短视频",
+                "status": "scheduled",
+                "cloudStatus": "scheduled",
+                "message": "等待定时执行",
+                "payload": {
+                    "scheduleTimes": schedule_times,
+                    "publishPayload": {
+                        "title": "排程视频",
+                    },
+                },
+                "cloudJobId": "cloud-job-schedule-times",
+            }
+        )
+
+        task = manager.get_task("cloud-ai-schedule-times")
+
+        self.assertEqual(task["scheduleTimes"]["publishAt"], "2099-01-01T11:48:19Z")
+        self.assertEqual(task["createdAt"], "2099-01-01T11:00:00Z")
+        self.assertEqual(task["updatedAt"], "2099-01-01T11:45:19Z")
+        self.assertEqual(task["generateAt"], "2099-01-01T11:45:19Z")
+        self.assertEqual(task["publishAt"], "2099-01-01T11:48:19Z")
+        self.assertIsNotNone(task["localCreatedAt"])
+        self.assertIsNotNone(task["localUpdatedAt"])
 
     def test_publish_task_manager_forces_single_worker(self):
         temp_dir = Path(tempfile.mkdtemp(prefix="publish-task-manager-single-worker-"))

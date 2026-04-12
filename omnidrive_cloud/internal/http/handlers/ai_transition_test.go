@@ -89,6 +89,28 @@ func TestBuildAIJobBridgeStateWaitingRecharge(t *testing.T) {
 	}
 }
 
+func TestExtractAIJobPrimaryTargetFallsBackToPublishTarget(t *testing.T) {
+	raw, err := json.Marshal(map[string]any{
+		"publishPayload": map[string]any{
+			"targets": []map[string]any{
+				{
+					"accountId":   "acc-1",
+					"platform":    "抖音",
+					"accountName": "测试账号",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	target := extractAIJobPrimaryTarget(raw)
+	if target.AccountID != "acc-1" || target.Platform != "抖音" || target.AccountName != "测试账号" {
+		t.Fatalf("unexpected target: %#v", target)
+	}
+}
+
 func TestApplySkillWorkflowPricingSnapshotSupportsItemizedMultiples(t *testing.T) {
 	durationSeconds := 30
 	raw, err := applySkillWorkflowPricingSnapshot(nil, &domain.ProductSkill{

@@ -7,6 +7,8 @@ import {
   ArrowDown,
   ArrowUp,
   Check,
+  ChevronDown,
+  ChevronUp,
   Cpu,
   FileText,
   Image as ImageIcon,
@@ -460,6 +462,7 @@ export function SkillEditorModal({
   const [coverPromptWarningOpen, setCoverPromptWarningOpen] = useState(false);
   const [coverPromptUnlockCountdown, setCoverPromptUnlockCountdown] = useState(0);
   const [coverPromptUnlocked, setCoverPromptUnlocked] = useState(false);
+  const [digitalHumanModelExpanded, setDigitalHumanModelExpanded] = useState(false);
   const draftCreationRef = useRef<Promise<Skill> | null>(null);
   const currentSkillId = skill?.id ?? draftSkillId;
   const isDigitalHumanOutputType = isDigitalHumanOutput(form.outputType);
@@ -1188,64 +1191,7 @@ export function SkillEditorModal({
                       </p>
                     </label>
 
-                    {isDigitalHumanOutputType ? (
-                      <div className="space-y-4 rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
-                        <div className="space-y-1">
-                          <span className="text-sm font-medium text-white">数字人口播配置</span>
-                          <p className="text-xs leading-5 text-text-secondary">
-                            素材和文案将保存在技能自身，账号执行时会直接按当前配置创建数字人任务。
-                          </p>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          {[
-                            { value: "digital" as const, label: "带货模式", icon: <Package className="h-3.5 w-3.5" /> },
-                            { value: "customize" as const, label: "口播模式", icon: <Mic className="h-3.5 w-3.5" /> },
-                          ].map((option) => (
-                            <button
-                              key={option.value}
-                              type="button"
-                              onClick={() => handleDigitalHumanModeChange(option.value)}
-                              className={cn(
-                                "inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-sm transition-all",
-                                form.digitalHumanMode === option.value
-                                  ? "border-emerald-400/35 bg-emerald-400/12 text-white"
-                                  : "border-white/10 bg-white/[0.04] text-text-secondary hover:border-white/20 hover:text-white",
-                              )}
-                            >
-                              {option.icon}
-                              {option.label}
-                            </button>
-                          ))}
-                        </div>
 
-                        {form.digitalHumanMode === "digital" ? (
-                          <label className="space-y-2.5">
-                            <span className="text-sm font-medium text-white">产品标题</span>
-                            <input
-                              value={form.digitalHumanGoodsTitle}
-                              onChange={(event) =>
-                                setForm((current) => ({ ...current, digitalHumanGoodsTitle: event.target.value }))
-                              }
-                              placeholder="例如：老廖牌香薰"
-                              className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
-                            />
-                          </label>
-                        ) : null}
-
-                        <label className="space-y-2.5">
-                          <span className="text-sm font-medium text-white">口播文案</span>
-                          <textarea
-                            value={form.digitalHumanGoodsText}
-                            onChange={(event) =>
-                              setForm((current) => ({ ...current, digitalHumanGoodsText: event.target.value }))
-                            }
-                            rows={5}
-                            placeholder="填写数字人口播文案，系统会按这段文案生成最终视频。"
-                            className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
-                          />
-                        </label>
-                      </div>
-                    ) : null}
 
                     {isVideoTextOutput(form.outputType) ? (
                       <div className="space-y-3 rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
@@ -1308,9 +1254,65 @@ export function SkillEditorModal({
                     ) : null}
                   </SectionCard>
 
+                  {isDigitalHumanOutputType ? (
+                    <SectionCard
+                      title="口播设定"
+                      description="配置数字人口播模式、产品信息和文案脚本。素材和文案将保存在技能自身，账号执行时会直接按当前配置创建数字人任务。"
+                    >
+                      <div className="flex flex-wrap gap-2">
+                        {[
+                          { value: "digital" as const, label: "带货模式", icon: <Package className="h-3.5 w-3.5" /> },
+                          { value: "customize" as const, label: "口播模式", icon: <Mic className="h-3.5 w-3.5" /> },
+                        ].map((option) => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => handleDigitalHumanModeChange(option.value)}
+                            className={cn(
+                              "inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-sm transition-all",
+                              form.digitalHumanMode === option.value
+                                ? "border-emerald-400/35 bg-emerald-400/12 text-white"
+                                : "border-white/10 bg-white/[0.04] text-text-secondary hover:border-white/20 hover:text-white",
+                            )}
+                          >
+                            {option.icon}
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {form.digitalHumanMode === "digital" ? (
+                        <label className="space-y-2.5">
+                          <span className="text-sm font-medium text-white">产品标题</span>
+                          <input
+                            value={form.digitalHumanGoodsTitle}
+                            onChange={(event) =>
+                              setForm((current) => ({ ...current, digitalHumanGoodsTitle: event.target.value }))
+                            }
+                            placeholder="例如：老廖牌香薰"
+                            className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
+                          />
+                        </label>
+                      ) : null}
+
+                      <label className="space-y-2.5">
+                        <span className="text-sm font-medium text-white">口播文案</span>
+                        <textarea
+                          value={form.digitalHumanGoodsText}
+                          onChange={(event) =>
+                            setForm((current) => ({ ...current, digitalHumanGoodsText: event.target.value }))
+                          }
+                          rows={5}
+                          placeholder="填写数字人口播文案，系统会按这段文案生成最终视频。"
+                          className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
+                        />
+                      </label>
+                    </SectionCard>
+                  ) : null}
+
                   <SectionCard
-                    title="模型与时长"
-                    description="选择最终执行模型并设置视频时长。模型和时长紧密耦合，在同一区域方便对照。"
+                    title={isDigitalHumanOutputType ? "执行模型" : "模型与时长"}
+                    description={isDigitalHumanOutputType ? "选择数字人口播的执行模型。系统已根据当前模式推荐最优模型，通常无需手动更换。" : "选择最终执行模型并设置视频时长。模型和时长紧密耦合，在同一区域方便对照。"}
                   >
                     {isDigitalHumanOutputType ? (
                       digitalHumanModelsLoading ? (
@@ -1319,42 +1321,102 @@ export function SkillEditorModal({
                         <div className="rounded-[24px] border border-dashed border-white/10 bg-white/[0.03] px-5 py-12 text-center text-sm text-text-secondary">
                           当前没有可用的数字人模型。
                         </div>
-                      ) : (
-                        <div className="grid gap-4 lg:grid-cols-2">
-                          {availableDigitalHumanModels.map((model) => {
-                            const selected = model.id === form.modelName;
+                      ) : !digitalHumanModelExpanded ? (
+                        /* ── Collapsed: show only selected model summary ── */
+                        <div className="space-y-3">
+                          {(() => {
+                            const activeModel = availableDigitalHumanModels.find((m) => m.id === form.modelName);
                             return (
-                              <button
-                                key={model.id}
-                                type="button"
-                                onClick={() =>
-                                  setForm((current) => ({ ...current, modelName: model.id }))
-                                }
-                                className={cn(
-                                  "group relative rounded-[26px] border p-5 text-left transition-all duration-200",
-                                  selected
-                                    ? "border-emerald-400/45 bg-[linear-gradient(160deg,rgba(16,185,129,0.14),rgba(12,18,32,0.08))] shadow-[0_0_0_1px_rgba(16,185,129,0.18),0_18px_45px_rgba(16,185,129,0.12)]"
-                                    : "border-white/10 bg-white/[0.04] hover:border-white/18 hover:bg-white/[0.06]",
-                                )}
-                              >
+                              <div className="rounded-[26px] border border-emerald-400/45 bg-[linear-gradient(160deg,rgba(16,185,129,0.14),rgba(12,18,32,0.08))] p-5 shadow-[0_0_0_1px_rgba(16,185,129,0.18),0_18px_45px_rgba(16,185,129,0.12)]">
                                 <div className="flex items-start justify-between gap-3">
                                   <div className="min-w-0">
                                     <div className="flex flex-wrap items-center gap-2">
-                                      <p className="text-base font-semibold text-white">{model.id}</p>
-                                      {model.isRecommended ? <MiniPill>推荐</MiniPill> : null}
-                                      {model.isCurrent ? <MiniPill>当前服务模型</MiniPill> : null}
+                                      <p className="text-base font-semibold text-white">{form.modelName || "未选择"}</p>
+                                      {activeModel?.isRecommended ? (
+                                        <span className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/12 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">✦ 推荐</span>
+                                      ) : null}
+                                      {activeModel?.isCurrent ? (
+                                        <span className="inline-flex items-center rounded-full border border-white/10 bg-white/6 px-2.5 py-0.5 text-[11px] font-semibold text-text-secondary">当前服务模型</span>
+                                      ) : null}
                                     </div>
                                     <p className="mt-2 text-sm leading-6 text-text-secondary">
-                                      {model.isRecommended
-                                        ? "推荐模型，适合作为数字人口播默认执行模型。"
-                                        : "可作为数字人口播执行模型，由技能在保存时固定。"}
+                                      {activeModel?.isRecommended
+                                        ? "系统推荐模型，适合作为当前模式的默认执行模型。"
+                                        : "已固定为该模型，保存后作为数字人口播默认执行模型。"}
                                     </p>
                                   </div>
-                                  <SelectionBadge selected={selected} />
+                                  <SelectionBadge selected />
                                 </div>
-                              </button>
+                              </div>
                             );
-                          })}
+                          })()}
+                          <button
+                            type="button"
+                            onClick={() => setDigitalHumanModelExpanded(true)}
+                            className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-medium text-text-secondary transition-all hover:border-white/20 hover:text-white"
+                          >
+                            <ChevronDown className="h-3.5 w-3.5" />
+                            更换模型（共 {availableDigitalHumanModels.length} 个）
+                          </button>
+                        </div>
+                      ) : (
+                        /* ── Expanded: full model list with recommended first ── */
+                        <div className="space-y-3">
+                          <div className="grid gap-4 lg:grid-cols-2">
+                            {[...availableDigitalHumanModels]
+                              .sort((a, b) => {
+                                if (a.isRecommended && !b.isRecommended) return -1;
+                                if (!a.isRecommended && b.isRecommended) return 1;
+                                if (a.isCurrent && !b.isCurrent) return -1;
+                                if (!a.isCurrent && b.isCurrent) return 1;
+                                return 0;
+                              })
+                              .map((model) => {
+                              const selected = model.id === form.modelName;
+                              return (
+                                <button
+                                  key={model.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setForm((current) => ({ ...current, modelName: model.id }));
+                                    setDigitalHumanModelExpanded(false);
+                                  }}
+                                  className={cn(
+                                    "group relative rounded-[26px] border p-5 text-left transition-all duration-200",
+                                    selected
+                                      ? "border-emerald-400/45 bg-[linear-gradient(160deg,rgba(16,185,129,0.14),rgba(12,18,32,0.08))] shadow-[0_0_0_1px_rgba(16,185,129,0.18),0_18px_45px_rgba(16,185,129,0.12)]"
+                                      : "border-white/10 bg-white/[0.04] hover:border-white/18 hover:bg-white/[0.06]",
+                                  )}
+                                >
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <p className="text-base font-semibold text-white">{model.id}</p>
+                                        {model.isRecommended ? (
+                                          <span className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/12 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">✦ 推荐</span>
+                                        ) : null}
+                                        {model.isCurrent ? <MiniPill>当前服务模型</MiniPill> : null}
+                                      </div>
+                                      <p className="mt-2 text-sm leading-6 text-text-secondary">
+                                        {model.isRecommended
+                                          ? "推荐模型，适合作为数字人口播默认执行模型。"
+                                          : "可作为数字人口播执行模型，由技能在保存时固定。"}
+                                      </p>
+                                    </div>
+                                    <SelectionBadge selected={selected} />
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setDigitalHumanModelExpanded(false)}
+                            className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-medium text-text-secondary transition-all hover:border-white/20 hover:text-white"
+                          >
+                            <ChevronUp className="h-3.5 w-3.5" />
+                            收起模型列表
+                          </button>
                         </div>
                       )
                     ) : modelsLoading ? (
@@ -1429,33 +1491,51 @@ export function SkillEditorModal({
                       </div>
                     )}
 
-                    <div className="rounded-[24px] border border-white/10 bg-[#0d1729] p-4">
-                      <div className="flex items-center gap-2 text-sm font-medium text-white">
-                        <Cpu className="h-4 w-4 text-cyan" />
-                        当前模型
+                    {!isDigitalHumanOutputType ? (
+                      <div className="rounded-[24px] border border-white/10 bg-[#0d1729] p-4">
+                        <div className="flex items-center gap-2 text-sm font-medium text-white">
+                          <Cpu className="h-4 w-4 text-cyan" />
+                          当前模型
+                        </div>
+                        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                          <SummaryLine
+                            label="执行模型"
+                            value={visibleModelName}
+                          />
+                          <SummaryLine
+                            label="单次扣费"
+                            value={formatSkillBillingAmount(selectedModel)}
+                          />
+                        </div>
+                        <p className="mt-3 text-xs leading-5 text-text-secondary">
+                          创建前即可看到当前技能单次预计扣费，实际扣费以任务入账结果为准。
+                        </p>
                       </div>
-                      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                        <SummaryLine
-                          label="当前模型"
-                          value={visibleModelName}
-                        />
-                        <SummaryLine
-                          label={isDigitalHumanOutputType ? "默认模式" : "单次扣费"}
-                          value={
-                            isDigitalHumanOutputType
-                              ? form.digitalHumanMode === "digital"
-                                ? "带货模式"
-                                : "口播模式"
-                              : formatSkillBillingAmount(selectedModel)
-                          }
-                        />
+                    ) : null}
+
+                    {isDigitalHumanOutputType ? (
+                      <div className="flex items-center justify-between rounded-[24px] border border-white/10 bg-[#0d1729] p-4">
+                        <div>
+                          <p className="text-sm font-medium text-white">技能状态</p>
+                          <p className="mt-1 text-xs text-text-secondary">关闭后保留配置，账号侧不能继续使用。</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setForm((current) => ({ ...current, isEnabled: !current.isEnabled }))}
+                          className={cn(
+                            "relative inline-flex h-7 w-12 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20",
+                            form.isEnabled ? "bg-emerald-500" : "bg-white/15",
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-lg ring-0 transition-transform duration-200",
+                              form.isEnabled ? "translate-x-5" : "translate-x-0.5",
+                            )}
+                          />
+                        </button>
                       </div>
-                      <p className="mt-3 text-xs leading-5 text-text-secondary">
-                        {isDigitalHumanOutputType
-                          ? "默认模型由 Admin 配置提供，技能保存后仍可以固定为你当前选择的数字人模型。"
-                          : "创建前即可看到当前技能单次预计扣费，实际扣费以任务入账结果为准。"}
-                      </p>
-                    </div>
+                    ) : null}
 
                     {isVideoTextOutput(form.outputType) ? (
                       <div className="space-y-3">
@@ -1511,52 +1591,54 @@ export function SkillEditorModal({
                     ) : null}
                   </SectionCard>
 
-                  <SectionCard
-                    title="执行方式"
-                    description="决定技能是否生效、是否启用简介 AI 优化和分镜优化。"
-                  >
-                    <div className="grid gap-4 lg:grid-cols-3">
-                      <SwitchCard
-                        title="简介 AI 优化"
-                        description="开启后，在每次发布前自动改写简介；关闭后沿用你填写的原始简介。"
-                        enabled={form.publishIntroEnabled}
-                        enabledLabel="已启用"
-                        disabledLabel="已关闭"
-                        accent="cyan"
-                        onToggle={() =>
-                          setForm((current) => ({
-                            ...current,
-                            publishIntroEnabled: !current.publishIntroEnabled,
-                          }))
-                        }
-                      />
-                      <SwitchCard
-                        title="AI 分镜优化"
-                        description="开启后，系统会先统一优化分镜、任务说明和发布简介，再交给最终模型。"
-                        enabled={form.storyboardEnabled}
-                        enabledLabel="已启用"
-                        disabledLabel="已关闭"
-                        accent="accent"
-                        onToggle={() =>
-                          setForm((current) => ({
-                            ...current,
-                            storyboardEnabled: !current.storyboardEnabled,
-                          }))
-                        }
-                      />
-                      <SwitchCard
-                        title="技能状态"
-                        description="关闭后保留配置，但账号侧不能继续用这条技能创建新任务。"
-                        enabled={form.isEnabled}
-                        enabledLabel="已启用"
-                        disabledLabel="已暂停"
-                        accent="emerald"
-                        onToggle={() =>
-                          setForm((current) => ({ ...current, isEnabled: !current.isEnabled }))
-                        }
-                      />
-                    </div>
-                  </SectionCard>
+                  {!isDigitalHumanOutputType ? (
+                    <SectionCard
+                      title="执行方式"
+                      description="决定技能是否生效、是否启用简介 AI 优化和分镜优化。"
+                    >
+                      <div className="grid gap-4 lg:grid-cols-3">
+                        <SwitchCard
+                          title="简介 AI 优化"
+                          description="开启后，在每次发布前自动改写简介；关闭后沿用你填写的原始简介。"
+                          enabled={form.publishIntroEnabled}
+                          enabledLabel="已启用"
+                          disabledLabel="已关闭"
+                          accent="cyan"
+                          onToggle={() =>
+                            setForm((current) => ({
+                              ...current,
+                              publishIntroEnabled: !current.publishIntroEnabled,
+                            }))
+                          }
+                        />
+                        <SwitchCard
+                          title="AI 分镜优化"
+                          description="开启后，系统会先统一优化分镜、任务说明和发布简介，再交给最终模型。"
+                          enabled={form.storyboardEnabled}
+                          enabledLabel="已启用"
+                          disabledLabel="已关闭"
+                          accent="accent"
+                          onToggle={() =>
+                            setForm((current) => ({
+                              ...current,
+                              storyboardEnabled: !current.storyboardEnabled,
+                            }))
+                          }
+                        />
+                        <SwitchCard
+                          title="技能状态"
+                          description="关闭后保留配置，但账号侧不能继续用这条技能创建新任务。"
+                          enabled={form.isEnabled}
+                          enabledLabel="已启用"
+                          disabledLabel="已暂停"
+                          accent="emerald"
+                          onToggle={() =>
+                            setForm((current) => ({ ...current, isEnabled: !current.isEnabled }))
+                          }
+                        />
+                      </div>
+                    </SectionCard>
+                  ) : null}
 
 
                   <SectionCard
@@ -1574,24 +1656,26 @@ export function SkillEditorModal({
                           hint="口播模式和带货模式都必填，用于生成数字人形象。"
                           icon={<UserRound className="h-5 w-5 text-emerald-300" />}
                         >
-                          <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-emerald-400/30 bg-emerald-400/10 px-4 py-5 text-center transition-all hover:border-emerald-400/50 hover:bg-emerald-400/14">
-                            <div>
-                              <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-400/15 text-emerald-300">
-                                <Upload className="h-5 w-5" />
+                          {!digitalHumanCharacterAssets.length && !uploadingDigitalHumanCharacters.length ? (
+                            <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-emerald-400/30 bg-emerald-400/10 px-4 py-5 text-center transition-all hover:border-emerald-400/50 hover:bg-emerald-400/14">
+                              <div>
+                                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-400/15 text-emerald-300">
+                                  <Upload className="h-5 w-5" />
+                                </div>
+                                <p className="mt-3 text-sm font-semibold text-white">上传人物主图</p>
+                                <p className="mt-1 text-xs text-text-secondary">单张上传，替换前请先删除旧素材。</p>
                               </div>
-                              <p className="mt-3 text-sm font-semibold text-white">上传人物主图</p>
-                              <p className="mt-1 text-xs text-text-secondary">单张上传，替换前请先删除旧素材。</p>
-                            </div>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={(event) => {
-                                handleDigitalHumanAssetSelection(event.target.files, "digital_human_character_image");
-                                event.target.value = "";
-                              }}
-                            />
-                          </label>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(event) => {
+                                  handleDigitalHumanAssetSelection(event.target.files, "digital_human_character_image");
+                                  event.target.value = "";
+                                }}
+                              />
+                            </label>
+                          ) : null}
                           <div className="mt-4 space-y-3">
                             {digitalHumanCharacterAssets.map((asset) => (
                               <AssetRow
@@ -1624,24 +1708,26 @@ export function SkillEditorModal({
                           hint={form.digitalHumanMode === "digital" ? "带货模式必填，用于商品展示。" : "口播模式可留空。"}
                           icon={<Package className="h-5 w-5 text-cyan" />}
                         >
-                          <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-cyan/30 bg-cyan/10 px-4 py-5 text-center transition-all hover:border-cyan/50 hover:bg-cyan/14">
-                            <div>
-                              <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan/15 text-cyan">
-                                <Upload className="h-5 w-5" />
+                          {!digitalHumanGoodsAssets.length && !uploadingDigitalHumanGoods.length ? (
+                            <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-cyan/30 bg-cyan/10 px-4 py-5 text-center transition-all hover:border-cyan/50 hover:bg-cyan/14">
+                              <div>
+                                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan/15 text-cyan">
+                                  <Upload className="h-5 w-5" />
+                                </div>
+                                <p className="mt-3 text-sm font-semibold text-white">上传商品主图</p>
+                                <p className="mt-1 text-xs text-text-secondary">仅带货模式会真正执行到成片。</p>
                               </div>
-                              <p className="mt-3 text-sm font-semibold text-white">上传商品主图</p>
-                              <p className="mt-1 text-xs text-text-secondary">仅带货模式会真正执行到成片。</p>
-                            </div>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={(event) => {
-                                handleDigitalHumanAssetSelection(event.target.files, "digital_human_goods_image");
-                                event.target.value = "";
-                              }}
-                            />
-                          </label>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(event) => {
+                                  handleDigitalHumanAssetSelection(event.target.files, "digital_human_goods_image");
+                                  event.target.value = "";
+                                }}
+                              />
+                            </label>
+                          ) : null}
                           <div className="mt-4 space-y-3">
                             {digitalHumanGoodsAssets.map((asset) => (
                               <AssetRow
@@ -1674,24 +1760,26 @@ export function SkillEditorModal({
                           hint="口播模式和带货模式都必填，用于拟合音色。"
                           icon={<AudioLines className="h-5 w-5 text-amber-200" />}
                         >
-                          <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-amber-300/30 bg-amber-300/10 px-4 py-5 text-center transition-all hover:border-amber-300/50 hover:bg-amber-300/14">
-                            <div>
-                              <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-300/15 text-amber-200">
-                                <Upload className="h-5 w-5" />
+                          {!digitalHumanAudioAssets.length && !uploadingDigitalHumanAudios.length ? (
+                            <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-amber-300/30 bg-amber-300/10 px-4 py-5 text-center transition-all hover:border-amber-300/50 hover:bg-amber-300/14">
+                              <div>
+                                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-300/15 text-amber-200">
+                                  <Upload className="h-5 w-5" />
+                                </div>
+                                <p className="mt-3 text-sm font-semibold text-white">上传参考音频</p>
+                                <p className="mt-1 text-xs text-text-secondary">支持 mp3、wav、m4a、aac。</p>
                               </div>
-                              <p className="mt-3 text-sm font-semibold text-white">上传参考音频</p>
-                              <p className="mt-1 text-xs text-text-secondary">支持 mp3、wav、m4a、aac。</p>
-                            </div>
-                            <input
-                              type="file"
-                              accept="audio/*,.m4a,.mp3,.wav,.aac"
-                              className="hidden"
-                              onChange={(event) => {
-                                handleDigitalHumanAssetSelection(event.target.files, "digital_human_ref_audio");
-                                event.target.value = "";
-                              }}
-                            />
-                          </label>
+                              <input
+                                type="file"
+                                accept="audio/*,.m4a,.mp3,.wav,.aac"
+                                className="hidden"
+                                onChange={(event) => {
+                                  handleDigitalHumanAssetSelection(event.target.files, "digital_human_ref_audio");
+                                  event.target.value = "";
+                                }}
+                              />
+                            </label>
+                          ) : null}
                           <div className="mt-4 space-y-3">
                             {digitalHumanAudioAssets.map((asset) => (
                               <AssetRow
@@ -2256,6 +2344,9 @@ function AssetRow({
 }) {
   const image = isImageAsset(asset);
   const video = isVideoAsset(asset);
+  const audio = (asset.mimeType || "").startsWith("audio/") || asset.assetType.includes("audio");
+  const hasReorder = typeof onMoveUp === "function" || typeof onMoveDown === "function";
+  const hasSequence = typeof sequence === "number";
 
   return (
     <div className="overflow-hidden rounded-[22px] border border-white/10 bg-white/[0.04]">
@@ -2270,64 +2361,60 @@ function AssetRow({
           <video src={asset.publicUrl} controls preload="metadata" className="h-40 w-full bg-black object-cover" />
         </div>
       ) : null}
-      <div className="flex items-start justify-between gap-3 px-4 py-3">
+      {asset.publicUrl && audio ? (
+        <div className="border-b border-white/10 bg-black/20 px-4 py-3">
+          <audio src={asset.publicUrl} controls preload="metadata" className="h-8 w-full" />
+        </div>
+      ) : null}
+      <div className="px-4 py-3">
         <div className="flex min-w-0 items-start gap-3">
-          {!asset.publicUrl || (!image && !video) || typeof sequence !== "number" ? (
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/6">
-              {icon}
-            </div>
-          ) : (
-            <div className="flex h-11 min-w-11 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/6 px-3 text-xs font-semibold text-white">
-              #{sequence}
-            </div>
-          )}
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              {!asset.publicUrl || (!image && !video) || typeof sequence !== "number" ? (
-                <MiniPill>#{sequence}</MiniPill>
-              ) : null}
-              <MiniPill>{video ? "视频" : image ? "图片" : "素材"}</MiniPill>
-            </div>
-            <p className="mt-2 truncate text-sm font-medium text-white">{asset.fileName}</p>
-            <p className="mt-1 text-xs text-text-secondary">{asset.mimeType || asset.assetType}</p>
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/6">
+            {icon}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-white">{asset.fileName}</p>
+            <p className="mt-0.5 text-xs text-text-secondary">{asset.mimeType || asset.assetType}</p>
           </div>
         </div>
-
-        <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            disabled={moveUpDisabled}
-            onClick={onMoveUp}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-text-muted transition-all hover:border-white/20 hover:text-white disabled:opacity-40"
-          >
-            <ArrowUp className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            disabled={moveDownDisabled}
-            onClick={onMoveDown}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-text-muted transition-all hover:border-white/20 hover:text-white disabled:opacity-40"
-          >
-            <ArrowDown className="h-4 w-4" />
-          </button>
-          {asset.publicUrl ? (
-            <a
-              href={asset.publicUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-full border border-white/10 bg-white/6 px-3 py-1.5 text-xs text-text-secondary transition-all hover:border-cyan/40 hover:text-cyan"
-            >
-              新窗预览
-            </a>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {hasReorder ? (
+            <>
+              <button
+                type="button"
+                disabled={moveUpDisabled}
+                onClick={onMoveUp}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-text-muted transition-all hover:border-white/20 hover:text-white disabled:opacity-40"
+              >
+                <ArrowUp className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                disabled={moveDownDisabled}
+                onClick={onMoveDown}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-text-muted transition-all hover:border-white/20 hover:text-white disabled:opacity-40"
+              >
+                <ArrowDown className="h-3.5 w-3.5" />
+              </button>
+            </>
           ) : null}
-          <button
-            type="button"
-            disabled={deleting}
-            onClick={onDelete}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-text-muted transition-all hover:border-danger hover:bg-danger/10 hover:text-danger disabled:opacity-50"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
+          {hasSequence ? (
+            <span className="rounded-full border border-white/10 bg-white/6 px-2 py-0.5 text-[10px] font-semibold text-text-secondary">
+              #{sequence}
+            </span>
+          ) : null}
+          <span className="rounded-full border border-white/10 bg-white/6 px-2 py-0.5 text-[10px] font-semibold text-text-secondary">
+            {audio ? "音频" : video ? "视频" : image ? "图片" : "素材"}
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              disabled={deleting}
+              onClick={onDelete}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-text-muted transition-all hover:border-danger hover:bg-danger/10 hover:text-danger disabled:opacity-50"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -2379,40 +2466,41 @@ function PendingRow({
           <video src={preview} controls preload="metadata" className="h-40 w-full bg-black object-cover" />
         </div>
       ) : null}
-      <div className="flex items-start justify-between gap-3 px-4 py-3">
+      <div className="px-4 py-3">
         <div className="flex min-w-0 items-start gap-3">
-          {!preview || typeof sequence !== "number" ? (
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/6">
-              {icon}
-            </div>
-          ) : (
-            <div className="flex h-11 min-w-11 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/6 px-3 text-xs font-semibold text-white">
-              #{sequence}
-            </div>
-          )}
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              {!preview || typeof sequence !== "number" ? null : <MiniPill>#{sequence}</MiniPill>}
-              <MiniPill>{file?.type.startsWith("video/") ? "视频" : file?.type.startsWith("image/") ? "图片" : "素材"}</MiniPill>
-            </div>
-            <p className="mt-2 truncate text-sm font-medium text-white">{label}</p>
-            <p className="mt-1 text-xs text-text-secondary">{helperText || "正在上传到云端..."}</p>
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/6">
+            {icon}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-white">{label}</p>
+            <p className="mt-0.5 text-xs text-text-secondary">{helperText || "正在上传到云端..."}</p>
           </div>
         </div>
-
-        {hideDelete ? (
-          <div className="inline-flex h-10 min-w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-3 text-[11px] font-medium text-text-secondary">
-            上传中
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {typeof sequence === "number" ? (
+            <span className="rounded-full border border-white/10 bg-white/6 px-2 py-0.5 text-[10px] font-semibold text-text-secondary">
+              #{sequence}
+            </span>
+          ) : null}
+          <span className="rounded-full border border-white/10 bg-white/6 px-2 py-0.5 text-[10px] font-semibold text-text-secondary">
+            {file?.type.startsWith("video/") ? "视频" : file?.type.startsWith("image/") ? "图片" : file?.type.startsWith("audio/") ? "音频" : "素材"}
+          </span>
+          <div className="ml-auto">
+            {hideDelete ? (
+              <span className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] font-medium text-text-secondary">
+                上传中
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={onDelete}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-text-muted transition-all hover:border-danger hover:bg-danger/10 hover:text-danger"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
-        ) : (
-          <button
-            type="button"
-            onClick={onDelete}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-text-muted transition-all hover:border-danger hover:bg-danger/10 hover:text-danger"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
-        )}
+        </div>
       </div>
     </div>
   );

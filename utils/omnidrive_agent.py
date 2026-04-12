@@ -1851,7 +1851,7 @@ class OmniDriveBridge:
             )
         return mirrored
 
-    def _import_missing_remote_ai_task(self, job):
+    def _import_missing_remote_ai_task(self, job, schedule_times=None):
         if not self.ai_task_manager:
             return None
 
@@ -1864,6 +1864,7 @@ class OmniDriveBridge:
         if not isinstance(payload, dict):
             payload = {}
         payload = self._merge_remote_ai_publish_payload(payload, job)
+        payload = self._merge_remote_ai_schedule_payload(payload, schedule_times)
 
         imported = self.ai_task_manager.import_remote_task(
             {
@@ -1923,6 +1924,35 @@ class OmniDriveBridge:
             merged["publishPayload"] = publish_payload
         return merged
 
+    @staticmethod
+    def _merge_remote_ai_schedule_payload(payload, schedule_times):
+        merged = dict(payload or {})
+        if not isinstance(schedule_times, dict) or not schedule_times:
+            return merged
+
+        cleaned = {}
+        for key, value in schedule_times.items():
+            if value in (None, ""):
+                continue
+            cleaned[str(key)] = value
+        if not cleaned:
+            return merged
+
+        merged["scheduleTimes"] = cleaned
+        if not merged.get("runAt") and cleaned.get("generateAt"):
+            merged["runAt"] = cleaned["generateAt"]
+        if not merged.get("publishAt") and cleaned.get("publishAt"):
+            merged["publishAt"] = cleaned["publishAt"]
+
+        publish_payload = dict(merged.get("publishPayload") or {})
+        if not publish_payload.get("runAt") and cleaned.get("publishAt"):
+            publish_payload["runAt"] = cleaned["publishAt"]
+        if not publish_payload.get("requestedRun") and cleaned.get("publishAt"):
+            publish_payload["requestedRun"] = cleaned["publishAt"]
+        if publish_payload:
+            merged["publishPayload"] = publish_payload
+        return merged
+
     def _import_remote_ai_jobs(self):
         if not self.ai_task_manager:
             return 0
@@ -1935,6 +1965,7 @@ class OmniDriveBridge:
         for item in items:
             job = item.get("job") or {}
             artifacts = item.get("artifacts") or []
+            schedule_times = item.get("scheduleTimes") or {}
             cloud_job_id = str(job.get("id") or "").strip()
             local_task_id = self._resolve_remote_ai_local_task_id(job)
             cloud_status = str(job.get("status") or "").strip()
@@ -1943,7 +1974,7 @@ class OmniDriveBridge:
 
             local_task = self.ai_task_manager.get_task(local_task_id)
             if not local_task:
-                local_task = self._import_missing_remote_ai_task(job)
+                local_task = self._import_missing_remote_ai_task(job, schedule_times=schedule_times)
                 if not local_task:
                     continue
 
@@ -1951,6 +1982,8 @@ class OmniDriveBridge:
             if not isinstance(payload, dict):
                 payload = {}
             payload = self._merge_remote_ai_publish_payload(payload, job)
+            payload = self._merge_remote_ai_schedule_payload(payload, schedule_times)
+            linked_publish_task_uuid = str(job.get("localPublishTaskId") or "").strip() or None
 
             local_task = self.ai_task_manager.update_cloud_binding(
                 local_task_id,
@@ -1963,6 +1996,7 @@ class OmniDriveBridge:
                 skill_id=str(job.get("skillId") or "").strip() or None,
                 prompt=str(job.get("prompt") or "").strip(),
                 payload=payload,
+                linked_publish_task_uuid=linked_publish_task_uuid,
             )
 
             if cloud_status in {"queued", "running"}:

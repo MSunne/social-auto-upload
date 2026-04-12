@@ -764,11 +764,23 @@ type AgentAIJobPackage struct {
 	Artifacts   []AIJobArtifact     `json:"artifacts"`
 }
 
+type AIJobScheduleTimes struct {
+	CreatedAt             time.Time  `json:"createdAt"`
+	UpdatedAt             time.Time  `json:"updatedAt"`
+	GenerateAt            *time.Time `json:"generateAt,omitempty"`
+	PublishAt             *time.Time `json:"publishAt,omitempty"`
+	Timezone              *string    `json:"timezone,omitempty"`
+	TimeOfDay             *string    `json:"timeOfDay,omitempty"`
+	RepeatDaily           bool       `json:"repeatDaily"`
+	GenerationLeadMinutes *int       `json:"generationLeadMinutes,omitempty"`
+}
+
 type AgentAIJobDeliveryItem struct {
-	Job       AIJob            `json:"job"`
-	Artifacts []AIJobArtifact  `json:"artifacts"`
-	Bridge    AIJobBridgeState `json:"bridge"`
-	Actions   AIJobActionState `json:"actions"`
+	Job           AIJob               `json:"job"`
+	Artifacts     []AIJobArtifact     `json:"artifacts"`
+	Bridge        AIJobBridgeState    `json:"bridge"`
+	Actions       AIJobActionState    `json:"actions"`
+	ScheduleTimes *AIJobScheduleTimes `json:"scheduleTimes,omitempty"`
 }
 
 type BillingPackage struct {

@@ -677,9 +677,6 @@ CREATE INDEX IF NOT EXISTS idx_digital_human_tasks_status_lease
 CREATE INDEX IF NOT EXISTS idx_digital_human_tasks_remote_task
     ON digital_human_tasks (remote_task_id);
 
-CREATE INDEX IF NOT EXISTS idx_digital_human_tasks_ai_job
-    ON digital_human_tasks (ai_job_id);
-
 ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS estimated_duration_seconds INT NOT NULL DEFAULT 0;
 ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS estimated_credits BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS estimated_credits_millis BIGINT NOT NULL DEFAULT 0;
@@ -1379,6 +1376,35 @@ CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_resource_type ON admin_audit_log
 CREATE INDEX IF NOT EXISTS idx_audit_events_owner_user_id ON audit_events(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_resource_type ON audit_events(resource_type);
 
+UPDATE ai_jobs AS jobs
+SET input_payload = jsonb_set(
+    COALESCE(jobs.input_payload, '{}'::jsonb),
+    '{accountId}',
+    to_jsonb(backfill.account_id),
+    true
+)
+FROM (
+    SELECT
+        target.id,
+        COALESCE(
+            NULLIF(TRIM(target.input_payload->'publishPayload'->'targets'->0->>'accountId'), ''),
+            NULLIF(TRIM((
+                SELECT events.payload->>'accountId'
+                FROM audit_events AS events
+                WHERE events.resource_type = 'ai_job'
+                  AND events.resource_id = target.id
+                  AND NULLIF(TRIM(events.payload->>'accountId'), '') IS NOT NULL
+                ORDER BY events.created_at DESC
+                LIMIT 1
+            )), '')
+        ) AS account_id
+    FROM ai_jobs AS target
+    WHERE target.source = 'account_skill_binding'
+      AND NULLIF(TRIM(target.input_payload->>'accountId'), '') IS NULL
+) AS backfill
+WHERE jobs.id = backfill.id
+  AND backfill.account_id IS NOT NULL;
+
 INSERT INTO ai_models (id, vendor, model_name, model_alias, category, billing_mode, description, pricing_payload, is_enabled)
 VALUES
     ('gemini-3.1-pro-preview', 'apiyi', 'gemini-3.1-pro-preview', 'Gemini 3.1 Pro 对话', 'chat', 'per_token', '默认思考与多模态理解模型', '{"unit":"credits","price":"dynamic"}', TRUE),
@@ -1505,6 +1531,139 @@ func (db *Database) EnsureSchema(ctx context.Context) error {
 			}
 			return fmt.Errorf("ensure schema statement %q: %w", summarizeSQLStatement(statement), err)
 		}
+	}
+	if err := db.repairDuplicateAccountSkillJobs(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+const duplicateAccountSkillJobsCTE = `
+WITH slot_candidates AS (
+    SELECT
+        id,
+        owner_user_id,
+        status,
+        run_at,
+        created_at,
+        updated_at,
+        delivered_at,
+        finished_at,
+        COALESCE(
+            NULLIF(BTRIM(input_payload->>'accountId'), ''),
+            NULLIF(BTRIM(input_payload->'publishPayload'->'targets'->0->>'accountId'), '')
+        ) AS account_id,
+        NULLIF(BTRIM(input_payload->'scheduleConfig'->>'scheduleKey'), '') AS schedule_key,
+        CASE
+            WHEN status IN ('success', 'completed', 'publish_queued', 'imported', 'output_ready', 'publish_pending', 'publishing', 'needs_verify') THEN 600
+            WHEN status = 'waiting_recharge' THEN 500
+            WHEN status = 'running' THEN 400
+            WHEN status = 'queued' THEN 300
+            WHEN status = 'scheduled' THEN 200
+            WHEN status = 'failed' THEN 100
+            WHEN status = 'cancel_requested' THEN 50
+            WHEN status = 'cancelled' THEN 40
+            ELSE 10
+        END AS status_rank
+    FROM ai_jobs
+    WHERE source = 'account_skill_binding'
+      AND run_at IS NOT NULL
+), ranked_slots AS (
+    SELECT
+        id,
+        status,
+        ROW_NUMBER() OVER (
+            PARTITION BY owner_user_id, account_id, schedule_key, run_at
+            ORDER BY status_rank DESC,
+                     COALESCE(delivered_at, finished_at, updated_at, created_at) DESC,
+                     updated_at DESC,
+                     created_at DESC,
+                     id DESC
+        ) AS slot_rank,
+        COUNT(*) OVER (
+            PARTITION BY owner_user_id, account_id, schedule_key, run_at
+        ) AS slot_count
+    FROM slot_candidates
+    WHERE account_id IS NOT NULL
+      AND schedule_key IS NOT NULL
+      AND run_at IS NOT NULL
+), doomed AS (
+    SELECT id
+    FROM ranked_slots
+    WHERE slot_count > 1
+      AND slot_rank > 1
+      AND status IN ('failed', 'cancelled', 'cancel_requested')
+)
+`
+
+// 清理历史重复的账号计划失败/取消 AI job，避免同一时段无限堆积脏数据。
+func (db *Database) repairDuplicateAccountSkillJobs(ctx context.Context) error {
+	if db == nil || db.Pool == nil {
+		return nil
+	}
+
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin duplicate account skill cleanup: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	type cleanupStep struct {
+		label string
+		sql   string
+	}
+
+	steps := []cleanupStep{
+		{
+			label: "billing_usage_events",
+			sql: duplicateAccountSkillJobsCTE + `
+DELETE FROM billing_usage_events
+WHERE source_type = 'ai_job'
+  AND source_id IN (SELECT id FROM doomed)
+  AND wallet_ledger_id IS NULL
+  AND quota_ledger_id IS NULL
+  AND bill_status = 'failed'
+`,
+		},
+		{
+			label: "audit_events",
+			sql: duplicateAccountSkillJobsCTE + `
+DELETE FROM audit_events
+WHERE resource_type = 'ai_job'
+  AND resource_id IN (SELECT id FROM doomed)
+`,
+		},
+		{
+			label: "digital_human_tasks",
+			sql: duplicateAccountSkillJobsCTE + `
+DELETE FROM digital_human_tasks
+WHERE ai_job_id IN (SELECT id FROM doomed)
+  AND status IN ('failed', 'cancelled')
+  AND result_asset IS NULL
+`,
+		},
+		{
+			label: "ai_jobs",
+			sql: duplicateAccountSkillJobsCTE + `
+DELETE FROM ai_jobs
+WHERE id IN (SELECT id FROM doomed)
+`,
+		},
+	}
+
+	logger := db.schemaLogger()
+	for _, step := range steps {
+		tag, execErr := tx.Exec(ctx, step.sql)
+		if execErr != nil {
+			return fmt.Errorf("repair duplicate account skill jobs %s: %w", step.label, execErr)
+		}
+		if affected := tag.RowsAffected(); affected > 0 {
+			logger.Info("duplicate account skill cleanup applied", "resource", step.label, "rows", affected)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit duplicate account skill cleanup: %w", err)
 	}
 	return nil
 }

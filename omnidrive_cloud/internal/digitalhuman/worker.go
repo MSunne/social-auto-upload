@@ -373,7 +373,7 @@ func (w *Worker) submitTask(ctx context.Context, task *domain.DigitalHumanTask, 
 		return nil, err
 	}
 
-	response, rawResponse, err := w.client.GenerateVideo(ctx, request)
+	response, rawResponse, err := w.client.GenerateVideoAsync(ctx, request)
 	if err != nil {
 		cleanupWorkingDir(w.app.Logger, tempDir)
 		w.failTask(ctx, task, leaseToken, buildFailureMessage(err), nil, rawResponse)
@@ -421,24 +421,27 @@ func (w *Worker) materializeTaskAssets(ctx context.Context, task *domain.Digital
 	}
 
 	request := GenerateRequest{
-		CharacterAssetPath: characterPath,
-		Mode:               task.Mode,
-		GoodsText:          task.GoodsText,
-		Source:             task.Source,
-		RefAudio:           audioPath,
+		Text:     task.GoodsText,
+		Mode:     "fixed",
+		RefAudio: stringPtr(audioPath),
+		TemplateParams: map[string]any{
+			"character_asset_path": characterPath,
+			"digital_human_mode":   strings.TrimSpace(task.Mode),
+			"source":               "omnidrive_cloud",
+		},
 	}
 	if strings.TrimSpace(task.ModelName) != "" {
 		request.LLMModel = stringPtr(strings.TrimSpace(task.ModelName))
 	}
 	if task.GoodsTitle != nil {
-		request.GoodsTitle = stringPtr(strings.TrimSpace(*task.GoodsTitle))
+		request.Title = stringPtr(strings.TrimSpace(*task.GoodsTitle))
 	}
 	if task.GoodsAsset != nil {
 		goodsPath, goodsErr := w.writeTempAsset(ctx, tempDir, "goods", *task.GoodsAsset)
 		if goodsErr != nil {
 			return tempDir, GenerateRequest{}, goodsErr
 		}
-		request.GoodsAssetPath = stringPtr(goodsPath)
+		request.TemplateParams["goods_asset_path"] = goodsPath
 	}
 	return tempDir, request, nil
 }
@@ -764,18 +767,33 @@ func normalizeRemoteStatus(status string) string {
 	}
 }
 
-func extractResultVideoURL(result map[string]any) string {
-	if len(result) == 0 {
+func extractResultVideoURL(result any) string {
+	typed, ok := result.(map[string]any)
+	if !ok || len(typed) == 0 {
 		return ""
 	}
-	if direct, ok := result["video_url"].(string); ok {
+	if direct, ok := typed["video_url"].(string); ok {
 		return strings.TrimSpace(direct)
 	}
-	if video, ok := result["video"].(map[string]any); ok {
+	if direct, ok := typed["videoUrl"].(string); ok {
+		return strings.TrimSpace(direct)
+	}
+	if output, ok := typed["output"].(map[string]any); ok {
+		if direct, ok := output["video_url"].(string); ok {
+			return strings.TrimSpace(direct)
+		}
+		if direct, ok := output["videoUrl"].(string); ok {
+			return strings.TrimSpace(direct)
+		}
+	}
+	if video, ok := typed["video"].(map[string]any); ok {
 		if direct, ok := video["url"].(string); ok {
 			return strings.TrimSpace(direct)
 		}
 		if direct, ok := video["video_url"].(string); ok {
+			return strings.TrimSpace(direct)
+		}
+		if direct, ok := video["videoUrl"].(string); ok {
 			return strings.TrimSpace(direct)
 		}
 	}

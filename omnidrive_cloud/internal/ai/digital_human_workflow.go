@@ -17,8 +17,9 @@ import (
 
 const (
 	digitalHumanWorkflowKind           = "digital_human"
-	digitalHumanSourceRunningHub       = "runninghub"
+	digitalHumanSourceOmniDriveCloud   = "omnidrive_cloud"
 	digitalHumanEstimateCharsPerSecond = 4
+	digitalHumanAutoRetryLimit         = 1
 )
 
 type digitalHumanWorkflowConfig struct {
@@ -67,6 +68,9 @@ func (w *Worker) executeDigitalHumanVideo(ctx context.Context, job *domain.AIJob
 	if err != nil {
 		return err
 	}
+	if shouldCreateDigitalHumanRetryTask(job, task) {
+		task = nil
+	}
 	if task == nil {
 		task, err = w.createDigitalHumanWorkflowTask(ctx, job, payload)
 		if err != nil {
@@ -88,20 +92,8 @@ func (w *Worker) executeDigitalHumanVideo(ctx context.Context, job *domain.AIJob
 
 		switch strings.ToLower(strings.TrimSpace(task.Status)) {
 		case "queued", "running":
-			message := strings.TrimSpace(valueOrEmptyString(task.ErrorMessage))
-			if task.Progress != nil && strings.TrimSpace(task.Progress.Message) != "" {
-				message = strings.TrimSpace(task.Progress.Message)
-			}
-			if message == "" {
-				message = "数字人口播生成中"
-			}
-			outputPayload := mustJSON(map[string]any{
-				"workflowKind":       digitalHumanWorkflowKind,
-				"digitalHumanTaskId": task.ID,
-				"digitalHumanStatus": task.Status,
-				"progress":           task.Progress,
-				"modelName":          task.ModelName,
-			})
+			message := digitalHumanRunningMessage(task)
+			outputPayload := buildDigitalHumanStatusPayload(job, task, nil)
 			job.OutputPayload = outputPayload
 			if _, err := w.syncRunningState(ctx, job, leaseToken, message, outputPayload); err != nil {
 				return err
@@ -109,10 +101,27 @@ func (w *Worker) executeDigitalHumanVideo(ctx context.Context, job *domain.AIJob
 		case "completed":
 			return w.completeDigitalHumanWorkflowJob(ctx, job, leaseToken, task)
 		case "failed", "cancelled":
-			if task.ErrorMessage != nil && strings.TrimSpace(*task.ErrorMessage) != "" {
-				return errors.New(strings.TrimSpace(*task.ErrorMessage))
+			message := digitalHumanFailureMessage(task)
+			if shouldAutoRetryDigitalHumanFailure(job, task, message) {
+				retryCount := digitalHumanAutoRetryCountFromPayload(job.OutputPayload) + 1
+				retryMessage := buildDigitalHumanAutoRetryMessage(retryCount)
+				retryPayload := buildDigitalHumanAutoRetryPayload(job, task, message, retryCount)
+				if _, err := w.requeueJobWithBackoff(ctx, job.ID, leaseToken, retryMessage, retryPayload, mediaFailureAutoRetryDelay); err != nil {
+					return err
+				}
+				w.recordAuditEvent(ctx, job, "cloud_generate_auto_retry", "数字人口播失败后自动重试", "queued", stringPtr(retryMessage), map[string]any{
+					"jobType":            job.JobType,
+					"modelName":          task.ModelName,
+					"digitalHumanTaskId": task.ID,
+					"digitalHumanStatus": task.Status,
+					"autoRetryCount":     retryCount,
+					"maxRetryCount":      digitalHumanAutoRetryLimit,
+					"failureMessage":     message,
+					"retryAfter":         mediaFailureAutoRetryDelay.String(),
+				})
+				return nil
 			}
-			return fmt.Errorf("digital human task %s", task.Status)
+			return errors.New(message)
 		default:
 			return fmt.Errorf("unsupported digital human task status: %s", task.Status)
 		}
@@ -150,7 +159,7 @@ func (w *Worker) createDigitalHumanWorkflowTask(ctx context.Context, job *domain
 	requestPayload := mustJSON(map[string]any{
 		"mode":      mode,
 		"modelName": strings.TrimSpace(job.ModelName),
-		"source":    digitalHumanSourceRunningHub,
+		"source":    digitalHumanSourceOmniDriveCloud,
 		"goodsText": goodsText,
 		"sourceAIJob": map[string]any{
 			"id":      job.ID,
@@ -164,7 +173,7 @@ func (w *Worker) createDigitalHumanWorkflowTask(ctx context.Context, job *domain
 		OwnerUserID:              job.OwnerUserID,
 		AIJobID:                  &job.ID,
 		Mode:                     mode,
-		Source:                   digitalHumanSourceRunningHub,
+		Source:                   digitalHumanSourceOmniDriveCloud,
 		Status:                   "queued",
 		ModelName:                strings.TrimSpace(job.ModelName),
 		CharacterAsset:           mustJSON(config.CharacterAsset),
@@ -245,15 +254,20 @@ func (w *Worker) completeDigitalHumanWorkflowJob(ctx context.Context, job *domai
 		return err
 	}
 
-	outputPayload := mustJSON(map[string]any{
-		"workflowKind":       digitalHumanWorkflowKind,
-		"digitalHumanTaskId": task.ID,
-		"digitalHumanStatus": task.Status,
-		"modelName":          task.ModelName,
-		"billingStatus":      task.BillingStatus,
-		"artifacts":          summarizeArtifacts(artifacts),
-		"completedAt":        firstNonNilTime(task.CompletedAt, time.Now().UTC()).Format(time.RFC3339),
-	})
+	publishTask, err := w.autoCreatePublishTaskFromAIJob(ctx, job, artifacts)
+	if err != nil {
+		return err
+	}
+
+	extras := map[string]any{
+		"billingStatus": task.BillingStatus,
+		"artifacts":     summarizeArtifacts(artifacts),
+		"completedAt":   firstNonNilTime(task.CompletedAt, time.Now().UTC()).Format(time.RFC3339),
+	}
+	if publishTask != nil {
+		extras["publishTaskId"] = publishTask.ID
+	}
+	outputPayload := buildDigitalHumanStatusPayload(job, task, extras)
 	message := "数字人口播生成完成"
 	if _, err := w.completeJob(ctx, job, leaseToken, message, outputPayload, nil); err != nil {
 		return err
@@ -265,6 +279,132 @@ func (w *Worker) completeDigitalHumanWorkflowJob(ctx context.Context, job *domai
 		"artifactCount":      len(artifacts),
 	})
 	return nil
+}
+
+func digitalHumanRunningMessage(task *domain.DigitalHumanTask) string {
+	message := strings.TrimSpace(valueOrEmptyString(task.ErrorMessage))
+	if task != nil && task.Progress != nil && strings.TrimSpace(task.Progress.Message) != "" {
+		message = strings.TrimSpace(task.Progress.Message)
+	}
+	if message == "" {
+		message = "数字人口播生成中"
+	}
+	return message
+}
+
+func digitalHumanFailureMessage(task *domain.DigitalHumanTask) string {
+	if task != nil && task.ErrorMessage != nil && strings.TrimSpace(*task.ErrorMessage) != "" {
+		return strings.TrimSpace(*task.ErrorMessage)
+	}
+	if task == nil {
+		return "数字人口播执行失败"
+	}
+	return fmt.Sprintf("digital human task %s", task.Status)
+}
+
+func shouldCreateDigitalHumanRetryTask(job *domain.AIJob, task *domain.DigitalHumanTask) bool {
+	if job == nil || task == nil {
+		return false
+	}
+	if digitalHumanAutoRetryCountFromPayload(job.OutputPayload) <= 0 {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(task.Status)) {
+	case "failed", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldAutoRetryDigitalHumanFailure(job *domain.AIJob, task *domain.DigitalHumanTask, message string) bool {
+	if job == nil || task == nil {
+		return false
+	}
+	if digitalHumanAutoRetryCountFromPayload(job.OutputPayload) >= digitalHumanAutoRetryLimit {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(task.Status)) {
+	case "failed", "cancelled":
+		return isRetryableDigitalHumanFailureMessage(message)
+	default:
+		return false
+	}
+}
+
+func digitalHumanAutoRetryCountFromPayload(raw []byte) int {
+	payload := decodePayloadMap(raw)
+	return intValue(payload["digitalHumanRetryCount"])
+}
+
+func buildDigitalHumanAutoRetryMessage(retryCount int) string {
+	return fmt.Sprintf("数字人口播执行失败，系统将自动重试第 %d/%d 次", retryCount, digitalHumanAutoRetryLimit)
+}
+
+func buildDigitalHumanAutoRetryPayload(job *domain.AIJob, task *domain.DigitalHumanTask, failureMessage string, retryCount int) []byte {
+	payload := decodePayloadMap(job.OutputPayload)
+	payload["workflowKind"] = digitalHumanWorkflowKind
+	payload["digitalHumanRetryCount"] = retryCount
+	payload["digitalHumanTaskId"] = task.ID
+	payload["digitalHumanStatus"] = task.Status
+	payload["modelName"] = task.ModelName
+	payload["lastFailureAt"] = time.Now().UTC().Format(time.RFC3339)
+	payload["lastFailureMessage"] = strings.TrimSpace(failureMessage)
+	delete(payload, "artifacts")
+	delete(payload, "publishTaskId")
+	delete(payload, "completedAt")
+	return mustJSON(payload)
+}
+
+func buildDigitalHumanStatusPayload(job *domain.AIJob, task *domain.DigitalHumanTask, extras map[string]any) []byte {
+	payload := map[string]any{
+		"workflowKind":           digitalHumanWorkflowKind,
+		"digitalHumanTaskId":     task.ID,
+		"digitalHumanStatus":     task.Status,
+		"digitalHumanRetryCount": digitalHumanAutoRetryCountFromPayload(job.OutputPayload),
+		"progress":               task.Progress,
+		"modelName":              task.ModelName,
+	}
+	for key, value := range extras {
+		if value == nil {
+			continue
+		}
+		if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
+			continue
+		}
+		payload[key] = value
+	}
+	return mustJSON(payload)
+}
+
+func isRetryableDigitalHumanFailureMessage(message string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(message))
+	if normalized == "" {
+		return true
+	}
+	for _, marker := range []string{
+		"已取消",
+		"cancelled",
+		"参数",
+		"missing",
+		"invalid",
+		"not found",
+		"积分不足",
+		"余额不足",
+		"账号",
+		"device is disabled",
+		"returned 400",
+		"returned 401",
+		"returned 403",
+		"returned 404",
+		"returned 409",
+		"returned 422",
+	} {
+		if strings.Contains(normalized, strings.ToLower(marker)) {
+			return false
+		}
+	}
+	return true
 }
 
 func (w *Worker) digitalHumanCreditsPerSecondMillis(ctx context.Context) (int64, error) {
