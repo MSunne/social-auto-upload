@@ -612,13 +612,11 @@ function buildMessagesFromHistory(job?: AIJob | null, artifacts: AIJobArtifact[]
     artifacts.find((item) => item.artifactType === "chat_response")?.textContent ||
     "";
   const fallbackStatusText =
-    typeof job.message === "string" && job.message.trim()
+    typeof job.message === "string" && job.message.trim() && job.message !== "聊天生成中"
       ? job.message.trim()
-      : job.status === "running"
-        ? "聊天生成中..."
-        : job.status === "failed"
-          ? "本次对话失败，请重试。"
-          : "";
+      : job.status === "failed"
+        ? "本次对话失败，请重试。"
+        : "聊天已中止。";
   const assistantContent = outputText.trim() || fallbackStatusText;
 
   if (assistantContent.trim()) {
@@ -628,7 +626,7 @@ function buildMessagesFromHistory(job?: AIJob | null, artifacts: AIJobArtifact[]
       content: assistantContent,
       rawContent: assistantContent,
       timestamp: job.finishedAt || job.updatedAt,
-      state: job.status === "failed" ? "error" : job.status === "running" ? "streaming" : "done",
+      state: job.status === "failed" ? "error" : "done",
       modelName: getModelDisplayName(job),
       jobId: job.id,
     });
@@ -720,6 +718,76 @@ function appendStreamError(existingContent: string, nextError: string) {
 
 function getAssistantDisplayContent(message: ChatMessage) {
   return message.content;
+}
+
+function parseThinkContent(fullText: string) {
+  const thinkStart = fullText.indexOf("<think>");
+  if (thinkStart === -1) {
+    return { think: null, text: fullText };
+  }
+  const thinkEnd = fullText.indexOf("</think>", thinkStart);
+  if (thinkEnd === -1) {
+    return {
+      think: fullText.slice(thinkStart + 7),
+      text: fullText.slice(0, thinkStart),
+    };
+  }
+  return {
+    think: fullText.slice(thinkStart + 7, thinkEnd),
+    text: fullText.slice(0, thinkStart) + fullText.slice(thinkEnd + 8),
+  };
+}
+
+function ThinkBlock({ content, isStreaming }: { content: string; isStreaming: boolean }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isStreaming) {
+      setCollapsed(true);
+    }
+  }, [isStreaming]);
+
+  useEffect(() => {
+    if (isStreaming && !collapsed && containerRef.current) {
+      const el = containerRef.current;
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [content, isStreaming, collapsed]);
+
+  return (
+    <div className="mb-4 overflow-hidden rounded-xl border border-border/80 bg-surface/30">
+      <button
+        type="button"
+        onClick={() => setCollapsed(!collapsed)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-[11px] font-medium text-text-muted transition-colors hover:bg-surface-hover/50 hover:text-text-primary"
+      >
+        <span>{isStreaming ? "思考中..." : "思考结束"}</span>
+        <ChevronDown
+          className={cn("h-3.5 w-3.5 transition-transform", collapsed ? "" : "rotate-180")}
+        />
+      </button>
+
+      <AnimatePresence initial={false}>
+        {!collapsed && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="border-t border-border/50"
+          >
+            <div
+              ref={containerRef}
+              className="custom-scrollbar max-h-40 overflow-y-auto px-4 py-3 text-xs leading-[1.65] text-text-secondary/80"
+            >
+              <span className="whitespace-pre-wrap">{content}</span>
+              {isStreaming && <span className="chat-streaming-cursor inline-block ml-1" />}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
 }
 
 function ChatThinkingIndicator() {
@@ -1427,6 +1495,8 @@ export default function ChatPage() {
   }
 
   function startNewConversation() {
+    stopStreaming();
+    setSending(false);
     nextScrollBehaviorRef.current = "auto";
     setSelectedJobId("");
     setPendingHydrationJobId("");
@@ -1509,7 +1579,7 @@ export default function ChatPage() {
               {groupedHistoryJobs.map((job) => {
                 const active = selectedConversationKey === getConversationKey(job);
                 return (
-                  <button key={getConversationKey(job)} type="button" onClick={() => { nextScrollBehaviorRef.current = "auto"; setAutoSelectLatestHistory(false); setConversationId(getConversationKey(job)); setSelectedJobId(job.id); setPendingHydrationJobId(job.id); }} className={cn("group w-full rounded-xl px-3 py-2.5 text-left transition-all", active ? "bg-accent/10 border border-accent/30 shadow-sm shadow-accent/10" : "border border-transparent hover:bg-surface-hover/80")}>
+                  <button key={getConversationKey(job)} type="button" onClick={() => { stopStreaming(); setSending(false); nextScrollBehaviorRef.current = "auto"; setAutoSelectLatestHistory(false); setConversationId(getConversationKey(job)); setSelectedJobId(job.id); setPendingHydrationJobId(job.id); }} className={cn("group w-full rounded-xl px-3 py-2.5 text-left transition-all", active ? "bg-accent/10 border border-accent/30 shadow-sm shadow-accent/10" : "border border-transparent hover:bg-surface-hover/80")}>
                     <div className="line-clamp-2 text-sm font-medium leading-5 text-text-primary">{summarizeHistory(job)}</div>
                     <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-text-muted">
                       <Clock3 className="h-3 w-3" />
@@ -1552,7 +1622,17 @@ export default function ChatPage() {
         <div ref={messagesViewportRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
           <div className="flex h-full w-full flex-col">
             <div className="space-y-4">
-              {messages.map((message) => (
+              {messages.map((message) => {
+                const parsedContent =
+                  message.role === "assistant"
+                    ? parseThinkContent(message.content)
+                    : { think: null, text: message.content };
+                const isThinkStreaming =
+                  message.state === "streaming" &&
+                  message.content.includes("<think>") &&
+                  !message.content.includes("</think>");
+
+                return (
                 <motion.div key={message.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: "easeOut" }} className={cn("flex gap-3", message.role === "user" ? "justify-end" : "justify-start")}>
                   {message.role === "assistant" && (
                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-accent to-cyan text-background">
@@ -1565,11 +1645,21 @@ export default function ChatPage() {
                     ) : (
                       <div className="text-sm leading-7">
                         {message.role === "assistant" ? (
-                          <ChatMarkdown content={getAssistantDisplayContent(message)} />
+                          <>
+                            {parsedContent.think != null && (
+                              <ThinkBlock
+                                content={parsedContent.think.trim()}
+                                isStreaming={isThinkStreaming}
+                              />
+                            )}
+                            {parsedContent.text.trim() ? (
+                              <ChatMarkdown content={parsedContent.text.trim()} />
+                            ) : null}
+                          </>
                         ) : (
                           <span className="whitespace-pre-wrap">{message.content}</span>
                         )}
-                        {message.state === "streaming" && message.content.trim() && <span className="chat-streaming-cursor" />}
+                        {message.state === "streaming" && parsedContent.text.trim() && !isThinkStreaming && <span className="chat-streaming-cursor inline-block ml-1" />}
                       </div>
                     )}
                     <AttachmentList attachments={message.attachments || []} compact />
@@ -1582,7 +1672,8 @@ export default function ChatPage() {
                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-border bg-surface-hover text-text-primary"><User className="h-3.5 w-3.5" /></div>
                   )}
                 </motion.div>
-              ))}
+              );
+            })}
               {submitError && (
                 <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
                   <div className="flex items-center gap-2"><AlertTriangle className="h-4 w-4" />{submitError}</div>

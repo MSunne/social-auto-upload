@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
+  AlertTriangle,
   CheckCircle2,
   Download,
   History,
@@ -16,7 +17,6 @@ import {
 } from "lucide-react";
 import { EmptyState, PageHeader, StatCard, StatusBadge } from "@/components/ui/common";
 import {
-  DIGITAL_HUMAN_POLL_INTERVAL_MS,
   formatDigitalHumanMode,
   isTerminalDigitalHumanTask,
   truncateDigitalHumanText,
@@ -26,6 +26,7 @@ import type { DigitalHumanTask } from "@/lib/types";
 import { formatDateTime } from "@/lib/workflow";
 
 type FilterKey = "all" | "running" | "completed" | "failed";
+const DIGITAL_HUMAN_HISTORY_PAGE_SIZE = 20;
 
 const FILTERS: Array<{ key: FilterKey; label: string; icon: React.ReactNode }> = [
   { key: "all", label: "全部", icon: <LayoutGrid className="h-3.5 w-3.5" /> },
@@ -49,6 +50,29 @@ const listItem = {
   hidden: { opacity: 0, y: 10 },
   show: { opacity: 1, y: 0, transition: { duration: 0.3, ease: "easeOut" as const } },
 };
+
+function sortDigitalHumanTasksByLatest(left: DigitalHumanTask, right: DigitalHumanTask) {
+  const timeDiff = new Date(right.updatedAt || 0).getTime() - new Date(left.updatedAt || 0).getTime();
+  if (timeDiff !== 0) {
+    return timeDiff;
+  }
+  return right.id.localeCompare(left.id);
+}
+
+function mergeDigitalHumanTasks(...groups: DigitalHumanTask[][]) {
+  const taskMap = new Map<string, DigitalHumanTask>();
+  groups.flat().forEach((task) => {
+    taskMap.set(task.id, task);
+  });
+  return Array.from(taskMap.values()).sort(sortDigitalHumanTasksByLatest);
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  return fallback;
+}
 
 /* ─── Skeleton Card ─── */
 function SkeletonCard() {
@@ -197,17 +221,37 @@ function TaskCard({ task }: { task: DigitalHumanTask }) {
 export default function DigitalHumanHistoryPage() {
   const [filter, setFilter] = useState<FilterKey>("all");
   const [query, setQuery] = useState("");
+  const [olderTasks, setOlderTasks] = useState<DigitalHumanTask[]>([]);
+  const [hasMore, setHasMore] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState("");
 
-  const { data: tasks = [], isLoading } = useQuery<DigitalHumanTask[]>({
-    queryKey: ["digitalHumanTasks", "history"],
-    queryFn: () => listDigitalHumanTasks({ limit: 100 }),
+  const {
+    data: latestTasks = [],
+    isLoading,
+    isError,
+    error,
+    isRefetchError,
+    refetch,
+  } = useQuery<DigitalHumanTask[]>({
+    queryKey: ["digitalHumanTasks", "history", "recent"],
+    queryFn: () => listDigitalHumanTasks({ limit: DIGITAL_HUMAN_HISTORY_PAGE_SIZE }),
     refetchInterval: ({ state }) => {
       const items = state.data as DigitalHumanTask[] | undefined;
       return items?.some((task) => !isTerminalDigitalHumanTask(task))
-        ? DIGITAL_HUMAN_POLL_INTERVAL_MS
+        ? 10_000
         : false;
     },
+    staleTime: 10_000,
   });
+
+  useEffect(() => {
+    if (olderTasks.length === 0) {
+      setHasMore(latestTasks.length === DIGITAL_HUMAN_HISTORY_PAGE_SIZE);
+    }
+  }, [latestTasks, olderTasks.length]);
+
+  const tasks = useMemo(() => mergeDigitalHumanTasks(latestTasks, olderTasks), [latestTasks, olderTasks]);
 
   const normalizedQuery = query.trim().toLowerCase();
 
@@ -243,12 +287,40 @@ export default function DigitalHumanHistoryPage() {
 
   const runningCount = tasks.filter((task) => ["queued", "running"].includes(task.status)).length;
   const completedCount = tasks.filter((task) => task.status === "completed").length;
+  const initialErrorMessage = getErrorMessage(error, "真人视频历史加载失败，请稍后重试");
+
+  async function handleLoadMore() {
+    if (isLoadingMore || !hasMore || tasks.length === 0) {
+      return;
+    }
+    const cursorTask = tasks[tasks.length - 1];
+    if (!cursorTask?.updatedAt) {
+      setHasMore(false);
+      return;
+    }
+
+    setIsLoadingMore(true);
+    setLoadMoreError("");
+    try {
+      const nextTasks = await listDigitalHumanTasks({
+        limit: DIGITAL_HUMAN_HISTORY_PAGE_SIZE,
+        beforeUpdatedAt: cursorTask.updatedAt,
+        beforeId: cursorTask.id,
+      });
+      setOlderTasks((current) => mergeDigitalHumanTasks(current, nextTasks));
+      setHasMore(nextTasks.length === DIGITAL_HUMAN_HISTORY_PAGE_SIZE);
+    } catch (loadError) {
+      setLoadMoreError(getErrorMessage(loadError, "加载更多失败，请稍后重试"));
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }
 
   return (
     <>
       <PageHeader
-        title="数字人历史"
-        subtitle="查看所有数字人视频任务的创建记录、实时状态和生成结果。"
+        title="真人视频历史"
+        subtitle="查看所有真人视频任务的创建记录、实时状态和生成结果。"
         actions={
           <Link
             href="/creation/digital-human"
@@ -329,28 +401,64 @@ export default function DigitalHumanHistoryPage() {
       </motion.div>
 
       {/* ─── Task List ─── */}
-      {isLoading ? (
+      {isLoading && tasks.length === 0 ? (
         <div className="space-y-4">
           <SkeletonCard />
           <SkeletonCard />
           <SkeletonCard />
         </div>
+      ) : isError && tasks.length === 0 ? (
+        <div className="flex min-h-[280px] flex-col items-center justify-center gap-3 rounded-2xl border border-border/40 bg-surface/30 px-6 text-center">
+          <AlertTriangle className="h-9 w-9 text-danger" />
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-text-primary">真人视频历史暂时无法加载</p>
+            <p className="text-xs text-text-muted">{initialErrorMessage}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-strong"
+          >
+            重试
+          </button>
+        </div>
       ) : filteredTasks.length > 0 ? (
-        <motion.div
-          variants={staggerContainer}
-          initial="hidden"
-          animate="show"
-          className="space-y-4"
-        >
-          {filteredTasks.map((task) => (
-            <TaskCard key={task.id} task={task} />
-          ))}
-        </motion.div>
+        <div className="space-y-4">
+          {isRefetchError || loadMoreError ? (
+            <div className="rounded-xl border border-warning/20 bg-warning/10 px-4 py-3 text-xs text-warning">
+              {isRefetchError ? "真人视频历史刷新失败，已保留上次成功结果。" : loadMoreError}
+            </div>
+          ) : null}
+          <motion.div
+            variants={staggerContainer}
+            initial="hidden"
+            animate="show"
+            className="space-y-4"
+          >
+            {filteredTasks.map((task) => (
+              <TaskCard key={task.id} task={task} />
+            ))}
+          </motion.div>
+          <div className="flex justify-end">
+            {hasMore ? (
+              <button
+                type="button"
+                onClick={() => void handleLoadMore()}
+                disabled={isLoadingMore}
+                className="rounded-lg border border-border px-4 py-2 text-sm text-text-primary transition-colors hover:bg-surface-hover disabled:opacity-50"
+              >
+                {isLoadingMore ? "加载中..." : "加载更多"}
+              </button>
+            ) : (
+              <p className="text-sm text-text-muted">已加载全部结果</p>
+            )}
+          </div>
+        </div>
       ) : (
         <EmptyState
           icon={<History className="h-6 w-6" />}
-          title="没有匹配的数字人任务"
-          description="提交一条数字人视频任务后，历史记录会在这里自动汇总。"
+          title="没有匹配的真人任务"
+          description="提交一条真人视频任务后，历史记录会在这里自动汇总。"
           action={
             <Link
               href="/creation/digital-human"

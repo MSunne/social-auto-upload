@@ -41,6 +41,21 @@ func TestScanAdminUserRowIncludesPhone(t *testing.T) {
 	}
 }
 
+func TestAdminAIJobListActionsAllowsDeleteForStaleRunningJobs(t *testing.T) {
+	staleUpdatedAt := time.Now().UTC().Add(-16 * time.Minute)
+	freshUpdatedAt := time.Now().UTC().Add(-5 * time.Minute)
+
+	stale := adminAIJobListActions("running", staleUpdatedAt, nil)
+	if !stale.CanDelete {
+		t.Fatalf("expected stale running job to be deletable")
+	}
+
+	fresh := adminAIJobListActions("running", freshUpdatedAt, nil)
+	if fresh.CanDelete {
+		t.Fatalf("expected fresh running job to remain non-deletable")
+	}
+}
+
 func TestScanAdminDeviceRowIncludesPlatformCapabilityColumns(t *testing.T) {
 	now := time.Now().UTC()
 	ownerID := "user-1"
@@ -145,6 +160,7 @@ func TestScanAdminAIJobListItemIncludesOnlyLightweightFields(t *testing.T) {
 		&runAt,
 		now,
 		now,
+		(*time.Time)(nil),
 		&messagePreview,
 	))
 	if err != nil {

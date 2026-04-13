@@ -21,7 +21,7 @@ func previewAIJobBilling(ctx context.Context, app *appstate.App, job *domain.AIJ
 			Details:    []store.UsageBillingDetail{},
 		}, nil
 	}
-	if isDigitalHumanWorkflowInput(job.InputPayload) {
+	if isDigitalHumanBillingJob(job) {
 		return previewDigitalHumanWorkflowBilling(ctx, app, job)
 	}
 	workflowPreview, err := aiclient.PreviewWorkflowBilling(ctx, app, job)
@@ -32,6 +32,16 @@ func previewAIJobBilling(ctx context.Context, app *appstate.App, job *domain.AIJ
 		return workflowPreview, nil
 	}
 	return app.Store.PreviewUsageBilling(ctx, aiclient.BuildEstimatedUsageBillingInput(job))
+}
+
+func isDigitalHumanBillingJob(job *domain.AIJob) bool {
+	if job == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(job.JobType), "digital_human") {
+		return true
+	}
+	return isDigitalHumanWorkflowInput(job.InputPayload)
 }
 
 // 处理用量计费判断是否应当Block相关逻辑，结合当前上下文完成必要的状态转换或结果组装。

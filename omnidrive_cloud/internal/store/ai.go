@@ -35,6 +35,7 @@ func aiJobAccountIDExpression(alias string) string {
 const (
 	aiJobPayloadModeFull    = "full"
 	aiJobPayloadModeSummary = "summary"
+	aiJobSummaryPromptLimit = 160
 )
 
 // 处理AI作业列表载荷Mode相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
@@ -62,6 +63,20 @@ func aiJobInputPayloadSelectColumn(alias string, payloadMode string) string {
 	)
 }
 
+// 处理AI作业提示词SelectColumn相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
+func aiJobPromptSelectColumn(alias string, payloadMode string) string {
+	qualified := aiJobQualifiedColumn(alias, "prompt")
+	if aiJobListPayloadMode(payloadMode) != aiJobPayloadModeSummary {
+		return qualified
+	}
+	return fmt.Sprintf(
+		`CASE WHEN %s IS NULL THEN NULL ELSE LEFT(%s, %d) END AS prompt`,
+		qualified,
+		qualified,
+		aiJobSummaryPromptLimit,
+	)
+}
+
 // 处理AI作业输出载荷SelectColumn相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func aiJobOutputPayloadSelectColumn(alias string, payloadMode string) string {
 	qualified := aiJobQualifiedColumn(alias, "output_payload")
@@ -82,6 +97,7 @@ func aiJobSelectColumnsFor(alias string, payloadMode string) string {
 		aiJobQualifiedColumn(alias, "owner_user_id"),
 		aiJobQualifiedColumn(alias, "device_id"),
 		aiJobQualifiedColumn(alias, "skill_id"),
+		aiJobQualifiedColumn(alias, "deleted_by_admin_user_id"),
 		aiJobQualifiedColumn(alias, "source"),
 		aiJobQualifiedColumn(alias, "local_task_id"),
 		aiJobQualifiedColumn(alias, "job_type"),
@@ -91,7 +107,7 @@ func aiJobSelectColumnsFor(alias string, payloadMode string) string {
 			qualifiedModelName,
 			qualifiedModelName,
 		),
-		aiJobQualifiedColumn(alias, "prompt"),
+		aiJobPromptSelectColumn(alias, payloadMode),
 		aiJobQualifiedColumn(alias, "status"),
 		aiJobInputPayloadSelectColumn(alias, payloadMode),
 		aiJobOutputPayloadSelectColumn(alias, payloadMode),
@@ -108,6 +124,7 @@ func aiJobSelectColumnsFor(alias string, payloadMode string) string {
 		aiJobQualifiedColumn(alias, "updated_at"),
 		aiJobQualifiedColumn(alias, "delivered_at"),
 		aiJobQualifiedColumn(alias, "finished_at"),
+		aiJobQualifiedColumn(alias, "deleted_at"),
 	}
 	return "\n\t" + strings.Join(columns, ",\n\t") + "\n"
 }
@@ -267,6 +284,7 @@ func scanAIJob(row pgx.Row) (*domain.AIJob, error) {
 	var job domain.AIJob
 	var deviceID *string
 	var skillID *string
+	var deletedByAdminUserID *string
 	var localTaskID *string
 	var prompt *string
 	var inputPayload []byte
@@ -280,12 +298,14 @@ func scanAIJob(row pgx.Row) (*domain.AIJob, error) {
 	var runAt *time.Time
 	var deliveredAt *time.Time
 	var finishedAt *time.Time
+	var deletedAt *time.Time
 
 	if err := row.Scan(
 		&job.ID,
 		&job.OwnerUserID,
 		&deviceID,
 		&skillID,
+		&deletedByAdminUserID,
 		&job.Source,
 		&localTaskID,
 		&job.JobType,
@@ -308,12 +328,14 @@ func scanAIJob(row pgx.Row) (*domain.AIJob, error) {
 		&job.UpdatedAt,
 		&deliveredAt,
 		&finishedAt,
+		&deletedAt,
 	); err != nil {
 		return nil, err
 	}
 
 	job.DeviceID = deviceID
 	job.SkillID = skillID
+	job.DeletedByAdminUserID = deletedByAdminUserID
 	job.LocalTaskID = localTaskID
 	job.Prompt = prompt
 	job.InputPayload = bytesOrNil(inputPayload)
@@ -327,6 +349,7 @@ func scanAIJob(row pgx.Row) (*domain.AIJob, error) {
 	job.RunAt = runAt
 	job.DeliveredAt = deliveredAt
 	job.FinishedAt = finishedAt
+	job.DeletedAt = deletedAt
 	return &job, nil
 }
 
@@ -459,6 +482,7 @@ func (s *Store) ListAIJobsByOwner(ctx context.Context, ownerUserID string, filte
 		SELECT %s
 		FROM ai_jobs
 		WHERE owner_user_id = $1
+		  AND deleted_at IS NULL
 	`, aiJobSelectColumnsFor("ai_jobs", payloadMode))
 	args := []any{ownerUserID}
 	argIndex := 2
@@ -497,7 +521,18 @@ func (s *Store) ListAIJobsByOwner(ctx context.Context, ownerUserID string, filte
 		args = append(args, filter.ExcludeSource)
 		argIndex++
 	}
-	query += ` ORDER BY updated_at DESC`
+	if filter.BeforeUpdatedAt != nil {
+		if strings.TrimSpace(filter.BeforeID) != "" {
+			query += fmt.Sprintf(" AND (updated_at, id) < ($%d, $%d)", argIndex, argIndex+1)
+			args = append(args, *filter.BeforeUpdatedAt, filter.BeforeID)
+			argIndex += 2
+		} else {
+			query += fmt.Sprintf(" AND updated_at < $%d", argIndex)
+			args = append(args, *filter.BeforeUpdatedAt)
+			argIndex++
+		}
+	}
+	query += ` ORDER BY updated_at DESC, id DESC`
 	if filter.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", argIndex)
 		args = append(args, filter.Limit)
@@ -538,7 +573,7 @@ func (s *Store) GetAIJobByOwner(ctx context.Context, jobID string, ownerUserID s
 	row := s.pool.QueryRow(ctx, `
 		SELECT `+aiJobSelectColumns+`
 		FROM ai_jobs
-		WHERE id = $1 AND owner_user_id = $2
+		WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NULL
 	`, jobID, ownerUserID)
 
 	job, err := scanAIJob(row)
@@ -1876,7 +1911,7 @@ func (s *Store) ListAIJobArtifactsByOwner(ctx context.Context, jobID string, own
 		       a.absolute_path, a.payload, a.created_at, a.updated_at
 		FROM ai_job_artifacts a
 		INNER JOIN ai_jobs j ON j.id = a.job_id
-		WHERE a.job_id = $1 AND j.owner_user_id = $2
+		WHERE a.job_id = $1 AND j.owner_user_id = $2 AND j.deleted_at IS NULL
 		ORDER BY a.created_at ASC
 	`, jobID, ownerUserID)
 	if err != nil {
@@ -1932,6 +1967,33 @@ func (s *Store) DeleteAIJobPublishLinksByOwner(ctx context.Context, jobID string
 		return 0, err
 	}
 	return commandTag.RowsAffected(), nil
+}
+
+// 执行AI作业相关的数据库写入，维护软删除状态并让用户侧立即隐藏该记录。
+func (s *Store) SoftDeleteAIJobByOwner(ctx context.Context, jobID string, ownerUserID string, adminUserID string) (*domain.AIJob, error) {
+	row := s.pool.QueryRow(ctx, `
+		UPDATE ai_jobs
+		SET deleted_at = NOW(),
+		    deleted_by_admin_user_id = $3,
+		    updated_at = NOW()
+		WHERE id = $1
+		  AND owner_user_id = $2
+		  AND deleted_at IS NULL
+		  AND (
+		      status IN ('failed', 'cancelled', 'success', 'completed')
+		      OR (status = 'running' AND updated_at <= NOW() - INTERVAL '15 minutes')
+		  )
+		RETURNING `+aiJobSelectColumns+`
+	`, strings.TrimSpace(jobID), strings.TrimSpace(ownerUserID), strings.TrimSpace(adminUserID))
+
+	job, err := scanAIJob(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return job, nil
 }
 
 // 执行AI作业相关的数据库写入，维护持久化状态与后续业务流转。

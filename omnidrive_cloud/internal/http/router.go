@@ -113,6 +113,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 
 			private.Route("/tasks", func(tasks chi.Router) {
 				tasks.Get("/", taskHandler.List)
+				tasks.Get("/summary", taskHandler.Summary)
 				tasks.Get("/diagnostics", taskHandler.Diagnostics)
 				tasks.Post("/bulk-repair", taskHandler.BulkRepair)
 				tasks.Post("/bulk-action", taskHandler.BulkAction)
@@ -281,6 +282,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 			private.With(authmiddleware.RequireAdminPermission("task.operate")).Post("/ai-jobs/{jobId}/cancel", adminConsoleHandler.CancelAIJob)
 			private.With(authmiddleware.RequireAdminPermission("task.operate")).Post("/ai-jobs/{jobId}/retry", adminConsoleHandler.RetryAIJob)
 			private.With(authmiddleware.RequireAdminPermission("task.operate")).Post("/ai-jobs/{jobId}/force-release", adminConsoleHandler.ForceReleaseAIJob)
+			private.With(authmiddleware.RequireAdminPermission("task.operate")).Post("/ai-jobs/{jobId}/delete", adminConsoleHandler.DeleteAIJob)
 			private.With(authmiddleware.RequireAdminPermission("task.read")).Get("/digital-human/models", adminConsoleHandler.ListDigitalHumanModels)
 			private.With(authmiddleware.RequireAdminPermission("task.read")).Get("/digital-human/tasks", adminConsoleHandler.ListDigitalHumanTasks)
 			private.With(authmiddleware.RequireAdminPermission("task.read")).Get("/digital-human/tasks/{taskId}", adminConsoleHandler.DetailDigitalHumanTask)

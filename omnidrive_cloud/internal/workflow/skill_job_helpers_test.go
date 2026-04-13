@@ -203,6 +203,16 @@ func TestBuildDigitalHumanSkillAIJobPayloadIncludesRootAccountID(t *testing.T) {
 	}
 }
 
+func TestMapSkillOutputTypeToJobTypeReturnsDigitalHuman(t *testing.T) {
+	jobType, ok := MapSkillOutputTypeToJobType("数字人口播")
+	if !ok {
+		t.Fatalf("expected 数字人口播 to be supported")
+	}
+	if jobType != "digital_human" {
+		t.Fatalf("expected digital_human job type, got %q", jobType)
+	}
+}
+
 func testStringPtr(value string) *string {
 	return &value
 }

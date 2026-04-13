@@ -14,8 +14,8 @@ import {
   LoaderCircle,
 } from "lucide-react";
 import Link from "next/link";
-import { listDevices, listTasks } from "@/lib/services";
-import type { Device, Task } from "@/lib/types";
+import { getTaskSummary, listDevices, listTasks } from "@/lib/services";
+import type { Device, Task, TaskSummary } from "@/lib/types";
 import { PageHeader, StatCard, StatusBadge, EmptyState } from "@/components/ui/common";
 import {
   BRIDGE_CHECK_POLL_MS,
@@ -42,9 +42,13 @@ export default function DashboardPage() {
     refetchIntervalInBackground: true,
   });
 
-  const { data: tasks = [] } = useQuery<Task[]>({
-    queryKey: ["tasks"],
-    queryFn: () => listTasks(),
+  const { data: taskSummary } = useQuery<TaskSummary>({
+    queryKey: ["taskSummary"],
+    queryFn: getTaskSummary,
+  });
+  const { data: recentTasks = [] } = useQuery<Task[]>({
+    queryKey: ["tasks", "dashboard", "recent"],
+    queryFn: () => listTasks({ limit: 5 }),
   });
 
   useEffect(() => {
@@ -62,10 +66,9 @@ export default function DashboardPage() {
   const onlineDevices = devices.filter(
     (d) => d.status === "online" && getBridgeDisplayStatus(d, effectivePendingBridgeChecks) === "healthy",
   ).length;
-  const pendingTasks = tasks.filter(
-    (t) => t.status === "pending" || t.status === "running",
-  ).length;
-  const verifyTasks = tasks.filter((t) => t.status === "needs_verify").length;
+  const pendingTasks = (taskSummary?.pendingCount || 0) + (taskSummary?.runningCount || 0);
+  const verifyTasks = taskSummary?.needsVerifyCount || 0;
+  const completedTasks = taskSummary?.completedCount || 0;
 
   return (
     <>
@@ -98,7 +101,7 @@ export default function DashboardPage() {
         />
         <StatCard
           label="今日完成"
-          value={tasks.filter((t) => t.status === "success").length}
+          value={completedTasks}
           change="本日统计"
           changeType="neutral"
           icon={<Activity className="h-5 w-5" />}
@@ -202,9 +205,9 @@ export default function DashboardPage() {
             </Link>
           </div>
 
-          {tasks.length > 0 ? (
+          {recentTasks.length > 0 ? (
             <div className="space-y-3">
-              {tasks.slice(0, 5).map((task) => (
+              {recentTasks.map((task) => (
                 <div
                   key={task.id}
                   className="flex items-center justify-between rounded-xl bg-surface-hover/50 px-4 py-3 transition-colors hover:bg-surface-hover"
@@ -265,7 +268,7 @@ export default function DashboardPage() {
               </div>
               <div>
                 <p className="text-sm font-medium text-text-primary">
-                  数字人视频
+                  真人视频
                 </p>
                 <p className="text-xs text-text-muted">
                   上传人物、音频和产品素材快速生成口播视频

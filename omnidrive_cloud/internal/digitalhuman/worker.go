@@ -420,28 +420,41 @@ func (w *Worker) materializeTaskAssets(ctx context.Context, task *domain.Digital
 		return tempDir, GenerateRequest{}, err
 	}
 
+	mode := strings.ToLower(strings.TrimSpace(task.Mode))
+	switch mode {
+	case "digital", "customize":
+	default:
+		return tempDir, GenerateRequest{}, fmt.Errorf("unsupported digital human mode: %s", task.Mode)
+	}
+	goodsText := strings.TrimSpace(task.GoodsText)
+	if goodsText == "" {
+		return tempDir, GenerateRequest{}, fmt.Errorf("digital human goods text is required")
+	}
+
 	request := GenerateRequest{
-		Text:     task.GoodsText,
-		Mode:     "fixed",
-		RefAudio: stringPtr(audioPath),
-		TemplateParams: map[string]any{
-			"character_asset_path": characterPath,
-			"digital_human_mode":   strings.TrimSpace(task.Mode),
-			"source":               "omnidrive_cloud",
-		},
+		CharacterAssetPath: characterPath,
+		Mode:               mode,
+		Source:             "runninghub",
+		GoodsText:          goodsText,
+		RefAudio:           stringPtr(audioPath),
 	}
 	if strings.TrimSpace(task.ModelName) != "" {
 		request.LLMModel = stringPtr(strings.TrimSpace(task.ModelName))
 	}
-	if task.GoodsTitle != nil {
-		request.Title = stringPtr(strings.TrimSpace(*task.GoodsTitle))
-	}
-	if task.GoodsAsset != nil {
+	if mode == "digital" {
+		if task.GoodsTitle == nil || strings.TrimSpace(*task.GoodsTitle) == "" {
+			return tempDir, GenerateRequest{}, fmt.Errorf("digital human digital mode requires goods title")
+		}
+		if task.GoodsAsset == nil {
+			return tempDir, GenerateRequest{}, fmt.Errorf("digital human digital mode requires goods asset")
+		}
+		request.GoodsTitle = stringPtr(strings.TrimSpace(*task.GoodsTitle))
+
 		goodsPath, goodsErr := w.writeTempAsset(ctx, tempDir, "goods", *task.GoodsAsset)
 		if goodsErr != nil {
 			return tempDir, GenerateRequest{}, goodsErr
 		}
-		request.TemplateParams["goods_asset_path"] = goodsPath
+		request.GoodsAssetPath = stringPtr(goodsPath)
 	}
 	return tempDir, request, nil
 }
@@ -467,6 +480,10 @@ func (w *Worker) saveResultAsset(ctx context.Context, task *domain.DigitalHumanT
 	if videoURL == "" {
 		return nil, fmt.Errorf("digital human result missing video_url")
 	}
+	resolvedVideoURL, err := w.resolveResultVideoURL(videoURL)
+	if err != nil {
+		return nil, err
+	}
 
 	workingDir := valueOrEmptyString(task.WorkingDir)
 	cleanupTempDir := false
@@ -483,7 +500,7 @@ func (w *Worker) saveResultAsset(ctx context.Context, task *domain.DigitalHumanT
 	}
 
 	targetPath := filepath.Join(workingDir, fmt.Sprintf("result-%s.mp4", uuid.NewString()))
-	if err := w.downloadResultVideo(ctx, videoURL, targetPath); err != nil {
+	if err := w.downloadResultVideo(ctx, resolvedVideoURL, targetPath); err != nil {
 		return nil, err
 	}
 
@@ -498,7 +515,7 @@ func (w *Worker) saveResultAsset(ctx context.Context, task *domain.DigitalHumanT
 	if contentType == "" || contentType == "application/octet-stream" {
 		contentType = "video/mp4"
 	}
-	fileName := resultFileName(videoURL)
+	fileName := resultFileName(resolvedVideoURL)
 	object, err := w.app.Storage.SaveBytes(
 		ctx,
 		fmt.Sprintf("digital-human/%s/%s/result/%s-%s", task.OwnerUserID, task.ID, uuid.NewString(), fileName),
@@ -519,6 +536,25 @@ func (w *Worker) saveResultAsset(ctx context.Context, task *domain.DigitalHumanT
 		actualDurationSeconds: actualDurationSeconds,
 		probeErr:              probeErr,
 	}, nil
+}
+
+func (w *Worker) resolveResultVideoURL(rawURL string) (string, error) {
+	if w.client != nil {
+		resolved, err := w.client.ResolveURL(rawURL)
+		if err == nil {
+			return resolved, nil
+		}
+		return "", fmt.Errorf("resolve digital human result url %q: %w", strings.TrimSpace(rawURL), err)
+	}
+
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return "", fmt.Errorf("resolve digital human result url %q: %w", strings.TrimSpace(rawURL), err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("resolve digital human result url %q: missing scheme or host", strings.TrimSpace(rawURL))
+	}
+	return parsed.String(), nil
 }
 
 func (w *Worker) failTask(ctx context.Context, task *domain.DigitalHumanTask, leaseToken string, message string, workingDir *string, rawResponse []byte) {

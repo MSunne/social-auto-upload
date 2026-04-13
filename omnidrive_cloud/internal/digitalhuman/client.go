@@ -19,12 +19,14 @@ type Client struct {
 }
 
 type GenerateRequest struct {
-	Text           string         `json:"text"`
-	LLMModel       *string        `json:"llm_model,omitempty"`
-	Mode           string         `json:"mode"`
-	Title          *string        `json:"title,omitempty"`
-	RefAudio       *string        `json:"ref_audio,omitempty"`
-	TemplateParams map[string]any `json:"template_params,omitempty"`
+	CharacterAssetPath string  `json:"character_asset_path"`
+	LLMModel           *string `json:"llm_model,omitempty"`
+	Source             string  `json:"source"`
+	Mode               string  `json:"mode"`
+	GoodsAssetPath     *string `json:"goods_asset_path,omitempty"`
+	GoodsText          string  `json:"goods_text"`
+	GoodsTitle         *string `json:"goods_title,omitempty"`
+	RefAudio           *string `json:"ref_audio,omitempty"`
 }
 
 type GenerateResponse struct {
@@ -81,7 +83,7 @@ func (c *Client) GenerateVideoAsync(ctx context.Context, req GenerateRequest) (*
 	if err != nil {
 		return nil, nil, err
 	}
-	respBody, err := c.doJSON(ctx, http.MethodPost, "/api/video/generate/async", body)
+	respBody, err := c.doJSON(ctx, http.MethodPost, "/api/step3-generate-video", body)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -100,7 +102,7 @@ func (c *Client) GetTask(ctx context.Context, taskID string) (*RemoteTask, []byt
 	if strings.TrimSpace(taskID) == "" {
 		return nil, nil, fmt.Errorf("task id is required")
 	}
-	respBody, err := c.doJSON(ctx, http.MethodGet, "/api/tasks/"+url.PathEscape(strings.TrimSpace(taskID)), nil)
+	respBody, err := c.doJSON(ctx, http.MethodGet, "/api/step4-check-status/"+url.PathEscape(strings.TrimSpace(taskID)), nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -113,6 +115,38 @@ func (c *Client) GetTask(ctx context.Context, taskID string) (*RemoteTask, []byt
 		task.TaskID = strings.TrimSpace(taskID)
 	}
 	return &task, respBody, nil
+}
+
+func (c *Client) ResolveURL(rawURL string) (string, error) {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		return "", fmt.Errorf("digital human result url is required")
+	}
+
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("parse digital human result url: %w", err)
+	}
+	if parsed.Scheme != "" {
+		if parsed.Host == "" {
+			return "", fmt.Errorf("digital human result url host is required")
+		}
+		return parsed.String(), nil
+	}
+
+	baseURL := strings.TrimSpace(c.baseURL)
+	if baseURL == "" {
+		return "", fmt.Errorf("digital human base url is required")
+	}
+	baseParsed, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("parse digital human base url: %w", err)
+	}
+	if baseParsed.Scheme == "" || baseParsed.Host == "" {
+		return "", fmt.Errorf("digital human base url must include scheme and host")
+	}
+
+	return baseParsed.ResolveReference(parsed).String(), nil
 }
 
 func (c *Client) ListModels(ctx context.Context) (*LLMModelsResponse, []byte, error) {

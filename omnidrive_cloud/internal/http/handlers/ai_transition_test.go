@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"omnidrive_cloud/internal/domain"
 )
@@ -77,6 +78,20 @@ func TestComputeAIJobActionsWaitingRecharge(t *testing.T) {
 	}
 }
 
+func TestComputeAIJobActionsAllowsDeleteForStaleRunningJobs(t *testing.T) {
+	staleJob := &domain.AIJob{Status: "running", UpdatedAt: time.Now().UTC().Add(-16 * time.Minute)}
+	staleActions := computeAIJobActions(staleJob, 0)
+	if !staleActions.CanDelete {
+		t.Fatalf("expected stale running job to be deletable")
+	}
+
+	freshJob := &domain.AIJob{Status: "running", UpdatedAt: time.Now().UTC().Add(-5 * time.Minute)}
+	freshActions := computeAIJobActions(freshJob, 0)
+	if freshActions.CanDelete {
+		t.Fatalf("expected fresh running job to remain non-deletable")
+	}
+}
+
 func TestBuildAIJobBridgeStateWaitingRecharge(t *testing.T) {
 	job := &domain.AIJob{
 		Status: "waiting_recharge",
@@ -143,5 +158,64 @@ func TestApplySkillWorkflowPricingSnapshotSupportsItemizedMultiples(t *testing.T
 	}
 	if _, exists := workflowPricing["ruleId"]; exists {
 		t.Fatalf("expected itemized snapshot without ruleId, got %#v", workflowPricing["ruleId"])
+	}
+}
+
+func TestReadCreateAIJobPurpose(t *testing.T) {
+	raw, err := json.Marshal(map[string]any{
+		"purpose": " Prompt_Optimize ",
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	if got := readCreateAIJobPurpose(raw); got != promptOptimizePurpose {
+		t.Fatalf("readCreateAIJobPurpose() = %q, want %q", got, promptOptimizePurpose)
+	}
+}
+
+func TestIsPromptOptimizeCreateJob(t *testing.T) {
+	raw, err := json.Marshal(map[string]any{
+		"purpose": promptOptimizePurpose,
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	if !isPromptOptimizeCreateJob("chat", raw) {
+		t.Fatal("expected chat prompt optimize payload to be detected")
+	}
+	if isPromptOptimizeCreateJob("image", raw) {
+		t.Fatal("did not expect non-chat job type to be treated as prompt optimize")
+	}
+}
+
+func TestPromptOptimizeModelCandidatesPreferDedicatedConfigThenFallback(t *testing.T) {
+	settings := effectiveAdminSystemSettings{
+		PromptOptimizeModel: "gemini-3.1-pro-preview",
+		DefaultChatModel:    "default-chat-model",
+	}
+
+	got := promptOptimizeModelCandidates(settings, "legacy-request-model")
+	want := []string{"gemini-3.1-pro-preview", "default-chat-model", "legacy-request-model"}
+	if len(got) != len(want) {
+		t.Fatalf("promptOptimizeModelCandidates() len = %d, want %d (%#v)", len(got), len(want), got)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("promptOptimizeModelCandidates()[%d] = %q, want %q", index, got[index], want[index])
+		}
+	}
+}
+
+func TestPromptOptimizeModelCandidatesDeduplicateValues(t *testing.T) {
+	settings := effectiveAdminSystemSettings{
+		PromptOptimizeModel: "gemini-3.1-pro-preview",
+		DefaultChatModel:    "gemini-3.1-pro-preview",
+	}
+
+	got := promptOptimizeModelCandidates(settings, "gemini-3.1-pro-preview")
+	if len(got) != 1 || got[0] != "gemini-3.1-pro-preview" {
+		t.Fatalf("unexpected candidate list: %#v", got)
 	}
 }

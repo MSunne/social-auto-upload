@@ -129,8 +129,8 @@ const OUTPUT_OPTIONS: OutputOption[] = [
     tone: "text-amber-200",
   },
   {
-    value: "数字人口播",
-    label: "数字人口播",
+    value: "真人口播",
+    label: "真人口播",
     hint: "带货口播、人物口播视频",
     icon: Mic,
     tone: "text-emerald-300",
@@ -755,7 +755,7 @@ export function SkillEditorModal({
     if (isDigitalHumanOutput(payload.outputType)) {
       const goodsText = form.digitalHumanGoodsText.trim();
       if (!goodsText) {
-        throw new Error("请先填写数字人口播文案");
+        throw new Error("请先填写真人口播文案");
       }
       if (form.digitalHumanMode === "digital" && !form.digitalHumanGoodsTitle.trim()) {
         throw new Error("带货模式请先填写产品标题");
@@ -1036,7 +1036,7 @@ export function SkillEditorModal({
   const flowSteps = isDigitalHumanOutputType
     ? [
         "账号执行技能时自动复用人物主图、商品主图和参考音频",
-        form.digitalHumanMode === "digital" ? "按带货模式创建数字人任务" : "按口播模式创建数字人任务",
+        form.digitalHumanMode === "digital" ? "按带货模式创建真人任务" : "按口播模式创建真人任务",
         visibleModelName || "最终模型待选择",
       ]
     : form.storyboardEnabled
@@ -1257,7 +1257,7 @@ export function SkillEditorModal({
                   {isDigitalHumanOutputType ? (
                     <SectionCard
                       title="口播设定"
-                      description="配置数字人口播模式、产品信息和文案脚本。素材和文案将保存在技能自身，账号执行时会直接按当前配置创建数字人任务。"
+                      description="配置真人口播模式、产品信息和文案脚本。素材和文案将保存在技能自身，账号执行时会直接按当前配置创建真人任务。"
                     >
                       <div className="flex flex-wrap gap-2">
                         {[
@@ -1303,7 +1303,7 @@ export function SkillEditorModal({
                             setForm((current) => ({ ...current, digitalHumanGoodsText: event.target.value }))
                           }
                           rows={5}
-                          placeholder="填写数字人口播文案，系统会按这段文案生成最终视频。"
+                          placeholder="填写真人口播文案，系统会按这段文案生成最终视频。"
                           className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
                         />
                       </label>
@@ -1312,14 +1312,14 @@ export function SkillEditorModal({
 
                   <SectionCard
                     title={isDigitalHumanOutputType ? "执行模型" : "模型与时长"}
-                    description={isDigitalHumanOutputType ? "选择数字人口播的执行模型。系统已根据当前模式推荐最优模型，通常无需手动更换。" : "选择最终执行模型并设置视频时长。模型和时长紧密耦合，在同一区域方便对照。"}
+                    description={isDigitalHumanOutputType ? "选择真人口播的执行模型。系统已根据当前模式推荐最优模型，通常无需手动更换。" : "选择最终执行模型并设置视频时长。模型和时长紧密耦合，在同一区域方便对照。"}
                   >
                     {isDigitalHumanOutputType ? (
                       digitalHumanModelsLoading ? (
-                        <InlineLoading label="正在读取数字人模型..." />
+                        <InlineLoading label="正在读取真人模型..." />
                       ) : availableDigitalHumanModels.length === 0 ? (
                         <div className="rounded-[24px] border border-dashed border-white/10 bg-white/[0.03] px-5 py-12 text-center text-sm text-text-secondary">
-                          当前没有可用的数字人模型。
+                          当前没有可用的真人模型。
                         </div>
                       ) : !digitalHumanModelExpanded ? (
                         /* ── Collapsed: show only selected model summary ── */
@@ -1342,7 +1342,7 @@ export function SkillEditorModal({
                                     <p className="mt-2 text-sm leading-6 text-text-secondary">
                                       {activeModel?.isRecommended
                                         ? "系统推荐模型，适合作为当前模式的默认执行模型。"
-                                        : "已固定为该模型，保存后作为数字人口播默认执行模型。"}
+                                        : "已固定为该模型，保存后作为真人口播默认执行模型。"}
                                     </p>
                                   </div>
                                   <SelectionBadge selected />
@@ -1399,8 +1399,8 @@ export function SkillEditorModal({
                                       </div>
                                       <p className="mt-2 text-sm leading-6 text-text-secondary">
                                         {model.isRecommended
-                                          ? "推荐模型，适合作为数字人口播默认执行模型。"
-                                          : "可作为数字人口播执行模型，由技能在保存时固定。"}
+                                          ? "推荐模型，适合作为真人口播默认执行模型。"
+                                          : "可作为真人口播执行模型，由技能在保存时固定。"}
                                       </p>
                                     </div>
                                     <SelectionBadge selected={selected} />
@@ -1645,7 +1645,7 @@ export function SkillEditorModal({
                     title="参考素材"
                     description={
                       isDigitalHumanOutputType
-                        ? "数字人口播会把人物主图、商品主图和参考音频保存在技能资产中，执行时自动复用。"
+                        ? "真人口播会把人物主图、商品主图和参考音频保存在技能资产中，执行时自动复用。"
                         : "图片和视频共用一条有序参考链，文本继续补充结构、卖点和限制条件。"
                     }
                   >
@@ -1653,7 +1653,7 @@ export function SkillEditorModal({
                       <div className="grid gap-4 lg:grid-cols-3">
                         <UploadCard
                           title="人物主图"
-                          hint="口播模式和带货模式都必填，用于生成数字人形象。"
+                          hint="口播模式和带货模式都必填，用于生成真人形象。"
                           icon={<UserRound className="h-5 w-5 text-emerald-300" />}
                         >
                           {!digitalHumanCharacterAssets.length && !uploadingDigitalHumanCharacters.length ? (

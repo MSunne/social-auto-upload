@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS admin_system_configs (
     digital_human_shopping_default_model TEXT NOT NULL DEFAULT 'qvq-max',
     digital_human_speech_default_model TEXT NOT NULL DEFAULT 'qvq-max',
     default_chat_model TEXT NOT NULL DEFAULT 'gemini-3.1-pro-preview',
+    prompt_optimize_model TEXT NOT NULL DEFAULT 'gemini-3.1-pro-preview',
     default_image_model TEXT NOT NULL DEFAULT 'gemini-3-pro-image-preview',
     default_video_model TEXT NOT NULL DEFAULT 'veo-3.1-fast-fl',
     video_cover_prompt_template TEXT NOT NULL DEFAULT '',
@@ -478,6 +479,7 @@ ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS digital_human_credits_
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS digital_human_credits_per_second_millis BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS digital_human_shopping_default_model TEXT NOT NULL DEFAULT 'qvq-max';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS digital_human_speech_default_model TEXT NOT NULL DEFAULT 'qvq-max';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS prompt_optimize_model TEXT NOT NULL DEFAULT 'gemini-3.1-pro-preview';
 ALTER TABLE phone_verification_codes ADD COLUMN IF NOT EXISTS verification_code_hash TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_chat_model TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_image_model TEXT;
@@ -497,6 +499,11 @@ ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS storyboard_enabled BOOLEAN N
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS next_run_at TIMESTAMPTZ;
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS last_run_at TIMESTAMPTZ;
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS topics JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+UPDATE admin_system_configs
+SET prompt_optimize_model = 'gemini-3.1-pro-preview'
+WHERE NULLIF(TRIM(prompt_optimize_model), '') IS NULL
+   OR TRIM(prompt_optimize_model) = 'claude-opus-4-6-thinking';
 
 CREATE TABLE IF NOT EXISTS ai_models (
     id TEXT PRIMARY KEY,
@@ -567,6 +574,7 @@ CREATE TABLE IF NOT EXISTS ai_jobs (
     owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     device_id TEXT REFERENCES devices(id) ON DELETE CASCADE,
     skill_id TEXT REFERENCES product_skills(id) ON DELETE SET NULL,
+    deleted_by_admin_user_id TEXT REFERENCES admin_users(id) ON DELETE SET NULL,
     source TEXT NOT NULL DEFAULT 'omnidrive_cloud',
     local_task_id TEXT,
     job_type TEXT NOT NULL,
@@ -590,11 +598,13 @@ CREATE TABLE IF NOT EXISTS ai_jobs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     delivered_at TIMESTAMPTZ,
-    finished_at TIMESTAMPTZ
+    finished_at TIMESTAMPTZ,
+    deleted_at TIMESTAMPTZ
 );
 
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS device_id TEXT REFERENCES devices(id) ON DELETE CASCADE;
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS skill_id TEXT REFERENCES product_skills(id) ON DELETE SET NULL;
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS deleted_by_admin_user_id TEXT REFERENCES admin_users(id) ON DELETE SET NULL;
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'omnidrive_cloud';
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS local_task_id TEXT;
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS lease_owner_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL;
@@ -608,6 +618,7 @@ ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS notes TEXT;
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS exception_reason TEXT;
 ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS risk_tags JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS ai_job_artifacts (
     id TEXT PRIMARY KEY,
@@ -670,6 +681,9 @@ CREATE TABLE IF NOT EXISTS digital_human_tasks (
 
 CREATE INDEX IF NOT EXISTS idx_digital_human_tasks_owner_updated
     ON digital_human_tasks (owner_user_id, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_digital_human_tasks_owner_updated_id
+    ON digital_human_tasks (owner_user_id, updated_at DESC, id DESC);
 
 CREATE INDEX IF NOT EXISTS idx_digital_human_tasks_status_lease
     ON digital_human_tasks (status, lease_expires_at, created_at ASC);
@@ -1299,6 +1313,8 @@ CREATE INDEX IF NOT EXISTS idx_publish_tasks_device_id ON publish_tasks(device_i
 CREATE INDEX IF NOT EXISTS idx_publish_tasks_lease_owner_device_id ON publish_tasks(lease_owner_device_id);
 CREATE INDEX IF NOT EXISTS idx_publish_tasks_lease_expires_at ON publish_tasks(lease_expires_at);
 CREATE INDEX IF NOT EXISTS idx_publish_tasks_status_platform ON publish_tasks(status, platform);
+CREATE INDEX IF NOT EXISTS idx_publish_tasks_device_updated_id ON publish_tasks(device_id, updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_publish_tasks_account_updated_id ON publish_tasks(account_id, updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_publish_task_events_task_id ON publish_task_events(task_id);
 CREATE INDEX IF NOT EXISTS idx_publish_task_artifacts_task_id ON publish_task_artifacts(task_id);
 CREATE INDEX IF NOT EXISTS idx_publish_task_runtime_states_last_agent_sync_at ON publish_task_runtime_states(last_agent_sync_at);
@@ -1307,6 +1323,7 @@ CREATE INDEX IF NOT EXISTS idx_ai_models_category ON ai_models(category);
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_owner_user_id ON ai_jobs(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_job_type ON ai_jobs(job_type);
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_owner_job_type_updated_at ON ai_jobs(owner_user_id, job_type, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_jobs_owner_job_type_source_updated_id ON ai_jobs(owner_user_id, job_type, source, updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_device_id ON ai_jobs(device_id);
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_source ON ai_jobs(source);
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_lease_expires_at ON ai_jobs(lease_expires_at);

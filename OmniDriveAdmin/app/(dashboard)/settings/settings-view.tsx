@@ -24,23 +24,38 @@ type SaveNotice = {
 
 export function SettingsView() {
   const { data: config, isLoading, error } = useSystemConfig();
-  const { data: aiModelsData } = useAIModels({ page: 1, pageSize: 500 });
+  const { data: chatModelsData } = useAIModels({ page: 1, pageSize: 1000, category: "chat" });
+  const { data: imageModelsData } = useAIModels({ page: 1, pageSize: 1000, category: "image" });
+  const { data: videoModelsData } = useAIModels({ page: 1, pageSize: 1000, category: "video" });
   const updateM = useUpdateSystemConfig();
   const [formData, setFormData] = useState<Partial<AdminSystemConfig>>({});
   const [saveNotice, setSaveNotice] = useState<SaveNotice | null>(null);
 
-  const aiModels = useMemo(() => aiModelsData?.items || [], [aiModelsData?.items]);
+  const chatModels = useMemo(() => chatModelsData?.items || [], [chatModelsData?.items]);
+  const imageModels = useMemo(() => imageModelsData?.items || [], [imageModelsData?.items]);
+  const videoModels = useMemo(() => videoModelsData?.items || [], [videoModelsData?.items]);
+  const aiModels = useMemo(() => {
+    const deduped = new Map<string, AIModel>();
+    [...chatModels, ...imageModels, ...videoModels].forEach((item) => {
+      deduped.set(item.modelName, item);
+    });
+    return Array.from(deduped.values());
+  }, [chatModels, imageModels, videoModels]);
   const chatModelOptions = useMemo(
-    () => buildModelOptions(aiModels, "chat", formData.defaultChatModel),
-    [aiModels, formData.defaultChatModel],
+    () => buildModelOptions(chatModels, formData.defaultChatModel),
+    [chatModels, formData.defaultChatModel],
+  );
+  const promptOptimizeModelOptions = useMemo(
+    () => buildPromptOptimizeModelOptions(chatModels, formData.promptOptimizeModel),
+    [chatModels, formData.promptOptimizeModel],
   );
   const imageModelOptions = useMemo(
-    () => buildModelOptions(aiModels, "image", formData.defaultImageModel),
-    [aiModels, formData.defaultImageModel],
+    () => buildModelOptions(imageModels, formData.defaultImageModel),
+    [imageModels, formData.defaultImageModel],
   );
   const videoModelOptions = useMemo(
-    () => buildModelOptions(aiModels, "video", formData.defaultVideoModel),
-    [aiModels, formData.defaultVideoModel],
+    () => buildModelOptions(videoModels, formData.defaultVideoModel),
+    [videoModels, formData.defaultVideoModel],
   );
 
   useEffect(() => {
@@ -221,6 +236,17 @@ export function SettingsView() {
                 displayValue={getModelDisplayNameByName(aiModels, formData.defaultChatModel)}
               />
               <ModelSelectField
+                label="AI 优化提示词模型"
+                value={formData.promptOptimizeModel || ""}
+                onChange={(value) =>
+                  setFormData((current) => ({ ...current, promptOptimizeModel: value }))
+                }
+                options={promptOptimizeModelOptions}
+                displayValue={getModelDisplayNameByName(aiModels, formData.promptOptimizeModel)}
+                emptyLabel="跟随默认语言大模型"
+                helperText="仅展示支持图片输入的 Chat 模型；留空时会回退到默认语言大模型。"
+              />
+              <ModelSelectField
                 label="默认生图模型 (Image)"
                 value={formData.defaultImageModel || ""}
                 onChange={(value) =>
@@ -230,13 +256,14 @@ export function SettingsView() {
                 displayValue={getModelDisplayNameByName(aiModels, formData.defaultImageModel)}
               />
               <ModelSelectField
-                label="默认短视频模型 (Video)"
+                label="默认视频生成模型 (Video)"
                 value={formData.defaultVideoModel || ""}
                 onChange={(value) =>
                   setFormData((current) => ({ ...current, defaultVideoModel: value }))
                 }
                 options={videoModelOptions}
                 displayValue={getModelDisplayNameByName(aiModels, formData.defaultVideoModel)}
+                helperText="仅用于普通 AI 视频生成；数字人口播默认模型请在“数字人设置”里单独配置。"
               />
             </div>
           </div>
@@ -534,6 +561,7 @@ function buildSystemConfigUpdatePayload(formData: Partial<AdminSystemConfig>) {
       codeLength: formData.smsRegistration?.codeLength ?? 6,
     },
     defaultChatModel: formData.defaultChatModel ?? "",
+    promptOptimizeModel: formData.promptOptimizeModel ?? "",
     defaultImageModel: formData.defaultImageModel ?? "",
     defaultVideoModel: formData.defaultVideoModel ?? "",
   };
@@ -566,9 +594,44 @@ function InputField({
   );
 }
 
-function buildModelOptions(models: AIModel[], category: string, currentValue?: string) {
+function buildModelOptions(models: AIModel[], currentValue?: string) {
   const matched = models
-    .filter((item) => item.category === category)
+    .sort((left, right) => getModelDisplayName(left).localeCompare(getModelDisplayName(right)))
+    .map((item) => ({
+      value: item.modelName,
+      label: getModelDisplayName(item),
+    }));
+
+  const normalized = currentValue?.trim();
+  if (normalized && !matched.some((item) => item.value === normalized)) {
+    return [{ value: normalized, label: `${normalized}（未注册模型）` }, ...matched];
+  }
+  return matched;
+}
+
+function supportsPromptOptimizeModel(model: AIModel) {
+  if (model.category !== "chat" || !model.isEnabled) {
+    return false;
+  }
+  const supportedFileTypes = Array.isArray(model.supportedFileTypes) ? model.supportedFileTypes : [];
+  const hasImageInput = supportedFileTypes.some((item) => {
+    const normalized = String(item || "").trim().toLowerCase();
+    return (
+      normalized === "image/*" ||
+      normalized.startsWith("image/") ||
+      normalized === ".png" ||
+      normalized === ".jpg" ||
+      normalized === ".jpeg" ||
+      normalized === ".webp" ||
+      normalized === ".gif"
+    );
+  });
+  return hasImageInput || model.modelName.toLowerCase().includes("gemini");
+}
+
+function buildPromptOptimizeModelOptions(models: AIModel[], currentValue?: string) {
+  const matched = models
+    .filter((item) => supportsPromptOptimizeModel(item))
     .sort((left, right) => getModelDisplayName(left).localeCompare(getModelDisplayName(right)))
     .map((item) => ({
       value: item.modelName,
@@ -588,12 +651,16 @@ function ModelSelectField({
   onChange,
   options,
   displayValue,
+  emptyLabel = "请选择模型",
+  helperText,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   options: Array<{ value: string; label: string }>;
   displayValue: string;
+  emptyLabel?: string;
+  helperText?: string;
 }) {
   return (
     <div>
@@ -603,7 +670,7 @@ function ModelSelectField({
         onChange={(event) => onChange(event.target.value)}
         className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm focus:border-[var(--color-primary)] focus:outline-none"
       >
-        <option value="">请选择模型</option>
+        <option value="">{emptyLabel}</option>
         {options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
@@ -614,6 +681,8 @@ function ModelSelectField({
         <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
           当前显示别名：{displayValue}，实际保存值：{value}
         </p>
+      ) : helperText ? (
+        <p className="mt-1 text-xs text-[var(--color-text-secondary)]">{helperText}</p>
       ) : null}
     </div>
   );

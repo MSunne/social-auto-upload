@@ -1,6 +1,7 @@
 package database
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -34,5 +35,14 @@ func TestShouldIgnoreSchemaError(t *testing.T) {
 	}
 	if shouldIgnoreSchemaError("CREATE TABLE users (id TEXT PRIMARY KEY)", err) {
 		t.Fatal("did not expect CREATE TABLE permission error to be ignored")
+	}
+}
+
+func TestBootstrapSQLIncludesPromptOptimizeModel(t *testing.T) {
+	if !strings.Contains(bootstrapSQL, "prompt_optimize_model") {
+		t.Fatal("expected bootstrapSQL to define prompt_optimize_model")
+	}
+	if !strings.Contains(bootstrapSQL, "claude-opus-4-6-thinking") {
+		t.Fatal("expected bootstrapSQL to backfill old claude prompt optimize model values")
 	}
 }

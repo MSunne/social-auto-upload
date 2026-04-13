@@ -121,6 +121,7 @@ type persistedChatAttachment struct {
 
 const streamChatPersistenceTimeout = 10 * time.Second
 const streamChatGenerationTimeout = 3 * time.Minute
+const promptOptimizePurpose = "prompt_optimize"
 
 var defaultChatSupportedFileTypes = []string{
 	"image/*",
@@ -184,6 +185,74 @@ func normalizeCreateAIJobInputPayload(jobType string, prompt *string, raw any) (
 	}
 	payload["storyboardEnabled"] = normalizeVideoStoryboardEnabled(payload["storyboardEnabled"])
 	return json.Marshal(payload)
+}
+
+// 读取创建 AI 作业输入用途，供模型选择链路判断是否命中专用优化流程。
+func readCreateAIJobPurpose(raw []byte) string {
+	return strings.ToLower(strings.TrimSpace(openAIStringValue(decodeRawPayloadMap(raw)["purpose"])))
+}
+
+// 判断当前 AI 作业请求是否属于提示词优化流程。
+func isPromptOptimizeCreateJob(jobType string, raw []byte) bool {
+	return strings.EqualFold(strings.TrimSpace(jobType), "chat") && readCreateAIJobPurpose(raw) == promptOptimizePurpose
+}
+
+// 生成提示词优化模型候选顺序，保证 Admin 专用配置优先于通用回退。
+func promptOptimizeModelCandidates(settings effectiveAdminSystemSettings, requestedModelName string) []string {
+	candidates := []string{
+		strings.TrimSpace(settings.PromptOptimizeModel),
+		strings.TrimSpace(settings.DefaultChatModel),
+		strings.TrimSpace(requestedModelName),
+	}
+	items := make([]string, 0, len(candidates))
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if _, exists := seen[candidate]; exists {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		items = append(items, candidate)
+	}
+	return items
+}
+
+// 加载启用的聊天模型，供提示词优化链路回退选择。
+func (h *AIHandler) loadEnabledChatModel(ctx context.Context, modelName string) (*domain.AIModel, error) {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return nil, nil
+	}
+	model, err := h.app.Store.GetAIModelByName(ctx, modelName)
+	if err != nil {
+		return nil, err
+	}
+	if model == nil || !model.IsEnabled || strings.TrimSpace(model.Category) != "chat" {
+		return nil, nil
+	}
+	return model, nil
+}
+
+// 解析提示词优化流程的最终模型，优先使用专用 Admin 配置，再按兼容顺序回退。
+func (h *AIHandler) resolvePromptOptimizeCreateJobModel(ctx context.Context, settings effectiveAdminSystemSettings, requestedModelName string) (string, *domain.AIModel, error) {
+	configuredModelName := strings.TrimSpace(settings.PromptOptimizeModel)
+	for _, candidate := range promptOptimizeModelCandidates(settings, requestedModelName) {
+		model, err := h.loadEnabledChatModel(ctx, candidate)
+		if err != nil {
+			return "", nil, err
+		}
+		if model == nil {
+			continue
+		}
+		if candidate == configuredModelName && configuredModelName != "" && !aiclient.SupportsStoryboardPackageModel(model) {
+			continue
+		}
+		return candidate, model, nil
+	}
+
+	return "", nil, nil
 }
 
 // 应用技能工作流定价Snapshot，把外部输入转换为当前链路的最终状态变更。
@@ -888,16 +957,34 @@ func (h *AIHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = parsed
 	}
+	beforeUpdatedAtRaw := strings.TrimSpace(r.URL.Query().Get("beforeUpdatedAt"))
+	beforeID := strings.TrimSpace(r.URL.Query().Get("beforeId"))
+	var beforeUpdatedAt *time.Time
+	if beforeUpdatedAtRaw != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, beforeUpdatedAtRaw)
+		if err != nil {
+			render.Error(w, http.StatusBadRequest, "beforeUpdatedAt must be a valid RFC3339 timestamp")
+			return
+		}
+		parsed = parsed.UTC()
+		beforeUpdatedAt = &parsed
+	}
+	if (beforeUpdatedAt == nil) != (beforeID == "") {
+		render.Error(w, http.StatusBadRequest, "beforeUpdatedAt and beforeId must be provided together")
+		return
+	}
 	items, err := h.app.Store.ListAIJobsByOwner(r.Context(), user.ID, store.ListAIJobsFilter{
-		JobType:       strings.TrimSpace(r.URL.Query().Get("jobType")),
-		Status:        strings.TrimSpace(r.URL.Query().Get("status")),
-		SkillID:       strings.TrimSpace(r.URL.Query().Get("skillId")),
-		DeviceID:      strings.TrimSpace(r.URL.Query().Get("deviceId")),
-		AccountID:     strings.TrimSpace(r.URL.Query().Get("accountId")),
-		Source:        strings.TrimSpace(r.URL.Query().Get("source")),
-		ExcludeSource: strings.TrimSpace(r.URL.Query().Get("excludeSource")),
-		PayloadMode:   strings.TrimSpace(r.URL.Query().Get("payloadMode")),
-		Limit:         limit,
+		JobType:         strings.TrimSpace(r.URL.Query().Get("jobType")),
+		Status:          strings.TrimSpace(r.URL.Query().Get("status")),
+		SkillID:         strings.TrimSpace(r.URL.Query().Get("skillId")),
+		DeviceID:        strings.TrimSpace(r.URL.Query().Get("deviceId")),
+		AccountID:       strings.TrimSpace(r.URL.Query().Get("accountId")),
+		Source:          strings.TrimSpace(r.URL.Query().Get("source")),
+		ExcludeSource:   strings.TrimSpace(r.URL.Query().Get("excludeSource")),
+		BeforeUpdatedAt: beforeUpdatedAt,
+		BeforeID:        beforeID,
+		PayloadMode:     strings.TrimSpace(r.URL.Query().Get("payloadMode")),
+		Limit:           limit,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load AI jobs")
@@ -1346,19 +1433,6 @@ func (h *AIHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusBadRequest, "jobType and modelName are required")
 		return
 	}
-	model, err := h.app.Store.GetAIModelByName(r.Context(), payload.ModelName)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to validate AI model")
-		return
-	}
-	if model == nil || !model.IsEnabled {
-		render.Error(w, http.StatusNotFound, "AI model not found")
-		return
-	}
-	if model.Category != payload.JobType {
-		render.Error(w, http.StatusConflict, "AI model category does not match job type")
-		return
-	}
 
 	deviceID, ok := h.resolveOwnedDeviceID(w, r, payload.DeviceID, user.ID)
 	if !ok {
@@ -1430,12 +1504,52 @@ func (h *AIHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	resolvedModelName := payload.ModelName
+	var model *domain.AIModel
+	if payload.JobType == "digital_human" {
+		if err := validateDigitalHumanModelName(r.Context(), h.app, resolvedModelName); err != nil {
+			render.Error(w, http.StatusBadRequest, "Digital human model not found")
+			return
+		}
+	} else if isPromptOptimizeCreateJob(payload.JobType, inputPayload) {
+		resolvedModelName, model, err = h.resolvePromptOptimizeCreateJobModel(r.Context(), settings, payload.ModelName)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to validate AI model")
+			return
+		}
+		if model == nil {
+			render.Error(w, http.StatusNotFound, "AI model not found")
+			return
+		}
+	} else {
+		model, err = h.app.Store.GetAIModelByName(r.Context(), resolvedModelName)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to validate AI model")
+			return
+		}
+		if model == nil || !model.IsEnabled {
+			render.Error(w, http.StatusNotFound, "AI model not found")
+			return
+		}
+		if model.Category != payload.JobType {
+			render.Error(w, http.StatusConflict, "AI model category does not match job type")
+			return
+		}
+	}
+
+	if payload.JobType == "chat" {
+		if err := validateChatInputPayloadFiles(model, inputPayload); err != nil {
+			render.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
 	jobID := uuid.NewString()
 	billingPreview, err := previewAIJobBilling(r.Context(), h.app, &domain.AIJob{
 		ID:           jobID,
 		OwnerUserID:  user.ID,
 		SkillID:      skillID,
-		ModelName:    payload.ModelName,
+		ModelName:    resolvedModelName,
 		JobType:      payload.JobType,
 		InputPayload: inputPayload,
 	})
@@ -1457,7 +1571,7 @@ func (h *AIHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		Source:       *source,
 		LocalTaskID:  normalizeTrimmedString(payload.LocalTaskID),
 		JobType:      payload.JobType,
-		ModelName:    payload.ModelName,
+		ModelName:    resolvedModelName,
 		Prompt:       payload.Prompt,
 		InputPayload: inputPayload,
 		Status:       "queued",
@@ -3045,8 +3159,20 @@ func readPayloadString(payload map[string]any, keys ...string) string {
 }
 
 // 计算AI作业动作，供AI作业复用派生状态和判定结果。
+const staleRunningDeleteThreshold = 15 * time.Minute
+
+func isStaleRunningAIJob(job *domain.AIJob) bool {
+	if job == nil || job.Status != "running" || job.UpdatedAt.IsZero() {
+		return false
+	}
+	return time.Since(job.UpdatedAt) >= staleRunningDeleteThreshold
+}
+
 func computeAIJobActions(job *domain.AIJob, artifactCount int) domain.AIJobActionState {
 	if job == nil {
+		return domain.AIJobActionState{}
+	}
+	if job.DeletedAt != nil {
 		return domain.AIJobActionState{}
 	}
 
@@ -3064,9 +3190,11 @@ func computeAIJobActions(job *domain.AIJob, artifactCount int) domain.AIJobActio
 		state.CanCancel = true
 	case "running":
 		state.CanCancel = true
+		state.CanDelete = isStaleRunningAIJob(job)
 	case "failed", "cancelled", "success", "completed":
 		state.CanEdit = true
 		state.CanRetry = true
+		state.CanDelete = true
 	default:
 		state.CanEdit = true
 	}

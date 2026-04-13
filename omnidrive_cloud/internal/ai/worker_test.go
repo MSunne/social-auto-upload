@@ -165,7 +165,7 @@ func TestShouldAutoRetryDigitalHumanFailureStopsAfterOneRetry(t *testing.T) {
 	}
 	task := &domain.DigitalHumanTask{Status: "failed"}
 
-	if shouldAutoRetryDigitalHumanFailure(job, task, "digital human api POST /api/video/generate/async returned 503") {
+	if shouldAutoRetryDigitalHumanFailure(job, task, "digital human api POST /api/step3-generate-video returned 503") {
 		t.Fatalf("expected digital human auto retry to stop after one retry")
 	}
 }
@@ -174,8 +174,81 @@ func TestShouldAutoRetryDigitalHumanFailureRejectsValidationErrors(t *testing.T)
 	job := &domain.AIJob{}
 	task := &domain.DigitalHumanTask{Status: "failed"}
 
-	if shouldAutoRetryDigitalHumanFailure(job, task, "digital human api POST /api/video/generate/async returned 422: invalid params") {
+	if shouldAutoRetryDigitalHumanFailure(job, task, "digital human api POST /api/step3-generate-video returned 422: invalid params") {
 		t.Fatalf("expected validation failure to stop auto retry")
+	}
+}
+
+func TestIsDigitalHumanWorkflowJobAcceptsNewJobType(t *testing.T) {
+	job := &domain.AIJob{
+		JobType: "digital_human",
+		InputPayload: mustJSON(map[string]any{
+			"digitalHumanConfig": map[string]any{
+				"mode":      "digital",
+				"goodsText": "测试文案",
+			},
+		}),
+	}
+
+	if !isDigitalHumanWorkflowJob(job) {
+		t.Fatalf("expected digital_human job type to be recognized")
+	}
+}
+
+func TestBuildDigitalHumanResultAssetPayloadUsesManagedFields(t *testing.T) {
+	sizeBytes := int64(2048)
+	payload := buildDigitalHumanResultAssetPayload(&domain.DigitalHumanAsset{
+		StorageKey: "videos/digital-human/result.mp4",
+		PublicURL:  "https://cdn.example.com/videos/digital-human/result.mp4",
+		FileName:   "result.mp4",
+		MimeType:   "video/mp4",
+		SizeBytes:  &sizeBytes,
+	})
+	if payload == nil {
+		t.Fatalf("expected result asset payload")
+	}
+	if got := payload["publicUrl"]; got != "https://cdn.example.com/videos/digital-human/result.mp4" {
+		t.Fatalf("unexpected publicUrl %#v", got)
+	}
+	if got := payload["storageKey"]; got != "videos/digital-human/result.mp4" {
+		t.Fatalf("unexpected storageKey %#v", got)
+	}
+	if got := payload["fileName"]; got != "result.mp4" {
+		t.Fatalf("unexpected fileName %#v", got)
+	}
+}
+
+func TestBuildDigitalHumanStatusPayloadIncludesManagedResultAsset(t *testing.T) {
+	job := &domain.AIJob{}
+	task := &domain.DigitalHumanTask{
+		ID:        "task-1",
+		Status:    "completed",
+		ModelName: "qvq-max",
+		ResultAsset: &domain.DigitalHumanAsset{
+			StorageKey: "videos/digital-human/result.mp4",
+			PublicURL:  "https://cdn.example.com/videos/digital-human/result.mp4",
+			FileName:   "result.mp4",
+			MimeType:   "video/mp4",
+		},
+	}
+
+	raw := buildDigitalHumanStatusPayload(job, task, map[string]any{
+		"resultAsset": buildDigitalHumanResultAssetPayload(task.ResultAsset),
+	})
+
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("unexpected payload json error: %v", err)
+	}
+	resultAsset, _ := payload["resultAsset"].(map[string]any)
+	if got := resultAsset["publicUrl"]; got != "https://cdn.example.com/videos/digital-human/result.mp4" {
+		t.Fatalf("unexpected managed result public url %#v", got)
+	}
+	if got := resultAsset["storageKey"]; got != "videos/digital-human/result.mp4" {
+		t.Fatalf("unexpected managed result storage key %#v", got)
+	}
+	if _, exists := payload["contentUrl"]; exists {
+		t.Fatalf("did not expect raw contentUrl in digital human payload")
 	}
 }
 

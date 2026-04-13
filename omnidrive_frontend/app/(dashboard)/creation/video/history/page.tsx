@@ -244,24 +244,73 @@ function VideoPreviewSurface({
 // --- END SHARED VIDEO LOGIC ---
 
 type FilterStatus = "all" | "processing" | "completed" | "failed";
+const VIDEO_HISTORY_PAGE_SIZE = 20;
+
+function sortJobsByLatest(left: AIJob, right: AIJob) {
+  const timeDiff = getJobTimelineTime(right) - getJobTimelineTime(left);
+  if (timeDiff !== 0) {
+    return timeDiff;
+  }
+  const updatedDiff = new Date(right.updatedAt || 0).getTime() - new Date(left.updatedAt || 0).getTime();
+  if (updatedDiff !== 0) {
+    return updatedDiff;
+  }
+  return right.id.localeCompare(left.id);
+}
+
+function mergeJobsByID(...groups: AIJob[][]) {
+  const jobMap = new Map<string, AIJob>();
+  groups.flat().forEach((job) => {
+    jobMap.set(job.id, job);
+  });
+  return Array.from(jobMap.values()).sort(sortJobsByLatest);
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  return fallback;
+}
 
 export default function VideoHistoryPage() {
   const [filter, setFilter] = useState<FilterStatus>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [olderJobs, setOlderJobs] = useState<AIJob[]>([]);
+  const [hasMore, setHasMore] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState("");
 
-  const { data: rawJobs = [], isLoading } = useQuery({
-    queryKey: ["aiJobs", { jobType: "video", history: "all-sources" }],
+  const {
+    data: latestJobs = [],
+    isLoading,
+    isError,
+    error,
+    isRefetchError,
+    refetch,
+  } = useQuery<AIJob[]>({
+    queryKey: ["aiJobs", { jobType: "video", history: "recent" }],
     queryFn: () =>
       listAIJobs({
         jobType: "video",
         payloadMode: "summary",
+        limit: VIDEO_HISTORY_PAGE_SIZE,
       }),
     refetchInterval: (query) => {
       const active = query.state.data?.some((job) => !isTerminalJob(job));
-      return active ? 3000 : false;
+      return active ? 10_000 : false;
     },
+    staleTime: 10_000,
   });
+
+  useEffect(() => {
+    if (olderJobs.length === 0) {
+      setHasMore(latestJobs.length === VIDEO_HISTORY_PAGE_SIZE);
+    }
+  }, [latestJobs, olderJobs.length]);
+
+  const rawJobs = useMemo(() => mergeJobsByID(latestJobs, olderJobs), [latestJobs, olderJobs]);
 
   const filteredJobs = useMemo(() => {
     return rawJobs.filter((job) => {
@@ -277,13 +326,7 @@ export default function VideoHistoryPage() {
       if (filter === "failed" && (!isTerminal || isSuccess)) return false;
 
       return true;
-    }).sort((left, right) => {
-      const timeDiff = getJobTimelineTime(right) - getJobTimelineTime(left);
-      if (timeDiff !== 0) {
-        return timeDiff;
-      }
-      return new Date(right.updatedAt || 0).getTime() - new Date(left.updatedAt || 0).getTime();
-    });
+    }).sort(sortJobsByLatest);
   }, [rawJobs, filter, searchQuery]);
 
   const selectedJob = useMemo(() => {
@@ -322,6 +365,37 @@ export default function VideoHistoryPage() {
     }
     return selectedPayloadPreview ? [selectedPayloadPreview] : [];
   }, [selectedArtifacts, selectedPayloadPreview]);
+
+  const initialErrorMessage = getErrorMessage(error, "视频历史加载失败，请稍后重试");
+
+  async function handleLoadMore() {
+    if (isLoadingMore || !hasMore || rawJobs.length === 0) {
+      return;
+    }
+    const cursorJob = rawJobs[rawJobs.length - 1];
+    if (!cursorJob?.updatedAt) {
+      setHasMore(false);
+      return;
+    }
+
+    setIsLoadingMore(true);
+    setLoadMoreError("");
+    try {
+      const nextJobs = await listAIJobs({
+        jobType: "video",
+        payloadMode: "summary",
+        limit: VIDEO_HISTORY_PAGE_SIZE,
+        beforeUpdatedAt: cursorJob.updatedAt,
+        beforeId: cursorJob.id,
+      });
+      setOlderJobs((current) => mergeJobsByID(current, nextJobs));
+      setHasMore(nextJobs.length === VIDEO_HISTORY_PAGE_SIZE);
+    } catch (loadError) {
+      setLoadMoreError(getErrorMessage(loadError, "加载更多失败，请稍后重试"));
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }
 
   return (
     <div className="flex h-full flex-col p-6">
@@ -381,8 +455,22 @@ export default function VideoHistoryPage() {
 
       {/* List content */}
       <div className="custom-scrollbar flex-1 overflow-y-auto rounded-xl border border-border/50 bg-surface/30">
-        {isLoading ? (
+        {isLoading && rawJobs.length === 0 ? (
           <div className="flex h-40 items-center justify-center text-text-muted">加载中...</div>
+        ) : isError && rawJobs.length === 0 ? (
+          <div className="flex h-56 flex-col items-center justify-center gap-3 px-6 text-center">
+            <AlertTriangle className="h-9 w-9 text-danger" />
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-text-primary">视频历史暂时无法加载</p>
+              <p className="text-xs text-text-muted">{initialErrorMessage}</p>
+            </div>
+            <button
+              onClick={() => void refetch()}
+              className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-strong"
+            >
+              重试
+            </button>
+          </div>
         ) : filteredJobs.length === 0 ? (
           <div className="flex h-40 flex-col items-center justify-center text-text-muted">
             <Video className="mb-2 h-8 w-8 opacity-20" />
@@ -390,6 +478,11 @@ export default function VideoHistoryPage() {
           </div>
         ) : (
           <div className="min-w-[800px]">
+            {(isRefetchError || loadMoreError) && (
+              <div className="border-b border-warning/20 bg-warning/10 px-6 py-3 text-xs text-warning">
+                {isRefetchError ? "视频历史刷新失败，已保留上次成功结果。" : loadMoreError}
+              </div>
+            )}
             <div className="grid grid-cols-[3fr_1.5fr_1.5fr_1.5fr_1fr] gap-4 border-b border-border/50 bg-surface-hover/50 px-6 py-3 text-xs font-semibold uppercase tracking-wider text-text-muted">
               <div>任务名称 / 提示词</div>
               <div>模型</div>
@@ -450,6 +543,20 @@ export default function VideoHistoryPage() {
                   </div>
                 );
               })}
+            </div>
+            <div className="flex justify-end border-t border-border/10 px-6 py-4">
+              {hasMore ? (
+                <button
+                  type="button"
+                  onClick={() => void handleLoadMore()}
+                  disabled={isLoadingMore}
+                  className="rounded-lg border border-border px-4 py-2 text-sm text-text-primary transition-colors hover:bg-surface-hover disabled:opacity-50"
+                >
+                  {isLoadingMore ? "加载中..." : "加载更多"}
+                </button>
+              ) : (
+                <p className="text-sm text-text-muted">已加载全部结果</p>
+              )}
             </div>
           </div>
         )}

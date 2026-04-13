@@ -112,8 +112,19 @@ func (s *Store) ListPublishTasksByOwner(ctx context.Context, ownerUserID string,
 		args = append(args, "%"+accountName+"%")
 		argIndex++
 	}
+	if filter.BeforeUpdatedAt != nil {
+		if beforeID := strings.TrimSpace(filter.BeforeID); beforeID != "" {
+			query += fmt.Sprintf(" AND (pt.updated_at, pt.id) < ($%d, $%d)", argIndex, argIndex+1)
+			args = append(args, *filter.BeforeUpdatedAt, beforeID)
+			argIndex += 2
+		} else {
+			query += fmt.Sprintf(" AND pt.updated_at < $%d", argIndex)
+			args = append(args, *filter.BeforeUpdatedAt)
+			argIndex++
+		}
+	}
 
-	query += " ORDER BY pt.updated_at DESC"
+	query += " ORDER BY pt.updated_at DESC, pt.id DESC"
 	if filter.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", argIndex)
 		args = append(args, filter.Limit)
@@ -135,6 +146,33 @@ func (s *Store) ListPublishTasksByOwner(ctx context.Context, ownerUserID string,
 	}
 
 	return items, rows.Err()
+}
+
+// 执行任务相关的数据库查询，依赖上下文和连接池返回列表统计摘要。
+func (s *Store) GetPublishTaskSummaryByOwner(ctx context.Context, ownerUserID string) (*domain.PublishTaskSummary, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT
+			COUNT(*)::BIGINT AS total_count,
+			COUNT(*) FILTER (WHERE pt.status = 'pending')::BIGINT AS pending_count,
+			COUNT(*) FILTER (WHERE pt.status = 'running')::BIGINT AS running_count,
+			COUNT(*) FILTER (WHERE pt.status = 'needs_verify')::BIGINT AS needs_verify_count,
+			COUNT(*) FILTER (WHERE pt.status IN ('success', 'completed'))::BIGINT AS completed_count
+		FROM publish_tasks pt
+		INNER JOIN devices d ON d.id = pt.device_id
+		WHERE d.owner_user_id = $1
+	`, ownerUserID)
+
+	var summary domain.PublishTaskSummary
+	if err := row.Scan(
+		&summary.TotalCount,
+		&summary.PendingCount,
+		&summary.RunningCount,
+		&summary.NeedsVerifyCount,
+		&summary.CompletedCount,
+	); err != nil {
+		return nil, err
+	}
+	return &summary, nil
 }
 
 // 执行任务相关的数据库查询，依赖上下文和连接池返回当前业务状态。

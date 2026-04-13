@@ -62,6 +62,7 @@ const DEFAULT_SIZE_OPTIONS: ImageSizeOption[] = [
   { aspectRatio: "4:3", resolution: "1152x896", width: 1152, height: 896 },
   { aspectRatio: "3:4", resolution: "896x1152", width: 896, height: 1152 },
 ];
+const PROMPT_OPTIMIZE_FALLBACK_MODEL = "gemini-3.1-pro-preview";
 
 function greatestCommonDivisor(a: number, b: number): number {
   let left = Math.abs(a);
@@ -376,24 +377,15 @@ export default function ImageCreationPage() {
     queryKey: ["aiModels", "image"],
     queryFn: () => listAIModels({ category: "image" }),
   });
-  const { data: allChatModels = [], isLoading: chatModelsLoading } = useQuery<AIModel[]>({
-    queryKey: ["aiModels", "chat"],
-    queryFn: () => listAIModels({ category: "chat" }),
-  });
 
   const imageModels = useMemo(() => {
     const filtered = allModels.filter((item) => item.category === "image" && item.isEnabled);
     return filtered.length > 0 ? filtered : allModels.filter((item) => item.category === "image");
   }, [allModels]);
-  const chatModels = useMemo(() => {
-    const filtered = allChatModels.filter((item) => item.category === "chat" && item.isEnabled);
-    return filtered.length > 0 ? filtered : allChatModels.filter((item) => item.category === "chat");
-  }, [allChatModels]);
 
   const activeModel = useMemo(() => {
     return imageModels.find((item) => item.modelName === selectedModel) || imageModels[0] || null;
   }, [imageModels, selectedModel]);
-  const activeOptimizeModel = useMemo(() => chatModels[0] || null, [chatModels]);
 
   const sizeOptions = useMemo(() => buildImageSizeOptions(activeModel), [activeModel]);
   const selectedSizeOption = useMemo(() => {
@@ -633,10 +625,6 @@ export default function ImageCreationPage() {
       setOptimizeError("请先输入要优化的提示词");
       return;
     }
-    if (!activeOptimizeModel) {
-      setOptimizeError("后台还没有启用可用的 AI 优化模型");
-      return;
-    }
 
     setOptimizeError("");
     setOptimizedPrompt("");
@@ -647,10 +635,11 @@ export default function ImageCreationPage() {
     try {
       const payload: CreateAIJobRequest = {
         jobType: "chat",
-        modelName: activeOptimizeModel.modelName,
+        modelName: PROMPT_OPTIMIZE_FALLBACK_MODEL,
         prompt: prompt.trim(),
         source: "omnidrive_cloud",
         inputPayload: {
+          purpose: "prompt_optimize",
           prompt: prompt.trim(),
           temperature: 0.4,
           maxTokens: 600,
@@ -812,17 +801,11 @@ export default function ImageCreationPage() {
           <div className="mt-2 flex items-center justify-between">
             <span className="text-xs text-text-muted">{prompt.length} / 2000</span>
             <div className="flex items-center gap-3">
-              <span className="text-[11px] text-text-muted">
-                {activeOptimizeModel
-                  ? `优化模型：${getModelDisplayName(activeOptimizeModel)}`
-                  : chatModelsLoading
-                    ? "正在加载优化模型..."
-                    : "未配置 AI 优化模型"}
-              </span>
+              <span className="text-[11px] text-text-muted">优化模型由后台 Admin 配置决定</span>
               <button
                 type="button"
                 onClick={() => void handleOptimizePrompt()}
-                disabled={!prompt.trim() || !activeOptimizeModel || optimizing}
+                disabled={!prompt.trim() || optimizing}
                 className="inline-flex items-center gap-1 rounded-full border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/15 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {optimizing ? (

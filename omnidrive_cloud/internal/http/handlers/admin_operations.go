@@ -3128,10 +3128,11 @@ func (h *AdminConsoleHandler) ListAIJobs(w http.ResponseWriter, r *http.Request)
 	}
 
 	items, nextCursor, hasMore, err := h.app.Store.ListAdminAIJobs(r.Context(), store.AdminAIJobListFilter{
-		Query:  strings.TrimSpace(r.URL.Query().Get("query")),
-		Status: strings.TrimSpace(r.URL.Query().Get("status")),
-		Limit:  parseAdminAIJobListLimit(r),
-		Cursor: cursor,
+		Query:      strings.TrimSpace(r.URL.Query().Get("query")),
+		Status:     strings.TrimSpace(r.URL.Query().Get("status")),
+		Visibility: strings.TrimSpace(r.URL.Query().Get("visibility")),
+		Limit:      parseAdminAIJobListLimit(r),
+		Cursor:     cursor,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load admin AI jobs")
@@ -3436,6 +3437,56 @@ func (h *AdminConsoleHandler) ForceReleaseAIJob(w http.ResponseWriter, r *http.R
 		return
 	}
 	h.recordAdminAction(r.Context(), "ai_job", &jobID, "force_release", "强制释放 AI 任务租约", "success", auditStringPtr("AI 任务租约已由运营后台释放"), nil)
+	render.JSON(w, http.StatusOK, updated)
+}
+
+// 处理管理端Console软删除AI作业接口，隐藏错误演示数据但保留审计与链路历史。
+func (h *AdminConsoleHandler) DeleteAIJob(w http.ResponseWriter, r *http.Request) {
+	jobID := strings.TrimSpace(chi.URLParam(r, "jobId"))
+	if jobID == "" {
+		render.Error(w, http.StatusBadRequest, "jobId is required")
+		return
+	}
+
+	record, err := h.loadAdminAIJobRow(r.Context(), jobID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load AI job")
+		return
+	}
+	if record == nil {
+		render.Error(w, http.StatusNotFound, "AI job not found")
+		return
+	}
+	if !computeAIJobActions(&record.Job, int(record.ArtifactCount)).CanDelete {
+		render.Error(w, http.StatusConflict, "AI job cannot be deleted")
+		return
+	}
+
+	admin := httpcontext.CurrentAdmin(r.Context())
+	if admin == nil || strings.TrimSpace(admin.ID) == "" {
+		render.Error(w, http.StatusUnauthorized, "admin identity is required")
+		return
+	}
+
+	job, err := h.app.Store.SoftDeleteAIJobByOwner(r.Context(), jobID, record.Job.OwnerUserID, admin.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to delete AI job")
+		return
+	}
+	if job == nil {
+		render.Error(w, http.StatusConflict, "AI job cannot be deleted")
+		return
+	}
+
+	updated, err := h.loadAdminAIJobRow(r.Context(), jobID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to reload AI job")
+		return
+	}
+	h.recordAdminAction(r.Context(), "ai_job", &jobID, "soft_delete", "软删除 AI 任务", "success", auditStringPtr("AI 任务已由运营后台软删除，对用户侧隐藏"), mustJSONBytes(map[string]any{
+		"deletedAt":          job.DeletedAt,
+		"deletedByAdminUser": admin.ID,
+	}))
 	render.JSON(w, http.StatusOK, updated)
 }
 

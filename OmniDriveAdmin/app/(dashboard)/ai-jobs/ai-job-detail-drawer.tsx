@@ -13,7 +13,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { useAdminAIJobWorkspace } from "@/lib/hooks/useAdminAIJobs";
+import { useAdminAIJobWorkspace, useDeleteAdminAIJob } from "@/lib/hooks/useAdminAIJobs";
 import { getModelDisplayName } from "@/lib/model-display";
 import type {
   AIJobArtifact,
@@ -283,6 +283,7 @@ function buildFallbackExecutionLogs(data: AdminAIJobWorkspace): AdminExecutionLo
 
 export function AIJobDetailDrawer({ jobId, onClose }: AIJobDetailDrawerProps) {
   const { data, isLoading, error, refetch, isFetching } = useAdminAIJobWorkspace(jobId);
+  const deleteAIJob = useDeleteAdminAIJob();
 
   const inputPayload = useMemo(
     () => stringifyPayload(data?.record.job.inputPayload),
@@ -296,6 +297,8 @@ export function AIJobDetailDrawer({ jobId, onClose }: AIJobDetailDrawerProps) {
   if (!jobId) {
     return null;
   }
+
+  const canDelete = Boolean(data?.record.actions.canDelete);
 
   return (
     <>
@@ -312,6 +315,25 @@ export function AIJobDetailDrawer({ jobId, onClose }: AIJobDetailDrawerProps) {
             </div>
 
             <div className="flex items-center gap-2">
+              {canDelete ? (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!window.confirm("确认软删除这条 AI 作业吗？删除后普通前端用户将不再看到它。")) {
+                      return;
+                    }
+                    try {
+                      await deleteAIJob.mutateAsync(jobId);
+                    } catch {
+                      window.alert("删除失败，请稍后重试");
+                    }
+                  }}
+                  className="inline-flex items-center gap-2 rounded-lg border border-red-500/25 px-3 py-2 text-sm text-red-600 transition-colors hover:bg-red-500/10"
+                >
+                  <AlertTriangle className="h-4 w-4" />
+                  删除
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => refetch()}
@@ -444,8 +466,9 @@ function DrawerBody({
           <CompactPanel title="作业概览">
             <div className="space-y-3">
               <InfoRow label="当前状态" value={<StatusPill status={job.status} />} />
+              <InfoRow label="删除状态" value={job.deletedAt ? "已删除" : "正常"} />
               <InfoRow label="模型" value={getModelDisplayName(job, "—")} />
-              <InfoRow label="类型" value={job.jobType || "—"} />
+              <InfoRow label="类型" value={job.jobType === "digital_human" ? "数字人口播生成" : job.jobType || "—"} />
               <InfoRow label="来源" value={job.source || "—"} />
               <InfoRow label="投递状态" value={job.deliveryStatus || "—"} />
               <InfoRow label="消耗积分" value={job.costCredits.toLocaleString()} />

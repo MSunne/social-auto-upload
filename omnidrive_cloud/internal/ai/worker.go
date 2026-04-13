@@ -284,6 +284,8 @@ func (w *Worker) processJob(ctx context.Context, job domain.AIJob) {
 		execErr = w.executeImage(ctx, claimed, leaseToken)
 	case "video":
 		execErr = w.executeVideo(ctx, claimed, leaseToken, leaseExpiresAt)
+	case "digital_human":
+		execErr = w.executeDigitalHumanVideo(ctx, claimed, leaseToken)
 	default:
 		execErr = fmt.Errorf("unsupported ai job type: %s", claimed.JobType)
 	}
@@ -1406,7 +1408,7 @@ func (w *Worker) applyUsageBilling(ctx context.Context, job *domain.AIJob, input
 
 // 处理 AI 作业执行中的确保Execution计费流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) ensureExecutionBilling(ctx context.Context, job *domain.AIJob) error {
-	if isDigitalHumanWorkflowJob(job) {
+	if isDigitalHumanAIJob(job) || isDigitalHumanWorkflowJob(job) {
 		return nil
 	}
 	if plan, planErr := BuildWorkflowBillingPlan(ctx, w.app, job); planErr != nil {
@@ -1477,7 +1479,7 @@ func (w *Worker) ensureExecutionBilling(ctx context.Context, job *domain.AIJob) 
 
 // 处理 AI 作业执行中的返还用量额度Failure流程，依赖作业状态、租约和持久化结果推进链路。
 func (w *Worker) returnUsageCreditsForFailure(ctx context.Context, job *domain.AIJob, failureMessage string) {
-	if isDigitalHumanWorkflowJob(job) {
+	if isDigitalHumanAIJob(job) || isDigitalHumanWorkflowJob(job) {
 		return
 	}
 	if plan, err := BuildWorkflowBillingPlan(ctx, w.app, job); err == nil && plan != nil {

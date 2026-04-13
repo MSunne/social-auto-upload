@@ -19,7 +19,7 @@ import { PageHeader, StatusBadge } from "@/components/ui/common";
 import { getModelDisplayName } from "@/lib/model-display";
 import { getAIJobWorkspace, listDevices } from "@/lib/services";
 import type { AIBillingItem, AIJobArtifact, AIJobWorkspace, Device } from "@/lib/types";
-import { buildAIJobTitle, formatDateTime, resolveAIJobStage } from "@/lib/workflow";
+import { buildAIJobTitle, formatAIJobTypeLabel, formatDateTime, resolveAIJobStage } from "@/lib/workflow";
 
 function sortByLatest<T extends { updatedAt?: string | null; createdAt?: string | null }>(items: T[]) {
   return [...items].sort((left, right) => {
@@ -368,7 +368,7 @@ export default function AIJobDetailPage() {
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex rounded-full bg-surface-hover px-3 py-1 text-xs font-medium text-text-primary">
-              {job.jobType}
+              {formatAIJobTypeLabel(job.jobType)}
             </div>
             <StatusBadge status={stage?.key || job.status} />
           </div>

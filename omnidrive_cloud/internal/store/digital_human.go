@@ -255,7 +255,18 @@ func (s *Store) ListDigitalHumanTasksByOwner(ctx context.Context, ownerUserID st
 		args = append(args, trimmed)
 		argIndex++
 	}
-	query += ` ORDER BY updated_at DESC, created_at DESC`
+	if filter.BeforeUpdatedAt != nil {
+		if beforeID := strings.TrimSpace(filter.BeforeID); beforeID != "" {
+			query += fmt.Sprintf(" AND (updated_at, id) < ($%d, $%d)", argIndex, argIndex+1)
+			args = append(args, *filter.BeforeUpdatedAt, beforeID)
+			argIndex += 2
+		} else {
+			query += fmt.Sprintf(" AND updated_at < $%d", argIndex)
+			args = append(args, *filter.BeforeUpdatedAt)
+			argIndex++
+		}
+	}
+	query += ` ORDER BY updated_at DESC, id DESC`
 	if filter.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", argIndex)
 		args = append(args, filter.Limit)

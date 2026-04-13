@@ -411,7 +411,7 @@ function DropZone({
 
 export default function DigitalHumanCreationPage() {
   const queryClient = useQueryClient();
-  const [mode, setMode] = useState<"digital" | "customize">("digital");
+  const [mode, setMode] = useState<"digital" | "customize">("customize");
   const [characterImage, setCharacterImage] = useState<File | null>(null);
   const [goodsImage, setGoodsImage] = useState<File | null>(null);
   const [refAudio, setRefAudio] = useState<File | null>(null);
@@ -541,7 +541,7 @@ export default function DigitalHumanCreationPage() {
     }
 
     if (!characterImage) {
-      nextErrors.characterImage = "请上传人物照片";
+      nextErrors.characterImage = "请上传人物产品实拍图";
     } else {
       const fileError = validateDigitalHumanFile(characterImage, "image");
       if (fileError) {
@@ -623,7 +623,7 @@ export default function DigitalHumanCreationPage() {
       return;
     }
     if (billingDisabled) {
-      setSubmitError("数字人计费暂未开放，请稍后再试");
+      setSubmitError("真人计费暂未开放，请稍后再试");
       return;
     }
     if (billingPreview && !billingPreview.canAfford) {
@@ -646,7 +646,7 @@ export default function DigitalHumanCreationPage() {
     try {
       await createMutation.mutateAsync(formData);
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : "数字人任务创建失败，请稍后重试");
+      setSubmitError(error instanceof Error ? error.message : "真人任务创建失败，请稍后重试");
     }
   }
 
@@ -660,18 +660,6 @@ export default function DigitalHumanCreationPage() {
         ? "积分不足"
         : "开始制作";
 
-  const modeOptions = [
-    {
-      key: "digital" as const,
-      title: "数字带货",
-      icon: <ShoppingBag className="h-4 w-4" />,
-    },
-    {
-      key: "customize" as const,
-      title: "自定义口播",
-      icon: <Mic className="h-4 w-4" />,
-    },
-  ];
 
   return (
     <>
@@ -684,35 +672,6 @@ export default function DigitalHumanCreationPage() {
           animate="show"
           className="space-y-4"
         >
-          {/* ─── Mode Toggle (compact pill slider) ─── */}
-          <motion.div variants={fadeUp} className="flex items-center gap-3">
-            <span className="text-sm font-medium text-text-secondary">制作模式</span>
-            <div className="relative inline-flex rounded-full border border-border/60 bg-surface/50 p-1">
-              {/* Sliding indicator */}
-              <div
-                className="absolute top-1 bottom-1 rounded-full bg-gradient-to-r from-accent to-[#7c3aed] shadow-[0_0_12px_rgba(177,73,255,0.3)] transition-all duration-300"
-                style={{
-                  left: mode === "digital" ? "4px" : "50%",
-                  width: "calc(50% - 4px)",
-                }}
-              />
-              {modeOptions.map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  onClick={() => handleModeChange(item.key)}
-                  className={`relative z-10 inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-medium transition-colors duration-200 ${
-                    mode === item.key
-                      ? "text-white"
-                      : "text-text-muted hover:text-text-primary"
-                  }`}
-                >
-                  {item.icon}
-                  {item.title}
-                </button>
-              ))}
-            </div>
-          </motion.div>
 
           <motion.section variants={fadeUp} className="glass-card p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -774,13 +733,13 @@ export default function DigitalHumanCreationPage() {
               素材上传
             </div>
 
-            {/* Images row: character + goods side by side */}
-            <div className={`grid gap-4 ${mode === "digital" ? "lg:grid-cols-2" : ""}`}>
+            {/* Content row: character + audio side by side */}
+            <div className="grid gap-4 lg:grid-cols-2">
               <DropZone
-                label="人物照片"
+                label="人物产品实拍图"
                 icon={<UserRound className="h-4 w-4 text-accent" />}
                 accept={DIGITAL_HUMAN_IMAGE_ACCEPT}
-                hint="支持 JPG / PNG / WebP，用于生成数字人形象"
+                hint="支持 JPG / PNG / WebP，用于生成真人形象"
                 kind="image"
                 file={characterImage}
                 previewUrl={characterPreview}
@@ -788,23 +747,6 @@ export default function DigitalHumanCreationPage() {
                 onSelect={(f) => handleImageSelect(f, "characterImage")}
               />
 
-              {mode === "digital" ? (
-                <DropZone
-                  label="参考产品图"
-                  icon={<Package className="h-4 w-4 text-accent" />}
-                  accept={DIGITAL_HUMAN_IMAGE_ACCEPT}
-                  hint="带货模式必填，展示产品外观"
-                  kind="image"
-                  file={goodsImage}
-                  previewUrl={goodsPreview}
-                  error={errors.goodsImage}
-                  onSelect={(f) => handleImageSelect(f, "goodsImage")}
-                />
-              ) : null}
-            </div>
-
-            {/* Audio: compact single-row */}
-            <div className="mt-4">
               <DropZone
                 label="参考语音"
                 icon={<AudioLines className="h-4 w-4 text-accent" />}
@@ -879,7 +821,7 @@ export default function DigitalHumanCreationPage() {
                   setErrors((current) => ({ ...current, goodsText: "" }));
                 }}
                 rows={5}
-                placeholder="请输入数字人口播文案，系统将根据文案内容生成对应时长的口播视频..."
+                placeholder="请输入真人口播文案，系统将根据文案内容生成对应时长的口播视频..."
                 className="mt-2 w-full resize-y rounded-2xl border border-accent/20 bg-accent/[0.03] px-4 py-3 text-sm leading-7 text-text-primary outline-none transition-all duration-300 focus:border-accent/50 focus:bg-accent/[0.05] focus:shadow-[0_0_16px_rgba(177,73,255,0.1)] placeholder:text-text-muted/50"
                 style={{ minHeight: "120px" }}
               />
@@ -895,7 +837,7 @@ export default function DigitalHumanCreationPage() {
                   <div className="space-y-1">
                     <p className="text-sm font-medium text-warning">暂未开放计费配置</p>
                     <p className="text-xs text-text-muted">
-                      管理后台尚未设置数字人视频每秒积分，当前无法提交任务。
+                      管理后台尚未设置真人视频每秒积分，当前无法提交任务。
                     </p>
                   </div>
                 ) : hasGoodsText && billingPreview ? (
@@ -968,7 +910,7 @@ export default function DigitalHumanCreationPage() {
               </span>
             ) : billingDisabled ? (
               <span className="text-xs text-warning">
-                后台尚未配置数字人视频每秒积分，暂时无法提交。
+                后台尚未配置真人视频每秒积分，暂时无法提交。
               </span>
             ) : billingInsufficient && billingPreview ? (
               <span className="text-xs text-danger">
@@ -976,7 +918,7 @@ export default function DigitalHumanCreationPage() {
               </span>
             ) : (
               <span className="text-xs text-text-muted">
-                素材将上传至云端后自动启动数字人视频生成
+                素材将上传至云端后自动启动真人视频生成
               </span>
             )}
           </motion.div>
@@ -1131,7 +1073,7 @@ export default function DigitalHumanCreationPage() {
                 ))
               ) : (
                 <div className="rounded-xl border border-dashed border-border/60 py-8 text-center text-sm text-text-muted">
-                  还没有数字人任务记录
+                  还没有真人任务记录
                 </div>
               )}
             </div>

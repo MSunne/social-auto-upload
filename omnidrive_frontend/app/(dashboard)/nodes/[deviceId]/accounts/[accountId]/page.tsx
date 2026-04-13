@@ -1,8 +1,9 @@
 "use client";
 
-import { use, useMemo, useState } from "react";
+import { use, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   ArrowLeft,
   CalendarClock,
   Clock3,
@@ -10,6 +11,7 @@ import {
   Loader2,
   Pencil,
   Plus,
+  RefreshCw,
   Sparkles,
   Trash2,
   UserRound,
@@ -78,6 +80,7 @@ type AccountSkillPlan = {
 };
 
 const DEFAULT_GENERATION_LEAD_MINUTES = 0;
+const ACCOUNT_TIMELINE_PAGE_SIZE = 20;
 
 function parseISOTime(value?: string | null) {
   if (!value) {
@@ -119,6 +122,49 @@ function normalizeGenerationLeadMinutes(value?: number | null) {
     return DEFAULT_GENERATION_LEAD_MINUTES;
   }
   return Math.min(24 * 60, Math.round(numeric));
+}
+
+function mergeAIJobs(...groups: AIJob[][]) {
+  const jobMap = new Map<string, AIJob>();
+  groups.flat().forEach((job) => {
+    jobMap.set(job.id, job);
+  });
+  return Array.from(jobMap.values()).sort((left, right) => {
+    const timeDiff = new Date(right.updatedAt || 0).getTime() - new Date(left.updatedAt || 0).getTime();
+    if (timeDiff !== 0) {
+      return timeDiff;
+    }
+    return right.id.localeCompare(left.id);
+  });
+}
+
+function mergePublishTasks(...groups: Task[][]) {
+  const taskMap = new Map<string, Task>();
+  groups.flat().forEach((task) => {
+    taskMap.set(task.id, task);
+  });
+  return Array.from(taskMap.values()).sort((left, right) => {
+    const timeDiff = new Date(right.updatedAt || 0).getTime() - new Date(left.updatedAt || 0).getTime();
+    if (timeDiff !== 0) {
+      return timeDiff;
+    }
+    return right.id.localeCompare(left.id);
+  });
+}
+
+function isTerminalAIJob(job: AIJob) {
+  return ["success", "completed", "failed", "cancelled"].includes(job.status);
+}
+
+function isTerminalPublishTask(task: Task) {
+  return ["success", "completed", "failed", "cancelled"].includes(task.status);
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  return fallback;
 }
 
 function isNotFoundError(error: unknown) {
@@ -336,6 +382,12 @@ export default function AccountTaskPage({
   const queryClient = useQueryClient();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<AIJob | null>(null);
+  const [olderTasks, setOlderTasks] = useState<Task[]>([]);
+  const [olderSkillRuns, setOlderSkillRuns] = useState<AIJob[]>([]);
+  const [hasMoreTasks, setHasMoreTasks] = useState(true);
+  const [hasMoreSkillRuns, setHasMoreSkillRuns] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState("");
 
   const { data: device } = useQuery<Device>({
     queryKey: ["device", deviceId],
@@ -354,25 +406,61 @@ export default function AccountTaskPage({
       refetchIntervalInBackground: true,
     });
 
-  const { data: tasks = [], isLoading: tasksLoading } = useQuery<Task[]>({
-    queryKey: ["tasks", "account", accountId],
-    queryFn: () => listTasks({ deviceId, accountId, limit: 100 }),
-    refetchInterval: 60000,
+  const {
+    data: latestTasks = [],
+    isLoading: tasksLoading,
+    error: tasksError,
+    isRefetchError: tasksRefetchError,
+    refetch: refetchTasks,
+  } = useQuery<Task[]>({
+    queryKey: ["tasks", "account", accountId, "recent"],
+    queryFn: () => listTasks({ deviceId, accountId, limit: ACCOUNT_TIMELINE_PAGE_SIZE }),
+    refetchInterval: ({ state }) => {
+      const items = state.data as Task[] | undefined;
+      return items?.some((item) => !isTerminalPublishTask(item)) ? 10_000 : false;
+    },
     refetchIntervalInBackground: true,
+    staleTime: 10_000,
   });
 
-  const { data: skillRuns = [], isLoading: aiLoading } = useQuery<AIJob[]>({
-    queryKey: ["aiJobs", "account", accountId],
+  const {
+    data: latestSkillRuns = [],
+    isLoading: aiLoading,
+    error: aiError,
+    isRefetchError: aiRefetchError,
+    refetch: refetchSkillRuns,
+  } = useQuery<AIJob[]>({
+    queryKey: ["aiJobs", "account", accountId, "recent"],
     queryFn: () =>
       listAIJobs({
         deviceId,
         accountId,
-        limit: 100,
+        limit: ACCOUNT_TIMELINE_PAGE_SIZE,
         excludeSource: "omnidrive_chat",
+        payloadMode: "summary",
       }),
-    refetchInterval: 60000,
+    refetchInterval: ({ state }) => {
+      const items = state.data as AIJob[] | undefined;
+      return items?.some((item) => shouldShowAIJobInWorkflow(item) && !isTerminalAIJob(item)) ? 10_000 : false;
+    },
     refetchIntervalInBackground: true,
+    staleTime: 10_000,
   });
+
+  useEffect(() => {
+    if (olderTasks.length === 0) {
+      setHasMoreTasks(latestTasks.length === ACCOUNT_TIMELINE_PAGE_SIZE);
+    }
+  }, [latestTasks, olderTasks.length]);
+
+  useEffect(() => {
+    if (olderSkillRuns.length === 0) {
+      setHasMoreSkillRuns(latestSkillRuns.length === ACCOUNT_TIMELINE_PAGE_SIZE);
+    }
+  }, [latestSkillRuns, olderSkillRuns.length]);
+
+  const tasks = useMemo(() => mergePublishTasks(latestTasks, olderTasks), [latestTasks, olderTasks]);
+  const skillRuns = useMemo(() => mergeAIJobs(latestSkillRuns, olderSkillRuns), [latestSkillRuns, olderSkillRuns]);
 
   const { data: skills = [] } = useQuery<Skill[]>({
     queryKey: ["skills", deviceId],
@@ -387,7 +475,7 @@ export default function AccountTaskPage({
     onSuccess: async (createdJobs) => {
       if (Array.isArray(createdJobs) && createdJobs.length > 0) {
         queryClient.setQueryData<AIJob[]>(
-          ["aiJobs", "account", accountId],
+          ["aiJobs", "account", accountId, "recent"],
           (current = []) => {
             const merged = new Map<string, AIJob>();
             createdJobs.forEach((job) => {
@@ -544,7 +632,11 @@ export default function AccountTaskPage({
         parseISOTime(right.scheduledAt) ||
         parseISOTime(right.updatedAt) ||
         new Date(0);
-      return leftDate.getTime() - rightDate.getTime();
+      const timeDiff = rightDate.getTime() - leftDate.getTime();
+      if (timeDiff !== 0) {
+        return timeDiff;
+      }
+      return right.id.localeCompare(left.id);
     });
   }, [skillMap, skillRuns, tasks]);
 
@@ -621,6 +713,62 @@ export default function AccountTaskPage({
     await deleteSkillRunMutation.mutateAsync(job);
   };
 
+  const hasMoreTimelineItems = hasMoreTasks || hasMoreSkillRuns;
+  const initialErrorMessage = getErrorMessage(aiError || tasksError, "账号任务信息加载失败，请稍后重试");
+
+  async function handleLoadMore() {
+    if (isLoadingMore || !hasMoreTimelineItems) {
+      return;
+    }
+
+    const taskCursor = tasks[tasks.length - 1];
+    const jobCursor = skillRuns[skillRuns.length - 1];
+    setIsLoadingMore(true);
+    setLoadMoreError("");
+
+    try {
+      const [nextTasks, nextSkillRuns] = await Promise.all([
+        hasMoreTasks && taskCursor?.updatedAt
+          ? listTasks({
+              deviceId,
+              accountId,
+              limit: ACCOUNT_TIMELINE_PAGE_SIZE,
+              beforeUpdatedAt: taskCursor.updatedAt,
+              beforeId: taskCursor.id,
+            })
+          : Promise.resolve([] as Task[]),
+        hasMoreSkillRuns && jobCursor?.updatedAt
+          ? listAIJobs({
+              deviceId,
+              accountId,
+              limit: ACCOUNT_TIMELINE_PAGE_SIZE,
+              excludeSource: "omnidrive_chat",
+              payloadMode: "summary",
+              beforeUpdatedAt: jobCursor.updatedAt,
+              beforeId: jobCursor.id,
+            })
+          : Promise.resolve([] as AIJob[]),
+      ]);
+
+      if (nextTasks.length > 0) {
+        setOlderTasks((current) => mergePublishTasks(current, nextTasks));
+      }
+      if (nextSkillRuns.length > 0) {
+        setOlderSkillRuns((current) => mergeAIJobs(current, nextSkillRuns));
+      }
+      if (hasMoreTasks) {
+        setHasMoreTasks(nextTasks.length === ACCOUNT_TIMELINE_PAGE_SIZE);
+      }
+      if (hasMoreSkillRuns) {
+        setHasMoreSkillRuns(nextSkillRuns.length === ACCOUNT_TIMELINE_PAGE_SIZE);
+      }
+    } catch (loadError) {
+      setLoadMoreError(getErrorMessage(loadError, "加载更多失败，请稍后重试"));
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }
+
   if (accountMissing) {
     return (
       <EmptyState
@@ -631,13 +779,34 @@ export default function AccountTaskPage({
     );
   }
 
-  if (workspaceLoading || tasksLoading || aiLoading) {
+  if (workspaceLoading || ((tasksLoading || aiLoading) && timelineItems.length === 0)) {
     return (
       <div className="flex h-72 items-center justify-center">
         <div className="flex items-center gap-3 text-text-secondary">
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-accent border-t-transparent" />
           正在读取账号任务信息...
         </div>
+      </div>
+    );
+  }
+  if ((tasksError || aiError) && timelineItems.length === 0) {
+    return (
+      <div className="flex min-h-[280px] flex-col items-center justify-center gap-3 rounded-2xl border border-border px-6 text-center">
+        <AlertTriangle className="h-8 w-8 text-danger" />
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-text-primary">账号任务信息暂时无法加载</p>
+          <p className="text-xs text-text-secondary">{initialErrorMessage}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            void refetchTasks();
+            void refetchSkillRuns();
+          }}
+          className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-strong"
+        >
+          重试
+        </button>
       </div>
     );
   }
@@ -667,14 +836,27 @@ export default function AccountTaskPage({
         title={`${account.accountName} · 任务列表`}
         subtitle={`${device?.name || "当前节点"} / ${account.platform}。这里按执行时间展示该账号的生成与发布链路。`}
         actions={
-          <button
-            type="button"
-            onClick={() => setIsCreateOpen(true)}
-            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-accent to-cyan px-4 py-2 text-sm font-semibold text-background"
-          >
-            <Plus className="h-4 w-4" />
-            新增账号计划
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                void refetchTasks();
+                void refetchSkillRuns();
+              }}
+              className="inline-flex items-center gap-2 rounded-xl border border-border bg-surface px-4 py-2 text-sm font-medium text-text-primary transition-colors hover:border-accent hover:text-accent"
+            >
+              <RefreshCw className="h-4 w-4" />
+              刷新
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsCreateOpen(true)}
+              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-accent to-cyan px-4 py-2 text-sm font-semibold text-background"
+            >
+              <Plus className="h-4 w-4" />
+              新增账号计划
+            </button>
+          </div>
         }
       />
 
@@ -877,6 +1059,12 @@ export default function AccountTaskPage({
           </p>
         </div>
 
+        {(tasksRefetchError || aiRefetchError || loadMoreError) ? (
+          <div className="border-b border-warning/20 bg-warning/10 px-6 py-3 text-xs text-warning">
+            {loadMoreError || "账号时间线刷新失败，已保留上次成功结果。"}
+          </div>
+        ) : null}
+
         {timelineItems.length === 0 ? (
           <div className="px-6 py-10">
             <EmptyState
@@ -1005,6 +1193,20 @@ export default function AccountTaskPage({
                 </div>
               </div>
             ))}
+            <div className="flex justify-end pt-2">
+              {hasMoreTimelineItems ? (
+                <button
+                  type="button"
+                  onClick={() => void handleLoadMore()}
+                  disabled={isLoadingMore}
+                  className="rounded-lg border border-border px-4 py-2 text-sm text-text-primary transition-colors hover:bg-surface-hover disabled:opacity-50"
+                >
+                  {isLoadingMore ? "加载中..." : "加载更多"}
+                </button>
+              ) : (
+                <p className="text-sm text-text-secondary">已加载全部结果</p>
+              )}
+            </div>
           </div>
         )}
       </div>

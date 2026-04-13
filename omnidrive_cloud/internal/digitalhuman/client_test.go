@@ -15,7 +15,7 @@ func TestClientGenerateVideoEncodesRequestPayload(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("expected POST, got %s", r.Method)
 		}
-		if r.URL.Path != "/api/video/generate/async" {
+		if r.URL.Path != "/api/step3-generate-video" {
 			t.Fatalf("unexpected path %q", r.URL.Path)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
@@ -33,40 +33,38 @@ func TestClientGenerateVideoEncodesRequestPayload(t *testing.T) {
 
 	goodsTitle := "老廖牌香薰"
 	resp, rawBody, err := client.GenerateVideoAsync(t.Context(), GenerateRequest{
-		Text:     "大家好，今天给大家推荐一款超好用的香薰",
-		Mode:     "fixed",
-		Title:    &goodsTitle,
-		RefAudio: stringPtr("/tmp/ref.m4a"),
-		TemplateParams: map[string]any{
-			"character_asset_path": "/tmp/character.jpg",
-			"goods_asset_path":     "/tmp/goods.jpg",
-			"source":               "omnidrive_cloud",
-		},
+		CharacterAssetPath: "/tmp/character.jpg",
+		GoodsAssetPath:     stringPtr("/tmp/goods.jpg"),
+		GoodsText:          "大家好，今天给大家推荐一款超好用的香薰",
+		GoodsTitle:         &goodsTitle,
+		Mode:               "digital",
+		Source:             "runninghub",
+		RefAudio:           stringPtr("/tmp/ref.m4a"),
 	})
 	if err != nil {
 		t.Fatalf("GenerateVideoAsync returned error: %v", err)
 	}
 
-	if captured.Text == "" {
-		t.Fatal("expected text to be populated")
+	if captured.CharacterAssetPath != "/tmp/character.jpg" {
+		t.Fatalf("unexpected character asset path %q", captured.CharacterAssetPath)
 	}
-	if captured.Mode != "fixed" {
+	if captured.Mode != "digital" {
 		t.Fatalf("unexpected mode %q", captured.Mode)
 	}
-	if captured.Title == nil || *captured.Title != goodsTitle {
-		t.Fatalf("unexpected title %+v", captured.Title)
+	if captured.Source != "runninghub" {
+		t.Fatalf("unexpected source %q", captured.Source)
+	}
+	if captured.GoodsText == "" {
+		t.Fatal("expected goods text to be populated")
+	}
+	if captured.GoodsTitle == nil || *captured.GoodsTitle != goodsTitle {
+		t.Fatalf("unexpected goods title %+v", captured.GoodsTitle)
 	}
 	if captured.RefAudio == nil || *captured.RefAudio != "/tmp/ref.m4a" {
 		t.Fatalf("unexpected ref audio %v", captured.RefAudio)
 	}
-	if captured.TemplateParams["character_asset_path"] != "/tmp/character.jpg" {
-		t.Fatalf("unexpected character asset path %#v", captured.TemplateParams["character_asset_path"])
-	}
-	if captured.TemplateParams["goods_asset_path"] != "/tmp/goods.jpg" {
-		t.Fatalf("unexpected goods asset path %#v", captured.TemplateParams["goods_asset_path"])
-	}
-	if captured.TemplateParams["source"] != "omnidrive_cloud" {
-		t.Fatalf("unexpected source %#v", captured.TemplateParams["source"])
+	if captured.GoodsAssetPath == nil || *captured.GoodsAssetPath != "/tmp/goods.jpg" {
+		t.Fatalf("unexpected goods asset path %#v", captured.GoodsAssetPath)
 	}
 	if resp.TaskID != "remote-123" {
 		t.Fatalf("unexpected task id %q", resp.TaskID)
@@ -81,7 +79,7 @@ func TestClientGetTaskDecodesResponse(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Fatalf("expected GET, got %s", r.Method)
 		}
-		if r.URL.Path != "/api/tasks/remote-123" {
+		if r.URL.Path != "/api/step4-check-status/remote-123" {
 			t.Fatalf("unexpected path %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -119,5 +117,42 @@ func TestClientGetTaskDecodesResponse(t *testing.T) {
 	}
 	if !strings.Contains(string(rawBody), `"status":"completed"`) {
 		t.Fatalf("expected raw body to include status, got %s", string(rawBody))
+	}
+}
+
+func TestClientResolveURLSupportsRelativePaths(t *testing.T) {
+	client := &Client{
+		baseURL: "https://digital.example.com",
+	}
+
+	resolved, err := client.ResolveURL("/api/files/final.mp4")
+	if err != nil {
+		t.Fatalf("ResolveURL returned error: %v", err)
+	}
+	if resolved != "https://digital.example.com/api/files/final.mp4" {
+		t.Fatalf("unexpected resolved url %q", resolved)
+	}
+
+	resolved, err = client.ResolveURL("api/files/final.mp4")
+	if err != nil {
+		t.Fatalf("ResolveURL returned error: %v", err)
+	}
+	if resolved != "https://digital.example.com/api/files/final.mp4" {
+		t.Fatalf("unexpected resolved url %q", resolved)
+	}
+}
+
+func TestClientResolveURLRejectsBrokenInputs(t *testing.T) {
+	client := &Client{
+		baseURL: "https://digital.example.com",
+	}
+
+	if _, err := client.ResolveURL("://bad"); err == nil {
+		t.Fatalf("expected malformed url to fail")
+	}
+
+	client.baseURL = "example.com"
+	if _, err := client.ResolveURL("/api/files/final.mp4"); err == nil {
+		t.Fatalf("expected invalid base url to fail")
 	}
 }

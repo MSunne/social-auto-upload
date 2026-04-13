@@ -226,7 +226,7 @@ export default function DigitalHumanTaskDetailPage() {
         </div>
       ) : error || !task ? (
         <div className="rounded-2xl border border-danger/30 bg-danger/10 px-5 py-4 text-sm text-danger">
-          {error instanceof Error ? error.message : "数字人任务不存在或读取失败"}
+          {error instanceof Error ? error.message : "真人任务不存在或读取失败"}
         </div>
       ) : (
         <motion.div
@@ -292,7 +292,7 @@ export default function DigitalHumanTaskDetailPage() {
               </div>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <AssetCard
-                  title="人物照片"
+                  title="人物产品实拍图"
                   icon={<ImageIcon className="h-3.5 w-3.5" />}
                   asset={task.characterAsset}
                   kind="image"

@@ -25,10 +25,9 @@ import {
   getDevice,
   listAccounts,
   listSkills,
-  listTasks,
   deleteAccount,
 } from "@/lib/services";
-import type { Device, Account, Skill, Task } from "@/lib/types";
+import type { Device, Account, Skill } from "@/lib/types";
 import { StatusBadge } from "@/components/ui/common";
 import { AddAccountModal } from "@/components/ui/add-account-modal";
 
@@ -123,13 +122,6 @@ export default function DeviceAccountsPage({
     queryFn: () => listSkills(),
   });
 
-  const { data: tasks = [] } = useQuery<Task[]>({
-    queryKey: ["tasks"],
-    queryFn: () => listTasks(),
-    refetchInterval: 60000,
-    refetchIntervalInBackground: true,
-  });
-
   /* Platform filter */
   const [platformFilter, setPlatformFilter] = useState<string | null>(null);
 
@@ -150,7 +142,6 @@ export default function DeviceAccountsPage({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["accounts", deviceId] }),
         queryClient.invalidateQueries({ queryKey: ["device", deviceId] }),
-        queryClient.invalidateQueries({ queryKey: ["tasks"] }),
       ]);
     } finally {
       setTimeout(() => setIsSyncing(false), 600);
@@ -192,7 +183,6 @@ export default function DeviceAccountsPage({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["accounts", deviceId] }),
         queryClient.invalidateQueries({ queryKey: ["device", deviceId] }),
-        queryClient.invalidateQueries({ queryKey: ["tasks"] }),
       ]);
       setDeleteTargetId(null);
     } catch (err: unknown) {
@@ -207,7 +197,10 @@ export default function DeviceAccountsPage({
   const uniquePlatforms = new Set(
     accounts.map((a) => asDisplayText(a.platform, "未知平台")),
   );
-  const deviceTasks = tasks.filter((t) => t.deviceId === deviceId);
+  const deviceTasks = useMemo(
+    () => accounts.reduce((total, account) => total + (account.load?.taskCount || 0), 0),
+    [accounts],
+  );
   const platformCounts: Record<string, number> = {};
   accounts.forEach((a) => {
     const platformKey = asDisplayText(a.platform, "未知平台");
@@ -261,7 +254,7 @@ export default function DeviceAccountsPage({
           {
             icon: <ListChecks className="h-5 w-5 text-emerald-400" />,
             label: "任务数量",
-            value: deviceTasks.length,
+            value: deviceTasks,
             bg: "bg-emerald-500/10",
             border: "border-emerald-500/20",
           },

@@ -36,9 +36,16 @@ type digitalHumanWorkflowPayload struct {
 	DigitalHumanConfig digitalHumanWorkflowConfig `json:"digitalHumanConfig"`
 }
 
+func isDigitalHumanAIJob(job *domain.AIJob) bool {
+	return job != nil && strings.EqualFold(strings.TrimSpace(job.JobType), digitalHumanWorkflowKind)
+}
+
 func isDigitalHumanWorkflowJob(job *domain.AIJob) bool {
 	if job == nil {
 		return false
+	}
+	if isDigitalHumanAIJob(job) {
+		return true
 	}
 	_, ok := parseDigitalHumanWorkflowPayload(job.InputPayload)
 	return ok
@@ -58,8 +65,29 @@ func parseDigitalHumanWorkflowPayload(raw []byte) (*digitalHumanWorkflowPayload,
 	return &payload, true
 }
 
+func parseDigitalHumanWorkflowPayloadForJob(job *domain.AIJob) (*digitalHumanWorkflowPayload, bool) {
+	if job == nil {
+		return nil, false
+	}
+	if payload, ok := parseDigitalHumanWorkflowPayload(job.InputPayload); ok {
+		return payload, true
+	}
+	if !isDigitalHumanAIJob(job) || len(job.InputPayload) == 0 {
+		return nil, false
+	}
+	var payload digitalHumanWorkflowPayload
+	if err := json.Unmarshal(job.InputPayload, &payload); err != nil {
+		return nil, false
+	}
+	if strings.TrimSpace(payload.DigitalHumanConfig.Mode) == "" || strings.TrimSpace(payload.DigitalHumanConfig.GoodsText) == "" {
+		return nil, false
+	}
+	payload.WorkflowKind = digitalHumanWorkflowKind
+	return &payload, true
+}
+
 func (w *Worker) executeDigitalHumanVideo(ctx context.Context, job *domain.AIJob, leaseToken string) error {
-	payload, ok := parseDigitalHumanWorkflowPayload(job.InputPayload)
+	payload, ok := parseDigitalHumanWorkflowPayloadForJob(job)
 	if !ok {
 		return fmt.Errorf("digital human workflow payload is invalid")
 	}
@@ -262,6 +290,7 @@ func (w *Worker) completeDigitalHumanWorkflowJob(ctx context.Context, job *domai
 	extras := map[string]any{
 		"billingStatus": task.BillingStatus,
 		"artifacts":     summarizeArtifacts(artifacts),
+		"resultAsset":   buildDigitalHumanResultAssetPayload(task.ResultAsset),
 		"completedAt":   firstNonNilTime(task.CompletedAt, time.Now().UTC()).Format(time.RFC3339),
 	}
 	if publishTask != nil {
@@ -375,6 +404,33 @@ func buildDigitalHumanStatusPayload(job *domain.AIJob, task *domain.DigitalHuman
 		payload[key] = value
 	}
 	return mustJSON(payload)
+}
+
+func buildDigitalHumanResultAssetPayload(asset *domain.DigitalHumanAsset) map[string]any {
+	if asset == nil {
+		return nil
+	}
+
+	payload := map[string]any{}
+	if storageKey := strings.TrimSpace(asset.StorageKey); storageKey != "" {
+		payload["storageKey"] = storageKey
+	}
+	if publicURL := strings.TrimSpace(asset.PublicURL); publicURL != "" {
+		payload["publicUrl"] = publicURL
+	}
+	if fileName := strings.TrimSpace(asset.FileName); fileName != "" {
+		payload["fileName"] = fileName
+	}
+	if mimeType := strings.TrimSpace(asset.MimeType); mimeType != "" {
+		payload["mimeType"] = mimeType
+	}
+	if asset.SizeBytes != nil && *asset.SizeBytes > 0 {
+		payload["sizeBytes"] = *asset.SizeBytes
+	}
+	if len(payload) == 0 {
+		return nil
+	}
+	return payload
 }
 
 func isRetryableDigitalHumanFailureMessage(message string) bool {

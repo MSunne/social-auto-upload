@@ -581,12 +581,14 @@ type ReplacePublishTaskMaterialRefInput struct {
 }
 
 type ListPublishTasksFilter struct {
-	DeviceID    string
-	AccountID   string
-	Status      string
-	Platform    string
-	AccountName string
-	Limit       int
+	DeviceID        string
+	AccountID       string
+	Status          string
+	Platform        string
+	AccountName     string
+	BeforeUpdatedAt *time.Time
+	BeforeID        string
+	Limit           int
 }
 
 type SyncPublishTaskInput struct {
@@ -694,15 +696,17 @@ type UpdateAIJobInput struct {
 }
 
 type ListAIJobsFilter struct {
-	JobType       string
-	Status        string
-	SkillID       string
-	DeviceID      string
-	AccountID     string
-	Source        string
-	ExcludeSource string
-	PayloadMode   string
-	Limit         int
+	JobType         string
+	Status          string
+	SkillID         string
+	DeviceID        string
+	AccountID       string
+	Source          string
+	ExcludeSource   string
+	BeforeUpdatedAt *time.Time
+	BeforeID        string
+	PayloadMode     string
+	Limit           int
 }
 
 type UpsertAIJobArtifactInput struct {
@@ -773,10 +777,12 @@ type UpdateDigitalHumanTaskExecutionInput struct {
 }
 
 type ListDigitalHumanTasksFilter struct {
-	AIJobID string
-	Mode    string
-	Status  string
-	Limit   int
+	AIJobID         string
+	Mode            string
+	Status          string
+	BeforeUpdatedAt *time.Time
+	BeforeID        string
+	Limit           int
 }
 
 type LinkAIJobPublishTaskInput struct {

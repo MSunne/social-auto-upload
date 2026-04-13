@@ -32,6 +32,7 @@ const JOB_TYPE_OPTIONS = [
   { value: "chat", label: "聊天" },
   { value: "image", label: "作图" },
   { value: "video", label: "视频" },
+  { value: "digital_human", label: "真人口播生成" },
 ];
 
 const STATUS_OPTIONS = [
@@ -68,6 +69,7 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   chat: "聊天",
   image: "作图",
   video: "视频",
+  digital_human: "真人口播生成",
 };
 
 function formatDateTime(value?: string | null) {
@@ -138,7 +140,7 @@ function getActivityBusinessLabel(item: BillingActivity) {
     return CHANNEL_LABELS[item.channel ?? ""] || item.channel || "充值";
   }
   if (item.kind === "ai_billing_session") {
-    return item.jobType ? JOB_TYPE_LABELS[item.jobType] || item.jobType : "AI 视频";
+    return item.jobType ? JOB_TYPE_LABELS[item.jobType] || item.jobType : "AI 任务";
   }
   if (item.kind === "wallet_ledger") {
     return ENTRY_TYPE_LABELS[item.entryType ?? ""] || item.entryType || "钱包账变";

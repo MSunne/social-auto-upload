@@ -71,6 +71,9 @@ func TestAIJobSelectColumnsForSummaryOmitsHeavyPayloads(t *testing.T) {
 	if strings.Contains(columns, "ai_jobs.output_payload,") {
 		t.Fatalf("expected summary columns to omit raw output payload, got %q", columns)
 	}
+	if !strings.Contains(columns, "LEFT(ai_jobs.prompt, 160)") {
+		t.Fatalf("expected summary columns to trim prompt preview, got %q", columns)
+	}
 }
 
 func TestAIJobAccountIDExpressionUsesRootAndNestedFallback(t *testing.T) {

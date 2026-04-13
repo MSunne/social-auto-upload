@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, Film, ListTodo, Wand2 } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Film, ListTodo, RefreshCw, Wand2 } from "lucide-react";
 import Link from "next/link";
 import { PageHeader, StatusBadge, EmptyState } from "@/components/ui/common";
 import { getModelDisplayName } from "@/lib/model-display";
@@ -10,6 +10,7 @@ import { listAIJobs, listDevices, listTasks } from "@/lib/services";
 import type { AIJob, Device, Task } from "@/lib/types";
 import {
   buildAIJobTitle,
+  formatAIJobTypeLabel,
   formatDateTime,
   resolveAIJobStage,
   resolveAIJobWorkflowTime,
@@ -34,6 +35,8 @@ type WorkflowRow = {
   updatedAt?: string | null;
   href?: string;
 };
+
+const WORKFLOW_PAGE_SIZE = 20;
 
 const SOURCE_FILTERS = [
   { key: "all", label: "全部流程" },
@@ -73,22 +76,112 @@ function stageGroup(stageKey: string) {
   return "all";
 }
 
+function getWorkflowRowTime(row: WorkflowRow) {
+  return new Date(row.workflowTime || row.updatedAt || 0).getTime();
+}
+
+function mergeAIJobs(...groups: AIJob[][]) {
+  const jobMap = new Map<string, AIJob>();
+  groups.flat().forEach((job) => {
+    jobMap.set(job.id, job);
+  });
+  return Array.from(jobMap.values()).sort((left, right) => {
+    const timeDiff = new Date(right.updatedAt || 0).getTime() - new Date(left.updatedAt || 0).getTime();
+    if (timeDiff !== 0) {
+      return timeDiff;
+    }
+    return right.id.localeCompare(left.id);
+  });
+}
+
+function mergePublishTasks(...groups: Task[][]) {
+  const taskMap = new Map<string, Task>();
+  groups.flat().forEach((task) => {
+    taskMap.set(task.id, task);
+  });
+  return Array.from(taskMap.values()).sort((left, right) => {
+    const timeDiff = new Date(right.updatedAt || 0).getTime() - new Date(left.updatedAt || 0).getTime();
+    if (timeDiff !== 0) {
+      return timeDiff;
+    }
+    return right.id.localeCompare(left.id);
+  });
+}
+
+function isTerminalAIJob(job: AIJob) {
+  return ["success", "completed", "failed", "cancelled"].includes(job.status);
+}
+
+function isTerminalPublishTask(task: Task) {
+  return ["success", "completed", "failed", "cancelled"].includes(task.status);
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  return fallback;
+}
+
 export default function TasksPage() {
   const [sourceFilter, setSourceFilter] = useState<(typeof SOURCE_FILTERS)[number]["key"]>("all");
   const [stageFilter, setStageFilter] = useState<(typeof STAGE_FILTERS)[number]["key"]>("all");
+  const [olderPublishTasks, setOlderPublishTasks] = useState<Task[]>([]);
+  const [olderAIJobs, setOlderAIJobs] = useState<AIJob[]>([]);
+  const [hasMorePublishTasks, setHasMorePublishTasks] = useState(true);
+  const [hasMoreAIJobs, setHasMoreAIJobs] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState("");
 
   const { data: devices = [] } = useQuery<Device[]>({
     queryKey: ["devices"],
     queryFn: listDevices,
   });
-  const { data: publishTasks = [], isLoading: publishLoading } = useQuery<Task[]>({
-    queryKey: ["tasks"],
-    queryFn: () => listTasks({ limit: 200 }),
+  const {
+    data: latestPublishTasks = [],
+    isLoading: publishLoading,
+    error: publishError,
+    isRefetchError: publishRefetchError,
+    refetch: refetchPublishTasks,
+  } = useQuery<Task[]>({
+    queryKey: ["tasks", "workflow", "recent"],
+    queryFn: () => listTasks({ limit: WORKFLOW_PAGE_SIZE }),
+    refetchInterval: ({ state }) => {
+      const items = state.data as Task[] | undefined;
+      return items?.some((task) => !isTerminalPublishTask(task)) ? 10_000 : false;
+    },
+    staleTime: 10_000,
   });
-  const { data: aiJobs = [], isLoading: aiLoading } = useQuery<AIJob[]>({
-    queryKey: ["aiJobs"],
-    queryFn: () => listAIJobs({ limit: 200, excludeSource: "omnidrive_chat", payloadMode: "summary" }),
+  const {
+    data: latestAIJobs = [],
+    isLoading: aiLoading,
+    error: aiError,
+    isRefetchError: aiRefetchError,
+    refetch: refetchAIJobs,
+  } = useQuery<AIJob[]>({
+    queryKey: ["aiJobs", "workflow", "recent"],
+    queryFn: () => listAIJobs({ limit: WORKFLOW_PAGE_SIZE, excludeSource: "omnidrive_chat", payloadMode: "summary" }),
+    refetchInterval: ({ state }) => {
+      const items = state.data as AIJob[] | undefined;
+      return items?.some((job) => shouldShowAIJobInWorkflow(job) && !isTerminalAIJob(job)) ? 10_000 : false;
+    },
+    staleTime: 10_000,
   });
+
+  useEffect(() => {
+    if (olderPublishTasks.length === 0) {
+      setHasMorePublishTasks(latestPublishTasks.length === WORKFLOW_PAGE_SIZE);
+    }
+  }, [latestPublishTasks, olderPublishTasks.length]);
+
+  useEffect(() => {
+    if (olderAIJobs.length === 0) {
+      setHasMoreAIJobs(latestAIJobs.length === WORKFLOW_PAGE_SIZE);
+    }
+  }, [latestAIJobs, olderAIJobs.length]);
+
+  const publishTasks = useMemo(() => mergePublishTasks(latestPublishTasks, olderPublishTasks), [latestPublishTasks, olderPublishTasks]);
+  const aiJobs = useMemo(() => mergeAIJobs(latestAIJobs, olderAIJobs), [latestAIJobs, olderAIJobs]);
 
   const deviceMap = useMemo(() => {
     return Object.fromEntries(devices.map((device) => [device.id, device.name]));
@@ -102,7 +195,7 @@ export default function TasksPage() {
         rawId: job.id,
         kind: "ai" as const,
         title: buildAIJobTitle(job),
-        typeLabel: job.jobType === "video" ? "视频制作" : job.jobType === "image" ? "图文制作" : "文本制作",
+        typeLabel: formatAIJobTypeLabel(job.jobType),
         stageKey: stage.key,
         stageLabel: stage.label,
         description: stage.description,
@@ -136,13 +229,11 @@ export default function TasksPage() {
     });
 
     return [...aiRows, ...publishRows].sort((left, right) => {
-      const timeDiff =
-        new Date(left.workflowTime || left.updatedAt || 0).getTime() -
-        new Date(right.workflowTime || right.updatedAt || 0).getTime();
+      const timeDiff = getWorkflowRowTime(right) - getWorkflowRowTime(left);
       if (timeDiff !== 0) {
         return timeDiff;
       }
-      return left.id.localeCompare(right.id);
+      return right.id.localeCompare(left.id);
     });
   }, [aiJobs, deviceMap, publishTasks]);
 
@@ -157,12 +248,76 @@ export default function TasksPage() {
   });
 
   const isLoading = publishLoading || aiLoading;
+  const hasMore = hasMorePublishTasks || hasMoreAIJobs;
+  const initialErrorMessage = getErrorMessage(aiError || publishError, "任务列表加载失败，请稍后重试");
+
+  async function handleLoadMore() {
+    if (isLoadingMore || !hasMore) {
+      return;
+    }
+
+    const publishCursor = publishTasks[publishTasks.length - 1];
+    const aiCursor = aiJobs[aiJobs.length - 1];
+    setIsLoadingMore(true);
+    setLoadMoreError("");
+
+    try {
+      const [nextPublishTasks, nextAIJobs] = await Promise.all([
+        hasMorePublishTasks && publishCursor?.updatedAt
+          ? listTasks({
+              limit: WORKFLOW_PAGE_SIZE,
+              beforeUpdatedAt: publishCursor.updatedAt,
+              beforeId: publishCursor.id,
+            })
+          : Promise.resolve([] as Task[]),
+        hasMoreAIJobs && aiCursor?.updatedAt
+          ? listAIJobs({
+              limit: WORKFLOW_PAGE_SIZE,
+              excludeSource: "omnidrive_chat",
+              payloadMode: "summary",
+              beforeUpdatedAt: aiCursor.updatedAt,
+              beforeId: aiCursor.id,
+            })
+          : Promise.resolve([] as AIJob[]),
+      ]);
+
+      if (nextPublishTasks.length > 0) {
+        setOlderPublishTasks((current) => mergePublishTasks(current, nextPublishTasks));
+      }
+      if (nextAIJobs.length > 0) {
+        setOlderAIJobs((current) => mergeAIJobs(current, nextAIJobs));
+      }
+      if (hasMorePublishTasks) {
+        setHasMorePublishTasks(nextPublishTasks.length === WORKFLOW_PAGE_SIZE);
+      }
+      if (hasMoreAIJobs) {
+        setHasMoreAIJobs(nextAIJobs.length === WORKFLOW_PAGE_SIZE);
+      }
+    } catch (loadError) {
+      setLoadMoreError(getErrorMessage(loadError, "加载更多失败，请稍后重试"));
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }
 
   return (
     <>
       <PageHeader
         title="OpenClaw 任务"
         subtitle="把 AI 制作、分镜优化、产物回流、发布执行放在同一张表里查看，方便随时追踪整条链路。"
+        actions={
+          <button
+            type="button"
+            onClick={() => {
+              void refetchPublishTasks();
+              void refetchAIJobs();
+            }}
+            className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm text-text-secondary transition-colors hover:bg-surface"
+          >
+            <RefreshCw className="h-4 w-4" />
+            刷新
+          </button>
+        }
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -199,13 +354,36 @@ export default function TasksPage() {
         ))}
       </div>
 
-      {isLoading ? (
+      {isLoading && rows.length === 0 ? (
         <div className="flex items-center justify-center rounded-2xl border border-border py-16 text-text-secondary">
           <div className="mr-3 h-5 w-5 animate-spin rounded-full border-2 border-accent border-t-transparent" />
           正在读取流程任务...
         </div>
+      ) : (aiError || publishError) && rows.length === 0 ? (
+        <div className="flex min-h-[260px] flex-col items-center justify-center gap-3 rounded-2xl border border-border px-6 text-center">
+          <AlertTriangle className="h-8 w-8 text-danger" />
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-text-primary">OpenClaw 任务暂时无法加载</p>
+            <p className="text-xs text-text-secondary">{initialErrorMessage}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              void refetchPublishTasks();
+              void refetchAIJobs();
+            }}
+            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-strong"
+          >
+            重试
+          </button>
+        </div>
       ) : filteredRows.length > 0 ? (
         <div className="overflow-hidden rounded-3xl border border-border bg-surface">
+          {(aiRefetchError || publishRefetchError || loadMoreError) ? (
+            <div className="border-b border-warning/20 bg-warning/10 px-5 py-3 text-xs text-warning">
+              {loadMoreError || "任务列表刷新失败，已保留上次成功结果。"}
+            </div>
+          ) : null}
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="border-b border-border bg-surface-hover/40 text-left text-xs uppercase tracking-wider text-text-muted">
@@ -278,6 +456,20 @@ export default function TasksPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="flex justify-end border-t border-border px-5 py-4">
+            {hasMore ? (
+              <button
+                type="button"
+                onClick={() => void handleLoadMore()}
+                disabled={isLoadingMore}
+                className="rounded-lg border border-border px-4 py-2 text-sm text-text-primary transition-colors hover:bg-surface-hover disabled:opacity-50"
+              >
+                {isLoadingMore ? "加载中..." : "加载更多"}
+              </button>
+            ) : (
+              <p className="text-sm text-text-secondary">已加载全部结果</p>
+            )}
           </div>
         </div>
       ) : (

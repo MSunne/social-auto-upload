@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -260,10 +261,28 @@ func (h *DigitalHumanTaskHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = parsed
 	}
+	beforeUpdatedAtRaw := strings.TrimSpace(r.URL.Query().Get("beforeUpdatedAt"))
+	beforeID := strings.TrimSpace(r.URL.Query().Get("beforeId"))
+	var beforeUpdatedAt *time.Time
+	if beforeUpdatedAtRaw != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, beforeUpdatedAtRaw)
+		if err != nil {
+			render.Error(w, http.StatusBadRequest, "beforeUpdatedAt must be a valid RFC3339 timestamp")
+			return
+		}
+		parsed = parsed.UTC()
+		beforeUpdatedAt = &parsed
+	}
+	if (beforeUpdatedAt == nil) != (beforeID == "") {
+		render.Error(w, http.StatusBadRequest, "beforeUpdatedAt and beforeId must be provided together")
+		return
+	}
 	items, err := h.app.Store.ListDigitalHumanTasksByOwner(r.Context(), user.ID, store.ListDigitalHumanTasksFilter{
-		Mode:   strings.TrimSpace(r.URL.Query().Get("mode")),
-		Status: strings.TrimSpace(r.URL.Query().Get("status")),
-		Limit:  limit,
+		Mode:            strings.TrimSpace(r.URL.Query().Get("mode")),
+		Status:          strings.TrimSpace(r.URL.Query().Get("status")),
+		BeforeUpdatedAt: beforeUpdatedAt,
+		BeforeID:        beforeID,
+		Limit:           limit,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load digital human tasks")

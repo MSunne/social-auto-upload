@@ -76,24 +76,23 @@ func TestWorkerMaterializeTaskAssetsBuildsGenerateRequest(t *testing.T) {
 	}
 	defer cleanupWorkingDir(slog.Default(), tempDir)
 
-	if request.Mode != "fixed" {
+	if request.Mode != "digital" {
 		t.Fatalf("unexpected mode %q", request.Mode)
 	}
-	if request.TemplateParams["source"] != "omnidrive_cloud" {
-		t.Fatalf("unexpected source %#v", request.TemplateParams["source"])
+	if request.Source != "runninghub" {
+		t.Fatalf("unexpected source %#v", request.Source)
 	}
-	if request.Text != task.GoodsText {
-		t.Fatalf("unexpected text %q", request.Text)
+	if request.GoodsText != task.GoodsText {
+		t.Fatalf("unexpected goods text %q", request.GoodsText)
 	}
-	if request.Title == nil || *request.Title != goodsTitle {
-		t.Fatalf("unexpected goods title %+v", request.Title)
+	if request.GoodsTitle == nil || *request.GoodsTitle != goodsTitle {
+		t.Fatalf("unexpected goods title %+v", request.GoodsTitle)
 	}
-	if request.TemplateParams["goods_asset_path"] == "" {
-		t.Fatalf("expected goods asset path, got %+v", request.TemplateParams["goods_asset_path"])
+	if request.GoodsAssetPath == nil || *request.GoodsAssetPath == "" {
+		t.Fatalf("expected goods asset path, got %+v", request.GoodsAssetPath)
 	}
 
-	characterPath, _ := request.TemplateParams["character_asset_path"].(string)
-	characterBytes, err := os.ReadFile(characterPath)
+	characterBytes, err := os.ReadFile(request.CharacterAssetPath)
 	if err != nil {
 		t.Fatalf("ReadFile character returned error: %v", err)
 	}
@@ -109,6 +108,13 @@ func TestWorkerMaterializeTaskAssetsBuildsGenerateRequest(t *testing.T) {
 	}
 	if string(audioBytes) != "audio-bytes" {
 		t.Fatalf("unexpected audio temp file content %q", string(audioBytes))
+	}
+	goodsBytes, err := os.ReadFile(*request.GoodsAssetPath)
+	if err != nil {
+		t.Fatalf("ReadFile goods returned error: %v", err)
+	}
+	if string(goodsBytes) != "goods-bytes" {
+		t.Fatalf("unexpected goods temp file content %q", string(goodsBytes))
 	}
 }
 
@@ -161,6 +167,9 @@ func TestWorkerSaveResultAssetMirrorsRemoteVideo(t *testing.T) {
 	if result.asset.StorageKey == "" || result.asset.PublicURL == "" {
 		t.Fatalf("expected mirrored storage metadata, got %+v", result.asset)
 	}
+	if result.asset.PublicURL == videoServer.URL+"/result.mp4" {
+		t.Fatalf("expected managed public url instead of raw upstream url, got %q", result.asset.PublicURL)
+	}
 	data, contentType, err := storageService.ReadBytes(t.Context(), result.asset.StorageKey)
 	if err != nil {
 		t.Fatalf("ReadBytes returned error: %v", err)
@@ -170,5 +179,61 @@ func TestWorkerSaveResultAssetMirrorsRemoteVideo(t *testing.T) {
 	}
 	if contentType != "video/mp4" {
 		t.Fatalf("unexpected content type %q", contentType)
+	}
+}
+
+func TestWorkerSaveResultAssetResolvesRelativeVideoURL(t *testing.T) {
+	videoServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/files/final.mp4" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = io.WriteString(w, "video-bytes")
+	}))
+	defer videoServer.Close()
+
+	storageService, err := storage.New(config.Config{
+		LocalStorageDir: t.TempDir(),
+		PublicBaseURL:   "http://localhost:5409",
+	})
+	if err != nil {
+		t.Fatalf("storage.New returned error: %v", err)
+	}
+
+	worker := &Worker{
+		app: &appstate.App{
+			Config:  config.Config{},
+			Logger:  slog.Default(),
+			Storage: storageService,
+		},
+		client: &Client{
+			baseURL:    videoServer.URL,
+			httpClient: videoServer.Client(),
+		},
+		probeDuration: func(ctx context.Context, path string) (float64, error) {
+			return 3.3, nil
+		},
+	}
+
+	task := &domain.DigitalHumanTask{
+		ID:          "task-relative-url",
+		OwnerUserID: "test-user",
+	}
+	result, err := worker.saveResultAsset(t.Context(), task, &RemoteTask{
+		Result: map[string]any{
+			"video_url": "/api/files/final.mp4",
+		},
+	})
+	if err != nil {
+		t.Fatalf("saveResultAsset returned error: %v", err)
+	}
+	if result == nil || result.asset == nil {
+		t.Fatal("expected mirrored result asset")
+	}
+	if result.asset.PublicURL == "/api/files/final.mp4" || result.asset.PublicURL == videoServer.URL+"/api/files/final.mp4" {
+		t.Fatalf("expected storage public url instead of source url, got %q", result.asset.PublicURL)
+	}
+	if result.actualDurationSeconds == nil || *result.actualDurationSeconds != 4 {
+		t.Fatalf("expected rounded duration, got %+v", result.actualDurationSeconds)
 	}
 }

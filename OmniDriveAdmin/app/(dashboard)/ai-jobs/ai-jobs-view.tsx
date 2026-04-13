@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Cpu, Loader2, RefreshCw, RotateCcw, Search, XCircle } from "lucide-react";
 import { PageHeader } from "@/components/ui/common";
-import { useAdminAIJobs, useBulkActionAIJobs } from "@/lib/hooks/useAdminAIJobs";
+import { useAdminAIJobs, useBulkActionAIJobs, useDeleteAdminAIJob } from "@/lib/hooks/useAdminAIJobs";
 import { getModelDisplayName } from "@/lib/model-display";
 import type { AdminAIJobListItem } from "@/lib/types";
 import { AIJobDetailDrawer } from "./ai-job-detail-drawer";
@@ -34,6 +34,12 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled: "已取消",
   pending_delivery: "待下发",
 };
+
+const VISIBILITY_OPTIONS = [
+  { value: "active", label: "进行中/正常" },
+  { value: "deleted", label: "已删除" },
+  { value: "all", label: "全部" },
+] as const;
 
 function formatCompactTime(value?: string | null) {
   if (!value) {
@@ -76,20 +82,24 @@ function StatusPill({ status }: { status: string }) {
 function JobRow({
   row,
   selected,
+  selectable,
   onToggleSelect,
   onOpenDetail,
+  onDelete,
 }: {
   row: AdminAIJobListItem;
   selected: boolean;
+  selectable: boolean;
   onToggleSelect: () => void;
   onOpenDetail: () => void;
+  onDelete: () => void;
 }) {
   const messageTone = getJobMessageTone(row.status, row.messagePreview);
 
   return (
-    <tr className={selected ? "bg-[var(--color-primary)]/5" : "hover:bg-[var(--color-bg-secondary)]/35"}>
+    <tr className={row.deletedAt ? "bg-[var(--color-bg-secondary)]/20 text-[var(--color-text-secondary)]" : selected ? "bg-[var(--color-primary)]/5" : "hover:bg-[var(--color-bg-secondary)]/35"}>
       <td className="px-3 py-3 align-top">
-        <input type="checkbox" checked={selected} onChange={onToggleSelect} className="rounded" />
+        <input type="checkbox" checked={selected} onChange={onToggleSelect} className="rounded" disabled={!selectable} />
       </td>
       <td className="px-3 py-3 align-top">
         <div className="flex items-start gap-3">
@@ -100,9 +110,14 @@ function JobRow({
             <div className="flex flex-wrap items-center gap-2">
               <p className="font-medium text-[var(--color-text-primary)]">{getModelDisplayName(row)}</p>
               <StatusPill status={row.status} />
+              {row.deletedAt ? (
+                <span className="inline-flex items-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2.5 py-1 text-xs font-medium text-[var(--color-text-secondary)]">
+                  已删除
+                </span>
+              ) : null}
             </div>
             <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
-              {row.jobType} · {row.source}
+              {row.jobType === "digital_human" ? "数字人口播生成" : row.jobType} · {row.source}
             </p>
             <p className="mt-1 truncate font-mono text-[11px] text-[var(--color-text-secondary)]">{row.id}</p>
           </div>
@@ -138,13 +153,24 @@ function JobRow({
         </div>
       </td>
       <td className="px-3 py-3 align-top">
-        <button
-          type="button"
-          onClick={onOpenDetail}
-          className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-bg-secondary)]"
-        >
-          查看日志
-        </button>
+        <div className="flex justify-end gap-2">
+          {row.actions.canDelete ? (
+            <button
+              type="button"
+              onClick={onDelete}
+              className="rounded-lg border border-red-500/25 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-500/10"
+            >
+              删除
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onOpenDetail}
+            className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-bg-secondary)]"
+          >
+            查看日志
+          </button>
+        </div>
       </td>
     </tr>
   );
@@ -154,6 +180,7 @@ export function AIJobsView() {
   const [query, setQuery] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [status, setStatus] = useState("");
+  const [visibility, setVisibility] = useState<"active" | "deleted" | "all">("active");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
 
@@ -161,9 +188,12 @@ export function AIJobsView() {
     limit: 20,
     query: query || undefined,
     status: status || undefined,
+    visibility,
   });
   const bulkAction = useBulkActionAIJobs();
+  const deleteAIJob = useDeleteAdminAIJob();
   const rows = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data?.pages]);
+  const selectableRows = useMemo(() => rows.filter((item) => !item.deletedAt), [rows]);
 
   const handleSearch = (event: React.FormEvent) => {
     event.preventDefault();
@@ -183,11 +213,27 @@ export function AIJobsView() {
     });
 
   const toggleSelectAll = () => {
-    if (!rows.length) {
+    if (!selectableRows.length) {
       return;
     }
-    const ids = rows.map((item) => item.id);
+    const ids = selectableRows.map((item) => item.id);
     setSelected(selected.size === ids.length ? new Set() : new Set(ids));
+  };
+
+  const handleDelete = async (jobId: string) => {
+    if (!window.confirm("确认软删除这条 AI 作业吗？删除后普通前端用户将不再看到它。")) {
+      return;
+    }
+    try {
+      await deleteAIJob.mutateAsync(jobId);
+      setSelected((current) => {
+        const next = new Set(current);
+        next.delete(jobId);
+        return next;
+      });
+    } catch {
+      window.alert("删除失败，请稍后重试");
+    }
   };
 
   const handleBulkAction = async (action: string, label: string) => {
@@ -259,6 +305,26 @@ export function AIJobsView() {
             ))}
           </div>
 
+          <div className="flex flex-wrap gap-2">
+            {VISIBILITY_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => {
+                  setVisibility(option.value);
+                  setSelected(new Set());
+                }}
+                className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                  visibility === option.value
+                    ? "border-[var(--color-primary)]/45 bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
+                    : "border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
           {selected.size > 0 ? (
             <div className="flex flex-wrap items-center gap-2 lg:ml-auto">
               <span className="text-xs text-[var(--color-text-secondary)]">已选 {selected.size}</span>
@@ -292,7 +358,7 @@ export function AIJobsView() {
                   <input
                     type="checkbox"
                     className="rounded"
-                    checked={Boolean(rows.length > 0 && selected.size === rows.length)}
+                    checked={Boolean(selectableRows.length > 0 && selected.size === selectableRows.length)}
                     onChange={toggleSelectAll}
                   />
                 </th>
@@ -329,8 +395,10 @@ export function AIJobsView() {
                     key={row.id}
                     row={row}
                     selected={selected.has(row.id)}
+                    selectable={!row.deletedAt}
                     onToggleSelect={() => toggleSelect(row.id)}
                     onOpenDetail={() => setSelectedJobId(row.id)}
+                    onDelete={() => void handleDelete(row.id)}
                   />
                 ))
               )}

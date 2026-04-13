@@ -298,7 +298,7 @@ export default function NodesPage() {
                     汇报时间
                   </th>
                   <th className="px-5 py-4 text-xs font-bold tracking-wider text-cyan">
-                    产品知识和技能
+                    内容计划
                   </th>
                   <th className="px-5 py-4 text-xs font-bold tracking-wider text-cyan">
                     OMNIBULL
@@ -383,14 +383,14 @@ export default function NodesPage() {
                           : "-"}
                       </td>
 
-                      {/* 产品知识和技能 */}
+                      {/* 内容计划 */}
                       <td className="px-5 py-4">
                         <Link
                           href={`/nodes/${device.id}`}
                           className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-accent/15 to-cyan/15 border border-accent/25 px-3.5 py-1.5 text-xs font-semibold text-accent transition-all hover:from-accent/25 hover:to-cyan/25 hover:border-accent/40 hover:shadow-[0_0_14px_rgba(177,73,255,0.2)] hover:-translate-y-px"
                         >
                           <BookOpen className="h-3 w-3" />
-                          详情/编辑技能
+                          内容/计划列表
                         </Link>
                       </td>
 
@@ -401,7 +401,7 @@ export default function NodesPage() {
                           className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-cyan/15 to-emerald-500/15 border border-cyan/25 px-3.5 py-1.5 text-xs font-semibold text-cyan transition-all hover:from-cyan/25 hover:to-emerald-500/25 hover:border-cyan/40 hover:shadow-[0_0_14px_rgba(0,245,212,0.2)] hover:-translate-y-px"
                         >
                           <ExternalLink className="h-3 w-3" />
-                          详情/编辑
+                          账号列表
                         </Link>
                       </td>
 

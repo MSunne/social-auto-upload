@@ -33,10 +33,11 @@ type AdminTaskListFilter struct {
 }
 
 type AdminAIJobListFilter struct {
-	Query  string
-	Status string
-	Limit  int
-	Cursor *AdminAIJobListCursor
+	Query      string
+	Status     string
+	Visibility string
+	Limit      int
+	Cursor     *AdminAIJobListCursor
 }
 
 type AdminAIJobListCursor struct {
@@ -87,11 +88,11 @@ const adminPlatformAccountSelectColumns = `
 `
 
 const adminAIJobSelectColumns = `
-	aj.id, aj.owner_user_id, aj.device_id, aj.skill_id, aj.source, aj.local_task_id,
+	aj.id, aj.owner_user_id, aj.device_id, aj.skill_id, aj.deleted_by_admin_user_id, aj.source, aj.local_task_id,
 	aj.job_type, aj.model_name, COALESCE(am.model_alias, aj.model_name) AS model_alias, aj.prompt, aj.status, aj.input_payload, aj.output_payload,
 	aj.message, aj.notes, aj.exception_reason, aj.risk_tags, aj.cost_credits, aj.lease_owner_device_id, aj.lease_token,
 	aj.lease_expires_at, aj.delivery_status, aj.delivery_message, aj.local_publish_task_id,
-	aj.run_at, aj.created_at, aj.updated_at, aj.delivered_at, aj.finished_at
+	aj.run_at, aj.created_at, aj.updated_at, aj.delivered_at, aj.finished_at, aj.deleted_at
 `
 
 const adminAIJobListSelectColumns = `
@@ -105,12 +106,39 @@ const adminAIJobListSelectColumns = `
 	aj.run_at,
 	aj.created_at,
 	aj.updated_at,
+	aj.deleted_at,
 	CASE
 		WHEN aj.message IS NULL OR BTRIM(aj.message) = '' THEN NULL
 		WHEN CHAR_LENGTH(aj.message) <= 160 THEN aj.message
 		ELSE SUBSTRING(aj.message FROM 1 FOR 160) || '...'
 	END AS message_preview
 `
+
+func adminAIJobListActions(status string, updatedAt time.Time, deletedAt *time.Time) domain.AIJobActionState {
+	if deletedAt != nil {
+		return domain.AIJobActionState{}
+	}
+	state := domain.AIJobActionState{}
+	switch strings.TrimSpace(status) {
+	case "queued":
+		state.CanEdit = true
+		state.CanCancel = true
+	case "waiting_recharge":
+		state.CanEdit = true
+		state.CanCancel = true
+	case "running":
+		state.CanCancel = true
+		state.CanForceRelease = true
+		state.CanDelete = !updatedAt.IsZero() && time.Since(updatedAt) >= 15*time.Minute
+	case "failed", "cancelled", "success", "completed":
+		state.CanEdit = true
+		state.CanRetry = true
+		state.CanDelete = true
+	default:
+		state.CanEdit = true
+	}
+	return state
+}
 
 // 处理扫描管理端用户行相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanAdminUserRow(scan scanFn) (*domain.AdminUserRow, error) {
@@ -482,6 +510,7 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 	var item domain.AdminAIJobRow
 	var deviceID *string
 	var skillID *string
+	var deletedByAdminUserID *string
 	var localTaskID *string
 	var prompt *string
 	var inputPayload []byte
@@ -498,6 +527,7 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 	var runAt *time.Time
 	var deliveredAt *time.Time
 	var finishedAt *time.Time
+	var deletedAt *time.Time
 	var ownerID *string
 	var ownerEmail *string
 	var ownerName *string
@@ -523,6 +553,7 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 		&item.Job.OwnerUserID,
 		&deviceID,
 		&skillID,
+		&deletedByAdminUserID,
 		&item.Job.Source,
 		&localTaskID,
 		&item.Job.JobType,
@@ -548,6 +579,7 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 		&item.Job.UpdatedAt,
 		&deliveredAt,
 		&finishedAt,
+		&deletedAt,
 		&ownerID,
 		&ownerEmail,
 		&ownerName,
@@ -576,6 +608,7 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 
 	item.Job.DeviceID = deviceID
 	item.Job.SkillID = skillID
+	item.Job.DeletedByAdminUserID = deletedByAdminUserID
 	item.Job.LocalTaskID = localTaskID
 	item.Job.Prompt = prompt
 	item.Job.InputPayload = bytesOrNil(inputPayload)
@@ -592,6 +625,7 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 	item.Job.RunAt = runAt
 	item.Job.DeliveredAt = deliveredAt
 	item.Job.FinishedAt = finishedAt
+	item.Job.DeletedAt = deletedAt
 
 	if ownerID != nil {
 		item.Owner = &domain.AdminUserSummary{
@@ -647,6 +681,7 @@ func scanAdminAIJobRow(scan scanFn) (*domain.AdminAIJobRow, error) {
 func scanAdminAIJobListItem(scan scanFn) (*domain.AdminAIJobListItem, error) {
 	var item domain.AdminAIJobListItem
 	var runAt *time.Time
+	var deletedAt *time.Time
 	var messagePreview *string
 
 	if err := scan(
@@ -660,13 +695,16 @@ func scanAdminAIJobListItem(scan scanFn) (*domain.AdminAIJobListItem, error) {
 		&runAt,
 		&item.CreatedAt,
 		&item.UpdatedAt,
+		&deletedAt,
 		&messagePreview,
 	); err != nil {
 		return nil, err
 	}
 
 	item.RunAt = runAt
+	item.DeletedAt = deletedAt
 	item.MessagePreview = trimOptionalString(messagePreview)
+	item.Actions = adminAIJobListActions(item.Status, item.UpdatedAt, item.DeletedAt)
 	return &item, nil
 }
 
@@ -1052,7 +1090,20 @@ func nextPrefixBoundary(prefix string) (string, bool) {
 	return "", false
 }
 
-func (s *Store) getAdminAIJobListItemByID(ctx context.Context, jobID string, status string) (*domain.AdminAIJobListItem, error) {
+func normalizeAdminAIJobVisibility(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "active":
+		return "active"
+	case "deleted":
+		return "deleted"
+	case "all":
+		return "all"
+	default:
+		return "active"
+	}
+}
+
+func (s *Store) getAdminAIJobListItemByID(ctx context.Context, jobID string, status string, visibility string) (*domain.AdminAIJobListItem, error) {
 	trimmedJobID := strings.TrimSpace(jobID)
 	if trimmedJobID == "" {
 		return nil, nil
@@ -1067,6 +1118,12 @@ func (s *Store) getAdminAIJobListItemByID(ctx context.Context, jobID string, sta
 	if status != "" {
 		query += ` AND aj.status = $2`
 		args = append(args, status)
+	}
+	switch normalizeAdminAIJobVisibility(visibility) {
+	case "active":
+		query += ` AND aj.deleted_at IS NULL`
+	case "deleted":
+		query += ` AND aj.deleted_at IS NOT NULL`
 	}
 
 	row := s.pool.QueryRow(ctx, query, args...)
@@ -1177,9 +1234,10 @@ func (s *Store) ListAdminAIJobs(ctx context.Context, filter AdminAIJobListFilter
 	limit := normalizeAdminAIJobListLimit(filter.Limit)
 	status := strings.TrimSpace(filter.Status)
 	query := strings.TrimSpace(filter.Query)
+	visibility := normalizeAdminAIJobVisibility(filter.Visibility)
 
 	if query != "" && filter.Cursor == nil {
-		exactMatch, err := s.getAdminAIJobListItemByID(ctx, query, status)
+		exactMatch, err := s.getAdminAIJobListItemByID(ctx, query, status, visibility)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -1196,6 +1254,12 @@ func (s *Store) ListAdminAIJobs(ctx context.Context, filter AdminAIJobListFilter
 		whereParts = append(whereParts, fmt.Sprintf("aj.status = $%d", argIndex))
 		args = append(args, status)
 		argIndex++
+	}
+	switch visibility {
+	case "active":
+		whereParts = append(whereParts, "aj.deleted_at IS NULL")
+	case "deleted":
+		whereParts = append(whereParts, "aj.deleted_at IS NOT NULL")
 	}
 
 	if query != "" {

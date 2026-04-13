@@ -233,10 +233,12 @@ type AdminAIJobListItem struct {
 	RunAt          *time.Time                   `json:"runAt,omitempty"`
 	CreatedAt      time.Time                    `json:"createdAt"`
 	UpdatedAt      time.Time                    `json:"updatedAt"`
+	DeletedAt      *time.Time                   `json:"deletedAt,omitempty"`
 	MessagePreview *string                      `json:"messagePreview,omitempty"`
 	Owner          *AdminUserSummary            `json:"owner,omitempty"`
 	Device         *AdminAIJobListDeviceSummary `json:"device,omitempty"`
 	Skill          *AdminAIJobListSkillSummary  `json:"skill,omitempty"`
+	Actions        AIJobActionState             `json:"actions"`
 }
 
 type AdminAIJobWorkspace struct {
@@ -826,6 +828,7 @@ type AdminSystemSettingsRecord struct {
 	DigitalHumanShoppingDefaultModel   string                     `json:"digitalHumanShoppingDefaultModel"`
 	DigitalHumanSpeechDefaultModel     string                     `json:"digitalHumanSpeechDefaultModel"`
 	DefaultChatModel                   string                     `json:"defaultChatModel"`
+	PromptOptimizeModel                string                     `json:"promptOptimizeModel"`
 	DefaultImageModel                  string                     `json:"defaultImageModel"`
 	DefaultVideoModel                  string                     `json:"defaultVideoModel"`
 	VideoCoverPrompt                   string                     `json:"videoCoverPrompt"`
@@ -853,6 +856,7 @@ type AdminSystemConfig struct {
 	DigitalHumanShoppingDefaultModel string                     `json:"digitalHumanShoppingDefaultModel"`
 	DigitalHumanSpeechDefaultModel   string                     `json:"digitalHumanSpeechDefaultModel"`
 	DefaultChatModel                 string                     `json:"defaultChatModel"`
+	PromptOptimizeModel              string                     `json:"promptOptimizeModel"`
 	DefaultImageModel                string                     `json:"defaultImageModel"`
 	DefaultVideoModel                string                     `json:"defaultVideoModel"`
 	VideoCoverPrompt                 string                     `json:"videoCoverPrompt"`

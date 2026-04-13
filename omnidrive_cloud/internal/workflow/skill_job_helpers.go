@@ -119,7 +119,7 @@ func MapSkillOutputTypeToJobType(outputType string) (string, bool) {
 	case "video", "video_text", "视文模式":
 		return "video", true
 	case skillOutputDigitalHuman:
-		return "video", true
+		return "digital_human", true
 	case "chat", "text", "text_only", "文本格式":
 		return "chat", true
 	default:
@@ -345,7 +345,7 @@ func buildDigitalHumanSkillAIJobPayload(
 
 	payload := map[string]any{
 		"workflowKind":          "digital_human",
-		"prompt":                BuildSkillJobPrompt(skill, "video"),
+		"prompt":                BuildSkillJobPrompt(skill, "digital_human"),
 		"skillName":             skill.Name,
 		"skillDescription":      skill.Description,
 		"publishPromptTemplate": BuildSkillPublishPromptTemplate(skill),

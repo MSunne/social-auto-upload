@@ -973,6 +973,7 @@ export default function VideoCreationPage() {
         listAIJobs({
           jobType: "video",
           payloadMode: "summary",
+          limit: 20,
         }),
       refetchInterval: currentJobId ? 4000 : false,
       refetchIntervalInBackground: true,
@@ -1536,23 +1537,7 @@ export default function VideoCreationPage() {
             </div>
           </div>
 
-          <div className="rounded-xl border border-border/60 bg-surface px-3 py-3">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
-                <Wand2 className="h-4 w-4 text-accent" />
-                直提视频生成
-              </div>
-              <p className="text-xs leading-5 text-text-muted">
-                这个页面会把你当前输入的 prompt 和参考图直接提交给视频模型，不再额外生成封面首帧，也不再套管理员分镜脚本。
-              </p>
-            </div>
-            <div className="mt-3 flex items-start gap-2 rounded-lg border border-border/40 bg-background/50 px-2.5 py-2 text-[11px] text-text-muted">
-              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan" />
-              <span>
-                你上传多少张参考图，就会按当前模型允许的数量原样提交多少张；超过 8 秒的视频仍然只保留分段尾帧续接。
-              </span>
-            </div>
-          </div>
+
 
           <div className="rounded-xl border border-border/50 bg-surface-hover px-3 py-3 text-xs text-text-muted">
             <div className="flex items-center justify-between gap-2">

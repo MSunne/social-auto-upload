@@ -76,8 +76,9 @@ func (p *APIYIProvider) GenerateChat(ctx context.Context, req ChatRequest) (*Cha
 	var response struct {
 		Choices []struct {
 			Message struct {
-				Role    string `json:"role"`
-				Content any    `json:"content"`
+				Role             string `json:"role"`
+				Content          any    `json:"content"`
+				ReasoningContent any    `json:"reasoning_content"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
@@ -91,8 +92,16 @@ func (p *APIYIProvider) GenerateChat(ctx context.Context, req ChatRequest) (*Cha
 	}
 
 	choice := response.Choices[0]
+	text := extractText(choice.Message.Content)
+	reasoning := extractText(choice.Message.ReasoningContent)
+
+	finalText := text
+	if reasoning != "" {
+		finalText = "<think>\n" + reasoning + "\n</think>\n" + text
+	}
+
 	return &ChatResult{
-		Text:         extractText(choice.Message.Content),
+		Text:         finalText,
 		Role:         strings.TrimSpace(choice.Message.Role),
 		Usage:        response.Usage,
 		FinishReason: strings.TrimSpace(choice.FinishReason),
@@ -144,6 +153,7 @@ func (p *APIYIProvider) GenerateChatStream(ctx context.Context, req ChatRequest,
 	var fullText strings.Builder
 	var rawResponse bytes.Buffer
 	sawDoneMarker := false
+	inReasoning := false
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
 
@@ -205,22 +215,35 @@ func (p *APIYIProvider) GenerateChatStream(ctx context.Context, req ChatRequest,
 		if reasoningText == "" {
 			reasoningText = extractText(choice.Message.ReasoningContent)
 		}
-		if deltaText == "" {
-			if reasoningText != "" && onChunk != nil {
-				return onChunk(ChatStreamChunk{
-					Text:         fullText.String(),
-					Role:         result.Role,
-					Usage:        result.Usage,
-					FinishReason: result.FinishReason,
-					Progressed:   true,
-				})
+
+		var combinedDelta string
+		if reasoningText != "" {
+			if !inReasoning {
+				inReasoning = true
+				combinedDelta += "<think>\n"
+				fullText.WriteString("<think>\n")
 			}
+			combinedDelta += reasoningText
+			fullText.WriteString(reasoningText)
+		}
+
+		if deltaText != "" {
+			if inReasoning {
+				inReasoning = false
+				combinedDelta += "\n</think>\n"
+				fullText.WriteString("\n</think>\n")
+			}
+			combinedDelta += deltaText
+			fullText.WriteString(deltaText)
+		}
+
+		if combinedDelta == "" {
 			return nil
 		}
-		fullText.WriteString(deltaText)
+
 		if onChunk != nil {
 			return onChunk(ChatStreamChunk{
-				Delta:        deltaText,
+				Delta:        combinedDelta,
 				Text:         fullText.String(),
 				Role:         result.Role,
 				Usage:        result.Usage,
@@ -251,6 +274,9 @@ func (p *APIYIProvider) GenerateChatStream(ctx context.Context, req ChatRequest,
 		return nil, fmt.Errorf("provider stream ended before terminal event")
 	}
 
+	if inReasoning {
+		fullText.WriteString("\n</think>\n")
+	}
 	result.Text = fullText.String()
 	result.RawResponse = rawResponse.Bytes()
 	if onChunk != nil {

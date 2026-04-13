@@ -31,6 +31,7 @@ type adminSystemConfigPatchRequest struct {
 	DigitalHumanShoppingDefaultModel *string                           `json:"digitalHumanShoppingDefaultModel"`
 	DigitalHumanSpeechDefaultModel   *string                           `json:"digitalHumanSpeechDefaultModel"`
 	DefaultChatModel                 *string                           `json:"defaultChatModel"`
+	PromptOptimizeModel              *string                           `json:"promptOptimizeModel"`
 	DefaultImageModel                *string                           `json:"defaultImageModel"`
 	DefaultVideoModel                *string                           `json:"defaultVideoModel"`
 	VideoCoverPrompt                 *string                           `json:"videoCoverPrompt"`
@@ -75,6 +76,7 @@ type effectiveAdminSystemSettings struct {
 	DigitalHumanShoppingDefaultModel   string
 	DigitalHumanSpeechDefaultModel     string
 	DefaultChatModel                   string
+	PromptOptimizeModel                string
 	DefaultImageModel                  string
 	DefaultVideoModel                  string
 	VideoCoverPrompt                   string
@@ -113,6 +115,7 @@ func defaultAdminSystemSettings(cfg config.Config) effectiveAdminSystemSettings 
 		DigitalHumanShoppingDefaultModel:   digitalHumanRecommendedModelID,
 		DigitalHumanSpeechDefaultModel:     digitalHumanRecommendedModelID,
 		DefaultChatModel:                   strings.TrimSpace(cfg.DefaultChatModel),
+		PromptOptimizeModel:                "gemini-3.1-pro-preview",
 		DefaultImageModel:                  strings.TrimSpace(cfg.DefaultImageModel),
 		DefaultVideoModel:                  strings.TrimSpace(cfg.DefaultVideoModel),
 		VideoCoverPrompt:                   strings.TrimSpace(ai.DefaultSkillVideoCoverPromptTemplate),
@@ -142,6 +145,22 @@ func validateStoryboardPackageModel(ctx context.Context, app *appstate.App, mode
 	}
 	if model == nil || !ai.SupportsStoryboardPackageModel(model) {
 		return renderableError("storyboardModel must reference an enabled chat model that supports image inputs")
+	}
+	return nil
+}
+
+// 处理校验提示词优化模型相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
+func validatePromptOptimizeModel(ctx context.Context, app *appstate.App, modelName string) error {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" || app == nil || app.Store == nil {
+		return nil
+	}
+	model, err := app.Store.GetAIModelByName(ctx, modelName)
+	if err != nil {
+		return err
+	}
+	if model == nil || !ai.SupportsStoryboardPackageModel(model) {
+		return renderableError("promptOptimizeModel must reference an enabled chat model that supports image inputs")
 	}
 	return nil
 }
@@ -240,6 +259,7 @@ func loadEffectiveAdminSystemSettings(ctx context.Context, app *appstate.App) (e
 		settings.DigitalHumanSpeechDefaultModel = value
 	}
 	settings.DefaultChatModel = strings.TrimSpace(record.DefaultChatModel)
+	settings.PromptOptimizeModel = strings.TrimSpace(record.PromptOptimizeModel)
 	settings.DefaultImageModel = strings.TrimSpace(record.DefaultImageModel)
 	settings.DefaultVideoModel = strings.TrimSpace(record.DefaultVideoModel)
 	if value := strings.TrimSpace(record.VideoCoverPrompt); value != "" {
@@ -288,6 +308,7 @@ func buildAdminSystemConfigPayload(app *appstate.App, settings effectiveAdminSys
 		DigitalHumanShoppingDefaultModel: settings.DigitalHumanShoppingDefaultModel,
 		DigitalHumanSpeechDefaultModel:   settings.DigitalHumanSpeechDefaultModel,
 		DefaultChatModel:                 settings.DefaultChatModel,
+		PromptOptimizeModel:              settings.PromptOptimizeModel,
 		DefaultImageModel:                settings.DefaultImageModel,
 		DefaultVideoModel:                settings.DefaultVideoModel,
 		VideoCoverPrompt:                 settings.VideoCoverPrompt,
@@ -643,6 +664,9 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 	if nestedFieldTouched(raw, "defaultChatModel") {
 		settings.DefaultChatModel = normalizePatchedString(payload.DefaultChatModel)
 	}
+	if nestedFieldTouched(raw, "promptOptimizeModel") {
+		settings.PromptOptimizeModel = normalizePatchedString(payload.PromptOptimizeModel)
+	}
 	if nestedFieldTouched(raw, "defaultImageModel") {
 		settings.DefaultImageModel = normalizePatchedString(payload.DefaultImageModel)
 	}
@@ -719,6 +743,12 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 	if strings.TrimSpace(settings.DefaultChatModel) == "" {
 		render.Error(w, http.StatusBadRequest, "defaultChatModel is required")
 		return
+	}
+	if nestedFieldTouched(raw, "promptOptimizeModel") {
+		if err := validatePromptOptimizeModel(r.Context(), h.app, settings.PromptOptimizeModel); err != nil {
+			render.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	if strings.TrimSpace(settings.DefaultImageModel) == "" {
 		render.Error(w, http.StatusBadRequest, "defaultImageModel is required")
@@ -819,6 +849,7 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 		DigitalHumanShoppingDefaultModel:   settings.DigitalHumanShoppingDefaultModel,
 		DigitalHumanSpeechDefaultModel:     settings.DigitalHumanSpeechDefaultModel,
 		DefaultChatModel:                   settings.DefaultChatModel,
+		PromptOptimizeModel:                settings.PromptOptimizeModel,
 		DefaultImageModel:                  settings.DefaultImageModel,
 		DefaultVideoModel:                  settings.DefaultVideoModel,
 		VideoCoverPrompt:                   settings.VideoCoverPrompt,
@@ -871,6 +902,7 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 				"codeLength":         settings.SMSRegistration.CodeLength,
 			},
 			"defaultChatModel":          settings.DefaultChatModel,
+			"promptOptimizeModel":       settings.PromptOptimizeModel,
 			"defaultImageModel":         settings.DefaultImageModel,
 			"defaultVideoModel":         settings.DefaultVideoModel,
 			"videoCoverPrompt":          settings.VideoCoverPrompt,

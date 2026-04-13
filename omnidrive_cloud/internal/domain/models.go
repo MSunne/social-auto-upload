@@ -321,6 +321,14 @@ type PublishTask struct {
 	UpdatedAt           time.Time       `json:"updatedAt"`
 }
 
+type PublishTaskSummary struct {
+	TotalCount       int64 `json:"totalCount"`
+	PendingCount     int64 `json:"pendingCount"`
+	RunningCount     int64 `json:"runningCount"`
+	NeedsVerifyCount int64 `json:"needsVerifyCount"`
+	CompletedCount   int64 `json:"completedCount"`
+}
+
 type PublishTaskActionState struct {
 	CanEdit             bool `json:"canEdit"`
 	CanCancel           bool `json:"canCancel"`
@@ -614,32 +622,34 @@ type AIModel struct {
 }
 
 type AIJob struct {
-	ID                 string          `json:"id"`
-	OwnerUserID        string          `json:"ownerUserId"`
-	DeviceID           *string         `json:"deviceId"`
-	SkillID            *string         `json:"skillId"`
-	Source             string          `json:"source"`
-	LocalTaskID        *string         `json:"localTaskId"`
-	JobType            string          `json:"jobType"`
-	ModelName          string          `json:"modelName"`
-	ModelAlias         string          `json:"modelAlias,omitempty"`
-	Prompt             *string         `json:"prompt"`
-	Status             string          `json:"status"`
-	InputPayload       json.RawMessage `json:"inputPayload,omitempty"`
-	OutputPayload      json.RawMessage `json:"outputPayload,omitempty"`
-	Message            *string         `json:"message"`
-	CostCredits        int64           `json:"costCredits"`
-	LeaseOwnerDeviceID *string         `json:"leaseOwnerDeviceId"`
-	LeaseToken         *string         `json:"leaseToken"`
-	LeaseExpiresAt     *time.Time      `json:"leaseExpiresAt"`
-	DeliveryStatus     string          `json:"deliveryStatus"`
-	DeliveryMessage    *string         `json:"deliveryMessage"`
-	LocalPublishTaskID *string         `json:"localPublishTaskId"`
-	RunAt              *time.Time      `json:"runAt"`
-	CreatedAt          time.Time       `json:"createdAt"`
-	UpdatedAt          time.Time       `json:"updatedAt"`
-	DeliveredAt        *time.Time      `json:"deliveredAt"`
-	FinishedAt         *time.Time      `json:"finishedAt"`
+	ID                   string          `json:"id"`
+	OwnerUserID          string          `json:"ownerUserId"`
+	DeviceID             *string         `json:"deviceId"`
+	SkillID              *string         `json:"skillId"`
+	DeletedByAdminUserID *string         `json:"deletedByAdminUserId,omitempty"`
+	Source               string          `json:"source"`
+	LocalTaskID          *string         `json:"localTaskId"`
+	JobType              string          `json:"jobType"`
+	ModelName            string          `json:"modelName"`
+	ModelAlias           string          `json:"modelAlias,omitempty"`
+	Prompt               *string         `json:"prompt"`
+	Status               string          `json:"status"`
+	InputPayload         json.RawMessage `json:"inputPayload,omitempty"`
+	OutputPayload        json.RawMessage `json:"outputPayload,omitempty"`
+	Message              *string         `json:"message"`
+	CostCredits          int64           `json:"costCredits"`
+	LeaseOwnerDeviceID   *string         `json:"leaseOwnerDeviceId"`
+	LeaseToken           *string         `json:"leaseToken"`
+	LeaseExpiresAt       *time.Time      `json:"leaseExpiresAt"`
+	DeliveryStatus       string          `json:"deliveryStatus"`
+	DeliveryMessage      *string         `json:"deliveryMessage"`
+	LocalPublishTaskID   *string         `json:"localPublishTaskId"`
+	RunAt                *time.Time      `json:"runAt"`
+	CreatedAt            time.Time       `json:"createdAt"`
+	UpdatedAt            time.Time       `json:"updatedAt"`
+	DeliveredAt          *time.Time      `json:"deliveredAt"`
+	FinishedAt           *time.Time      `json:"finishedAt"`
+	DeletedAt            *time.Time      `json:"deletedAt,omitempty"`
 }
 
 type AIJobActionState struct {
@@ -648,6 +658,7 @@ type AIJobActionState struct {
 	CanRetry             bool `json:"canRetry"`
 	CanCreatePublishTask bool `json:"canCreatePublishTask"`
 	CanForceRelease      bool `json:"canForceRelease"`
+	CanDelete            bool `json:"canDelete"`
 }
 
 type AIJobArtifact struct {

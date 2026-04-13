@@ -113,6 +113,27 @@ func NewTaskHandler(app *appstate.App) *TaskHandler {
 	return &TaskHandler{app: app}
 }
 
+func parseTaskListSeekCursor(w http.ResponseWriter, r *http.Request) (*time.Time, string, bool) {
+	beforeUpdatedAtRaw := strings.TrimSpace(r.URL.Query().Get("beforeUpdatedAt"))
+	beforeID := strings.TrimSpace(r.URL.Query().Get("beforeId"))
+
+	var beforeUpdatedAt *time.Time
+	if beforeUpdatedAtRaw != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, beforeUpdatedAtRaw)
+		if err != nil {
+			render.Error(w, http.StatusBadRequest, "beforeUpdatedAt must be a valid RFC3339 timestamp")
+			return nil, "", false
+		}
+		parsed = parsed.UTC()
+		beforeUpdatedAt = &parsed
+	}
+	if (beforeUpdatedAt == nil) != (beforeID == "") {
+		render.Error(w, http.StatusBadRequest, "beforeUpdatedAt and beforeId must be provided together")
+		return nil, "", false
+	}
+	return beforeUpdatedAt, beforeID, true
+}
+
 // 处理任务列表接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *TaskHandler) List(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
@@ -125,19 +146,36 @@ func (h *TaskHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = parsed
 	}
+	beforeUpdatedAt, beforeID, ok := parseTaskListSeekCursor(w, r)
+	if !ok {
+		return
+	}
 	items, err := h.app.Store.ListPublishTasksByOwner(r.Context(), user.ID, store.ListPublishTasksFilter{
-		DeviceID:    strings.TrimSpace(r.URL.Query().Get("deviceId")),
-		AccountID:   strings.TrimSpace(r.URL.Query().Get("accountId")),
-		Status:      strings.TrimSpace(r.URL.Query().Get("status")),
-		Platform:    strings.TrimSpace(r.URL.Query().Get("platform")),
-		AccountName: strings.TrimSpace(r.URL.Query().Get("accountName")),
-		Limit:       limit,
+		DeviceID:        strings.TrimSpace(r.URL.Query().Get("deviceId")),
+		AccountID:       strings.TrimSpace(r.URL.Query().Get("accountId")),
+		Status:          strings.TrimSpace(r.URL.Query().Get("status")),
+		Platform:        strings.TrimSpace(r.URL.Query().Get("platform")),
+		AccountName:     strings.TrimSpace(r.URL.Query().Get("accountName")),
+		BeforeUpdatedAt: beforeUpdatedAt,
+		BeforeID:        beforeID,
+		Limit:           limit,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load tasks")
 		return
 	}
 	render.JSON(w, http.StatusOK, items)
+}
+
+// 处理任务摘要接口，返回控制面板所需的轻量统计结果。
+func (h *TaskHandler) Summary(w http.ResponseWriter, r *http.Request) {
+	user := httpcontext.CurrentUser(r.Context())
+	summary, err := h.app.Store.GetPublishTaskSummaryByOwner(r.Context(), user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load task summary")
+		return
+	}
+	render.JSON(w, http.StatusOK, summary)
 }
 
 // 处理任务诊断接口，解析请求参数并调用应用状态或存储层完成业务动作。
