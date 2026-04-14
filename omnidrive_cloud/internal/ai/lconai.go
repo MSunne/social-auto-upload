@@ -8,7 +8,6 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -62,7 +61,7 @@ func (p *LConAIProvider) SubmitVideo(ctx context.Context, req VideoRequest) (*Vi
 	if err != nil {
 		return nil, err
 	}
-	responseBody, err := p.doLConVideoRequest(ctx, req.BaseURL, req.APIKey, http.MethodPost, "/v1/videos", requestBody, contentType)
+	responseBody, err := p.doLConVideoRequest(ctx, req.BaseURL, req.APIKey, req.ExplicitBaseURL, http.MethodPost, resolveVideoCollectionRequestPath(req.ExplicitBaseURL), requestBody, contentType)
 	if err != nil {
 		return nil, err
 	}
@@ -105,8 +104,8 @@ func (p *LConAIProvider) SubmitVideo(ctx context.Context, req VideoRequest) (*Vi
 }
 
 // 获取视频，为当前链路返回后续处理所需的数据内容。
-func (p *LConAIProvider) GetVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string) (*VideoStatus, error) {
-	body, err := p.doLConVideoRequest(ctx, baseURL, apiKey, http.MethodGet, fmt.Sprintf("/v1/videos/%s", url.PathEscape(videoID)), nil, "")
+func (p *LConAIProvider) GetVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string, explicitBaseURL bool) (*VideoStatus, error) {
+	body, err := p.doLConVideoRequest(ctx, baseURL, apiKey, explicitBaseURL, http.MethodGet, resolveVideoStatusRequestPath(videoID, explicitBaseURL), nil, "")
 	if err != nil {
 		return nil, err
 	}
@@ -163,12 +162,12 @@ func (p *LConAIProvider) GetVideo(ctx context.Context, videoID string, model str
 }
 
 // 下载视频，为后续处理步骤提供本地可用的数据副本。
-func (p *LConAIProvider) DownloadVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string, contentURL string) (*BinaryArtifact, error) {
+func (p *LConAIProvider) DownloadVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string, contentURL string, explicitBaseURL bool) (*BinaryArtifact, error) {
 	if directURL := strings.TrimSpace(contentURL); directURL != "" {
 		return p.downloadBinary(ctx, directURL, fmt.Sprintf("%s.mp4", videoID), "video/mp4")
 	}
 
-	status, err := p.GetVideo(ctx, videoID, model, baseURL, apiKey)
+	status, err := p.GetVideo(ctx, videoID, model, baseURL, apiKey, explicitBaseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -241,12 +240,19 @@ func sanitizeSeedancePrompt(prompt string, aspectRatio string, resolution string
 }
 
 // 处理doLCon视频请求相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
-func (p *LConAIProvider) doLConVideoRequest(ctx context.Context, baseURL string, apiKey string, method string, path string, body []byte, contentType string) ([]byte, error) {
-	normalizedBaseURL := normalizeLConBaseURL(baseURL)
-	if normalizedBaseURL == "" {
-		normalizedBaseURL = normalizeLConBaseURL(p.baseURL)
+func (p *LConAIProvider) doLConVideoRequest(ctx context.Context, baseURL string, apiKey string, explicitBaseURL bool, method string, path string, body []byte, contentType string) ([]byte, error) {
+	resolvedBaseURL := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if explicitBaseURL {
+		if resolvedBaseURL == "" {
+			resolvedBaseURL = strings.TrimRight(strings.TrimSpace(p.baseURL), "/")
+		}
+	} else {
+		resolvedBaseURL = normalizeLConBaseURL(resolvedBaseURL)
+		if resolvedBaseURL == "" {
+			resolvedBaseURL = normalizeLConBaseURL(p.baseURL)
+		}
 	}
-	req, err := p.newRetryableRequest(ctx, method, p.APIYIProvider.resolveEndpointURL(normalizedBaseURL, path), body, func(r *http.Request) {
+	req, err := p.newRetryableRequest(ctx, method, p.APIYIProvider.resolveEndpointURL(resolvedBaseURL, path), body, func(r *http.Request) {
 		r.Header.Set("Authorization", p.resolveAPIKey(apiKey))
 		if strings.TrimSpace(contentType) != "" {
 			r.Header.Set("Content-Type", contentType)

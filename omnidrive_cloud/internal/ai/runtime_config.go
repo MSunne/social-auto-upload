@@ -35,3 +35,8 @@ func ResolveModelRuntimeConfig(cfg config.Config, model *domain.AIModel) (string
 
 	return baseURL, apiKey
 }
+
+// 判断模型是否显式配置了 BaseURL，供图片/视频链路区分终态地址与默认回退。
+func modelHasExplicitBaseURL(model *domain.AIModel) bool {
+	return model != nil && model.BaseURL != nil && strings.TrimSpace(*model.BaseURL) != ""
+}

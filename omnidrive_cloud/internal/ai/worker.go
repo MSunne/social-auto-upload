@@ -449,12 +449,13 @@ func (w *Worker) executeImage(ctx context.Context, job *domain.AIJob, leaseToken
 	if strings.TrimSpace(optimizedPrompt) != "" {
 		req.Prompt = optimizedPrompt
 	}
-	_, provider, providerName, baseURL, apiKey, err := w.resolveModelRuntime(ctx, job.ModelName)
+	model, provider, providerName, baseURL, apiKey, err := w.resolveModelRuntime(ctx, job.ModelName)
 	if err != nil {
 		return err
 	}
 	req.BaseURL = baseURL
 	req.APIKey = apiKey
+	req.ExplicitBaseURL = modelHasExplicitBaseURL(model)
 	result, err := provider.GenerateImage(ctx, req)
 	if err != nil {
 		return err
@@ -533,17 +534,21 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 	if err != nil {
 		return err
 	}
-	_, provider, providerName, baseURL, apiKey, err := w.resolveModelRuntime(ctx, job.ModelName)
+	model, provider, providerName, baseURL, apiKey, err := w.resolveModelRuntime(ctx, job.ModelName)
 	if err != nil {
 		return err
 	}
 	req.BaseURL = baseURL
 	req.APIKey = apiKey
+	req.ExplicitBaseURL = modelHasExplicitBaseURL(model)
 	req.Vendor = providerName
 
 	state := parseVideoExecutionState(job.OutputPayload)
 	if strings.TrimSpace(state.BaseURL) == "" {
 		state.BaseURL = baseURL
+	}
+	if !state.ExplicitBaseURL {
+		state.ExplicitBaseURL = req.ExplicitBaseURL
 	}
 	if strings.TrimSpace(state.Provider) == "" {
 		state.Provider = providerName
@@ -594,7 +599,7 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 			return renewErr
 		}
 
-		status, err := provider.GetVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey)
+		status, err := provider.GetVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey, state.ExplicitBaseURL)
 		if err != nil {
 			if isTransientVideoProviderExecutionError(err) {
 				return buildTemporaryVideoRequeueError(job, state, err)
@@ -698,7 +703,7 @@ func (w *Worker) downloadAndFinalizeVideoArtifact(ctx context.Context, provider 
 
 	for attempt := 1; attempt <= videoArtifactFinalizeMaxAttempts; attempt++ {
 		if attempt > 1 {
-			latestStatus, statusErr := provider.GetVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey)
+			latestStatus, statusErr := provider.GetVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey, state.ExplicitBaseURL)
 			if statusErr != nil {
 				w.app.Logger.Warn(
 					"ai worker failed to refresh completed video status before retry",
@@ -721,7 +726,7 @@ func (w *Worker) downloadAndFinalizeVideoArtifact(ctx context.Context, provider 
 			}
 		}
 
-		artifact, err := provider.DownloadVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey, state.ContentURL)
+		artifact, err := provider.DownloadVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey, state.ContentURL, state.ExplicitBaseURL)
 		if err == nil {
 			if strings.TrimSpace(artifact.FileName) == "" {
 				artifact.FileName = "video.mp4"
@@ -1513,6 +1518,7 @@ func resultBillMessage(result *store.ApplyUsageBillingResult) *string {
 type videoExecutionState struct {
 	Provider                  string
 	BaseURL                   string
+	ExplicitBaseURL           bool
 	RemoteVideoID             string
 	RemoteStatus              string
 	ProgressPercent           *int
@@ -1555,15 +1561,16 @@ func buildVideoOutputPayload(job *domain.AIJob, state videoExecutionState, artif
 		providerName = strings.TrimSpace(stringValue(payload["provider"]))
 	}
 	videoPayload := map[string]any{
-		"provider":    providerName,
-		"baseUrl":     state.BaseURL,
-		"id":          state.RemoteVideoID,
-		"status":      state.RemoteStatus,
-		"contentUrl":  state.ContentURL,
-		"message":     state.Message,
-		"failureCode": state.FailureCode,
-		"submittedAt": state.SubmittedAt.Format(time.RFC3339),
-		"updatedAt":   state.UpdatedAt.Format(time.RFC3339),
+		"provider":        providerName,
+		"baseUrl":         state.BaseURL,
+		"explicitBaseUrl": state.ExplicitBaseURL,
+		"id":              state.RemoteVideoID,
+		"status":          state.RemoteStatus,
+		"contentUrl":      state.ContentURL,
+		"message":         state.Message,
+		"failureCode":     state.FailureCode,
+		"submittedAt":     state.SubmittedAt.Format(time.RFC3339),
+		"updatedAt":       state.UpdatedAt.Format(time.RFC3339),
 	}
 	if providerName != "" {
 		payload["provider"] = providerName
@@ -1571,6 +1578,7 @@ func buildVideoOutputPayload(job *domain.AIJob, state videoExecutionState, artif
 	payload["kind"] = "video"
 	payload["model"] = job.ModelName
 	payload["baseUrl"] = state.BaseURL
+	payload["explicitBaseUrl"] = state.ExplicitBaseURL
 	payload["video"] = videoPayload
 	payload["artifacts"] = summarizeArtifacts(artifacts)
 	if len(state.ReferenceFrames) > 0 {
@@ -1668,6 +1676,7 @@ func parseVideoExecutionState(raw []byte) videoExecutionState {
 		stringValue(payload["baseUrl"]),
 		stringValue(videoPayload["baseUrl"]),
 	))
+	state.ExplicitBaseURL = boolValue(firstNonNilValue(payload["explicitBaseUrl"], videoPayload["explicitBaseUrl"]))
 	state.RemoteVideoID = strings.TrimSpace(firstNonEmptyString(
 		stringValue(payload["remoteVideoId"]),
 		stringValue(videoPayload["id"]),
@@ -1895,7 +1904,7 @@ func (w *Worker) prepareVideoStoryboardPackage(ctx context.Context, job *domain.
 		},
 	})
 
-	_, provider, providerName, baseURL, apiKey, err := w.resolveModelRuntime(ctx, storyboardModel)
+	model, provider, providerName, baseURL, apiKey, err := w.resolveModelRuntime(ctx, storyboardModel)
 	if err != nil {
 		return nil, err
 	}
@@ -1903,6 +1912,7 @@ func (w *Worker) prepareVideoStoryboardPackage(ctx context.Context, job *domain.
 		Model:           storyboardModel,
 		BaseURL:         baseURL,
 		APIKey:          apiKey,
+		ExplicitBaseURL: modelHasExplicitBaseURL(model),
 		SystemPrompt:    storyboardPrompt,
 		Prompt:          userPrompt,
 		ReferenceImages: sourceReferenceImages,
@@ -1990,7 +2000,7 @@ func (w *Worker) prepareVideoCoverReferenceFrame(ctx context.Context, job *domai
 	if err != nil {
 		return nil, err
 	}
-	frameModelName, imageProvider, imageProviderName, imageBaseURL, imageAPIKey, err := w.resolveVideoCoverModelRuntimeConfig(ctx)
+	frameModelName, imageProvider, imageProviderName, imageBaseURL, imageAPIKey, imageExplicitBaseURL, err := w.resolveVideoCoverModelRuntimeConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -2002,6 +2012,7 @@ func (w *Worker) prepareVideoCoverReferenceFrame(ctx context.Context, job *domai
 		Model:           frameModelName,
 		BaseURL:         imageBaseURL,
 		APIKey:          imageAPIKey,
+		ExplicitBaseURL: imageExplicitBaseURL,
 		Prompt:          prompt,
 		ReferenceImages: sourceReferenceImages,
 		AspectRatio:     req.AspectRatio,
@@ -2132,7 +2143,7 @@ func (w *Worker) resolveVideoStoryboardConfig(ctx context.Context) (string, stri
 }
 
 // 处理 AI 作业执行中的解析视频封面模型运行时配置流程，依赖作业状态、租约和持久化结果推进链路。
-func (w *Worker) resolveVideoCoverModelRuntimeConfig(ctx context.Context) (string, Provider, string, string, string, error) {
+func (w *Worker) resolveVideoCoverModelRuntimeConfig(ctx context.Context) (string, Provider, string, string, string, bool, error) {
 	candidates := nonEmpty([]string{
 		strings.TrimSpace(DefaultVideoCoverModelName),
 		strings.TrimSpace(w.app.Config.DefaultImageModel),
@@ -2140,7 +2151,7 @@ func (w *Worker) resolveVideoCoverModelRuntimeConfig(ctx context.Context) (strin
 	for _, candidate := range candidates {
 		model, provider, providerName, baseURL, apiKey, err := w.resolveModelRuntime(ctx, candidate)
 		if err != nil {
-			return "", nil, "", "", "", err
+			return "", nil, "", "", "", false, err
 		}
 		if model == nil || !model.IsEnabled || strings.TrimSpace(model.Category) != "image" {
 			continue
@@ -2148,9 +2159,9 @@ func (w *Worker) resolveVideoCoverModelRuntimeConfig(ctx context.Context) (strin
 		if strings.TrimSpace(baseURL) == "" {
 			continue
 		}
-		return candidate, provider, providerName, baseURL, apiKey, nil
+		return candidate, provider, providerName, baseURL, apiKey, modelHasExplicitBaseURL(model), nil
 	}
-	return "", nil, "", "", "", fmt.Errorf("video cover model is not configured")
+	return "", nil, "", "", "", false, fmt.Errorf("video cover model is not configured")
 }
 
 // 构建视频分镜回退载荷，为AI作业执行生成后续步骤所需的派生参数或载荷。

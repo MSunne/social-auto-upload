@@ -27,18 +27,22 @@ func (w *Worker) executeWorkflowVideo(
 	if err != nil {
 		return err
 	}
-	_, provider, providerName, baseURL, apiKey, err := w.resolveModelRuntime(ctx, job.ModelName)
+	model, provider, providerName, baseURL, apiKey, err := w.resolveModelRuntime(ctx, job.ModelName)
 	if err != nil {
 		return err
 	}
 	req.BaseURL = baseURL
 	req.APIKey = apiKey
+	req.ExplicitBaseURL = modelHasExplicitBaseURL(model)
 	req.Vendor = providerName
 	req.Model = normalizeVideoModel(strings.TrimSpace(job.ModelName), req.AspectRatio, len(req.ReferenceImages) > 0)
 
 	state := parseVideoExecutionState(job.OutputPayload)
 	if strings.TrimSpace(state.BaseURL) == "" {
 		state.BaseURL = baseURL
+	}
+	if !state.ExplicitBaseURL {
+		state.ExplicitBaseURL = req.ExplicitBaseURL
 	}
 	if strings.TrimSpace(state.Provider) == "" {
 		state.Provider = providerName
@@ -241,7 +245,7 @@ func (w *Worker) executeWorkflowVideoSegment(
 			return nil, leaseExpiresAt, renewErr
 		}
 
-		status, err := provider.GetVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey)
+		status, err := provider.GetVideo(ctx, state.RemoteVideoID, req.Model, state.BaseURL, apiKey, state.ExplicitBaseURL)
 		if err != nil {
 			if isTransientVideoProviderExecutionError(err) {
 				return nil, leaseExpiresAt, buildTemporaryVideoRequeueError(job, *state, err)

@@ -177,7 +177,7 @@ function toPreviewItem(artifact: AIJobArtifact): ImagePreviewItem {
   };
 }
 
-function getJobSortTime(job: AIJob) {
+function getImageJobTimelineTime(job: AIJob) {
   return (
     new Date(job.runAt || 0).getTime() ||
     new Date(job.createdAt || 0).getTime() ||
@@ -185,14 +185,60 @@ function getJobSortTime(job: AIJob) {
   );
 }
 
-function sortJobsByUpdatedAt(items: AIJob[]) {
+function getImageJobFreshnessTimestamp(job?: AIJob | null) {
+  if (!job) {
+    return 0;
+  }
+  const candidates = [job.finishedAt, job.deliveredAt, job.updatedAt, job.createdAt]
+    .map((value) => new Date(value || 0).getTime())
+    .filter((value) => Number.isFinite(value) && value > 0);
+  return candidates.length > 0 ? Math.max(...candidates) : 0;
+}
+
+function pickPreferredImageJob(primary?: AIJob | null, secondary?: AIJob | null) {
+  if (!primary) {
+    return secondary || null;
+  }
+  if (!secondary) {
+    return primary;
+  }
+
+  const primaryTerminal = isTerminalJob(primary);
+  const secondaryTerminal = isTerminalJob(secondary);
+  if (primaryTerminal !== secondaryTerminal) {
+    return secondaryTerminal ? secondary : primary;
+  }
+
+  const primaryFreshness = getImageJobFreshnessTimestamp(primary);
+  const secondaryFreshness = getImageJobFreshnessTimestamp(secondary);
+  if (primaryFreshness !== secondaryFreshness) {
+    return secondaryFreshness > primaryFreshness ? secondary : primary;
+  }
+
+  return primary;
+}
+
+function sortImageJobsByLatest(items: AIJob[]) {
   return [...items].sort((left, right) => {
-    const timeDiff = getJobSortTime(left) - getJobSortTime(right);
+    const timeDiff = getImageJobTimelineTime(right) - getImageJobTimelineTime(left);
     if (timeDiff !== 0) {
       return timeDiff;
     }
-    return new Date(left.updatedAt || 0).getTime() - new Date(right.updatedAt || 0).getTime();
+    const updatedDiff = new Date(right.updatedAt || 0).getTime() - new Date(left.updatedAt || 0).getTime();
+    if (updatedDiff !== 0) {
+      return updatedDiff;
+    }
+    return right.id.localeCompare(left.id);
   });
+}
+
+function mergeImageJobs(items: AIJob[]) {
+  const jobs = new Map<string, AIJob>();
+  items.forEach((job) => {
+    const existing = jobs.get(job.id);
+    jobs.set(job.id, pickPreferredImageJob(existing, job) || job);
+  });
+  return sortImageJobsByLatest(Array.from(jobs.values()));
 }
 
 function buildProgress(job?: AIJob | null) {
@@ -368,6 +414,7 @@ export default function ImageCreationPage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewSectionRef = useRef<HTMLDivElement>(null);
+  const taskListRef = useRef<HTMLDivElement>(null);
   const autoPreviewedJobIdRef = useRef<string | null>(null);
   const resolvedOptimizeJobIdRef = useRef<string | null>(null);
   const billedJobIdRef = useRef<string | null>(null);
@@ -433,10 +480,7 @@ export default function ImageCreationPage() {
   });
 
   const mergedJobs = useMemo(() => {
-    if (!currentJob) {
-      return sortJobsByUpdatedAt(imageJobs);
-    }
-    return sortJobsByUpdatedAt([currentJob, ...imageJobs.filter((item) => item.id !== currentJob.id)]);
+    return mergeImageJobs([...imageJobs, ...(currentJob ? [currentJob] : [])]);
   }, [currentJob, imageJobs]);
 
   const selectedJob = useMemo(() => {
@@ -473,11 +517,41 @@ export default function ImageCreationPage() {
   const activeJob = useMemo(() => {
     return currentJob && !isTerminalJob(currentJob) ? currentJob : null;
   }, [currentJob]);
-  const currentProgress = buildProgress(activeJob || currentJob);
   const selectedProgress = buildProgress(selectedJob);
   const optimizeProgress = buildProgress(currentOptimizeJob);
-  const hasRunningJob = Boolean(activeJob);
   const optimizing = optimizingPrompt || Boolean(currentOptimizeJob && !isTerminalJob(currentOptimizeJob));
+  const submitDisabledReason = useMemo(() => {
+    if (!prompt.trim()) {
+      return "请先输入图片描述";
+    }
+    if (!activeModel) {
+      return modelsLoading ? "正在加载图片模型..." : "暂无可用图片模型";
+    }
+    if (!selectedSizeOption) {
+      return "请选择输出尺寸";
+    }
+    return "";
+  }, [activeModel, modelsLoading, prompt, selectedSizeOption]);
+  const submitHelperText = submitDisabledReason || "提交到真实后端并同步图片结果";
+  const statusJob = useMemo(() => {
+    if (activeJob) {
+      return activeJob;
+    }
+    if (selectedJobId && selectedJob) {
+      return selectedJob;
+    }
+    return currentJob || null;
+  }, [activeJob, currentJob, selectedJob, selectedJobId]);
+  const statusProgress = statusJob ? buildProgress(statusJob) : null;
+  const creatingProgress = useMemo(
+    () => ({
+      value: 8,
+      label: "正在创建",
+      tone: "progress" as const,
+      hint: "正在创建图片任务，马上会同步到右侧列表。",
+    }),
+    [],
+  );
 
   useEffect(() => {
     if (!selectedModel && imageModels.length > 0) {
@@ -607,11 +681,14 @@ export default function ImageCreationPage() {
       const job = await createAIJob(payload);
       queryClient.setQueryData<AIJob>(["aiJob", job.id], job);
       queryClient.setQueryData<AIJob[]>(["aiJobs", "image"], (previous = []) =>
-        sortJobsByUpdatedAt([job, ...previous.filter((item) => item.id !== job.id)]),
+        mergeImageJobs([job, ...previous]),
       );
       setCurrentJobId(job.id);
       setSelectedJobId(job.id);
       setPreviewIndex(0);
+      window.requestAnimationFrame(() => {
+        taskListRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+      });
       void queryClient.invalidateQueries({ queryKey: ["aiJobs", "image"] });
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "图片生成请求失败");
@@ -1006,40 +1083,6 @@ export default function ImageCreationPage() {
           </div>
         </motion.div>
 
-        {currentJob && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="glass-card p-4"
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">任务进度</span>
-              <span className="text-[11px] text-text-secondary">{currentProgress.label}</span>
-            </div>
-
-            <div className="h-2 overflow-hidden rounded-full bg-surface">
-              <div
-                className={cn(
-                  "h-full rounded-full transition-all duration-500",
-                  currentProgress.tone === "success" && "bg-gradient-to-r from-emerald-400 to-cyan",
-                  currentProgress.tone === "danger" && "bg-gradient-to-r from-rose-500 to-orange-400",
-                  currentProgress.tone === "progress" && "bg-gradient-to-r from-cyan to-accent",
-                  currentProgress.tone === "idle" && "bg-border",
-                )}
-                style={{ width: `${currentProgress.value}%` }}
-              />
-            </div>
-            <div className="mt-3 space-y-2 text-sm">
-              <p className="font-medium text-text-primary">{currentProgress.hint}</p>
-              <p className="text-xs text-text-secondary">任务 ID: {currentJob.id}</p>
-              {currentJob.message ? (
-                <p className="text-xs text-text-muted">{currentJob.message}</p>
-              ) : null}
-            </div>
-          </motion.div>
-        )}
-
         <div className="flex-1" />
 
         <motion.button
@@ -1048,7 +1091,7 @@ export default function ImageCreationPage() {
           transition={{ delay: 0.25 }}
           type="button"
           onClick={handleGenerate}
-          disabled={!prompt.trim() || !activeModel || submitting}
+          disabled={Boolean(submitDisabledReason) || submitting}
           className="group relative mt-2 w-full shrink-0 overflow-hidden rounded-2xl bg-gradient-to-r from-accent via-pink to-cyan py-5 text-sm font-bold transition-all hover:scale-[1.02] hover:shadow-[0_0_40px_rgba(177,73,255,0.5),0_0_80px_rgba(0,245,212,0.25)] active:scale-[0.98] disabled:opacity-40"
         >
           <div className="absolute inset-[1px] rounded-2xl bg-background/60 backdrop-blur-xl" />
@@ -1069,7 +1112,7 @@ export default function ImageCreationPage() {
           </div>
         </motion.button>
         <p className="mt-2 text-center text-[10px] text-text-muted">
-          {submitting ? currentProgress.hint : hasRunningJob ? `后台仍有任务在执行：${currentProgress.hint}` : "提交到真实后端并同步图片结果"}
+          {submitHelperText}
         </p>
       </div>
 
@@ -1234,7 +1277,112 @@ export default function ImageCreationPage() {
           </Link>
         </div>
 
-        <div className="custom-scrollbar flex-1 space-y-3 overflow-y-auto pr-1">
+        <div className="shrink-0 space-y-3">
+          <AnimatePresence>
+            {submitError ? (
+              <motion.div
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                className="rounded-2xl border border-danger/30 bg-danger/10 p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-danger/20">
+                      <AlertTriangle className="h-4 w-4 text-danger" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-text-primary">无法启动图片制作</p>
+                      <p className="mt-1 text-sm leading-6 text-text-secondary">{submitError}</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSubmitError("")}
+                    className="rounded-lg border border-danger/20 p-1.5 text-danger transition-colors hover:bg-danger/10"
+                    aria-label="关闭图片制作错误提示"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.05 }}
+            className="glass-card p-4"
+          >
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-text-muted">任务状态</p>
+                <p className="mt-1 text-sm font-semibold text-text-primary">
+                  {submitting
+                    ? "正在创建新的图片任务"
+                    : statusJob
+                      ? buildAIJobTitle(statusJob)
+                      : "等待创建图片任务"}
+                </p>
+              </div>
+              <span
+                className={cn(
+                  "rounded-full px-2.5 py-1 text-[11px]",
+                  (submitting ? creatingProgress.tone : statusProgress?.tone) === "success" && "bg-success/15 text-success",
+                  (submitting ? creatingProgress.tone : statusProgress?.tone) === "danger" && "bg-danger/15 text-danger",
+                  (submitting ? creatingProgress.tone : statusProgress?.tone) === "progress" && "bg-accent/15 text-accent",
+                  (submitting ? creatingProgress.tone : statusProgress?.tone) === "idle" && "bg-surface-hover text-text-secondary",
+                )}
+              >
+                {submitting ? creatingProgress.label : statusProgress?.label || "待开始"}
+              </span>
+            </div>
+
+            {submitting || statusProgress ? (
+              <>
+                <div className="flex items-center justify-between text-xs text-text-secondary">
+                  <span>云端同步进度</span>
+                  <span>{submitting ? creatingProgress.value : statusProgress?.value || 0}%</span>
+                </div>
+                <div className="mt-2 h-2 overflow-hidden rounded-full bg-surface">
+                  <div
+                    className={cn(
+                      "h-full rounded-full transition-all duration-500",
+                      (submitting ? creatingProgress.tone : statusProgress?.tone) === "success" &&
+                        "bg-gradient-to-r from-emerald-400 to-cyan",
+                      (submitting ? creatingProgress.tone : statusProgress?.tone) === "danger" &&
+                        "bg-gradient-to-r from-rose-500 to-orange-400",
+                      (submitting ? creatingProgress.tone : statusProgress?.tone) === "progress" &&
+                        "bg-gradient-to-r from-cyan to-accent",
+                      (submitting ? creatingProgress.tone : statusProgress?.tone) === "idle" && "bg-border",
+                    )}
+                    style={{ width: `${submitting ? creatingProgress.value : statusProgress?.value || 0}%` }}
+                  />
+                </div>
+                <div className="mt-3 space-y-2 text-sm">
+                  <p className="font-medium text-text-primary">
+                    {submitting ? creatingProgress.hint : statusProgress?.hint}
+                  </p>
+                  {submitting ? (
+                    <p className="text-xs text-text-secondary">任务创建成功后会自动出现在右侧列表顶部。</p>
+                  ) : statusJob ? (
+                    <p className="text-xs text-text-secondary">任务 ID: {statusJob.id}</p>
+                  ) : null}
+                  {!submitting && statusJob?.message ? (
+                    <p className="text-xs text-text-muted">{statusJob.message}</p>
+                  ) : null}
+                </div>
+              </>
+            ) : (
+              <p className="text-sm leading-6 text-text-muted">
+                提交图片制作任务后，这里会显示当前任务的进度、结果状态和错误信息。
+              </p>
+            )}
+          </motion.div>
+        </div>
+
+        <div ref={taskListRef} className="custom-scrollbar flex-1 space-y-3 overflow-y-auto pr-1">
           {mergedJobs.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-sm text-text-muted">
               还没有图片生成记录
@@ -1308,42 +1456,6 @@ export default function ImageCreationPage() {
           )}
         </div>
       </div>
-
-      {/* Error Popup Modal */}
-      <AnimatePresence>
-        {submitError && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setSubmitError("")}
-              className="absolute inset-0 bg-background/80 backdrop-blur-sm"
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="glass-card relative z-10 flex w-full max-w-sm flex-col items-center overflow-hidden p-8 text-center"
-            >
-              <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-danger/20">
-                <AlertTriangle className="h-7 w-7 text-danger" />
-              </div>
-              <h3 className="mb-3 text-lg font-bold text-text-primary">无法启动图片制作</h3>
-              <p className="mb-6 text-sm leading-relaxed text-text-muted">
-                {submitError}
-              </p>
-              <button
-                type="button"
-                onClick={() => setSubmitError("")}
-                className="w-full rounded-xl bg-accent px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-accent/20 transition-all hover:bg-accent-strong hover:shadow-accent/40"
-              >
-                我知道了
-              </button>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

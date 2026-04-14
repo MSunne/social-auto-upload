@@ -409,9 +409,20 @@ function AIModelDrawerContent({
                 onChange={(e) =>
                   setForm((f) => ({ ...f, baseUrl: e.target.value }))
                 }
-                placeholder="https://api.example.com/v1/generate"
+                placeholder={
+                  form.category === "image"
+                    ? "https://api.apiyi.com/v1/images/generations 或完整 Gemini ...:generateContent"
+                    : form.category === "video"
+                      ? "https://api.apiyi.com/v1/videos"
+                      : "https://api.example.com/v1/chat/completions"
+                }
                 className="w-full px-3 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm focus:outline-none focus:border-[var(--color-accent)] font-mono"
               />
+              <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                {form.category === "image" || form.category === "video"
+                  ? "作图/视频模型这里填写最终可调用接口地址；如果已填写模型级 Base URL，后端不会再自动补任何前缀或路径。"
+                  : "聊天模型按当前 provider 的接口格式填写；如使用 OpenAI 兼容接口，通常填写完整可调用地址。"}
+              </p>
             </div>
             <div className="col-span-2">
               <label className="block text-sm text-[var(--color-text-secondary)] mb-1.5">

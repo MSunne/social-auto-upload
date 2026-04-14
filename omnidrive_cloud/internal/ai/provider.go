@@ -11,8 +11,8 @@ type Provider interface {
 	GenerateImage(ctx context.Context, req ImageRequest) (*ImageResult, error)
 	GenerateStoryboardPackage(ctx context.Context, req StoryboardPackageRequest) (*StoryboardPackageResult, error)
 	SubmitVideo(ctx context.Context, req VideoRequest) (*VideoSubmission, error)
-	GetVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string) (*VideoStatus, error)
-	DownloadVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string, contentURL string) (*BinaryArtifact, error)
+	GetVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string, explicitBaseURL bool) (*VideoStatus, error)
+	DownloadVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string, contentURL string, explicitBaseURL bool) (*BinaryArtifact, error)
 }
 
 type ChatMessage struct {
@@ -61,6 +61,7 @@ type ImageRequest struct {
 	Model           string       `json:"model"`
 	BaseURL         string       `json:"baseUrl,omitempty"`
 	APIKey          string       `json:"apiKey,omitempty"`
+	ExplicitBaseURL bool         `json:"-"`
 	Prompt          string       `json:"prompt"`
 	ReferenceImages []MediaInput `json:"referenceImages,omitempty"`
 	AspectRatio     string       `json:"aspectRatio,omitempty"`
@@ -87,6 +88,7 @@ type StoryboardPackageRequest struct {
 	Model           string       `json:"model"`
 	BaseURL         string       `json:"baseUrl,omitempty"`
 	APIKey          string       `json:"apiKey,omitempty"`
+	ExplicitBaseURL bool         `json:"-"`
 	SystemPrompt    string       `json:"systemPrompt,omitempty"`
 	Prompt          string       `json:"prompt"`
 	ReferenceImages []MediaInput `json:"referenceImages,omitempty"`
@@ -108,6 +110,7 @@ type VideoRequest struct {
 	Model           string       `json:"model"`
 	BaseURL         string       `json:"baseUrl,omitempty"`
 	APIKey          string       `json:"apiKey,omitempty"`
+	ExplicitBaseURL bool         `json:"-"`
 	Prompt          string       `json:"prompt"`
 	ReferenceMedia  []MediaInput `json:"referenceMedia,omitempty"`
 	ReferenceImages []MediaInput `json:"referenceImages,omitempty"`

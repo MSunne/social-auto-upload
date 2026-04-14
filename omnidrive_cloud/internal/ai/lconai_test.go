@@ -202,7 +202,7 @@ func TestLConAIGetVideoPrefersVideoURL(t *testing.T) {
 		t.Fatalf("NewLConAIProvider returned error: %v", err)
 	}
 
-	status, err := provider.GetVideo(context.Background(), "task_456", "seedance-2.0", server.URL, "sk-seedance")
+	status, err := provider.GetVideo(context.Background(), "task_456", "seedance-2.0", server.URL, "sk-seedance", false)
 	if err != nil {
 		t.Fatalf("GetVideo returned error: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestLConAIDownloadVideoUsesDirectContentURL(t *testing.T) {
 		t.Fatalf("NewLConAIProvider returned error: %v", err)
 	}
 
-	artifact, err := provider.DownloadVideo(context.Background(), "task_456", "seedance-2.0", server.URL, "sk-seedance", fmt.Sprintf("%s/content/output.mp4", server.URL))
+	artifact, err := provider.DownloadVideo(context.Background(), "task_456", "seedance-2.0", server.URL, "sk-seedance", fmt.Sprintf("%s/content/output.mp4", server.URL), false)
 	if err != nil {
 		t.Fatalf("DownloadVideo returned error: %v", err)
 	}
@@ -266,10 +266,11 @@ func TestLConAISubmitVideoNormalizesBaseURLEndpoint(t *testing.T) {
 	}
 
 	result, err := provider.SubmitVideo(context.Background(), VideoRequest{
-		Model:   "seedance-2.0",
-		BaseURL: server.URL + "/v1/videos",
-		APIKey:  "sk-seedance",
-		Prompt:  "测试录入了末级接口的 base_url",
+		Model:           "seedance-2.0",
+		BaseURL:         server.URL + "/v1/videos",
+		APIKey:          "sk-seedance",
+		ExplicitBaseURL: true,
+		Prompt:          "测试录入了末级接口的 base_url",
 	})
 	if err != nil {
 		t.Fatalf("SubmitVideo returned error: %v", err)

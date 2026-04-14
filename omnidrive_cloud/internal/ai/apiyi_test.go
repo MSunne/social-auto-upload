@@ -93,10 +93,11 @@ func TestGenerateImageDoesNotDuplicateConfiguredGeminiModelPath(t *testing.T) {
 	}
 
 	_, err = provider.GenerateImage(context.Background(), ImageRequest{
-		Model:   "gemini-3-pro-image-preview",
-		BaseURL: server.URL + "/v1beta/models/gemini-3-pro-image-preview",
-		APIKey:  "sk-image",
-		Prompt:  "生成产品海报",
+		Model:           "gemini-3-pro-image-preview",
+		BaseURL:         server.URL + "/v1beta/models/gemini-3-pro-image-preview:generateContent",
+		APIKey:          "sk-image",
+		ExplicitBaseURL: true,
+		Prompt:          "生成产品海报",
 	})
 	if err != nil {
 		t.Fatalf("GenerateImage returned error: %v", err)
@@ -104,6 +105,149 @@ func TestGenerateImageDoesNotDuplicateConfiguredGeminiModelPath(t *testing.T) {
 
 	if capturedPath != "/v1beta/models/gemini-3-pro-image-preview:generateContent" {
 		t.Fatalf("unexpected request path %q", capturedPath)
+	}
+}
+
+func TestGenerateImageUsesExplicitOpenAIImagesEndpoint(t *testing.T) {
+	var capturedPath string
+	var capturedAuth string
+	var payload map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		capturedAuth = r.Header.Get("Authorization")
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll returned error: %v", err)
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("json.Unmarshal returned error: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"b64_json":"aW1hZ2U=","revised_prompt":"优化后的提示词"}]}`))
+	}))
+	defer server.Close()
+
+	provider, err := NewAPIYIProvider(config.Config{
+		APIYIBaseURL: server.URL,
+		APIYIApiKey:  "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewAPIYIProvider returned error: %v", err)
+	}
+
+	result, err := provider.GenerateImage(context.Background(), ImageRequest{
+		Model:           "seedream-5-0-260128",
+		BaseURL:         server.URL + "/v1/images/generations",
+		APIKey:          "sk-image",
+		ExplicitBaseURL: true,
+		Prompt:          "生成商品海报",
+		Resolution:      "2048x2048",
+	})
+	if err != nil {
+		t.Fatalf("GenerateImage returned error: %v", err)
+	}
+
+	if capturedPath != "/v1/images/generations" {
+		t.Fatalf("unexpected request path %q", capturedPath)
+	}
+	if capturedAuth != "Bearer sk-image" {
+		t.Fatalf("unexpected authorization header %q", capturedAuth)
+	}
+	if payload["model"] != "seedream-5-0-260128" || payload["prompt"] != "生成商品海报" {
+		t.Fatalf("unexpected payload %#v", payload)
+	}
+	if payload["response_format"] != "b64_json" {
+		t.Fatalf("unexpected response_format %#v", payload["response_format"])
+	}
+	if payload["size"] != "2048x2048" {
+		t.Fatalf("unexpected size %#v", payload["size"])
+	}
+	if count, ok := payload["n"].(float64); !ok || count != 1 {
+		t.Fatalf("unexpected n %#v", payload["n"])
+	}
+	if len(result.Images) != 1 || string(result.Images[0].Data) != "image" {
+		t.Fatalf("unexpected images %#v", result.Images)
+	}
+	if result.Text != "优化后的提示词" {
+		t.Fatalf("unexpected revised prompt %q", result.Text)
+	}
+}
+
+func TestGenerateImageDownloadsOpenAIImageURLWhenProviderReturnsURL(t *testing.T) {
+	requestedPaths := make([]string, 0, 2)
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPaths = append(requestedPaths, r.URL.Path)
+		switch r.URL.Path {
+		case "/v1/images/generations":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"url":"` + server.URL + `/files/generated.png"}]}`))
+		case "/files/generated.png":
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write([]byte("raw-image"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	provider, err := NewAPIYIProvider(config.Config{
+		APIYIBaseURL: server.URL,
+		APIYIApiKey:  "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewAPIYIProvider returned error: %v", err)
+	}
+
+	result, err := provider.GenerateImage(context.Background(), ImageRequest{
+		Model:           "seedream-5-0-260128",
+		BaseURL:         server.URL + "/v1/images/generations",
+		APIKey:          "sk-image",
+		ExplicitBaseURL: true,
+		Prompt:          "生成商品主图",
+	})
+	if err != nil {
+		t.Fatalf("GenerateImage returned error: %v", err)
+	}
+
+	if got := strings.Join(requestedPaths, ","); got != "/v1/images/generations,/files/generated.png" {
+		t.Fatalf("unexpected request sequence %q", got)
+	}
+	if len(result.Images) != 1 || string(result.Images[0].Data) != "raw-image" {
+		t.Fatalf("unexpected images %#v", result.Images)
+	}
+	if result.Images[0].FileName != "image-1.png" {
+		t.Fatalf("unexpected filename %q", result.Images[0].FileName)
+	}
+}
+
+func TestGenerateImageRejectsReferenceImagesForOpenAIImagesEndpoint(t *testing.T) {
+	provider, err := NewAPIYIProvider(config.Config{
+		APIYIBaseURL: "https://api.apiyi.com",
+		APIYIApiKey:  "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewAPIYIProvider returned error: %v", err)
+	}
+
+	_, err = provider.GenerateImage(context.Background(), ImageRequest{
+		Model:           "seedream-5-0-260128",
+		BaseURL:         "https://api.apiyi.com/v1/images/generations",
+		APIKey:          "sk-image",
+		ExplicitBaseURL: true,
+		Prompt:          "生成商品主图",
+		ReferenceImages: []MediaInput{{
+			Data:     []byte("img"),
+			MIMEType: "image/png",
+			FileName: "ref.png",
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected openai images endpoint to reject reference images")
+	}
+	if !strings.Contains(err.Error(), "不支持参考图") {
+		t.Fatalf("unexpected error %v", err)
 	}
 }
 
@@ -144,6 +288,7 @@ func TestSubmitVideoUsesSoraBearerAuthAndOfficialFields(t *testing.T) {
 		Model:           "sora-2",
 		BaseURL:         server.URL + "/v1/videos",
 		APIKey:          "sk-sora",
+		ExplicitBaseURL: true,
 		Prompt:          "让这个产品镜头缓慢推进",
 		Resolution:      "1280x720",
 		AspectRatio:     "16:9",
@@ -201,6 +346,7 @@ func TestSubmitVideoPassesConfiguredSoraDurationThrough(t *testing.T) {
 		Model:           "sora-2-pro",
 		BaseURL:         server.URL + "/v1/videos",
 		APIKey:          "sk-sora",
+		ExplicitBaseURL: true,
 		Prompt:          "生成珠宝广告视频",
 		Resolution:      "1792x1024",
 		AspectRatio:     "16:9",
@@ -217,6 +363,70 @@ func TestSubmitVideoPassesConfiguredSoraDurationThrough(t *testing.T) {
 
 	if capturedSeconds != "15" {
 		t.Fatalf("unexpected seconds field %q", capturedSeconds)
+	}
+}
+
+func TestGetVideoUsesExplicitCollectionEndpointWithoutDuplicatingPath(t *testing.T) {
+	var capturedPath string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"video_123","model":"sora-2","status":"processing","progress":55}`))
+	}))
+	defer server.Close()
+
+	provider, err := NewAPIYIProvider(config.Config{
+		APIYIBaseURL: server.URL,
+		APIYIApiKey:  "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewAPIYIProvider returned error: %v", err)
+	}
+
+	status, err := provider.GetVideo(context.Background(), "video_123", "sora-2", server.URL+"/v1/videos", "sk-sora", true)
+	if err != nil {
+		t.Fatalf("GetVideo returned error: %v", err)
+	}
+	if capturedPath != "/v1/videos/video_123" {
+		t.Fatalf("unexpected request path %q", capturedPath)
+	}
+	if status.ProgressPercent == nil || *status.ProgressPercent != 55 {
+		t.Fatalf("unexpected progress %#v", status.ProgressPercent)
+	}
+}
+
+func TestDownloadVideoUsesExplicitCollectionEndpointWithoutDuplicatingPath(t *testing.T) {
+	requestedPaths := make([]string, 0, 1)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPaths = append(requestedPaths, r.URL.Path)
+		if r.URL.Path != "/v1/videos/video_123/content" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write([]byte("video-bytes"))
+	}))
+	defer server.Close()
+
+	provider, err := NewAPIYIProvider(config.Config{
+		APIYIBaseURL: server.URL,
+		APIYIApiKey:  "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewAPIYIProvider returned error: %v", err)
+	}
+
+	artifact, err := provider.DownloadVideo(context.Background(), "video_123", "sora-2", server.URL+"/v1/videos", "sk-sora", "", true)
+	if err != nil {
+		t.Fatalf("DownloadVideo returned error: %v", err)
+	}
+	if got := strings.Join(requestedPaths, ","); got != "/v1/videos/video_123/content" {
+		t.Fatalf("unexpected request sequence %q", got)
+	}
+	if string(artifact.Data) != "video-bytes" {
+		t.Fatalf("unexpected artifact data %q", string(artifact.Data))
 	}
 }
 
@@ -810,7 +1020,7 @@ func TestDownloadVideoParsesSoraVideoURL(t *testing.T) {
 		t.Fatalf("NewAPIYIProvider returned error: %v", err)
 	}
 
-	artifact, err := provider.DownloadVideo(context.Background(), "video_123", "sora-2", server.URL, "sk-sora", "")
+	artifact, err := provider.DownloadVideo(context.Background(), "video_123", "sora-2", server.URL, "sk-sora", "", false)
 	if err != nil {
 		t.Fatalf("DownloadVideo returned error: %v", err)
 	}
@@ -847,7 +1057,7 @@ func TestDownloadVideoUsesProvidedContentURL(t *testing.T) {
 		t.Fatalf("NewAPIYIProvider returned error: %v", err)
 	}
 
-	artifact, err := provider.DownloadVideo(context.Background(), "video_123", "veo-3.1-fast-fl", server.URL, "sk-veo", server.URL+"/files/direct.mp4")
+	artifact, err := provider.DownloadVideo(context.Background(), "video_123", "veo-3.1-fast-fl", server.URL, "sk-veo", server.URL+"/files/direct.mp4", false)
 	if err != nil {
 		t.Fatalf("DownloadVideo returned error: %v", err)
 	}

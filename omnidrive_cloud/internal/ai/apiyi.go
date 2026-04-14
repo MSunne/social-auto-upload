@@ -455,7 +455,22 @@ func cloneMap(input map[string]any) map[string]any {
 
 // 处理Generate图片相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *APIYIProvider) GenerateImage(ctx context.Context, req ImageRequest) (*ImageResult, error) {
-	body, err := p.generateGeminiContent(ctx, req.BaseURL, req.APIKey, req.Model, "", req.Prompt, req.ReferenceImages, buildGeminiImageGenerationConfig(req))
+	if req.ExplicitBaseURL {
+		switch {
+		case isOpenAIImageGenerationEndpoint(req.BaseURL):
+			return p.generateOpenAIImage(ctx, req)
+		case isGeminiGenerateContentEndpoint(req.BaseURL):
+			return p.generateGeminiImage(ctx, req)
+		default:
+			return nil, fmt.Errorf("image model baseUrl must point to a final /v1/images/generations or Gemini :generateContent endpoint")
+		}
+	}
+	return p.generateGeminiImage(ctx, req)
+}
+
+// 处理Generate Gemini图片相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
+func (p *APIYIProvider) generateGeminiImage(ctx context.Context, req ImageRequest) (*ImageResult, error) {
+	body, err := p.generateGeminiContent(ctx, req.BaseURL, req.ExplicitBaseURL, req.APIKey, req.Model, "", req.Prompt, req.ReferenceImages, buildGeminiImageGenerationConfig(req))
 	if err != nil {
 		return nil, err
 	}
@@ -474,11 +489,38 @@ func (p *APIYIProvider) GenerateImage(ctx context.Context, req ImageRequest) (*I
 	return result, nil
 }
 
+// 处理Generate OpenAI兼容图片相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
+func (p *APIYIProvider) generateOpenAIImage(ctx context.Context, req ImageRequest) (*ImageResult, error) {
+	if len(req.ReferenceImages) > 0 {
+		return nil, fmt.Errorf("当前 /v1/images/generations 接口不支持参考图，请改用 Gemini :generateContent 终态 baseUrl")
+	}
+
+	payload := buildOpenAIImageGenerationPayload(req)
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := p.doJSON(ctx, req.BaseURL, req.APIKey, http.MethodPost, "", data, true)
+	if err != nil {
+		return nil, err
+	}
+	result, err := p.parseOpenAIImageGenerationResponse(ctx, body)
+	if err != nil {
+		return nil, err
+	}
+	if len(result.Images) == 0 {
+		return nil, fmt.Errorf("image response did not contain image data")
+	}
+	return result, nil
+}
+
 // 处理Generate分镜包相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *APIYIProvider) GenerateStoryboardPackage(ctx context.Context, req StoryboardPackageRequest) (*StoryboardPackageResult, error) {
 	body, err := p.generateGeminiContent(
 		ctx,
 		req.BaseURL,
+		req.ExplicitBaseURL,
 		req.APIKey,
 		req.Model,
 		req.SystemPrompt,
@@ -523,7 +565,7 @@ func (p *APIYIProvider) SubmitVideo(ctx context.Context, req VideoRequest) (*Vid
 	if err != nil {
 		return nil, err
 	}
-	responseBody, err := p.doVideoRequest(ctx, req.Model, req.BaseURL, req.APIKey, http.MethodPost, "/v1/videos", requestBody, contentType)
+	responseBody, err := p.doVideoRequest(ctx, req.Model, req.BaseURL, req.APIKey, http.MethodPost, resolveVideoCollectionRequestPath(req.ExplicitBaseURL), requestBody, contentType)
 	if err != nil {
 		return nil, err
 	}
@@ -554,8 +596,8 @@ func (p *APIYIProvider) SubmitVideo(ctx context.Context, req VideoRequest) (*Vid
 }
 
 // 获取视频，为当前链路返回后续处理所需的数据内容。
-func (p *APIYIProvider) GetVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string) (*VideoStatus, error) {
-	body, err := p.doVideoRequest(ctx, model, baseURL, apiKey, http.MethodGet, fmt.Sprintf("/v1/videos/%s", url.PathEscape(videoID)), nil, "")
+func (p *APIYIProvider) GetVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string, explicitBaseURL bool) (*VideoStatus, error) {
+	body, err := p.doVideoRequest(ctx, model, baseURL, apiKey, http.MethodGet, resolveVideoStatusRequestPath(videoID, explicitBaseURL), nil, "")
 	if err != nil {
 		return nil, err
 	}
@@ -616,12 +658,12 @@ func (p *APIYIProvider) GetVideo(ctx context.Context, videoID string, model stri
 }
 
 // 下载视频，为后续处理步骤提供本地可用的数据副本。
-func (p *APIYIProvider) DownloadVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string, contentURL string) (*BinaryArtifact, error) {
+func (p *APIYIProvider) DownloadVideo(ctx context.Context, videoID string, model string, baseURL string, apiKey string, contentURL string, explicitBaseURL bool) (*BinaryArtifact, error) {
 	if directURL := strings.TrimSpace(contentURL); directURL != "" {
 		return p.downloadBinary(ctx, directURL, fmt.Sprintf("%s.mp4", videoID), "video/mp4")
 	}
 
-	endpointURL := p.resolveEndpointURL(baseURL, fmt.Sprintf("/v1/videos/%s/content", url.PathEscape(videoID)))
+	endpointURL := p.resolveEndpointURL(baseURL, resolveVideoContentRequestPath(videoID, explicitBaseURL))
 	httpReq, err := p.newRetryableRequest(ctx, http.MethodGet, endpointURL, nil, func(r *http.Request) {
 		r.Header.Set("Authorization", p.resolveVideoAuthorization(model, apiKey))
 		r.Header.Set("Accept", "application/json")
@@ -828,7 +870,7 @@ func (p *APIYIProvider) doVideoRequest(ctx context.Context, model string, baseUR
 }
 
 // 处理generateGemini内容相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
-func (p *APIYIProvider) generateGeminiContent(ctx context.Context, baseURL string, apiKey string, model string, systemPrompt string, prompt string, referenceImages []MediaInput, generationConfig map[string]any) ([]byte, error) {
+func (p *APIYIProvider) generateGeminiContent(ctx context.Context, baseURL string, explicitBaseURL bool, apiKey string, model string, systemPrompt string, prompt string, referenceImages []MediaInput, generationConfig map[string]any) ([]byte, error) {
 	parts := make([]map[string]any, 0, len(referenceImages)+1)
 	for _, media := range referenceImages {
 		payload, err := p.mediaToGeminiPart(ctx, media)
@@ -854,6 +896,13 @@ func (p *APIYIProvider) generateGeminiContent(ctx context.Context, baseURL strin
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
+	}
+
+	if explicitBaseURL {
+		if !isGeminiGenerateContentEndpoint(baseURL) {
+			return nil, fmt.Errorf("storyboard/image model baseUrl must point to a final Gemini :generateContent endpoint")
+		}
+		return p.doJSON(ctx, baseURL, apiKey, http.MethodPost, "", data, true)
 	}
 
 	path := fmt.Sprintf("/v1beta/models/%s:generateContent", url.PathEscape(model))
@@ -897,6 +946,53 @@ func (p *APIYIProvider) resolveEndpointURL(override string, endpointPath string)
 	}
 	parsedURL.RawPath = ""
 	return strings.TrimRight(parsedURL.String(), "/")
+}
+
+// 判断是否属于显式 OpenAI 图片生成终态接口，供当前链路选择后续处理策略。
+func isOpenAIImageGenerationEndpoint(rawURL string) bool {
+	return strings.HasSuffix(normalizeURLPathForMatch(rawURL), "/v1/images/generations")
+}
+
+// 判断是否属于显式 Gemini generateContent 终态接口，供当前链路选择后续处理策略。
+func isGeminiGenerateContentEndpoint(rawURL string) bool {
+	return strings.Contains(normalizeURLPathForMatch(rawURL), ":generatecontent")
+}
+
+// 规范化 URL 路径匹配值，统一多来源数据后返回稳定结果。
+func normalizeURLPathForMatch(rawURL string) string {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		return ""
+	}
+	parsed, err := url.Parse(trimmed)
+	if err == nil && parsed.Host != "" {
+		return strings.ToLower(strings.TrimSpace(parsed.Path))
+	}
+	return strings.ToLower(trimmed)
+}
+
+// 解析视频集合请求路径，根据当前配置和上下文确定最终使用结果。
+func resolveVideoCollectionRequestPath(explicitBaseURL bool) string {
+	if explicitBaseURL {
+		return ""
+	}
+	return "/v1/videos"
+}
+
+// 解析视频状态请求路径，根据当前配置和上下文确定最终使用结果。
+func resolveVideoStatusRequestPath(videoID string, explicitBaseURL bool) string {
+	if explicitBaseURL {
+		return "/" + url.PathEscape(videoID)
+	}
+	return fmt.Sprintf("/v1/videos/%s", url.PathEscape(videoID))
+}
+
+// 解析视频内容请求路径，根据当前配置和上下文确定最终使用结果。
+func resolveVideoContentRequestPath(videoID string, explicitBaseURL bool) string {
+	if explicitBaseURL {
+		return fmt.Sprintf("/%s/content", url.PathEscape(videoID))
+	}
+	return fmt.Sprintf("/v1/videos/%s/content", url.PathEscape(videoID))
 }
 
 // 解析API键，根据当前配置和上下文确定最终使用结果。
@@ -1088,6 +1184,21 @@ func buildGeminiImageGenerationConfig(req ImageRequest) map[string]any {
 	return config
 }
 
+// 构建 OpenAI 兼容图片生成载荷，为 APIYI 生成后续步骤所需的派生参数或载荷。
+func buildOpenAIImageGenerationPayload(req ImageRequest) map[string]any {
+	size := strings.TrimSpace(req.Resolution)
+	if size == "" {
+		size = "1024x1024"
+	}
+	return map[string]any{
+		"model":           strings.TrimSpace(req.Model),
+		"prompt":          req.Prompt,
+		"size":            size,
+		"n":               1,
+		"response_format": "b64_json",
+	}
+}
+
 // 构建Gemini分镜生成配置，为APIYI生成后续步骤所需的派生参数或载荷。
 func buildGeminiStoryboardGenerationConfig(req StoryboardPackageRequest) map[string]any {
 	config := map[string]any{
@@ -1176,6 +1287,53 @@ func parseGeminiGenerateContentResponse(body []byte) (*geminiGeneratedContent, e
 		}
 	}
 	result.Text = strings.TrimSpace(strings.Join(result.TextParts, "\n"))
+	return result, nil
+}
+
+// 解析 OpenAI 兼容图片生成响应，为 APIYI 提供结构化输入。
+func (p *APIYIProvider) parseOpenAIImageGenerationResponse(ctx context.Context, body []byte) (*ImageResult, error) {
+	var response struct {
+		Data []struct {
+			B64JSON       string `json:"b64_json"`
+			URL           string `json:"url"`
+			RevisedPrompt string `json:"revised_prompt"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, err
+	}
+
+	result := &ImageResult{
+		Images:      make([]BinaryArtifact, 0, len(response.Data)),
+		RawResponse: body,
+	}
+	textParts := make([]string, 0, len(response.Data))
+	for index, item := range response.Data {
+		if revisedPrompt := strings.TrimSpace(item.RevisedPrompt); revisedPrompt != "" {
+			textParts = append(textParts, revisedPrompt)
+		}
+		switch {
+		case strings.TrimSpace(item.B64JSON) != "":
+			data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(item.B64JSON))
+			if err != nil {
+				return nil, err
+			}
+			fileName := fmt.Sprintf("image-%d.png", index+1)
+			result.Images = append(result.Images, BinaryArtifact{
+				FileName:  fileName,
+				MIMEType:  "image/png",
+				Data:      data,
+				SizeBytes: int64(len(data)),
+			})
+		case strings.TrimSpace(item.URL) != "":
+			artifact, err := p.downloadBinary(ctx, item.URL, fmt.Sprintf("image-%d.png", index+1), "image/png")
+			if err != nil {
+				return nil, err
+			}
+			result.Images = append(result.Images, *artifact)
+		}
+	}
+	result.Text = strings.TrimSpace(strings.Join(textParts, "\n"))
 	return result, nil
 }
 
