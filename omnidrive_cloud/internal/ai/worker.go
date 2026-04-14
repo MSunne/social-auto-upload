@@ -688,10 +688,11 @@ func (w *Worker) executeVideo(ctx context.Context, job *domain.AIJob, leaseToken
 			if _, err := w.syncRunningState(ctx, job, leaseToken, message, runningPayload); err != nil {
 				return err
 			}
+			pollInterval := mediaExecutionPollInterval(state.SubmittedAt, time.Now().UTC())
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(w.videoPollInterval):
+			case <-time.After(pollInterval):
 			}
 		}
 	}

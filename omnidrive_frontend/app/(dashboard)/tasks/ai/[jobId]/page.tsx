@@ -16,6 +16,7 @@ import {
   Wand2,
 } from "lucide-react";
 import { PageHeader, StatusBadge } from "@/components/ui/common";
+import { getAIJobPollInterval } from "@/lib/long-task-poll";
 import { getModelDisplayName } from "@/lib/model-display";
 import { getAIJobWorkspace, listDevices } from "@/lib/services";
 import type { AIBillingItem, AIJobArtifact, AIJobWorkspace, Device } from "@/lib/types";
@@ -299,7 +300,10 @@ export default function AIJobDetailPage() {
     queryKey: ["aiJobWorkspace", jobId],
     queryFn: () => getAIJobWorkspace(jobId),
     enabled: Boolean(jobId),
-    refetchInterval: 5000,
+    refetchInterval: ({ state }) => {
+      const nextWorkspace = state.data as AIJobWorkspace | undefined;
+      return getAIJobPollInterval(nextWorkspace?.job);
+    },
   });
   const { data: devices = [] } = useQuery<Device[]>({
     queryKey: ["devices"],

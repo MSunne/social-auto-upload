@@ -120,6 +120,14 @@ func (w *Worker) executeDigitalHumanVideo(ctx context.Context, job *domain.AIJob
 
 		switch strings.ToLower(strings.TrimSpace(task.Status)) {
 		case "queued", "running":
+			if shouldContinueDigitalHumanInBackground(task, w.videoTimeout, time.Now().UTC()) {
+				outputPayload := buildDigitalHumanStatusPayload(job, task, nil)
+				job.OutputPayload = outputPayload
+				return &requeueExecutionError{
+					Message:       fmt.Sprintf("数字人口播生成超过 %s，继续后台回查云端结果", w.videoTimeout),
+					OutputPayload: outputPayload,
+				}
+			}
 			message := digitalHumanRunningMessage(task)
 			outputPayload := buildDigitalHumanStatusPayload(job, task, nil)
 			job.OutputPayload = outputPayload
@@ -154,10 +162,11 @@ func (w *Worker) executeDigitalHumanVideo(ctx context.Context, job *domain.AIJob
 			return fmt.Errorf("unsupported digital human task status: %s", task.Status)
 		}
 
+		pollInterval := mediaExecutionPollInterval(digitalHumanTaskExecutionAnchor(task), time.Now().UTC())
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(w.videoPollInterval):
+		case <-time.After(pollInterval):
 		}
 	}
 }

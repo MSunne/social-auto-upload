@@ -105,6 +105,8 @@ openclaw plugins enable omnidrive
 - 文生图、图生图调用 `omnidrive_image`
 - 文生视频、图生视频调用 `omnidrive_video`
 - 需要查看异步任务时，调用 `omnidrive_jobs` 或 `omnidrive_job_detail`
+- 视频长任务的 `wait=true` 只用于短观察窗口；超过 5 分钟后，插件会直接返回当前运行状态，云端继续执行
+- 若 `omnidrive_video` 同时传入 `accountId`、`platform`、`accountName`、`publishAt`，生成完成后会自动创建 OmniBull 发布任务
 
 ## 主聊天接入
 

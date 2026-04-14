@@ -25,7 +25,6 @@ import { StatusBadge } from "@/components/ui/common";
 import {
   DIGITAL_HUMAN_AUDIO_ACCEPT,
   DIGITAL_HUMAN_IMAGE_ACCEPT,
-  DIGITAL_HUMAN_POLL_INTERVAL_MS,
   DIGITAL_HUMAN_REMINDER_TEXT,
   countUnicodeCharacters,
   formatDigitalHumanMode,
@@ -33,6 +32,7 @@ import {
   isTerminalDigitalHumanTask,
   validateDigitalHumanFile,
 } from "@/lib/digital-human";
+import { getDigitalHumanTaskPollInterval } from "@/lib/long-task-poll";
 import {
   createDigitalHumanTask,
   getDigitalHumanBillingPreview,
@@ -460,9 +460,8 @@ export default function DigitalHumanCreationPage() {
     queryFn: () => listDigitalHumanTasks({ limit: 6 }),
     refetchInterval: ({ state }) => {
       const tasks = state.data as DigitalHumanTask[] | undefined;
-      return tasks?.some((task) => !isTerminalDigitalHumanTask(task))
-        ? DIGITAL_HUMAN_POLL_INTERVAL_MS
-        : false;
+      const activeTask = tasks?.find((task) => !isTerminalDigitalHumanTask(task));
+      return getDigitalHumanTaskPollInterval(activeTask);
     },
   });
 
@@ -474,9 +473,7 @@ export default function DigitalHumanCreationPage() {
     enabled: Boolean(resolvedActiveTaskId),
     refetchInterval: ({ state }) => {
       const task = state.data as DigitalHumanTask | undefined;
-      return task && !isTerminalDigitalHumanTask(task)
-        ? DIGITAL_HUMAN_POLL_INTERVAL_MS
-        : false;
+      return getDigitalHumanTaskPollInterval(task);
     },
   });
 

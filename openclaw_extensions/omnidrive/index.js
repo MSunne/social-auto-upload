@@ -9,6 +9,8 @@ const DEFAULT_VIDEO_DURATION_SECONDS = 8;
 const OPENCLAW_SKILL_CHAT_SOURCE = "openclaw_skill";
 const OPENCLAW_MAIN_CHAT_SOURCE = "openclaw_main_chat";
 const FINAL_AI_JOB_STATUSES = new Set(["success", "completed", "failed", "cancelled", "needs_verify"]);
+const LONG_JOB_OBSERVATION_WINDOW_MS = 5 * 60 * 1000;
+const LONG_JOB_OBSERVATION_POLL_INTERVAL_MS = 15 * 1000;
 
 let cachedSession = null;
 
@@ -128,6 +130,67 @@ function buildGatewayError(methodName, error) {
 function normalizeChatSource(source, fallbackSource) {
   const value = String(source || "").trim();
   return value || fallbackSource;
+}
+
+function isLongRunningJobType(jobType) {
+  const value = String(jobType || "").trim().toLowerCase();
+  return value === "video" || value === "digital_human";
+}
+
+function parseTimestampMs(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getLongJobObservationRemainingMs(job, nowMs = Date.now()) {
+  if (!isLongRunningJobType(job?.jobType)) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const createdAtMs = parseTimestampMs(job?.createdAt);
+  if (!createdAtMs) {
+    return LONG_JOB_OBSERVATION_WINDOW_MS;
+  }
+  const elapsedMs = Math.max(0, nowMs - createdAtMs);
+  return Math.max(0, LONG_JOB_OBSERVATION_WINDOW_MS - elapsedMs);
+}
+
+function buildPublishMetadataInputPayload(params = {}) {
+  const accountId = String(params.accountId || "").trim();
+  const platform = String(params.platform || "").trim();
+  const accountName = String(params.accountName || "").trim();
+  const publishAt = String(params.publishAt || "").trim();
+  const hasAnyPublishField =
+    accountId !== "" ||
+    platform !== "" ||
+    accountName !== "" ||
+    publishAt !== "";
+
+  if (!hasAnyPublishField) {
+    return {};
+  }
+
+  ensure(accountId && platform && accountName && publishAt, "自动发布需要同时提供 accountId、platform、accountName、publishAt");
+
+  return {
+    accountId,
+    platform,
+    accountName,
+    publishAt,
+    publishPayload: {
+      runAt: publishAt,
+      requestedRun: publishAt,
+      targets: [
+        {
+          accountId,
+          platform,
+          accountName,
+        },
+      ],
+    },
+  };
 }
 
 function buildQuery(params) {
@@ -496,21 +559,53 @@ async function updateBoundDevice(api, payload, overrides = {}) {
   );
 }
 
-async function pollWorkspaceUntilFinal(api, jobId, options = {}) {
+async function pollWorkspaceUntilFinal(api, jobId, options = {}, fetchWorkspace = fetchJobWorkspace) {
   const timeoutMs = Number(options.timeoutMs || 0) > 0 ? Number(options.timeoutMs) : 60000;
   const pollIntervalMs = Number(options.pollIntervalMs || 0) > 0 ? Number(options.pollIntervalMs) : 2500;
+  const observationPollIntervalMs =
+    Number(options.observationPollIntervalMs || 0) > 0
+      ? Number(options.observationPollIntervalMs)
+      : LONG_JOB_OBSERVATION_POLL_INTERVAL_MS;
   const startedAt = Date.now();
 
   while (true) {
-    const workspace = await fetchJobWorkspace(api, jobId, options);
+    const workspace = await fetchWorkspace(api, jobId, options);
     const status = String(workspace?.job?.status || "").trim();
     if (FINAL_AI_JOB_STATUSES.has(status)) {
-      return workspace;
+      return {
+        workspace,
+        terminal: true,
+        waitExpired: false,
+        observationExpired: false,
+      };
+    }
+
+    const observationRemainingMs = getLongJobObservationRemainingMs(workspace?.job, Date.now());
+    if (observationRemainingMs === 0) {
+      return {
+        workspace,
+        terminal: false,
+        waitExpired: true,
+        observationExpired: true,
+      };
     }
     if (Date.now() - startedAt >= timeoutMs) {
-      return workspace;
+      return {
+        workspace,
+        terminal: false,
+        waitExpired: true,
+        observationExpired: false,
+      };
     }
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+
+    const elapsedMs = Date.now() - startedAt;
+    const remainingTimeoutMs = Math.max(1, timeoutMs - elapsedMs);
+    let effectivePollIntervalMs = pollIntervalMs;
+    if (Number.isFinite(observationRemainingMs)) {
+      effectivePollIntervalMs = Math.min(observationPollIntervalMs, observationRemainingMs);
+    }
+    effectivePollIntervalMs = Math.min(effectivePollIntervalMs, remainingTimeoutMs);
+    await new Promise((resolve) => setTimeout(resolve, Math.max(1, effectivePollIntervalMs)));
   }
 }
 
@@ -824,6 +919,7 @@ async function executeVideo(api, params) {
       ...(normalizeReferenceImages(params.referenceImages).length > 0
         ? { referenceImages: normalizeReferenceImages(params.referenceImages) }
         : {}),
+      ...buildPublishMetadataInputPayload(params || {}),
     },
   };
 
@@ -833,15 +929,21 @@ async function executeVideo(api, params) {
     return toolResult({ job, nextStep: "视频默认异步生成，请使用 omnidrive_job_detail 轮询结果" });
   }
 
-  const workspace = await pollWorkspaceUntilFinal(api, job.id, {
+  const pollResult = await pollWorkspaceUntilFinal(api, job.id, {
     ...params,
-    timeoutMs: params.timeoutMs || 600000,
-    pollIntervalMs: params.pollIntervalMs || 5000,
+    timeoutMs: params.timeoutMs || LONG_JOB_OBSERVATION_WINDOW_MS,
+    pollIntervalMs: params.pollIntervalMs || LONG_JOB_OBSERVATION_POLL_INTERVAL_MS,
   });
-  return toolResult({
+  const result = {
     job,
-    workspace: summarizeWorkspace(workspace),
-  });
+    workspace: summarizeWorkspace(pollResult.workspace),
+  };
+  if (pollResult.waitExpired && !pollResult.terminal) {
+    result.waitExpired = true;
+    result.nextStep =
+      "任务仍在 OmniDrive 云端执行，请稍后使用 omnidrive_job_detail 查询。若已配置发布目标，生成完成后会继续自动创建 OmniBull 发布任务。";
+  }
+  return toolResult(result);
 }
 
 async function executeJobs(api, params) {
@@ -868,9 +970,15 @@ async function executeJobDetail(api, params) {
   const wait = params.wait === true;
   const includeArtifacts = params.includeArtifacts === true;
   let workspace = null;
+  let pollResult = null;
 
   if (wait) {
-    workspace = await pollWorkspaceUntilFinal(api, jobId, params || {});
+    pollResult = await pollWorkspaceUntilFinal(api, jobId, {
+      ...params,
+      timeoutMs: params.timeoutMs || LONG_JOB_OBSERVATION_WINDOW_MS,
+      pollIntervalMs: params.pollIntervalMs || LONG_JOB_OBSERVATION_POLL_INTERVAL_MS,
+    });
+    workspace = pollResult.workspace;
   } else if (params.includeWorkspace !== false) {
     workspace = await fetchJobWorkspace(api, jobId, params || {});
   }
@@ -889,6 +997,11 @@ async function executeJobDetail(api, params) {
       { method: "GET" },
       params || {},
     );
+  }
+  if (pollResult?.waitExpired && !pollResult?.terminal) {
+    result.waitExpired = true;
+    result.nextStep =
+      "任务仍在 OmniDrive 云端执行，请稍后继续使用 omnidrive_job_detail 查询。若已配置发布目标，生成完成后会继续自动创建 OmniBull 发布任务。";
   }
   return toolResult(result);
 }
@@ -1058,6 +1171,10 @@ const plugin = {
           resolution: { type: "string" },
           durationSeconds: { type: "integer", minimum: 1, maximum: 120 },
           referenceImages: { type: "array", items: { type: ["string", "object"] } },
+          accountId: { type: "string" },
+          platform: { type: "string" },
+          accountName: { type: "string" },
+          publishAt: { type: "string" },
           wait: { type: "boolean" },
           pollIntervalMs: { type: "integer", minimum: 500, maximum: 60000 },
           timeoutMs: { type: "integer", minimum: 1000, maximum: 1800000 },
@@ -1116,3 +1233,4 @@ const plugin = {
 };
 
 export default plugin;
+export { buildPublishMetadataInputPayload, getLongJobObservationRemainingMs, isLongRunningJobType, pollWorkspaceUntilFinal };

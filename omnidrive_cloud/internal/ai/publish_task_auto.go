@@ -23,16 +23,16 @@ func (w *Worker) autoCreatePublishTaskFromAIJob(ctx context.Context, job *domain
 	if w == nil || w.app == nil || w.app.Store == nil || job == nil {
 		return nil, nil
 	}
-	if strings.TrimSpace(job.Source) != "account_skill_binding" || len(artifacts) == 0 {
+	if !allowAutoPublishJobSource(job.Source) || len(artifacts) == 0 {
 		return nil, nil
 	}
 	if job.DeviceID == nil || strings.TrimSpace(*job.DeviceID) == "" {
-		return nil, fmt.Errorf("account skill job missing device id")
+		return nil, fmt.Errorf("auto publish job missing device id")
 	}
 
 	target := extractAutoPublishTarget(job.InputPayload)
 	if target.AccountID == "" || target.Platform == "" || target.AccountName == "" {
-		return nil, fmt.Errorf("account skill publish target is invalid")
+		return nil, fmt.Errorf("auto publish target is invalid")
 	}
 
 	device, err := w.app.Store.GetOwnedDevice(ctx, strings.TrimSpace(*job.DeviceID), job.OwnerUserID)
@@ -40,7 +40,7 @@ func (w *Worker) autoCreatePublishTaskFromAIJob(ctx context.Context, job *domain
 		return nil, err
 	}
 	if device == nil || !device.IsEnabled {
-		return nil, fmt.Errorf("account skill publish device is invalid")
+		return nil, fmt.Errorf("auto publish device is invalid")
 	}
 
 	account, err := w.app.Store.GetOwnedAccountByID(ctx, target.AccountID, job.OwnerUserID)
@@ -48,13 +48,13 @@ func (w *Worker) autoCreatePublishTaskFromAIJob(ctx context.Context, job *domain
 		return nil, err
 	}
 	if account == nil {
-		return nil, fmt.Errorf("account skill publish account is missing")
+		return nil, fmt.Errorf("auto publish account is missing")
 	}
 	if !allowAutoPublishAccountStatus(account.Status) {
-		return nil, fmt.Errorf("account skill publish account is not active")
+		return nil, fmt.Errorf("auto publish account is not active")
 	}
 	if account.DeviceID != device.ID || account.Platform != target.Platform || account.AccountName != target.AccountName {
-		return nil, fmt.Errorf("account skill publish target does not match synced account")
+		return nil, fmt.Errorf("auto publish target does not match synced account")
 	}
 
 	runAt, err := extractAutoPublishRunAt(job.InputPayload)
@@ -121,7 +121,7 @@ func (w *Worker) autoCreatePublishTaskFromAIJob(ctx context.Context, job *domain
 			EventType: "created_from_ai_job",
 			Source:    "omnidrive",
 			Status:    createdTask.Status,
-			Message:   stringPtr("发布任务由数字人口播任务自动创建"),
+			Message:   stringPtr("发布任务由 AI 任务自动创建"),
 			Payload: mustJSON(map[string]any{
 				"aiJobId":       job.ID,
 				"artifactCount": len(artifacts),
@@ -138,7 +138,7 @@ func (w *Worker) autoCreatePublishTaskFromAIJob(ctx context.Context, job *domain
 	}
 
 	if task != nil && created {
-		w.recordAuditEvent(ctx, job, "publish_task_auto_created", "数字人口播自动创建发布任务", "success", stringPtr(taskMessage), map[string]any{
+		w.recordAuditEvent(ctx, job, "publish_task_auto_created", "AI 成品自动创建发布任务", "success", stringPtr(taskMessage), map[string]any{
 			"taskId":      task.ID,
 			"platform":    task.Platform,
 			"accountName": task.AccountName,
@@ -205,7 +205,7 @@ func buildAutoPublishMediaPayload(job *domain.AIJob, artifacts []domain.AIJobArt
 		})
 	}
 	if len(items) == 0 {
-		return nil, fmt.Errorf("digital human artifacts are missing public urls")
+		return nil, fmt.Errorf("ai job artifacts are missing public urls")
 	}
 
 	return json.Marshal(map[string]any{
@@ -226,7 +226,7 @@ func buildAutoPublishTaskTitle(job *domain.AIJob) string {
 	if job.Prompt != nil && strings.TrimSpace(*job.Prompt) != "" {
 		return strings.TrimSpace(*job.Prompt)
 	}
-	return "数字人口播成品发布"
+	return "AI 成品发布"
 }
 
 func resolveAutoPublishContentText(job *domain.AIJob) *string {
@@ -256,6 +256,15 @@ func allowAutoPublishAccountStatus(status string) bool {
 		return false
 	default:
 		return true
+	}
+}
+
+func allowAutoPublishJobSource(source string) bool {
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "account_skill_binding", "openclaw_skill":
+		return true
+	default:
+		return false
 	}
 }
 

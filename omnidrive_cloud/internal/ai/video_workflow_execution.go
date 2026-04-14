@@ -301,10 +301,11 @@ func (w *Worker) executeWorkflowVideoSegment(
 			if _, err := w.syncRunningState(ctx, job, leaseToken, message, runningPayload); err != nil {
 				return nil, leaseExpiresAt, err
 			}
+			pollInterval := mediaExecutionPollInterval(state.SubmittedAt, time.Now().UTC())
 			select {
 			case <-ctx.Done():
 				return nil, leaseExpiresAt, ctx.Err()
-			case <-time.After(w.videoPollInterval):
+			case <-time.After(pollInterval):
 			}
 		}
 	}

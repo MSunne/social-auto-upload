@@ -48,5 +48,6 @@ description: |
 - 如果当前话题已经明确是在 OmniDrive 做视频场景里，用户只说“换成某个模型”或“当前是什么模型”，默认理解为在问 OmniDrive 默认视频模型
 - 用户确认使用默认方案后，调用 `omnidrive_video` 时优先显式传入 `durationSeconds: 8`；即使省略，工具也会自动回落到默认 8 秒
 - 视频默认建议 `wait=false`，先创建 job，再用 `omnidrive_job_detail` 轮询
-- 如果用户明确要求等待结果，再设置 `wait=true`
+- 如果用户明确要求等待结果，再设置 `wait=true`；但视频长任务只会短观察前 5 分钟，之后返回当前状态并继续后台执行
+- 需要生成完成后自动落到 OmniBull 发布时，调用 `omnidrive_video` 时同时提供 `accountId`、`platform`、`accountName`、`publishAt`
 - 返回结果时优先说明 job 状态、视频链接和计费状态

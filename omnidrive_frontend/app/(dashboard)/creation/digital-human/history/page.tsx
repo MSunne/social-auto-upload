@@ -21,6 +21,7 @@ import {
   isTerminalDigitalHumanTask,
   truncateDigitalHumanText,
 } from "@/lib/digital-human";
+import { getDigitalHumanTaskPollInterval } from "@/lib/long-task-poll";
 import { listDigitalHumanTasks } from "@/lib/services";
 import type { DigitalHumanTask } from "@/lib/types";
 import { formatDateTime } from "@/lib/workflow";
@@ -238,9 +239,8 @@ export default function DigitalHumanHistoryPage() {
     queryFn: () => listDigitalHumanTasks({ limit: DIGITAL_HUMAN_HISTORY_PAGE_SIZE }),
     refetchInterval: ({ state }) => {
       const items = state.data as DigitalHumanTask[] | undefined;
-      return items?.some((task) => !isTerminalDigitalHumanTask(task))
-        ? 10_000
-        : false;
+      const activeTask = items?.find((task) => !isTerminalDigitalHumanTask(task));
+      return getDigitalHumanTaskPollInterval(activeTask);
     },
     staleTime: 10_000,
   });

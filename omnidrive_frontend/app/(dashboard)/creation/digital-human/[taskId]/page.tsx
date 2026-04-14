@@ -22,12 +22,12 @@ import {
 } from "lucide-react";
 import { PageHeader, StatusBadge } from "@/components/ui/common";
 import {
-  DIGITAL_HUMAN_POLL_INTERVAL_MS,
   DIGITAL_HUMAN_REMINDER_TEXT,
   formatDigitalHumanMode,
   isSuccessfulDigitalHumanTask,
   isTerminalDigitalHumanTask,
 } from "@/lib/digital-human";
+import { getDigitalHumanTaskPollInterval } from "@/lib/long-task-poll";
 import { getDigitalHumanTask } from "@/lib/services";
 import type { DigitalHumanAsset, DigitalHumanTask } from "@/lib/types";
 import { formatDateTime } from "@/lib/workflow";
@@ -185,9 +185,7 @@ export default function DigitalHumanTaskDetailPage() {
     enabled: Boolean(taskId),
     refetchInterval: ({ state }) => {
       const item = state.data as DigitalHumanTask | undefined;
-      return item && !isTerminalDigitalHumanTask(item)
-        ? DIGITAL_HUMAN_POLL_INTERVAL_MS
-        : false;
+      return getDigitalHumanTaskPollInterval(item);
     },
   });
 

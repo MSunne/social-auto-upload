@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getAIJobPollInterval } from "@/lib/long-task-poll";
 import { getModelDisplayName } from "@/lib/model-display";
 import {
   buildAIJobTitle,
@@ -975,7 +976,14 @@ export default function VideoCreationPage() {
           payloadMode: "summary",
           limit: 20,
         }),
-      refetchInterval: currentJobId ? 4000 : false,
+      refetchInterval: ({ state }) => {
+        if (!currentJobId) {
+          return false;
+        }
+        const items = state.data as AIJob[] | undefined;
+        const activeJob = items?.find((item) => item.id === currentJobId) || null;
+        return getAIJobPollInterval(activeJob || { jobType: "video", status: "running" });
+      },
       refetchIntervalInBackground: true,
     },
   );
@@ -987,7 +995,10 @@ export default function VideoCreationPage() {
     retry: 2,
     refetchInterval: (query) => {
       const job = query.state.data as AIJob | undefined;
-      return currentJobId && !isTerminalJob(job) ? 3000 : false;
+      if (!currentJobId) {
+        return false;
+      }
+      return getAIJobPollInterval(job || { jobType: "video", status: "running" });
     },
     refetchIntervalInBackground: true,
   });
@@ -1024,9 +1035,8 @@ export default function VideoCreationPage() {
     refetchInterval:
       selectedJob?.id &&
       currentJobId &&
-      selectedJob.id === currentJobId &&
-      !isTerminalJob(effectiveCurrentJob)
-        ? 3000
+      selectedJob.id === currentJobId
+        ? getAIJobPollInterval(effectiveCurrentJob || { jobType: "video", status: "running" })
         : false,
     refetchIntervalInBackground: true,
   });
