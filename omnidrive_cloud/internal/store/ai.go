@@ -151,7 +151,12 @@ func aiJobOutputPayloadSelectColumn(alias string, payloadMode string) string {
 				WHEN %s = 'chat' THEN jsonb_strip_nulls(jsonb_build_object(
 					'text', %s->'text',
 					'attachments', %s->'attachments',
-					'stage', %s->'stage'
+					'stage', %s->'stage',
+					'completionState', %s->'completionState',
+					'warningCodes', %s->'warningCodes',
+					'warningMessage', %s->'warningMessage',
+					'protocolFamily', %s->'protocolFamily',
+					'streamDiagnostics', %s->'streamDiagnostics'
 				))
 				WHEN %s = 'video' THEN jsonb_strip_nulls(jsonb_build_object(
 					'stage', %s->'stage',
@@ -184,6 +189,11 @@ func aiJobOutputPayloadSelectColumn(alias string, payloadMode string) string {
 				))
 			END AS output_payload`,
 			jobType,
+			qualified,
+			qualified,
+			qualified,
+			qualified,
+			qualified,
 			qualified,
 			qualified,
 			qualified,
@@ -337,7 +347,7 @@ func aiJobArtifactSelectColumnsFor(alias string, mode string) string {
 }
 
 const aiModelSelectColumns = `
-	id, vendor, model_name, model_alias, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
+	id, vendor, model_name, model_alias, category, billing_mode, chat_protocol, base_url, api_key, raw_rate, billing_amount,
 	description, pricing_payload,
 	image_reference_limit, image_supported_sizes,
 	video_reference_limit, video_supported_resolutions, video_supported_durations,
@@ -370,6 +380,7 @@ func normalizeAIModelBillingMode(category string, billingMode string) string {
 // 处理扫描AI模型相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func scanAIModel(row pgx.Row) (*domain.AIModel, error) {
 	var model domain.AIModel
+	var chatProtocol string
 	var baseURL *string
 	var apiKey *string
 	var rawRate *float64
@@ -390,6 +401,7 @@ func scanAIModel(row pgx.Row) (*domain.AIModel, error) {
 		&model.ModelAlias,
 		&model.Category,
 		&model.BillingMode,
+		&chatProtocol,
 		&baseURL,
 		&apiKey,
 		&rawRate,
@@ -410,6 +422,7 @@ func scanAIModel(row pgx.Row) (*domain.AIModel, error) {
 	}
 
 	model.BillingMode = normalizeAIModelBillingMode(model.Category, model.BillingMode)
+	model.ChatProtocol = normalizeAIModelChatProtocol(chatProtocol)
 	model.BaseURL = normalizeOptionalString(baseURL)
 	model.APIKey = normalizeOptionalString(apiKey)
 	model.RawRate = rawRate
@@ -424,6 +437,19 @@ func scanAIModel(row pgx.Row) (*domain.AIModel, error) {
 	model.VideoSupportedDurations = decodeStringList(videoSupportedDurations)
 	model.SupportedFileTypes = decodeStringList(supportedFileTypes)
 	return &model, nil
+}
+
+func normalizeAIModelChatProtocol(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "auto":
+		return "auto"
+	case "openai_chat_completions":
+		return "openai_chat_completions"
+	case "anthropic_messages":
+		return "anthropic_messages"
+	default:
+		return "auto"
+	}
 }
 
 // 应用AI模型定价载荷，把外部输入转换为当前链路的最终状态变更。

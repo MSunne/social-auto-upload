@@ -39,6 +39,46 @@ func TestBuildChatRequestFromPromptAndSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestBuildChatRequestRaisesMaxTokensForLongFormGeminiPrompt(t *testing.T) {
+	job := &domain.AIJob{
+		ModelName: "gemini-3.1-pro-preview",
+		Prompt:    stringPtrForTest("请详细分析商业模式，并按月份做表，给我完整的收入测算和分成 breakdown。"),
+		InputPayload: mustJSONForTest(map[string]any{
+			"temperature": 0.5,
+			"maxTokens":   1800,
+		}),
+	}
+
+	req, err := BuildChatRequest(job)
+	if err != nil {
+		t.Fatalf("BuildChatRequest returned error: %v", err)
+	}
+	if req.MaxTokens == nil {
+		t.Fatal("expected maxTokens to be normalized")
+	}
+	if *req.MaxTokens < reasoningLongFormChatMaxTokens {
+		t.Fatalf("expected maxTokens >= %d, got %d", reasoningLongFormChatMaxTokens, *req.MaxTokens)
+	}
+}
+
+func TestBuildChatRequestKeepsHigherExplicitMaxTokens(t *testing.T) {
+	job := &domain.AIJob{
+		ModelName: "claude-opus-4-1-preview",
+		Prompt:    stringPtrForTest("请详细分析并做表。"),
+		InputPayload: mustJSONForTest(map[string]any{
+			"maxTokens": 8192,
+		}),
+	}
+
+	req, err := BuildChatRequest(job)
+	if err != nil {
+		t.Fatalf("BuildChatRequest returned error: %v", err)
+	}
+	if req.MaxTokens == nil || *req.MaxTokens != 8192 {
+		t.Fatalf("expected explicit maxTokens to be preserved, got %#v", req.MaxTokens)
+	}
+}
+
 func TestBuildVideoRequestAddsLandscapeAndKeepsFLWhenReferenceImagesExist(t *testing.T) {
 	job := &domain.AIJob{
 		ModelName: "veo-3.1-fast-fl",

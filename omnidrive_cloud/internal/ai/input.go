@@ -12,20 +12,25 @@ import (
 	"omnidrive_cloud/internal/domain"
 )
 
+const (
+	defaultChatRequestMaxTokens    = 3200
+	longFormChatRequestMaxTokens   = 4800
+	reasoningChatRequestMaxTokens  = 4096
+	reasoningLongFormChatMaxTokens = 6400
+)
+
 // 构建对话请求，为AI输入生成后续步骤所需的派生参数或载荷。
 func BuildChatRequest(job *domain.AIJob) (ChatRequest, error) {
 	payload := decodePayloadMap(job.InputPayload)
+	prompt := strings.TrimSpace(stringValue(job.Prompt))
+	if prompt == "" {
+		prompt = strings.TrimSpace(stringValueFromMap(payload, "prompt"))
+	}
 	messages, err := parseChatMessages(payload)
 	if err != nil {
 		return ChatRequest{}, err
 	}
 	if len(messages) == 0 {
-		prompt := strings.TrimSpace(stringValue(job.Prompt))
-		if prompt == "" {
-			if raw := strings.TrimSpace(stringValueFromMap(payload, "prompt")); raw != "" {
-				prompt = raw
-			}
-		}
 		if prompt == "" {
 			return ChatRequest{}, fmt.Errorf("chat job requires prompt or messages")
 		}
@@ -40,8 +45,151 @@ func BuildChatRequest(job *domain.AIJob) (ChatRequest, error) {
 		Model:       strings.TrimSpace(job.ModelName),
 		Messages:    messages,
 		Temperature: floatPtrFromMap(payload, "temperature"),
-		MaxTokens:   intPtrFromMap(payload, "maxTokens", "max_tokens"),
+		MaxTokens:   normalizeChatRequestMaxTokens(strings.TrimSpace(job.ModelName), prompt, messages, intPtrFromMap(payload, "maxTokens", "max_tokens")),
 	}, nil
+}
+
+// 规范化聊天请求MaxTokens，统一长文本与推理模型的最小输出预算。
+func normalizeChatRequestMaxTokens(modelName string, prompt string, messages []ChatMessage, requested *int) *int {
+	recommended := recommendedChatRequestMaxTokens(modelName, prompt, messages)
+	if recommended <= 0 {
+		return requested
+	}
+	if requested == nil || *requested < recommended {
+		value := recommended
+		return &value
+	}
+	return requested
+}
+
+// 计算聊天请求推荐输出预算，避免长文本或推理模型过早触发 length 截断。
+func recommendedChatRequestMaxTokens(modelName string, prompt string, messages []ChatMessage) int {
+	combinedText := strings.TrimSpace(prompt)
+	if combinedText == "" {
+		combinedText = strings.TrimSpace(extractChatMessagesPlainText(messages))
+	}
+	charCount := len([]rune(combinedText))
+	longForm := isLongFormChatPrompt(combinedText)
+	reasoningModel := isHighOutputChatModel(modelName)
+
+	budget := 0
+	if charCount >= 800 {
+		budget = defaultChatRequestMaxTokens
+	}
+	if longForm {
+		budget = longFormChatRequestMaxTokens
+	}
+	if reasoningModel && (longForm || charCount >= 600) && budget < reasoningChatRequestMaxTokens {
+		budget = reasoningChatRequestMaxTokens
+	}
+	if reasoningModel && longForm && budget < reasoningLongFormChatMaxTokens {
+		budget = reasoningLongFormChatMaxTokens
+	}
+	if budget == 0 {
+		return 0
+	}
+	switch {
+	case charCount >= 2400:
+		budget += 1024
+	case charCount >= 1200:
+		budget += 512
+	}
+	return roundChatTokenBudget(budget)
+}
+
+// 提取聊天消息纯文本，用于估算输出预算。
+func extractChatMessagesPlainText(messages []ChatMessage) string {
+	if len(messages) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(messages))
+	for _, message := range messages {
+		if text := strings.TrimSpace(extractChatContentText(message.Content)); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+// 提取聊天内容文本，用于估算输出预算。
+func extractChatContentText(content any) string {
+	switch typed := content.(type) {
+	case string:
+		return typed
+	case []map[string]any:
+		parts := make([]string, 0, len(typed))
+		for _, part := range typed {
+			parts = append(parts, extractChatContentText(part))
+		}
+		return strings.Join(parts, "\n")
+	case []any:
+		parts := make([]string, 0, len(typed))
+		for _, item := range typed {
+			parts = append(parts, extractChatContentText(item))
+		}
+		return strings.Join(parts, "\n")
+	case map[string]any:
+		partType := strings.TrimSpace(stringValueFromMap(typed, "type"))
+		switch partType {
+		case "text":
+			return strings.TrimSpace(stringValueFromMap(typed, "text"))
+		case "input_text":
+			return strings.TrimSpace(stringValueFromMap(typed, "text"))
+		default:
+			if text := strings.TrimSpace(stringValueFromMap(typed, "text")); text != "" {
+				return text
+			}
+			return ""
+		}
+	default:
+		return strings.TrimSpace(fmt.Sprint(content))
+	}
+}
+
+// 判断聊天提示词是否属于长文本输出场景。
+func isLongFormChatPrompt(text string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	if normalized == "" {
+		return false
+	}
+	keywords := []string{
+		"详细", "做表", "表格", "逐步", "分步骤", "展开", "完整", "系统", "分析", "测算", "收入",
+		"计算", "清单", "列出", "对比", "方案", "总结", "markdown table", "table", "breakdown",
+		"step by step", "analysis", "detailed", "compare", "plan",
+	}
+	for _, keyword := range keywords {
+		if strings.Contains(normalized, strings.ToLower(keyword)) {
+			return true
+		}
+	}
+	return false
+}
+
+// 判断聊天模型是否适合更高输出预算。
+func isHighOutputChatModel(modelName string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(modelName))
+	if normalized == "" {
+		return false
+	}
+	markers := []string{"gemini", "claude", "opus", "deepseek", "r1", "o1", "o3", "o4"}
+	for _, marker := range markers {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// 统一聊天预算步长，避免模型侧收到过细碎的 token 数。
+func roundChatTokenBudget(value int) int {
+	if value <= 0 {
+		return 0
+	}
+	const step = 256
+	if value%step == 0 {
+		return value
+	}
+	return ((value / step) + 1) * step
 }
 
 // 构建图片请求，为AI输入生成后续步骤所需的派生参数或载荷。

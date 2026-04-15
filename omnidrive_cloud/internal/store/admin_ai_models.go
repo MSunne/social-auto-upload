@@ -117,6 +117,7 @@ type CreateAIModelInput struct {
 	ModelAlias                string
 	Category                  string
 	BillingMode               string
+	ChatProtocol              string
 	BaseURL                   *string
 	APIKey                    *string
 	RawRate                   *float64
@@ -136,19 +137,19 @@ type CreateAIModelInput struct {
 func (s *Store) CreateAIModel(ctx context.Context, input CreateAIModelInput) (*domain.AIModel, error) {
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO ai_models (
-			id, vendor, model_name, model_alias, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
+			id, vendor, model_name, model_alias, category, billing_mode, chat_protocol, base_url, api_key, raw_rate, billing_amount,
 			description, pricing_payload,
 			image_reference_limit, image_supported_sizes,
 			video_reference_limit, video_supported_resolutions, video_supported_durations,
 			supported_file_types,
 			is_enabled, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-			$11, $12,
-			$13, $14,
-			$15, $16, $17,
-			$18,
-			$19, CLOCK_TIMESTAMP(), CLOCK_TIMESTAMP()
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+			$12, $13,
+			$14, $15,
+			$16, $17, $18,
+			$19,
+			$20, CLOCK_TIMESTAMP(), CLOCK_TIMESTAMP()
 		)
 		RETURNING `+aiModelSelectColumns+`
 	`,
@@ -158,6 +159,7 @@ func (s *Store) CreateAIModel(ctx context.Context, input CreateAIModelInput) (*d
 		input.ModelAlias,
 		input.Category,
 		input.BillingMode,
+		input.ChatProtocol,
 		input.BaseURL,
 		input.APIKey,
 		input.RawRate,
@@ -182,6 +184,7 @@ type UpdateAIModelInput struct {
 	ModelAlias                *string
 	Category                  *string
 	BillingMode               *string
+	ChatProtocol              *string
 	BaseURL                   *string
 	APIKey                    *string
 	RawRate                   *float64
@@ -226,6 +229,11 @@ func (s *Store) UpdateAIModel(ctx context.Context, id string, input UpdateAIMode
 	if input.BillingMode != nil {
 		setParts = append(setParts, fmt.Sprintf("billing_mode = $%d", argIndex))
 		args = append(args, strings.TrimSpace(*input.BillingMode))
+		argIndex++
+	}
+	if input.ChatProtocol != nil {
+		setParts = append(setParts, fmt.Sprintf("chat_protocol = $%d", argIndex))
+		args = append(args, strings.TrimSpace(*input.ChatProtocol))
 		argIndex++
 	}
 	if input.BaseURL != nil {

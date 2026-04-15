@@ -512,6 +512,7 @@ CREATE TABLE IF NOT EXISTS ai_models (
     model_alias TEXT NOT NULL,
     category TEXT NOT NULL,
     billing_mode TEXT NOT NULL DEFAULT 'per_call',
+    chat_protocol TEXT NOT NULL DEFAULT 'auto',
     base_url TEXT,
     api_key TEXT,
     raw_rate DOUBLE PRECISION,
@@ -550,6 +551,10 @@ SET billing_mode = CASE
     ELSE 'per_call'
 END
 WHERE billing_mode IS NULL OR TRIM(billing_mode) = '';
+ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS chat_protocol TEXT NOT NULL DEFAULT 'auto';
+UPDATE ai_models
+SET chat_protocol = 'auto'
+WHERE chat_protocol IS NULL OR TRIM(chat_protocol) = '';
 ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS api_key TEXT;
 ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS raw_rate DOUBLE PRECISION;
 ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS billing_amount DOUBLE PRECISION;

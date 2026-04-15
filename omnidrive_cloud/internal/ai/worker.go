@@ -374,22 +374,30 @@ func (w *Worker) executeChat(ctx context.Context, job *domain.AIJob, leaseToken 
 	if strings.TrimSpace(optimizedPrompt) != "" {
 		req.Messages = replaceLastUserMessage(req.Messages, optimizedPrompt)
 	}
-	_, provider, providerName, baseURL, apiKey, err := w.resolveModelRuntime(ctx, job.ModelName)
+	model, provider, providerName, baseURL, apiKey, err := w.resolveModelRuntime(ctx, job.ModelName)
 	if err != nil {
 		return err
 	}
 	req.BaseURL = baseURL
 	req.APIKey = apiKey
+	if model != nil {
+		req.ChatProtocol = model.ChatProtocol
+	}
 	result, err := provider.GenerateChat(ctx, req)
 	if err != nil {
 		return err
 	}
 
 	artifactPayload := mustJSON(map[string]any{
-		"provider":     providerName,
-		"role":         result.Role,
-		"finishReason": result.FinishReason,
-		"usage":        result.Usage,
+		"provider":          providerName,
+		"role":              result.Role,
+		"finishReason":      result.FinishReason,
+		"completionState":   result.CompletionState,
+		"warningCodes":      result.WarningCodes,
+		"warningMessage":    result.WarningMessage,
+		"protocolFamily":    result.ProtocolFamily,
+		"streamDiagnostics": result.StreamDiagnostics,
+		"usage":             result.Usage,
 	})
 	fileName := "response.txt"
 	mimeType := "text/plain; charset=utf-8"
@@ -412,19 +420,24 @@ func (w *Worker) executeChat(ctx context.Context, job *domain.AIJob, leaseToken 
 	billing := w.applyUsageBilling(ctx, job, buildChatBillingInput(job, result))
 
 	outputPayload := mustJSON(map[string]any{
-		"provider":     providerName,
-		"kind":         "chat",
-		"model":        job.ModelName,
-		"text":         result.Text,
-		"role":         result.Role,
-		"finishReason": result.FinishReason,
-		"usage":        result.Usage,
-		"billing":      billingToPayload(billing),
-		"artifacts":    summarizeArtifacts(artifacts),
-		"storyboard":   storyboardPayload,
-		"completedAt":  time.Now().UTC().Format(time.RFC3339),
+		"provider":          providerName,
+		"kind":              "chat",
+		"model":             job.ModelName,
+		"text":              result.Text,
+		"role":              result.Role,
+		"finishReason":      result.FinishReason,
+		"completionState":   result.CompletionState,
+		"warningCodes":      result.WarningCodes,
+		"warningMessage":    result.WarningMessage,
+		"protocolFamily":    result.ProtocolFamily,
+		"streamDiagnostics": result.StreamDiagnostics,
+		"usage":             result.Usage,
+		"billing":           billingToPayload(billing),
+		"artifacts":         summarizeArtifacts(artifacts),
+		"storyboard":        storyboardPayload,
+		"completedAt":       time.Now().UTC().Format(time.RFC3339),
 	})
-	message := buildCompletionMessage("AI 聊天已完成", billing)
+	message := buildCompletionMessage(buildAIChatCompletionBaseMessage(result), billing)
 	if _, err := w.completeJob(ctx, job, leaseToken, message, outputPayload, billingCreditsPtr(billing)); err != nil {
 		return err
 	}
@@ -824,7 +837,7 @@ func (w *Worker) prepareStoryboardPrompt(ctx context.Context, job *domain.AIJob,
 		systemPrompt = defaultStoryboardSystemPrompt
 	}
 
-	_, provider, _, baseURL, apiKey, err := w.resolveModelRuntime(ctx, modelName)
+	model, provider, _, baseURL, apiKey, err := w.resolveModelRuntime(ctx, modelName)
 	if err != nil {
 		return nil, originalPrompt, err
 	}
@@ -840,9 +853,10 @@ func (w *Worker) prepareStoryboardPrompt(ctx context.Context, job *domain.AIJob,
 	}
 
 	result, err := provider.GenerateChat(ctx, ChatRequest{
-		Model:   modelName,
-		BaseURL: baseURL,
-		APIKey:  apiKey,
+		Model:        modelName,
+		BaseURL:      baseURL,
+		APIKey:       apiKey,
+		ChatProtocol: model.ChatProtocol,
 		Messages: []ChatMessage{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userPrompt},
@@ -2789,6 +2803,21 @@ func buildCompletionMessage(base string, billing *store.ApplyUsageBillingResult)
 	default:
 		return base
 	}
+}
+
+func buildAIChatCompletionBaseMessage(result *ChatResult) string {
+	if result == nil || strings.TrimSpace(result.CompletionState) != ChatCompletionStateIncomplete {
+		return "AI 聊天已完成"
+	}
+	for _, warningCode := range result.WarningCodes {
+		if strings.TrimSpace(warningCode) == ChatWarningReasoningOnlyOutput {
+			return "AI 聊天已完成（仅收到思考过程，未收到最终答复）"
+		}
+	}
+	if strings.Contains(strings.TrimSpace(result.WarningMessage), "仅收到思考过程") {
+		return "AI 聊天已完成（仅收到思考过程，未收到最终答复）"
+	}
+	return "AI 聊天已完成（内容可能不完整）"
 }
 
 // 处理计费额度Ptr相关逻辑，结合当前上下文完成必要的状态转换或结果组装。

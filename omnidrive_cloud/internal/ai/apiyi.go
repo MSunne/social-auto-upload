@@ -1,7 +1,6 @@
 package ai
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -59,246 +58,22 @@ func NewAPIYIProvider(cfg config.Config) (*APIYIProvider, error) {
 
 // 处理Generate对话相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *APIYIProvider) GenerateChat(ctx context.Context, req ChatRequest) (*ChatResult, error) {
-	req, err := p.normalizeChatRequest(ctx, req)
-	if err != nil {
-		return nil, err
+	switch resolveChatProtocol(req) {
+	case ChatProtocolAnthropicMessages:
+		return p.generateAnthropicMessagesChat(ctx, req)
+	default:
+		return p.generateOpenAIChat(ctx, req)
 	}
-	payload := buildChatPayload(req, false)
-
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-
-	body, err := p.doJSON(ctx, req.BaseURL, req.APIKey, http.MethodPost, "/v1/chat/completions", data, true)
-	if err != nil {
-		return nil, err
-	}
-
-	var response struct {
-		Choices []struct {
-			Message struct {
-				Role             string `json:"role"`
-				Content          any    `json:"content"`
-				ReasoningContent any    `json:"reasoning_content"`
-			} `json:"message"`
-			FinishReason string `json:"finish_reason"`
-		} `json:"choices"`
-		Usage map[string]any `json:"usage"`
-	}
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, err
-	}
-	if len(response.Choices) == 0 {
-		return nil, fmt.Errorf("chat response did not contain choices")
-	}
-
-	choice := response.Choices[0]
-	text := extractText(choice.Message.Content)
-	reasoning := extractText(choice.Message.ReasoningContent)
-
-	finalText := text
-	if reasoning != "" {
-		finalText = "<think>\n" + reasoning + "\n</think>\n" + text
-	}
-
-	return &ChatResult{
-		Text:         finalText,
-		Role:         strings.TrimSpace(choice.Message.Role),
-		Usage:        response.Usage,
-		FinishReason: strings.TrimSpace(choice.FinishReason),
-		RawResponse:  body,
-	}, nil
 }
 
 // 处理Generate对话流式相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *APIYIProvider) GenerateChatStream(ctx context.Context, req ChatRequest, onChunk func(ChatStreamChunk) error) (*ChatResult, error) {
-	req, err := p.normalizeChatRequest(ctx, req)
-	if err != nil {
-		return nil, err
+	switch resolveChatProtocol(req) {
+	case ChatProtocolAnthropicMessages:
+		return p.generateAnthropicMessagesChatStream(ctx, req, onChunk)
+	default:
+		return p.generateOpenAIChatStream(ctx, req, onChunk)
 	}
-	payload := buildChatPayload(req, true)
-
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-
-	httpReq, err := p.newRetryableRequest(ctx, http.MethodPost, p.resolveEndpointURL(req.BaseURL, "/v1/chat/completions"), data, func(r *http.Request) {
-		r.Header.Set("Authorization", "Bearer "+p.resolveAPIKey(req.APIKey))
-		r.Header.Set("Content-Type", "application/json")
-		r.Header.Set("Accept", "text/event-stream")
-		r.Header.Set("Cache-Control", "no-cache")
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := p.doStreamingRequest(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, readErr := io.ReadAll(resp.Body)
-		if readErr != nil {
-			return nil, readErr
-		}
-		if statusErr := ensureHTTPStatus(resp, body); statusErr != nil {
-			return nil, statusErr
-		}
-		return nil, fmt.Errorf("provider request failed with status %d", resp.StatusCode)
-	}
-
-	result := &ChatResult{Role: "assistant"}
-	var fullText strings.Builder
-	var rawResponse bytes.Buffer
-	sawDoneMarker := false
-	sawContent := false
-	inReasoning := false
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
-
-	dataLines := make([]string, 0, 4)
-	dispatchEvent := func() error {
-		if len(dataLines) == 0 {
-			return nil
-		}
-		payloadText := strings.Join(dataLines, "\n")
-		dataLines = dataLines[:0]
-		rawResponse.WriteString("data: ")
-		rawResponse.WriteString(payloadText)
-		rawResponse.WriteString("\n\n")
-
-		if strings.TrimSpace(payloadText) == "[DONE]" {
-			sawDoneMarker = true
-			return nil
-		}
-
-		var response struct {
-			Choices []struct {
-				Delta struct {
-					Role             string `json:"role"`
-					Content          any    `json:"content"`
-					ReasoningContent any    `json:"reasoning_content"`
-				} `json:"delta"`
-				Message struct {
-					Role             string `json:"role"`
-					Content          any    `json:"content"`
-					ReasoningContent any    `json:"reasoning_content"`
-				} `json:"message"`
-				FinishReason string `json:"finish_reason"`
-			} `json:"choices"`
-			Usage map[string]any `json:"usage"`
-		}
-		if err := json.Unmarshal([]byte(payloadText), &response); err != nil {
-			return err
-		}
-		if response.Usage != nil {
-			result.Usage = response.Usage
-		}
-		if len(response.Choices) == 0 {
-			return nil
-		}
-
-		choice := response.Choices[0]
-		if role := strings.TrimSpace(firstNonEmptyString(choice.Delta.Role, choice.Message.Role)); role != "" {
-			result.Role = role
-		}
-		if finishReason := strings.TrimSpace(choice.FinishReason); finishReason != "" {
-			result.FinishReason = finishReason
-		}
-
-		deltaText := extractDeltaText(choice.Delta.Content)
-		if deltaText == "" {
-			deltaText = extractDeltaText(choice.Message.Content)
-		}
-		reasoningText := extractText(choice.Delta.ReasoningContent)
-		if reasoningText == "" {
-			reasoningText = extractText(choice.Message.ReasoningContent)
-		}
-
-		var combinedDelta string
-		if reasoningText != "" {
-			if !inReasoning {
-				inReasoning = true
-				combinedDelta += "<think>\n"
-				fullText.WriteString("<think>\n")
-			}
-			combinedDelta += reasoningText
-			fullText.WriteString(reasoningText)
-		}
-
-		if deltaText != "" {
-			if inReasoning {
-				inReasoning = false
-				combinedDelta += "\n</think>\n"
-				fullText.WriteString("\n</think>\n")
-			}
-			combinedDelta += deltaText
-			fullText.WriteString(deltaText)
-		}
-
-		if combinedDelta == "" {
-			return nil
-		}
-		sawContent = true
-
-		if onChunk != nil {
-			return onChunk(ChatStreamChunk{
-				Delta:        combinedDelta,
-				Text:         fullText.String(),
-				Role:         result.Role,
-				Usage:        result.Usage,
-				FinishReason: result.FinishReason,
-			})
-		}
-		return nil
-	}
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		switch {
-		case strings.TrimSpace(line) == "":
-			if err := dispatchEvent(); err != nil {
-				return nil, err
-			}
-		case strings.HasPrefix(line, "data:"):
-			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-	if err := dispatchEvent(); err != nil {
-		return nil, err
-	}
-	if !sawDoneMarker && strings.TrimSpace(result.FinishReason) == "" {
-		if sawContent {
-			result.FinishReason = "stream_eof"
-		} else {
-			return nil, fmt.Errorf("provider stream ended before terminal event")
-		}
-	}
-
-	if inReasoning {
-		fullText.WriteString("\n</think>\n")
-	}
-	result.Text = fullText.String()
-	result.RawResponse = rawResponse.Bytes()
-	if onChunk != nil {
-		if err := onChunk(ChatStreamChunk{
-			Text:         result.Text,
-			Role:         result.Role,
-			Usage:        result.Usage,
-			FinishReason: result.FinishReason,
-			Done:         true,
-		}); err != nil {
-			return nil, err
-		}
-	}
-	return result, nil
 }
 
 // 构建对话载荷，为APIYI生成后续步骤所需的派生参数或载荷。

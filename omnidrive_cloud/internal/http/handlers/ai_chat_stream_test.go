@@ -142,11 +142,14 @@ func TestClassifyStreamChatTermination(t *testing.T) {
 	if got := classifyStreamChatTermination(nil, context.DeadlineExceeded, false); got != "timeout" {
 		t.Fatalf("expected timeout classification, got %q", got)
 	}
-	if got := classifyStreamChatTermination(&aiclient.ChatResult{FinishReason: "stream_eof"}, nil, false); got != "eof_after_delta" {
-		t.Fatalf("expected eof_after_delta classification, got %q", got)
+	if got := classifyStreamChatTermination(&aiclient.ChatResult{CompletionState: aiclient.ChatCompletionStateIncomplete}, nil, false); got != "incomplete" {
+		t.Fatalf("expected incomplete classification, got %q", got)
 	}
 	if got := classifyStreamChatTermination(&aiclient.ChatResult{FinishReason: "stop"}, nil, false); got != "finish_reason" {
 		t.Fatalf("expected finish_reason classification, got %q", got)
+	}
+	if got := classifyStreamChatTermination(&aiclient.ChatResult{StreamDiagnostics: &aiclient.ChatStreamDiagnostics{StopReason: "end_turn"}}, nil, false); got != "stop_reason" {
+		t.Fatalf("expected stop_reason classification, got %q", got)
 	}
 	if got := classifyStreamChatTermination(nil, nil, true); got != "write_error" {
 		t.Fatalf("expected write_error classification, got %q", got)

@@ -807,6 +807,12 @@ func TestGenerateChatStreamAggregatesSSEChunks(t *testing.T) {
 	if result.FinishReason != "stop" {
 		t.Fatalf("unexpected finish reason %q", result.FinishReason)
 	}
+	if result.CompletionState != ChatCompletionStateComplete {
+		t.Fatalf("expected completionState complete, got %q", result.CompletionState)
+	}
+	if result.ProtocolFamily != ChatProtocolOpenAIChatCompletions {
+		t.Fatalf("expected protocolFamily %q, got %q", ChatProtocolOpenAIChatCompletions, result.ProtocolFamily)
+	}
 	if len(chunks) != 3 {
 		t.Fatalf("expected 3 stream callbacks, got %d", len(chunks))
 	}
@@ -815,6 +821,9 @@ func TestGenerateChatStreamAggregatesSSEChunks(t *testing.T) {
 	}
 	if !chunks[2].Done {
 		t.Fatalf("expected last callback to mark done, got %#v", chunks[2])
+	}
+	if chunks[2].CompletionState != ChatCompletionStateComplete {
+		t.Fatalf("expected done chunk to mark complete, got %#v", chunks[2])
 	}
 }
 
@@ -850,8 +859,179 @@ func TestGenerateChatStreamCompletesWhenTerminalEventIsMissingAfterContent(t *te
 	if got := strings.TrimSpace(result.Text); got != "半截回复" {
 		t.Fatalf("expected partial content to be preserved, got %q", got)
 	}
-	if result.FinishReason != "stream_eof" {
-		t.Fatalf("expected finish reason stream_eof, got %q", result.FinishReason)
+	if result.FinishReason != "" {
+		t.Fatalf("expected empty finish reason, got %q", result.FinishReason)
+	}
+	if result.CompletionState != ChatCompletionStateIncomplete {
+		t.Fatalf("expected incomplete completionState, got %q", result.CompletionState)
+	}
+	if !containsString(result.WarningCodes, ChatWarningStreamEOFAfterContent) {
+		t.Fatalf("expected stream_eof_after_content warning, got %#v", result.WarningCodes)
+	}
+}
+
+func TestGenerateChatStreamMarksReasoningOnlyOpenAIResponsesIncomplete(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"先想一下\"},\"finish_reason\":\"\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	provider, err := NewAPIYIProvider(config.Config{
+		APIYIBaseURL: server.URL,
+		APIYIApiKey:  "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewAPIYIProvider returned error: %v", err)
+	}
+
+	result, err := provider.GenerateChatStream(context.Background(), ChatRequest{
+		Model:   "gpt-5.4",
+		BaseURL: server.URL,
+		APIKey:  "sk-chat",
+		Messages: []ChatMessage{
+			{Role: "user", Content: "say hello"},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("GenerateChatStream returned error: %v", err)
+	}
+
+	if result.CompletionState != ChatCompletionStateIncomplete {
+		t.Fatalf("expected incomplete completionState, got %q", result.CompletionState)
+	}
+	if !containsString(result.WarningCodes, ChatWarningMissingFinishReason) {
+		t.Fatalf("expected missing_finish_reason warning, got %#v", result.WarningCodes)
+	}
+	if !containsString(result.WarningCodes, ChatWarningReasoningOnlyOutput) {
+		t.Fatalf("expected reasoning_only_output warning, got %#v", result.WarningCodes)
+	}
+	if strings.TrimSpace(result.WarningMessage) == "" {
+		t.Fatalf("expected warning message, got empty")
+	}
+}
+
+func TestGenerateAnthropicMessagesStreamCompletesWithStopReason(t *testing.T) {
+	var capturedPath string
+	var capturedAnthropicVersion string
+	var capturedAPIKey string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		capturedAnthropicVersion = r.Header.Get("anthropic-version")
+		capturedAPIKey = r.Header.Get("x-api-key")
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"role\":\"assistant\",\"usage\":{\"input_tokens\":12}}}\n\n"))
+		_, _ = w.Write([]byte("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\"}}\n\n"))
+		_, _ = w.Write([]byte("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"你好\"}}\n\n"))
+		_, _ = w.Write([]byte("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":4}}\n\n"))
+		_, _ = w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+	}))
+	defer server.Close()
+
+	provider, err := NewAPIYIProvider(config.Config{
+		APIYIBaseURL: server.URL,
+		APIYIApiKey:  "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewAPIYIProvider returned error: %v", err)
+	}
+
+	result, err := provider.GenerateChatStream(context.Background(), ChatRequest{
+		Model:   "claude-opus-4-6-thinking",
+		BaseURL: server.URL,
+		APIKey:  "sk-claude",
+		Messages: []ChatMessage{
+			{Role: "user", Content: "say hello"},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("GenerateChatStream returned error: %v", err)
+	}
+
+	if capturedPath != "/v1/messages" {
+		t.Fatalf("unexpected request path %q", capturedPath)
+	}
+	if capturedAnthropicVersion != "2023-06-01" {
+		t.Fatalf("unexpected anthropic-version %q", capturedAnthropicVersion)
+	}
+	if capturedAPIKey != "sk-claude" {
+		t.Fatalf("unexpected x-api-key header %q", capturedAPIKey)
+	}
+	if result.ProtocolFamily != ChatProtocolAnthropicMessages {
+		t.Fatalf("expected protocolFamily %q, got %q", ChatProtocolAnthropicMessages, result.ProtocolFamily)
+	}
+	if result.CompletionState != ChatCompletionStateComplete {
+		t.Fatalf("expected completionState complete, got %q", result.CompletionState)
+	}
+	if result.StreamDiagnostics == nil || result.StreamDiagnostics.StopReason != "end_turn" {
+		t.Fatalf("expected stop_reason end_turn, got %#v", result.StreamDiagnostics)
+	}
+	if strings.TrimSpace(result.Text) != "你好" {
+		t.Fatalf("unexpected text %q", result.Text)
+	}
+}
+
+func TestGenerateAnthropicMessagesStreamMarksReasoningOnlyIncomplete(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"role\":\"assistant\"}}\n\n"))
+		_, _ = w.Write([]byte("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\"}}\n\n"))
+		_, _ = w.Write([]byte("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"让我想想\"}}\n\n"))
+		_, _ = w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+	}))
+	defer server.Close()
+
+	provider, err := NewAPIYIProvider(config.Config{
+		APIYIBaseURL: server.URL,
+		APIYIApiKey:  "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewAPIYIProvider returned error: %v", err)
+	}
+
+	result, err := provider.GenerateChatStream(context.Background(), ChatRequest{
+		Model:   "claude-opus-4-6-thinking",
+		BaseURL: server.URL,
+		APIKey:  "sk-claude",
+		Messages: []ChatMessage{
+			{Role: "user", Content: "say hello"},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("GenerateChatStream returned error: %v", err)
+	}
+
+	if result.CompletionState != ChatCompletionStateIncomplete {
+		t.Fatalf("expected incomplete completionState, got %q", result.CompletionState)
+	}
+	if !containsString(result.WarningCodes, ChatWarningMissingStopReason) {
+		t.Fatalf("expected missing_stop_reason warning, got %#v", result.WarningCodes)
+	}
+	if !containsString(result.WarningCodes, ChatWarningReasoningOnlyOutput) {
+		t.Fatalf("expected reasoning_only_output warning, got %#v", result.WarningCodes)
+	}
+}
+
+func TestResolveChatProtocolSelection(t *testing.T) {
+	if got := resolveChatProtocol(ChatRequest{
+		Model:        "claude-opus-4-6-thinking",
+		ChatProtocol: ChatProtocolAuto,
+	}); got != ChatProtocolAnthropicMessages {
+		t.Fatalf("expected claude auto route to anthropic_messages, got %q", got)
+	}
+	if got := resolveChatProtocol(ChatRequest{
+		Model:        "gemini-3.1-pro-preview",
+		ChatProtocol: ChatProtocolAuto,
+	}); got != ChatProtocolOpenAIChatCompletions {
+		t.Fatalf("expected gemini auto route to openai_chat_completions, got %q", got)
+	}
+	if got := resolveChatProtocol(ChatRequest{
+		Model:        "gemini-3.1-pro-preview",
+		ChatProtocol: ChatProtocolAnthropicMessages,
+	}); got != ChatProtocolAnthropicMessages {
+		t.Fatalf("expected explicit chatProtocol to win, got %q", got)
 	}
 }
 
@@ -909,6 +1089,15 @@ func TestBuildChatPayloadUsesGPT5SpecificFields(t *testing.T) {
 	if payload["max_completion_tokens"] != 1200 {
 		t.Fatalf("unexpected max_completion_tokens %#v", payload["max_completion_tokens"])
 	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func TestGenerateChatStreamInlinesImageURLsForGPT5Models(t *testing.T) {

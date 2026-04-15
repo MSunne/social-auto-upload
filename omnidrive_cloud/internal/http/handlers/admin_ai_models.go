@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	aiclient "omnidrive_cloud/internal/ai"
 	appstate "omnidrive_cloud/internal/app"
 	httpcontext "omnidrive_cloud/internal/http/context"
 	"omnidrive_cloud/internal/http/render"
@@ -33,6 +34,7 @@ type adminCreateAIModelRequest struct {
 	ModelAlias                string          `json:"modelAlias"`
 	Category                  string          `json:"category"`
 	BillingMode               string          `json:"billingMode"`
+	ChatProtocol              string          `json:"chatProtocol"`
 	ModelType                 string          `json:"modelType"`
 	BaseURL                   *string         `json:"baseUrl"`
 	APIKey                    *string         `json:"apiKey"`
@@ -59,6 +61,7 @@ type adminUpdateAIModelRequest struct {
 	ModelAlias                *string          `json:"modelAlias"`
 	Category                  *string          `json:"category"`
 	BillingMode               *string          `json:"billingMode"`
+	ChatProtocol              *string          `json:"chatProtocol"`
 	ModelType                 *string          `json:"modelType"`
 	BaseURL                   *string          `json:"baseUrl"`
 	APIKey                    *string          `json:"apiKey"`
@@ -122,6 +125,17 @@ func validateAIModelBillingMode(billingMode string) bool {
 	default:
 		return false
 	}
+}
+
+func normalizeAIModelChatProtocol(category string, value string) string {
+	if normalizeAIModelCategory(category) != "chat" {
+		return aiclient.ChatProtocolAuto
+	}
+	normalized := aiclient.NormalizeChatProtocol(value)
+	if normalized == "" {
+		return ""
+	}
+	return normalized
 }
 
 // 规范化可选管理端Text，统一管理端AI模型链路的输入格式和后续处理行为。
@@ -201,6 +215,10 @@ func normalizeCreateAIModelPayload(payload adminCreateAIModelRequest) (store.Cre
 		return store.CreateAIModelInput{}, errInvalidAIModelBillingMode
 	}
 	billingMode := normalizeAIModelBillingMode(category, rawBillingMode)
+	chatProtocol := normalizeAIModelChatProtocol(category, payload.ChatProtocol)
+	if chatProtocol == "" {
+		return store.CreateAIModelInput{}, errInvalidAIModelChatProtocol
+	}
 
 	vendor := strings.TrimSpace(payload.Vendor)
 	modelName := strings.TrimSpace(payload.ModelName)
@@ -220,6 +238,7 @@ func normalizeCreateAIModelPayload(payload adminCreateAIModelRequest) (store.Cre
 		ModelAlias:         modelAlias,
 		Category:           category,
 		BillingMode:        billingMode,
+		ChatProtocol:       chatProtocol,
 		BaseURL:            baseURL,
 		APIKey:             normalizeOptionalAdminText(payload.APIKey),
 		RawRate:            payload.RawRate,
@@ -293,6 +312,14 @@ func normalizeUpdateAIModelPayload(payload adminUpdateAIModelRequest) (store.Upd
 		}
 		resolvedBillingMode := normalizeAIModelBillingMode(firstNonEmptyAdminValue(resolvedCategory, valueOrEmpty(payload.Category)), rawBillingMode)
 		input.BillingMode = &resolvedBillingMode
+	}
+	if payload.ChatProtocol != nil {
+		resolvedCategoryForProtocol := firstNonEmptyAdminValue(resolvedCategory, valueOrEmpty(payload.Category))
+		resolvedChatProtocol := normalizeAIModelChatProtocol(resolvedCategoryForProtocol, valueOrEmpty(payload.ChatProtocol))
+		if resolvedChatProtocol == "" {
+			return store.UpdateAIModelInput{}, errInvalidAIModelChatProtocol
+		}
+		input.ChatProtocol = &resolvedChatProtocol
 	}
 
 	if payload.ImageReferenceLimit != nil {
@@ -400,6 +427,7 @@ func (h *AdminAIHandler) DetailModel(w http.ResponseWriter, r *http.Request) {
 
 var errInvalidAIModelCategory = renderableError("category must be one of: image, video, chat, music")
 var errInvalidAIModelBillingMode = renderableError("billingMode must be one of: per_call, per_second, per_token")
+var errInvalidAIModelChatProtocol = renderableError("chatProtocol must be one of: auto, openai_chat_completions, anthropic_messages")
 
 type renderableError string
 

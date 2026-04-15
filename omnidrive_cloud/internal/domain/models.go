@@ -600,6 +600,7 @@ type AIModel struct {
 	ModelAlias                string          `json:"modelAlias,omitempty"`
 	Category                  string          `json:"category"`
 	BillingMode               string          `json:"billingMode"`
+	ChatProtocol              string          `json:"chatProtocol,omitempty"`
 	BaseURL                   *string         `json:"baseUrl,omitempty"`
 	APIKey                    *string         `json:"apiKey,omitempty"`
 	RawRate                   *float64        `json:"rawRate,omitempty"`

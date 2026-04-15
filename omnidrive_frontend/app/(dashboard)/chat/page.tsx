@@ -6,9 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertTriangle,
   Bot,
-  Check,
   CheckCircle2,
-  Clipboard,
   Clock3,
   Coins,
   FileText,
@@ -24,10 +22,6 @@ import {
   User,
   X,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { API_BASE_URL } from "@/lib/api";
 import { safeLocalStorageGet } from "@/lib/browser-storage";
 import {
@@ -40,6 +34,7 @@ import { getAIJob, getAIJobArtifacts, listAIJobs, listAIModels } from "@/lib/ser
 import { getModelDisplayName } from "@/lib/model-display";
 import type { AIJob, AIJobArtifact, AIModel } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { ChatMarkdown } from "@/components/ui/chat-markdown";
 
 type ChatAttachmentKind = "image" | "text" | "file";
 
@@ -66,6 +61,9 @@ type ChatMessage = {
   rawContent?: unknown;
   attachments?: ChatAttachment[];
   jobId?: string | null;
+  completionState?: string | null;
+  warningCodes?: string[];
+  warningMessage?: string | null;
 };
 
 type StreamEventPayload = {
@@ -75,6 +73,11 @@ type StreamEventPayload = {
   text?: string;
   role?: string;
   finishReason?: string;
+  completionState?: string;
+  warningCodes?: string[];
+  warningMessage?: string;
+  protocolFamily?: string;
+  streamDiagnostics?: Record<string, unknown>;
   done?: boolean;
   error?: string;
   progressed?: boolean;
@@ -86,8 +89,12 @@ type StreamReadState = {
   sawError: boolean;
 };
 
-const DEFAULT_CHAT_MAX_TOKENS = 1800;
+const DEFAULT_CHAT_MAX_TOKENS = 2048;
 const ATTACHMENT_HEAVY_CHAT_MAX_TOKENS = 3200;
+const LONG_FORM_CHAT_MAX_TOKENS = 4800;
+const HIGH_OUTPUT_CHAT_MAX_TOKENS = 4096;
+const HIGH_OUTPUT_LONG_FORM_CHAT_MAX_TOKENS = 6400;
+const CHAT_MAX_TOKEN_HARD_CAP = 8192;
 const CHAT_MODELS_STALE_TIME = 5 * 60 * 1000;
 const CHAT_HISTORY_STALE_TIME = 15 * 1000;
 
@@ -118,6 +125,104 @@ function buildConversationMessages(history: ChatMessage[], nextUserMessage: stri
     content: nextUserMessage.trim(),
   });
   return messages;
+}
+
+function extractContentText(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content.map((item) => extractContentText(item)).join("\n");
+  }
+  if (content && typeof content === "object") {
+    const record = content as Record<string, unknown>;
+    if (typeof record.text === "string") {
+      return record.text;
+    }
+    return "";
+  }
+  return "";
+}
+
+function estimateConversationChars(messages: Array<{ role: string; content: unknown }>) {
+  return messages.reduce((total, item) => total + extractContentText(item.content).length, 0);
+}
+
+function isLongFormChatPrompt(text: string) {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return [
+    "详细",
+    "做表",
+    "表格",
+    "逐步",
+    "展开",
+    "完整",
+    "分析",
+    "测算",
+    "收入",
+    "计算",
+    "列出",
+    "对比",
+    "方案",
+    "markdown table",
+    "table",
+    "breakdown",
+    "step by step",
+    "analysis",
+    "detailed",
+    "compare",
+    "plan",
+  ].some((keyword) => normalized.includes(keyword));
+}
+
+function isHighOutputChatModel(modelName?: string | null) {
+  const normalized = (modelName || "").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return ["gemini", "claude", "opus", "deepseek", "r1", "o1", "o3", "o4"].some((marker) =>
+    normalized.includes(marker),
+  );
+}
+
+function roundChatTokenBudget(value: number) {
+  const step = 256;
+  return Math.ceil(value / step) * step;
+}
+
+function resolveRequestedChatMaxTokens(
+  model: AIModel | null | undefined,
+  history: ChatMessage[],
+  nextUserMessage: string,
+  attachments: ChatAttachment[],
+) {
+  const conversationMessages = buildConversationMessages(history, nextUserMessage);
+  const conversationChars = estimateConversationChars(conversationMessages);
+  const longForm = isLongFormChatPrompt(nextUserMessage);
+  const highOutputModel = isHighOutputChatModel(model?.modelName);
+
+  let budget = attachments.length > 0 ? ATTACHMENT_HEAVY_CHAT_MAX_TOKENS : DEFAULT_CHAT_MAX_TOKENS;
+  if (conversationChars >= 800) {
+    budget = Math.max(budget, 3072);
+  }
+  if (longForm) {
+    budget = Math.max(budget, LONG_FORM_CHAT_MAX_TOKENS);
+  }
+  if (highOutputModel && (longForm || conversationChars >= 600)) {
+    budget = Math.max(budget, HIGH_OUTPUT_CHAT_MAX_TOKENS);
+  }
+  if (highOutputModel && longForm) {
+    budget = Math.max(budget, HIGH_OUTPUT_LONG_FORM_CHAT_MAX_TOKENS);
+  }
+  if (conversationChars >= 2400) {
+    budget += 1024;
+  } else if (conversationChars >= 1200) {
+    budget += 512;
+  }
+  return Math.min(CHAT_MAX_TOKEN_HARD_CAP, roundChatTokenBudget(budget));
 }
 
 function createConversationId() {
@@ -381,42 +486,6 @@ function scrollChatViewportToBottom(container: HTMLDivElement | null, behavior: 
   }
 }
 
-function writeTextToClipboard(text: string) {
-  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-    return navigator.clipboard.writeText(text);
-  }
-
-  return new Promise<void>((resolve, reject) => {
-    if (typeof document === "undefined") {
-      reject(new Error("当前环境不支持复制"));
-      return;
-    }
-
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.setAttribute("readonly", "true");
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    textarea.style.pointerEvents = "none";
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-
-    try {
-      const copied = document.execCommand("copy");
-      document.body.removeChild(textarea);
-      if (!copied) {
-        reject(new Error("复制失败"));
-        return;
-      }
-      resolve();
-    } catch (error) {
-      document.body.removeChild(textarea);
-      reject(error instanceof Error ? error : new Error("复制失败"));
-    }
-  });
-}
-
 function detectAttachmentKind(mimeType: string, fileName: string): ChatAttachmentKind {
   const normalizedMime = mimeType.trim().toLowerCase();
   if (normalizedMime.startsWith("image/")) {
@@ -608,6 +677,7 @@ function buildMessagesFromHistory(job?: AIJob | null, artifacts: AIJobArtifact[]
   });
 
   const outputPayload = (job.outputPayload || {}) as Record<string, unknown>;
+  const completionWarning = resolveCompletionWarning(outputPayload);
   const outputText =
     (typeof outputPayload.text === "string" && outputPayload.text.trim()) ||
     artifacts.find((item) => item.artifactType === "chat_response")?.textContent ||
@@ -630,6 +700,9 @@ function buildMessagesFromHistory(job?: AIJob | null, artifacts: AIJobArtifact[]
       state: job.status === "failed" ? "error" : "done",
       modelName: getModelDisplayName(job),
       jobId: job.id,
+      completionState: completionWarning.completionState || null,
+      warningCodes: completionWarning.warningCodes,
+      warningMessage: completionWarning.warningMessage || null,
     });
   }
 
@@ -756,8 +829,38 @@ function appendStreamError(existingContent: string, nextError: string) {
   return `${normalizedContent}\n\n[流式连接已中断] ${normalizedError}`;
 }
 
-function getAssistantDisplayContent(message: ChatMessage) {
-  return message.content;
+function toWarningCodes(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function defaultCompletionWarningMessage(warningCodes: string[]) {
+  if (warningCodes.includes("reasoning_only_output")) {
+    return "仅收到思考过程，未收到最终答复";
+  }
+  return "本次回复已结束，但模型未返回完整终止信号，内容可能不完整";
+}
+
+function resolveCompletionWarning(payload: Record<string, unknown>) {
+  const completionState =
+    typeof payload.completionState === "string" ? payload.completionState.trim() : "";
+  const warningCodes = toWarningCodes(payload.warningCodes);
+  const warningMessage =
+    typeof payload.warningMessage === "string" ? payload.warningMessage.trim() : "";
+  if (completionState !== "incomplete") {
+    return {
+      completionState: completionState || undefined,
+      warningCodes,
+      warningMessage: warningMessage || undefined,
+    };
+  }
+  return {
+    completionState,
+    warningCodes,
+    warningMessage: warningMessage || defaultCompletionWarningMessage(warningCodes),
+  };
 }
 
 function parseThinkContent(fullText: string) {
@@ -784,8 +887,10 @@ function ThinkBlock({ content, isStreaming }: { content: string; isStreaming: bo
 
   useEffect(() => {
     if (!isStreaming) {
-      setCollapsed(true);
+      const frame = window.requestAnimationFrame(() => setCollapsed(true));
+      return () => window.cancelAnimationFrame(frame);
     }
+    return undefined;
   }, [isStreaming]);
 
   useEffect(() => {
@@ -935,155 +1040,6 @@ function AttachmentThumbnail({ href, fileName }: { href: string; fileName: strin
       className="h-11 w-11 rounded-xl object-cover"
       onError={() => setFailed(true)}
     />
-  );
-}
-
-function CodeCopyButton({ code }: { code: string }) {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = useCallback(() => {
-    void writeTextToClipboard(code)
-      .then(() => {
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 2000);
-      })
-      .catch(() => {
-        setCopied(false);
-      });
-  }, [code]);
-  return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      className="inline-flex items-center gap-1 rounded-lg bg-white/10 px-2 py-1 text-[11px] font-medium text-text-muted transition-colors hover:bg-white/20 hover:text-text-primary"
-    >
-      {copied ? <Check className="h-3 w-3" /> : <Clipboard className="h-3 w-3" />}
-      {copied ? "已复制" : "复制"}
-    </button>
-  );
-}
-
-function ChatMarkdown({ content }: { content: string }) {
-  const normalized = content
-    .replace(/([^\n])(#{1,6}\s)/g, "$1\n\n$2")
-    .replace(/([^\n])(```)/g, "$1\n\n$2")
-    .replace(/(```\w*\n[\s\S]*?```)\s*([^\n])/g, "$1\n\n$2")
-    .replace(/([^\n])(\n?- )/g, "$1\n$2")
-    .replace(/([^\n])(\n?\d+\.\s)/g, "$1\n$2")
-    .replace(/([^\n])(>\s)/g, "$1\n\n$2")
-    .replace(/([^\n])(\n?\|)/g, "$1\n$2");
-
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        code({ className, children, ...rest }) {
-          const match = /language-(\w+)/.exec(className || "");
-          const codeString = String(children).replace(/\n$/, "");
-          if (match) {
-            return (
-              <div className="group/code my-3 overflow-hidden rounded-xl border border-border bg-[#1e1e2e]">
-                <div className="flex items-center justify-between border-b border-white/10 px-4 py-2">
-                  <span className="text-[11px] font-medium uppercase tracking-wider text-text-muted">
-                    {match[1]}
-                  </span>
-                  <CodeCopyButton code={codeString} />
-                </div>
-                <SyntaxHighlighter
-                  style={oneDark}
-                  language={match[1]}
-                  PreTag="div"
-                  customStyle={{
-                    margin: 0,
-                    padding: "1rem",
-                    background: "transparent",
-                    fontSize: "0.8125rem",
-                    lineHeight: "1.7",
-                  }}
-                >
-                  {codeString}
-                </SyntaxHighlighter>
-              </div>
-            );
-          }
-          return (
-            <code
-              className="rounded-md bg-white/10 px-1.5 py-0.5 text-[0.8125rem] font-mono text-accent"
-              {...rest}
-            >
-              {children}
-            </code>
-          );
-        },
-        p({ children }) {
-          return <p className="my-2 leading-7">{children}</p>;
-        },
-        h1({ children }) {
-          return <h1 className="mb-3 mt-5 text-lg font-bold text-text-primary">{children}</h1>;
-        },
-        h2({ children }) {
-          return <h2 className="mb-2 mt-4 text-base font-bold text-text-primary">{children}</h2>;
-        },
-        h3({ children }) {
-          return <h3 className="mb-2 mt-3 text-sm font-bold text-text-primary">{children}</h3>;
-        },
-        ul({ children }) {
-          return <ul className="my-2 list-disc space-y-1 pl-5">{children}</ul>;
-        },
-        ol({ children }) {
-          return <ol className="my-2 list-decimal space-y-1 pl-5">{children}</ol>;
-        },
-        li({ children }) {
-          return <li className="leading-7">{children}</li>;
-        },
-        blockquote({ children }) {
-          return (
-            <blockquote className="my-3 border-l-3 border-accent/60 pl-4 text-text-muted italic">
-              {children}
-            </blockquote>
-          );
-        },
-        table({ children }) {
-          return (
-            <div className="my-3 overflow-x-auto rounded-xl border border-border">
-              <table className="w-full text-sm">{children}</table>
-            </div>
-          );
-        },
-        thead({ children }) {
-          return <thead className="border-b border-border bg-white/5">{children}</thead>;
-        },
-        th({ children }) {
-          return (
-            <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-text-muted">
-              {children}
-            </th>
-          );
-        },
-        td({ children }) {
-          return <td className="border-t border-border/50 px-3 py-2">{children}</td>;
-        },
-        a({ href, children }) {
-          return (
-            <a
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:text-accent/80"
-            >
-              {children}
-            </a>
-          );
-        },
-        strong({ children }) {
-          return <strong className="font-semibold text-text-primary">{children}</strong>;
-        },
-        hr() {
-          return <hr className="my-4 border-border" />;
-        },
-      }}
-    >
-      {normalized}
-    </ReactMarkdown>
   );
 }
 
@@ -1343,8 +1299,12 @@ export default function ChatPage() {
     streamAbortRef.current = controller;
 
     const outboundAttachments = serializeAttachments(draftAttachments);
-    const requestedMaxTokens =
-      draftAttachments.length > 0 ? ATTACHMENT_HEAVY_CHAT_MAX_TOKENS : DEFAULT_CHAT_MAX_TOKENS;
+    const requestedMaxTokens = resolveRequestedChatMaxTokens(
+      activeModel,
+      messages,
+      nextUserMessage,
+      draftAttachments,
+    );
     const activeConversationId = conversationId || (selectedJob ? getConversationKey(selectedJob) : "") || createConversationId();
     setDraft("");
     setDraftAttachments([]);
@@ -1440,6 +1400,7 @@ export default function ChatPage() {
 
         if (event === "done") {
           const finalText = (payload.text || receivedText).trim();
+          const completionWarning = resolveCompletionWarning(payload as Record<string, unknown>);
           setMessages((previous) =>
             previous.map((item) =>
               item.id === assistantMessageId
@@ -1450,6 +1411,9 @@ export default function ChatPage() {
                     state: "done",
                     timestamp: new Date().toISOString(),
                     jobId: createdJobId || item.jobId,
+                    completionState: completionWarning.completionState || null,
+                    warningCodes: completionWarning.warningCodes,
+                    warningMessage: completionWarning.warningMessage || null,
                   }
                 : item,
             ),
@@ -1702,7 +1666,18 @@ export default function ChatPage() {
                               />
                             )}
                             {parsedContent.text.trim() ? (
-                              <ChatMarkdown content={parsedContent.text.trim()} />
+                              <ChatMarkdown
+                                content={parsedContent.text.trim()}
+                                allowMermaid={message.state === "done"}
+                              />
+                            ) : null}
+                            {message.state === "done" &&
+                            message.completionState === "incomplete" &&
+                            message.warningMessage ? (
+                              <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs leading-6 text-amber-200">
+                                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+                                <span>{message.warningMessage}</span>
+                              </div>
                             ) : null}
                           </>
                         ) : (

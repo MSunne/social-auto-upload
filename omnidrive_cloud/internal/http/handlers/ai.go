@@ -81,17 +81,22 @@ type uploadAIArtifactURLRequest struct {
 }
 
 type chatStreamResponse struct {
-	JobID        string         `json:"jobId,omitempty"`
-	ModelName    string         `json:"modelName,omitempty"`
-	Delta        string         `json:"delta,omitempty"`
-	Text         string         `json:"text,omitempty"`
-	Role         string         `json:"role,omitempty"`
-	Usage        map[string]any `json:"usage,omitempty"`
-	FinishReason string         `json:"finishReason,omitempty"`
-	Progressed   bool           `json:"progressed,omitempty"`
-	Done         bool           `json:"done,omitempty"`
-	Ping         bool           `json:"ping,omitempty"`
-	Error        string         `json:"error,omitempty"`
+	JobID             string                          `json:"jobId,omitempty"`
+	ModelName         string                          `json:"modelName,omitempty"`
+	Delta             string                          `json:"delta,omitempty"`
+	Text              string                          `json:"text,omitempty"`
+	Role              string                          `json:"role,omitempty"`
+	Usage             map[string]any                  `json:"usage,omitempty"`
+	FinishReason      string                          `json:"finishReason,omitempty"`
+	CompletionState   string                          `json:"completionState,omitempty"`
+	WarningCodes      []string                        `json:"warningCodes,omitempty"`
+	WarningMessage    string                          `json:"warningMessage,omitempty"`
+	ProtocolFamily    string                          `json:"protocolFamily,omitempty"`
+	StreamDiagnostics *aiclient.ChatStreamDiagnostics `json:"streamDiagnostics,omitempty"`
+	Progressed        bool                            `json:"progressed,omitempty"`
+	Done              bool                            `json:"done,omitempty"`
+	Ping              bool                            `json:"ping,omitempty"`
+	Error             string                          `json:"error,omitempty"`
 }
 
 type aiJobPrimaryTarget struct {
@@ -488,6 +493,25 @@ func buildStreamChatCompletionMessage(base string, billing *store.ApplyUsageBill
 	default:
 		return base
 	}
+}
+
+func buildStreamChatCompletionBaseMessage(result *aiclient.ChatResult) string {
+	if result == nil || strings.TrimSpace(result.CompletionState) != aiclient.ChatCompletionStateIncomplete {
+		return "聊天已完成"
+	}
+	if hasWarningCode(result.WarningCodes, aiclient.ChatWarningReasoningOnlyOutput) {
+		return "聊天已完成（仅收到思考过程，未收到最终答复）"
+	}
+	return "聊天已完成（内容可能不完整）"
+}
+
+func hasWarningCode(values []string, target string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == strings.TrimSpace(target) {
+			return true
+		}
+	}
+	return false
 }
 
 // 处理计费Result额度Ptr相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
@@ -1228,6 +1252,7 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 	if model.APIKey != nil {
 		req.APIKey = strings.TrimSpace(*model.APIKey)
 	}
+	req.ChatProtocol = model.ChatProtocol
 
 	provider, err := aiclient.NewAPIYIProvider(h.app.Config)
 	if err != nil {
@@ -1259,13 +1284,18 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 		if chunk.Done {
 			sawDoneEvent = true
 			if err := writeStreamEvent("done", chatStreamResponse{
-				JobID:        jobID,
-				ModelName:    payload.ModelName,
-				Text:         chunk.Text,
-				Role:         chunk.Role,
-				Usage:        chunk.Usage,
-				FinishReason: chunk.FinishReason,
-				Done:         true,
+				JobID:             jobID,
+				ModelName:         payload.ModelName,
+				Text:              chunk.Text,
+				Role:              chunk.Role,
+				Usage:             chunk.Usage,
+				FinishReason:      chunk.FinishReason,
+				CompletionState:   chunk.CompletionState,
+				WarningCodes:      chunk.WarningCodes,
+				WarningMessage:    chunk.WarningMessage,
+				ProtocolFamily:    chunk.ProtocolFamily,
+				StreamDiagnostics: chunk.StreamDiagnostics,
+				Done:              true,
 			}); err != nil {
 				streamWriteFailed = true
 				h.app.Logger.Warn("stream chat failed to flush terminal SSE chunk, continuing to persist completion",
@@ -1298,13 +1328,14 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 		}
 		chunkCount++
 		if err := writeStreamEvent("delta", chatStreamResponse{
-			JobID:        jobID,
-			ModelName:    payload.ModelName,
-			Delta:        chunk.Delta,
-			Text:         chunk.Text,
-			Role:         chunk.Role,
-			Usage:        chunk.Usage,
-			FinishReason: chunk.FinishReason,
+			JobID:          jobID,
+			ModelName:      payload.ModelName,
+			Delta:          chunk.Delta,
+			Text:           chunk.Text,
+			Role:           chunk.Role,
+			Usage:          chunk.Usage,
+			FinishReason:   chunk.FinishReason,
+			ProtocolFamily: chunk.ProtocolFamily,
 		}); err != nil {
 			streamWriteFailed = true
 			h.app.Logger.Warn("stream chat failed to flush delta SSE chunk, suppressing further stream writes",
@@ -1347,13 +1378,18 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 	}
 	if result != nil && !sawDoneEvent && canWriteStream() {
 		if err := writeStreamEvent("done", chatStreamResponse{
-			JobID:        jobID,
-			ModelName:    payload.ModelName,
-			Text:         result.Text,
-			Role:         result.Role,
-			Usage:        result.Usage,
-			FinishReason: result.FinishReason,
-			Done:         true,
+			JobID:             jobID,
+			ModelName:         payload.ModelName,
+			Text:              result.Text,
+			Role:              result.Role,
+			Usage:             result.Usage,
+			FinishReason:      result.FinishReason,
+			CompletionState:   result.CompletionState,
+			WarningCodes:      result.WarningCodes,
+			WarningMessage:    result.WarningMessage,
+			ProtocolFamily:    result.ProtocolFamily,
+			StreamDiagnostics: result.StreamDiagnostics,
+			Done:              true,
 		}); err != nil {
 			h.app.Logger.Warn("stream chat failed to flush terminal SSE chunk after provider completion",
 				"job_id", jobID,
@@ -1381,16 +1417,21 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 	finishedAt := time.Now().UTC()
 
 	responsePayload := mustJSONBytes(map[string]any{
-		"text":         result.Text,
-		"role":         result.Role,
-		"usage":        result.Usage,
-		"finishReason": result.FinishReason,
-		"attachments":  attachmentRefs,
-		"billing":      billingResultToPayload(billing),
-		"completedAt":  finishedAt.Format(time.RFC3339),
+		"text":              result.Text,
+		"role":              result.Role,
+		"usage":             result.Usage,
+		"finishReason":      result.FinishReason,
+		"completionState":   result.CompletionState,
+		"warningCodes":      result.WarningCodes,
+		"warningMessage":    result.WarningMessage,
+		"protocolFamily":    result.ProtocolFamily,
+		"streamDiagnostics": result.StreamDiagnostics,
+		"attachments":       attachmentRefs,
+		"billing":           billingResultToPayload(billing),
+		"completedAt":       finishedAt.Format(time.RFC3339),
 	})
 	successStatus := "success"
-	successMessage := buildStreamChatCompletionMessage("聊天已完成", billing)
+	successMessage := buildStreamChatCompletionMessage(buildStreamChatCompletionBaseMessage(result), billing)
 	if _, err := h.app.Store.UpdateAIJob(persistCtx, jobID, user.ID, store.UpdateAIJobInput{
 		Status:          &successStatus,
 		OutputPayload:   responsePayload,
@@ -1411,8 +1452,13 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 			Title:        stringPtr("助手回复"),
 			TextContent:  stringPtr(result.Text),
 			Payload: mustJSONBytes(map[string]any{
-				"usage":        result.Usage,
-				"finishReason": result.FinishReason,
+				"usage":             result.Usage,
+				"finishReason":      result.FinishReason,
+				"completionState":   result.CompletionState,
+				"warningCodes":      result.WarningCodes,
+				"warningMessage":    result.WarningMessage,
+				"protocolFamily":    result.ProtocolFamily,
+				"streamDiagnostics": result.StreamDiagnostics,
 			}),
 		}}); err != nil {
 			h.app.Logger.Warn("stream chat failed to persist assistant response artifact", "job_id", jobID, "error", err)
@@ -1507,11 +1553,15 @@ func classifyStreamChatTermination(result *aiclient.ChatResult, err error, strea
 	if result == nil {
 		return "done"
 	}
+	if strings.TrimSpace(result.CompletionState) == aiclient.ChatCompletionStateIncomplete {
+		return "incomplete"
+	}
+	if result.StreamDiagnostics != nil && strings.TrimSpace(result.StreamDiagnostics.StopReason) != "" {
+		return "stop_reason"
+	}
 	switch strings.TrimSpace(result.FinishReason) {
 	case "":
 		return "done"
-	case "stream_eof":
-		return "eof_after_delta"
 	default:
 		return "finish_reason"
 	}

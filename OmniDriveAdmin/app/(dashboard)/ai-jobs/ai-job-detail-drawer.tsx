@@ -109,6 +109,45 @@ function stringifyPayload(value: unknown) {
   }
 }
 
+type ChatCompletionDiagnostics = {
+  completionState?: string;
+  protocolFamily?: string;
+  warningCodes: string[];
+  warningMessage?: string;
+  streamDiagnostics?: Record<string, unknown>;
+};
+
+function extractChatCompletionDiagnostics(outputPayload: unknown): ChatCompletionDiagnostics | null {
+  if (!outputPayload || typeof outputPayload !== "object") {
+    return null;
+  }
+  const payload = outputPayload as Record<string, unknown>;
+  const completionState =
+    typeof payload.completionState === "string" ? payload.completionState.trim() : "";
+  const protocolFamily =
+    typeof payload.protocolFamily === "string" ? payload.protocolFamily.trim() : "";
+  const warningCodes = Array.isArray(payload.warningCodes)
+    ? payload.warningCodes.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+  const warningMessage =
+    typeof payload.warningMessage === "string" ? payload.warningMessage.trim() : "";
+  const streamDiagnostics =
+    payload.streamDiagnostics && typeof payload.streamDiagnostics === "object"
+      ? (payload.streamDiagnostics as Record<string, unknown>)
+      : undefined;
+
+  if (!completionState && !protocolFamily && warningCodes.length === 0 && !warningMessage && !streamDiagnostics) {
+    return null;
+  }
+  return {
+    completionState: completionState || undefined,
+    protocolFamily: protocolFamily || undefined,
+    warningCodes,
+    warningMessage: warningMessage || undefined,
+    streamDiagnostics,
+  };
+}
+
 function pickArtifactLabel(artifact: AIJobArtifact) {
   return artifact.fileName || artifact.title || artifact.artifactType || artifact.artifactKey;
 }
@@ -395,6 +434,7 @@ function DrawerBody({
   const publishTargetSummary = formatPublishTargetSummary(job.inputPayload);
   const scheduleMeta = extractJobScheduleMeta(job);
   const scheduleSummary = describeJobSchedule(scheduleMeta);
+  const completionDiagnostics = extractChatCompletionDiagnostics(job.outputPayload);
 
   return (
     <div className="space-y-5">
@@ -404,6 +444,34 @@ function DrawerBody({
           <div>
             <p className="font-medium">最近一次异常 / 返回信息</p>
             <p className="mt-1 break-all leading-6">{mainMessage}</p>
+          </div>
+        </div>
+      ) : null}
+
+      {completionDiagnostics ? (
+        <div
+          className={`flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm ${
+            completionDiagnostics.completionState === "incomplete"
+              ? "border-amber-500/20 bg-amber-500/10 text-amber-700"
+              : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)]"
+          }`}
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+          <div className="space-y-1.5">
+            <p className="font-medium">流式完成诊断</p>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs leading-6">
+              <span>完成状态：{completionDiagnostics.completionState || "—"}</span>
+              <span>协议：{completionDiagnostics.protocolFamily || "—"}</span>
+              <span>告警：{completionDiagnostics.warningCodes.length > 0 ? completionDiagnostics.warningCodes.join(", ") : "无"}</span>
+            </div>
+            {completionDiagnostics.warningMessage ? (
+              <p className="break-all leading-6">{completionDiagnostics.warningMessage}</p>
+            ) : null}
+            {completionDiagnostics.streamDiagnostics ? (
+              <pre className="overflow-x-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-3 text-xs leading-6 text-[var(--color-text-secondary)]">
+                {stringifyPayload(completionDiagnostics.streamDiagnostics)}
+              </pre>
+            ) : null}
           </div>
         </div>
       ) : null}

@@ -20,6 +20,7 @@ const DEFAULT_FORM = {
   modelAlias: "",
   category: "image",
   billingMode: "per_call",
+  chatProtocol: "auto",
   baseUrl: "",
   apiKey: "",
   rawRate: "",
@@ -51,6 +52,12 @@ const BILLING_MODE_LABELS: Record<string, string> = {
   per_token: "按 Token 计费",
 };
 
+const CHAT_PROTOCOL_LABELS: Record<string, string> = {
+  auto: "自动识别",
+  openai_chat_completions: "OpenAI Chat Completions",
+  anthropic_messages: "Anthropic Messages",
+};
+
 function toCommaSeparated(values?: string[]) {
   return values && values.length > 0 ? values.join(", ") : "";
 }
@@ -73,6 +80,7 @@ function toFormState(model: AIModel | null) {
     modelAlias: model.modelAlias || model.modelName,
     category: model.category,
     billingMode: model.billingMode || (model.category === "chat" ? "per_token" : "per_call"),
+    chatProtocol: model.chatProtocol || "auto",
     baseUrl: model.baseUrl || "",
     apiKey: model.apiKey || "",
     rawRate: model.rawRate !== undefined ? String(model.rawRate) : "",
@@ -185,6 +193,7 @@ function AIModelDrawerContent({
       modelAlias,
       category: form.category,
       billingMode: form.billingMode,
+      chatProtocol: form.category === "chat" ? form.chatProtocol : "auto",
       modelType: form.category,
       baseUrl: form.baseUrl.trim() || undefined,
       apiKey: isCreate ? form.apiKey.trim() || undefined : form.apiKey.trim(),
@@ -394,6 +403,28 @@ function AIModelDrawerContent({
                   {form.isEnabled ? "启用 (enabled)" : "停用 (disabled)"}
                 </span>
               </div>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-sm text-[var(--color-text-secondary)] mb-1.5">
+                聊天协议
+              </label>
+              <select
+                value={form.chatProtocol}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, chatProtocol: e.target.value }))
+                }
+                disabled={form.category !== "chat"}
+                className="w-full px-3 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm focus:outline-none focus:border-[var(--color-accent)] disabled:opacity-60"
+              >
+                {Object.entries(CHAT_PROTOCOL_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label} ({value})
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                聊天模型默认走自动识别。只有特殊渠道协议不稳定时，才建议在这里强制覆盖。
+              </p>
             </div>
           </div>
 

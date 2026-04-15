@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -21,30 +22,99 @@ type ChatMessage struct {
 }
 
 type ChatRequest struct {
-	Model       string        `json:"model"`
-	BaseURL     string        `json:"baseUrl,omitempty"`
-	APIKey      string        `json:"apiKey,omitempty"`
-	Messages    []ChatMessage `json:"messages"`
-	Temperature *float64      `json:"temperature,omitempty"`
-	MaxTokens   *int          `json:"maxTokens,omitempty"`
+	Model        string        `json:"model"`
+	BaseURL      string        `json:"baseUrl,omitempty"`
+	APIKey       string        `json:"apiKey,omitempty"`
+	ChatProtocol string        `json:"chatProtocol,omitempty"`
+	Messages     []ChatMessage `json:"messages"`
+	Temperature  *float64      `json:"temperature,omitempty"`
+	MaxTokens    *int          `json:"maxTokens,omitempty"`
+}
+
+const (
+	ChatProtocolAuto                  = "auto"
+	ChatProtocolOpenAIChatCompletions = "openai_chat_completions"
+	ChatProtocolAnthropicMessages     = "anthropic_messages"
+
+	ChatCompletionStateComplete   = "complete"
+	ChatCompletionStateIncomplete = "incomplete"
+
+	ChatWarningMissingFinishReason   = "missing_finish_reason"
+	ChatWarningMissingStopReason     = "missing_stop_reason"
+	ChatWarningReasoningOnlyOutput   = "reasoning_only_output"
+	ChatWarningStreamEOFAfterContent = "stream_eof_after_content"
+)
+
+type ChatStreamDiagnostics struct {
+	SawTerminalMarker   bool   `json:"sawTerminalMarker,omitempty"`
+	FinishReason        string `json:"finishReason,omitempty"`
+	StopReason          string `json:"stopReason,omitempty"`
+	ReasoningDeltaCount int    `json:"reasoningDeltaCount,omitempty"`
+	AnswerDeltaCount    int    `json:"answerDeltaCount,omitempty"`
 }
 
 type ChatResult struct {
-	Text         string         `json:"text"`
-	Role         string         `json:"role"`
-	Usage        map[string]any `json:"usage,omitempty"`
-	FinishReason string         `json:"finishReason,omitempty"`
-	RawResponse  []byte         `json:"rawResponse,omitempty"`
+	Text              string                 `json:"text"`
+	Role              string                 `json:"role"`
+	Usage             map[string]any         `json:"usage,omitempty"`
+	FinishReason      string                 `json:"finishReason,omitempty"`
+	CompletionState   string                 `json:"completionState,omitempty"`
+	WarningCodes      []string               `json:"warningCodes,omitempty"`
+	WarningMessage    string                 `json:"warningMessage,omitempty"`
+	ProtocolFamily    string                 `json:"protocolFamily,omitempty"`
+	StreamDiagnostics *ChatStreamDiagnostics `json:"streamDiagnostics,omitempty"`
+	RawResponse       []byte                 `json:"rawResponse,omitempty"`
 }
 
 type ChatStreamChunk struct {
-	Delta        string         `json:"delta,omitempty"`
-	Text         string         `json:"text,omitempty"`
-	Role         string         `json:"role,omitempty"`
-	Usage        map[string]any `json:"usage,omitempty"`
-	FinishReason string         `json:"finishReason,omitempty"`
-	Progressed   bool           `json:"progressed,omitempty"`
-	Done         bool           `json:"done,omitempty"`
+	Delta             string                 `json:"delta,omitempty"`
+	Text              string                 `json:"text,omitempty"`
+	Role              string                 `json:"role,omitempty"`
+	Usage             map[string]any         `json:"usage,omitempty"`
+	FinishReason      string                 `json:"finishReason,omitempty"`
+	CompletionState   string                 `json:"completionState,omitempty"`
+	WarningCodes      []string               `json:"warningCodes,omitempty"`
+	WarningMessage    string                 `json:"warningMessage,omitempty"`
+	ProtocolFamily    string                 `json:"protocolFamily,omitempty"`
+	StreamDiagnostics *ChatStreamDiagnostics `json:"streamDiagnostics,omitempty"`
+	Progressed        bool                   `json:"progressed,omitempty"`
+	Done              bool                   `json:"done,omitempty"`
+}
+
+func NormalizeChatProtocol(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", ChatProtocolAuto:
+		return ChatProtocolAuto
+	case ChatProtocolOpenAIChatCompletions:
+		return ChatProtocolOpenAIChatCompletions
+	case ChatProtocolAnthropicMessages:
+		return ChatProtocolAnthropicMessages
+	default:
+		return ""
+	}
+}
+
+func normalizeChatWarningCodes(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	items := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		items = append(items, trimmed)
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	return items
 }
 
 type MediaInput struct {

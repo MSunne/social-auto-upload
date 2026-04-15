@@ -60,6 +60,13 @@ function renderSupportedFileTypes(model: AIModel) {
   return model.supportedFileTypes.join(", ");
 }
 
+function renderChatProtocol(model: AIModel) {
+  if (model.category !== "chat") {
+    return null;
+  }
+  return model.chatProtocol || "auto";
+}
+
 export function AIModelsView() {
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState("");
@@ -265,6 +272,11 @@ export function AIModelsView() {
                           {BILLING_MODE_LABELS[model.billingMode] ||
                             model.billingMode}
                         </div>
+                        {renderChatProtocol(model) ? (
+                          <div className="text-xs text-[var(--color-text-secondary)]">
+                            协议：{renderChatProtocol(model)}
+                          </div>
+                        ) : null}
                         {renderPricingSummary(model)}
                         <div
                           className="text-xs text-[var(--color-text-secondary)] max-w-[320px] truncate"
