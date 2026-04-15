@@ -79,6 +79,17 @@ func computeDeviceBridgeStatus(lastSeenAt *time.Time, runtimePayload []byte) str
 	return "unknown"
 }
 
+// 根据设备替换元数据推导身份状态，区分当前身份与已被替换的历史身份。
+func computeDeviceIdentityState(supersededByDeviceID *string, supersededAt *time.Time) string {
+	if supersededAt != nil {
+		return "superseded"
+	}
+	if supersededByDeviceID != nil && strings.TrimSpace(*supersededByDeviceID) != "" {
+		return "superseded"
+	}
+	return "active"
+}
+
 // 根据运行时载荷推导设备在线判定窗口，避免不同心跳频率下出现误判。
 func onlineWindowForRuntimePayload(runtimePayload []byte) time.Duration {
 	if len(runtimePayload) == 0 {
@@ -753,6 +764,8 @@ type UpdateDigitalHumanTaskExecutionInput struct {
 	Status                *string
 	RemoteTaskID          *string
 	RemoteTaskTouched     bool
+	RequestPayload        []byte
+	RequestPayloadTouched bool
 	ResultAsset           []byte
 	ResultAssetTouched    bool
 	ActualDurationSeconds *int

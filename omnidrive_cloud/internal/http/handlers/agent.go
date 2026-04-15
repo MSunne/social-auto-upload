@@ -219,6 +219,31 @@ func NewAgentHandler(app *appstate.App) *AgentHandler {
 	return &AgentHandler{app: app}
 }
 
+func loadAgentDeviceByIdentity(ctx context.Context, app *appstate.App, deviceCode string, agentKey string) (*domain.Device, error) {
+	return app.Store.GetDeviceByIdentity(ctx, strings.TrimSpace(deviceCode), strings.TrimSpace(agentKey))
+}
+
+func requireAgentDeviceByIdentity(w http.ResponseWriter, ctx context.Context, app *appstate.App, deviceCode string, agentKey string, requireClaimed bool, requireEnabled bool) (*domain.Device, bool) {
+	device, err := loadAgentDeviceByIdentity(ctx, app, deviceCode, agentKey)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device")
+		return nil, false
+	}
+	if device == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return nil, false
+	}
+	if requireClaimed && (device.OwnerUserID == nil || strings.TrimSpace(*device.OwnerUserID) == "") {
+		render.Error(w, http.StatusConflict, "Device is not claimed")
+		return nil, false
+	}
+	if requireEnabled && !device.IsEnabled {
+		render.Error(w, http.StatusConflict, "Device is disabled")
+		return nil, false
+	}
+	return device, true
+}
+
 // 处理Agent心跳接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	var payload heartbeatRequest
@@ -236,17 +261,8 @@ func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to check device")
-		return
-	}
-	if existing != nil && existing.AgentKey != "" && existing.AgentKey != payload.AgentKey {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
-		return
-	}
-
 	var runtimePayload []byte
+	var err error
 	if payload.RuntimePayload != nil {
 		runtimePayload, err = json.Marshal(payload.RuntimePayload)
 		if err != nil {
@@ -283,25 +299,8 @@ func (h *AgentHandler) IssueDeviceSession(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), deviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
-		return
-	}
-	if device.OwnerUserID == nil || strings.TrimSpace(*device.OwnerUserID) == "" {
-		render.Error(w, http.StatusConflict, "Device is not bound to any OmniDrive user")
-		return
-	}
-	if !device.IsEnabled {
-		render.Error(w, http.StatusConflict, "Device is disabled")
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, deviceCode, agentKey, true, true)
+	if !ok {
 		return
 	}
 
@@ -373,17 +372,8 @@ func (h *AgentHandler) SyncAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, payload.DeviceCode, agentKey, true, false)
+	if !ok {
 		return
 	}
 
@@ -447,21 +437,8 @@ func (h *AgentHandler) ListAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), deviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
-		return
-	}
-	if !device.IsEnabled {
-		render.Error(w, http.StatusConflict, "Device is disabled")
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, deviceCode, agentKey, true, true)
+	if !ok {
 		return
 	}
 
@@ -485,21 +462,8 @@ func (h *AgentHandler) ListLoginTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), deviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
-		return
-	}
-	if !device.IsEnabled {
-		render.Error(w, http.StatusConflict, "Device is disabled")
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, deviceCode, agentKey, true, true)
+	if !ok {
 		return
 	}
 
@@ -638,21 +602,8 @@ func (h *AgentHandler) ListPublishTasks(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), deviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
-		return
-	}
-	if !device.IsEnabled {
-		render.Error(w, http.StatusConflict, "Device is disabled")
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, deviceCode, agentKey, true, true)
+	if !ok {
 		return
 	}
 
@@ -822,21 +773,8 @@ func (h *AgentHandler) ListAIJobsDelta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), deviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
-		return
-	}
-	if !device.IsEnabled {
-		render.Error(w, http.StatusConflict, "Device is disabled")
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, deviceCode, agentKey, true, true)
+	if !ok {
 		return
 	}
 
@@ -923,27 +861,8 @@ func (h *AgentHandler) ListSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), deviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
-		return
-	}
-	if !device.IsEnabled {
-		render.Error(w, http.StatusConflict, "Device is disabled")
-		return
-	}
-	if device.OwnerUserID == nil || strings.TrimSpace(*device.OwnerUserID) == "" {
-		render.JSON(w, http.StatusOK, map[string]any{
-			"items": []domain.AgentSkillPackage{},
-		})
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, deviceCode, agentKey, true, true)
+	if !ok {
 		return
 	}
 
@@ -1080,17 +999,8 @@ func (h *AgentHandler) AckRetiredSkills(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, payload.DeviceCode, agentKey, true, false)
+	if !ok {
 		return
 	}
 
@@ -1152,17 +1062,8 @@ func (h *AgentHandler) AckRetiredAccounts(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, payload.DeviceCode, agentKey, true, false)
+	if !ok {
 		return
 	}
 
@@ -1217,21 +1118,8 @@ func (h *AgentHandler) SyncSkillStates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
-		return
-	}
-	if device.OwnerUserID == nil || strings.TrimSpace(*device.OwnerUserID) == "" {
-		render.Error(w, http.StatusConflict, "Device is not claimed")
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, payload.DeviceCode, agentKey, true, false)
+	if !ok {
 		return
 	}
 
@@ -1295,21 +1183,8 @@ func (h *AgentHandler) ListAIJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), deviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
-		return
-	}
-	if !device.IsEnabled {
-		render.Error(w, http.StatusConflict, "Device is disabled")
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, deviceCode, agentKey, true, true)
+	if !ok {
 		return
 	}
 
@@ -1384,25 +1259,8 @@ func (h *AgentHandler) SyncAIJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
-		return
-	}
-	if !device.IsEnabled {
-		render.Error(w, http.StatusConflict, "Device is disabled")
-		return
-	}
-	if device.OwnerUserID == nil || strings.TrimSpace(*device.OwnerUserID) == "" {
-		render.Error(w, http.StatusConflict, "Device is not claimed")
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, payload.DeviceCode, agentKey, true, true)
+	if !ok {
 		return
 	}
 
@@ -1570,17 +1428,8 @@ func (h *AgentHandler) UpdateAIJobDelivery(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, payload.DeviceCode, agentKey, true, false)
+	if !ok {
 		return
 	}
 
@@ -1638,21 +1487,8 @@ func (h *AgentHandler) PublishTaskPackage(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), deviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
-		return
-	}
-	if !device.IsEnabled {
-		render.Error(w, http.StatusConflict, "Device is disabled")
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, deviceCode, agentKey, true, true)
+	if !ok {
 		return
 	}
 
@@ -1742,21 +1578,8 @@ func (h *AgentHandler) ClaimPublishTask(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
-		return
-	}
-	if !device.IsEnabled {
-		render.Error(w, http.StatusConflict, "Device is disabled")
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, payload.DeviceCode, agentKey, true, true)
+	if !ok {
 		return
 	}
 
@@ -1858,17 +1681,8 @@ func (h *AgentHandler) RenewPublishTaskLease(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, payload.DeviceCode, agentKey, true, false)
+	if !ok {
 		return
 	}
 
@@ -1912,17 +1726,8 @@ func (h *AgentHandler) ReleasePublishTaskLease(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, payload.DeviceCode, agentKey, true, false)
+	if !ok {
 		return
 	}
 
@@ -2013,17 +1818,8 @@ func (h *AgentHandler) SyncPublishTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, payload.DeviceCode, agentKey, true, false)
+	if !ok {
 		return
 	}
 

@@ -68,6 +68,8 @@ func TestScanAdminDeviceRowIncludesPlatformCapabilityColumns(t *testing.T) {
 	videoModel := "video-model"
 	platformRevision := "rev-1"
 	notes := "device notes"
+	supersededByDeviceID := "device-2"
+	supersededAt := now.Add(2 * time.Minute)
 	ownerEmail := "user@example.com"
 	ownerName := "User Name"
 	activationID := "activation-1"
@@ -96,6 +98,8 @@ func TestScanAdminDeviceRowIncludesPlatformCapabilityColumns(t *testing.T) {
 		[]byte(`{"heartbeatIntervalSeconds":30}`),
 		&now,
 		&notes,
+		&supersededByDeviceID,
+		&supersededAt,
 		now,
 		now,
 		int64(5),
@@ -141,6 +145,12 @@ func TestScanAdminDeviceRowIncludesPlatformCapabilityColumns(t *testing.T) {
 	}
 	if item.Activation == nil || item.Activation.ID != activationID {
 		t.Fatalf("expected activation config to be populated, got %#v", item.Activation)
+	}
+	if item.Device.IdentityState != "superseded" {
+		t.Fatalf("expected identity state to be superseded, got %q", item.Device.IdentityState)
+	}
+	if item.Device.SupersededByDeviceID == nil || *item.Device.SupersededByDeviceID != supersededByDeviceID {
+		t.Fatalf("expected supersededByDeviceID to be preserved, got %#v", item.Device.SupersededByDeviceID)
 	}
 }
 

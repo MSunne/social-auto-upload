@@ -15,7 +15,6 @@ import {
   Loader2,
   MessageSquareText,
   Mic,
-  Package,
   Sparkles,
   Trash2,
   Upload,
@@ -139,7 +138,7 @@ const OUTPUT_OPTIONS: OutputOption[] = [
   {
     value: "数字人口播",
     label: "真人视频",
-    hint: "带货视频、真人口播、数字人视频",
+    hint: "真人口播、数字人视频",
     icon: Mic,
     tone: "text-emerald-300",
   },
@@ -168,10 +167,9 @@ function parseDigitalHumanConfig(referencePayload: Record<string, unknown> | nul
     referencePayload?.digitalHuman && typeof referencePayload.digitalHuman === "object"
       ? (referencePayload.digitalHuman as Record<string, unknown>)
       : referencePayload || {};
-  const rawMode = typeof base.mode === "string" ? base.mode.trim() : "";
   return {
-    mode: rawMode === "digital" ? "digital" : "customize",
-    goodsTitle: typeof base.goodsTitle === "string" ? base.goodsTitle : "",
+    mode: "customize",
+    goodsTitle: "",
     goodsText: typeof base.goodsText === "string" ? base.goodsText : "",
   } as const;
 }
@@ -503,8 +501,8 @@ export function SkillEditorModal({
     [digitalHumanModels?.models],
   );
   const sortedDigitalHumanModels = useMemo(
-    () => sortDigitalHumanModelsForMode(availableDigitalHumanModels, digitalHumanModels, form.digitalHumanMode),
-    [availableDigitalHumanModels, digitalHumanModels, form.digitalHumanMode],
+    () => sortDigitalHumanModelsForMode(availableDigitalHumanModels, digitalHumanModels, "customize"),
+    [availableDigitalHumanModels, digitalHumanModels],
   );
   const selectedModel = useMemo(
     () => availableModels.find((item) => item.modelName === form.modelName) ?? null,
@@ -515,8 +513,8 @@ export function SkillEditorModal({
     [availableDigitalHumanModels, form.modelName],
   );
   const selectedDigitalHumanModelIsRecommended = useMemo(
-    () => isRecommendedDigitalHumanModel(digitalHumanModels, form.digitalHumanMode, form.modelName),
-    [digitalHumanModels, form.digitalHumanMode, form.modelName],
+    () => isRecommendedDigitalHumanModel(digitalHumanModels, "customize", form.modelName),
+    [digitalHumanModels, form.modelName],
   );
   const selectedOutput = useMemo(
     () => OUTPUT_OPTIONS.find((item) => item.value === form.outputType) ?? OUTPUT_OPTIONS[0],
@@ -546,10 +544,6 @@ export function SkillEditorModal({
     () => assets.filter((asset) => asset.assetType === "digital_human_character_image"),
     [assets],
   );
-  const digitalHumanGoodsAssets = useMemo(
-    () => assets.filter((asset) => asset.assetType === "digital_human_goods_image"),
-    [assets],
-  );
   const digitalHumanAudioAssets = useMemo(
     () => assets.filter((asset) => asset.assetType === "digital_human_ref_audio"),
     [assets],
@@ -572,10 +566,6 @@ export function SkillEditorModal({
   );
   const uploadingDigitalHumanCharacters = useMemo(
     () => uploadingAssets.filter((item) => item.assetType === "digital_human_character_image"),
-    [uploadingAssets],
-  );
-  const uploadingDigitalHumanGoods = useMemo(
-    () => uploadingAssets.filter((item) => item.assetType === "digital_human_goods_image"),
     [uploadingAssets],
   );
   const uploadingDigitalHumanAudios = useMemo(
@@ -698,7 +688,7 @@ export function SkillEditorModal({
     if (!isOpen || !isDigitalHumanOutputType || !digitalHumanModels) {
       return;
     }
-    const nextModelName = resolveDefaultDigitalHumanModel(digitalHumanModels, form.digitalHumanMode);
+    const nextModelName = resolveDefaultDigitalHumanModel(digitalHumanModels, "customize");
     const modelExists = availableDigitalHumanModels.some((item) => item.id === form.modelName);
     if (!nextModelName || (form.modelName && modelExists)) {
       return;
@@ -721,7 +711,6 @@ export function SkillEditorModal({
   }, [
     availableDigitalHumanModels,
     digitalHumanModels,
-    form.digitalHumanMode,
     form.modelName,
     isDigitalHumanOutputType,
     isOpen,
@@ -766,8 +755,8 @@ export function SkillEditorModal({
       referenceMediaOrder,
       isDigitalHumanOutput(form.outputType)
         ? {
-            mode: form.digitalHumanMode,
-            goodsTitle: form.digitalHumanGoodsTitle,
+            mode: "customize",
+            goodsTitle: "",
             goodsText: form.digitalHumanGoodsText,
           }
         : null,
@@ -788,18 +777,12 @@ export function SkillEditorModal({
       if (!goodsText) {
         throw new Error("请先填写真人视频文案");
       }
-      if (form.digitalHumanMode === "digital" && !form.digitalHumanGoodsTitle.trim()) {
-        throw new Error("带货模式请先填写产品标题");
-      }
       if (options?.requireDigitalHumanAssets) {
         if (digitalHumanCharacterAssets.length === 0) {
           throw new Error("请先上传人物主图");
         }
         if (digitalHumanAudioAssets.length === 0) {
           throw new Error("请先上传参考音频");
-        }
-        if (form.digitalHumanMode === "digital" && digitalHumanGoodsAssets.length === 0) {
-          throw new Error("带货模式请先上传商品主图");
         }
       }
       return;
@@ -950,7 +933,7 @@ export function SkillEditorModal({
     const nextCategory = mapSkillOutputToModelCategory(nextOutputType);
     const nextIsDigitalHuman = isDigitalHumanOutput(nextOutputType);
     const nextDefaultDigitalHumanModel = nextIsDigitalHuman
-      ? resolveDefaultDigitalHumanModel(digitalHumanModels, form.digitalHumanMode)
+      ? resolveDefaultDigitalHumanModel(digitalHumanModels, "customize")
       : "";
     setForm((current) => ({
       ...current,
@@ -967,16 +950,6 @@ export function SkillEditorModal({
         mapSkillOutputToModelCategory(current.outputType) === nextCategory
           ? current.modelName
           : nextDefaultDigitalHumanModel,
-    }));
-  };
-
-  const handleDigitalHumanModeChange = (nextMode: "digital" | "customize") => {
-    const nextModelName = resolveDefaultDigitalHumanModel(digitalHumanModels, nextMode);
-    setForm((current) => ({
-      ...current,
-      digitalHumanMode: nextMode,
-      modelName: nextModelName || current.modelName,
-      digitalHumanGoodsTitle: nextMode === "customize" ? "" : current.digitalHumanGoodsTitle,
     }));
   };
 
@@ -1078,8 +1051,8 @@ export function SkillEditorModal({
 
   const flowSteps = isDigitalHumanOutputType
     ? [
-        "账号执行技能时自动复用人物主图、商品主图和参考音频",
-        form.digitalHumanMode === "digital" ? "按带货模式创建真人视频任务" : "按口播模式创建真人视频任务",
+        "账号执行技能时自动复用人物主图和参考音频",
+        "按口播模式创建真人视频任务",
         visibleModelName || "最终模型待选择",
       ]
     : form.storyboardEnabled
@@ -1300,44 +1273,8 @@ export function SkillEditorModal({
                   {isDigitalHumanOutputType ? (
                     <SectionCard
                       title="真人视频设定"
-                      description="配置真人视频模式、产品信息和文案脚本。素材和文案会保存在技能自身，账号执行时会直接按当前配置创建真人视频任务。"
+                      description="配置真人视频文案。素材和文案会保存在技能自身，账号执行时会直接按口播模式创建真人视频任务。"
                     >
-                      <div className="flex flex-wrap gap-2">
-                        {[
-                          { value: "digital" as const, label: "带货模式", icon: <Package className="h-3.5 w-3.5" /> },
-                          { value: "customize" as const, label: "口播模式", icon: <Mic className="h-3.5 w-3.5" /> },
-                        ].map((option) => (
-                          <button
-                            key={option.value}
-                            type="button"
-                            onClick={() => handleDigitalHumanModeChange(option.value)}
-                            className={cn(
-                              "inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-sm transition-all",
-                              form.digitalHumanMode === option.value
-                                ? "border-emerald-400/35 bg-emerald-400/12 text-white"
-                                : "border-white/10 bg-white/[0.04] text-text-secondary hover:border-white/20 hover:text-white",
-                            )}
-                          >
-                            {option.icon}
-                            {option.label}
-                          </button>
-                        ))}
-                      </div>
-
-                      {form.digitalHumanMode === "digital" ? (
-                        <label className="space-y-2.5">
-                          <span className="text-sm font-medium text-white">产品标题</span>
-                          <input
-                            value={form.digitalHumanGoodsTitle}
-                            onChange={(event) =>
-                              setForm((current) => ({ ...current, digitalHumanGoodsTitle: event.target.value }))
-                            }
-                            placeholder="例如：老廖牌香薰"
-                            className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
-                          />
-                        </label>
-                      ) : null}
-
                       <label className="space-y-2.5">
                         <span className="text-sm font-medium text-white">视频文案</span>
                         <textarea
@@ -1355,7 +1292,7 @@ export function SkillEditorModal({
 
                   <SectionCard
                     title={isDigitalHumanOutputType ? "真人视频模型" : "模型与时长"}
-                    description={isDigitalHumanOutputType ? "选择真人视频的执行模型，并查看当前模式默认模型、单次任务计费和余额状态。" : "选择最终执行模型并设置视频时长。模型和时长紧密耦合，在同一区域方便对照。"}
+                    description={isDigitalHumanOutputType ? "选择真人视频的执行模型，并查看 Admin 保存的默认模型、单次任务计费和余额状态。" : "选择最终执行模型并设置视频时长。模型和时长紧密耦合，在同一区域方便对照。"}
                   >
                     {isDigitalHumanOutputType ? (
                       digitalHumanModelsLoading ? (
@@ -1376,7 +1313,7 @@ export function SkillEditorModal({
                                     <div className="flex flex-wrap items-center gap-2">
                                       <p className="text-base font-semibold text-white">{form.modelName || "未选择"}</p>
                                       {selectedDigitalHumanModelIsRecommended ? (
-                                        <span className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/12 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">当前模式默认</span>
+                                        <span className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/12 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">默认模型</span>
                                       ) : null}
                                       {activeModel?.isCurrent ? (
                                         <span className="inline-flex items-center rounded-full border border-white/10 bg-white/6 px-2.5 py-0.5 text-[11px] font-semibold text-text-secondary">当前服务模型</span>
@@ -1384,7 +1321,7 @@ export function SkillEditorModal({
                                     </div>
                                     <p className="mt-2 text-sm leading-6 text-text-secondary">
                                       {selectedDigitalHumanModelIsRecommended
-                                        ? "这个模型来自当前模式在 Admin 中保存的默认模型。"
+                                        ? "这个模型来自 Admin 中保存的默认模型。"
                                         : "已固定为该模型，保存后会按这个模型执行真人视频任务。"}
                                     </p>
                                   </div>
@@ -1405,12 +1342,13 @@ export function SkillEditorModal({
                       ) : (
                         /* ── Expanded: full model list with recommended first ── */
                         <div className="space-y-3">
-                          <div className="grid gap-4 lg:grid-cols-2">
+                          <div className="max-h-[min(60vh,720px)] overflow-y-auto pr-2">
+                            <div className="grid gap-4 lg:grid-cols-2">
                             {sortedDigitalHumanModels.map((model) => {
                               const selected = model.id === form.modelName;
                               const recommended = isRecommendedDigitalHumanModel(
                                 digitalHumanModels,
-                                form.digitalHumanMode,
+                                "customize",
                                 model.id,
                               );
                               return (
@@ -1433,13 +1371,13 @@ export function SkillEditorModal({
                                       <div className="flex flex-wrap items-center gap-2">
                                         <p className="text-base font-semibold text-white">{model.id}</p>
                                         {recommended ? (
-                                          <span className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/12 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">当前模式默认</span>
+                                          <span className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/12 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">默认模型</span>
                                         ) : null}
                                         {model.isCurrent ? <MiniPill>当前服务模型</MiniPill> : null}
                                       </div>
                                       <p className="mt-2 text-sm leading-6 text-text-secondary">
                                         {recommended
-                                          ? "这个模型来自当前模式在 Admin 中保存的默认模型。"
+                                          ? "这个模型来自 Admin 中保存的默认模型。"
                                           : "可作为真人视频执行模型，由技能在保存时固定。"}
                                       </p>
                                     </div>
@@ -1448,6 +1386,7 @@ export function SkillEditorModal({
                                 </button>
                               );
                             })}
+                            </div>
                           </div>
                           <button
                             type="button"
@@ -1732,15 +1671,15 @@ export function SkillEditorModal({
                     title="参考素材"
                     description={
                       isDigitalHumanOutputType
-                        ? "真人视频会把人物主图、商品主图和参考音频保存在技能资产中，执行时自动复用。"
+                        ? "真人视频会把人物主图和参考音频保存在技能资产中，执行时自动复用。"
                         : "图片和视频共用一条有序参考链，文本继续补充结构、卖点和限制条件。"
                     }
                   >
                     {isDigitalHumanOutputType ? (
-                      <div className="grid gap-4 lg:grid-cols-3">
+                      <div className="grid gap-4 lg:grid-cols-2">
                         <UploadCard
                           title="人物主图"
-                          hint="口播模式和带货模式都必填，用于生成真人形象。"
+                          hint="口播模式必填，用于生成真人形象。"
                           icon={<UserRound className="h-5 w-5 text-emerald-300" />}
                         >
                           {!digitalHumanCharacterAssets.length && !uploadingDigitalHumanCharacters.length ? (
@@ -1791,60 +1730,8 @@ export function SkillEditorModal({
                         </UploadCard>
 
                         <UploadCard
-                          title="商品主图"
-                          hint={form.digitalHumanMode === "digital" ? "带货模式必填，用于商品展示。" : "口播模式可留空。"}
-                          icon={<Package className="h-5 w-5 text-cyan" />}
-                        >
-                          {!digitalHumanGoodsAssets.length && !uploadingDigitalHumanGoods.length ? (
-                            <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-cyan/30 bg-cyan/10 px-4 py-5 text-center transition-all hover:border-cyan/50 hover:bg-cyan/14">
-                              <div>
-                                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan/15 text-cyan">
-                                  <Upload className="h-5 w-5" />
-                                </div>
-                                <p className="mt-3 text-sm font-semibold text-white">上传商品主图</p>
-                                <p className="mt-1 text-xs text-text-secondary">仅带货模式会真正执行到成片。</p>
-                              </div>
-                              <input
-                                type="file"
-                                accept="image/*"
-                                className="hidden"
-                                onChange={(event) => {
-                                  handleDigitalHumanAssetSelection(event.target.files, "digital_human_goods_image");
-                                  event.target.value = "";
-                                }}
-                              />
-                            </label>
-                          ) : null}
-                          <div className="mt-4 space-y-3">
-                            {digitalHumanGoodsAssets.map((asset) => (
-                              <AssetRow
-                                key={asset.id}
-                                asset={asset}
-                                icon={<Package className="h-4 w-4 text-cyan" />}
-                                deleting={deleteAssetMutation.isPending}
-                                onDelete={() => deleteAssetMutation.mutate(asset)}
-                              />
-                            ))}
-                            {uploadingDigitalHumanGoods.map((item) => (
-                              <PendingRow
-                                key={item.id}
-                                label={item.file.name}
-                                icon={<Package className="h-4 w-4 text-cyan" />}
-                                file={item.file}
-                                helperText="正在上传到云端..."
-                                onDelete={() => undefined}
-                                hideDelete
-                              />
-                            ))}
-                            {!digitalHumanGoodsAssets.length && !uploadingDigitalHumanGoods.length ? (
-                              <EmptyUploadState label="还没有商品主图。" />
-                            ) : null}
-                          </div>
-                        </UploadCard>
-
-                        <UploadCard
                           title="参考音频"
-                          hint="口播模式和带货模式都必填，用于拟合音色。"
+                          hint="口播模式必填，用于拟合音色。"
                           icon={<AudioLines className="h-5 w-5 text-amber-200" />}
                         >
                           {!digitalHumanAudioAssets.length && !uploadingDigitalHumanAudios.length ? (
@@ -2074,7 +1961,7 @@ export function SkillEditorModal({
                         label="参考素材"
                         value={
                           isDigitalHumanOutputType
-                            ? `${digitalHumanCharacterAssets.length} 人物 / ${digitalHumanGoodsAssets.length} 商品 / ${digitalHumanAudioAssets.length} 音频`
+                            ? `${digitalHumanCharacterAssets.length} 人物 / ${digitalHumanAudioAssets.length} 音频`
                             : `${totalMediaCount} 媒体 / ${totalTextCount} 文`
                         }
                       />
@@ -2082,9 +1969,7 @@ export function SkillEditorModal({
                         label={isDigitalHumanOutputType ? "当前模式" : "媒体构成"}
                         value={
                           isDigitalHumanOutputType
-                            ? form.digitalHumanMode === "digital"
-                              ? "带货模式"
-                              : "口播模式"
+                            ? "口播模式"
                             : `${totalImageCount} 图 / ${totalVideoCount} 视频`
                         }
                       />

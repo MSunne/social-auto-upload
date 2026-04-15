@@ -288,6 +288,7 @@ func (h *DigitalHumanTaskHandler) List(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to load digital human tasks")
 		return
 	}
+	decorateDigitalHumanTaskSliceForResponse(items)
 	render.JSON(w, http.StatusOK, items)
 }
 
@@ -308,6 +309,7 @@ func (h *DigitalHumanTaskHandler) Detail(w http.ResponseWriter, r *http.Request)
 		render.Error(w, http.StatusNotFound, "Digital human task not found")
 		return
 	}
+	decorateDigitalHumanTaskForResponse(task)
 	render.JSON(w, http.StatusOK, task)
 }
 

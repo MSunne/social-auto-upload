@@ -1,6 +1,7 @@
 package digitalhuman
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -372,6 +373,38 @@ func (w *Worker) submitTask(ctx context.Context, task *domain.DigitalHumanTask, 
 		w.failTask(ctx, task, leaseToken, buildFailureMessage(err), nil, nil)
 		return nil, err
 	}
+	request = normalizeGenerateRequest(request)
+	requestAuditPayload, err := buildDigitalHumanRequestAuditPayload(task.RequestPayload, request)
+	if err != nil {
+		cleanupWorkingDir(w.app.Logger, tempDir)
+		w.failTask(ctx, task, leaseToken, buildFailureMessage(err), nil, nil)
+		return nil, err
+	}
+	startedAt := time.Now().UTC()
+	progress := mustJSON(domain.DigitalHumanProgress{
+		Current:    0,
+		Total:      0,
+		Percentage: 0,
+		Message:    "正在提交到数字人生成服务",
+	})
+	updated, syncErr := w.app.Store.SyncDigitalHumanTaskExecution(ctx, task.ID, leaseToken, store.UpdateDigitalHumanTaskExecutionInput{
+		Status:                stringPtr("running"),
+		RequestPayload:        requestAuditPayload,
+		RequestPayloadTouched: true,
+		Progress:              progress,
+		ProgressTouched:       true,
+		StartedAt:             timePtr(startedAt),
+		StartedTouched:        true,
+		WorkingDir:            stringPtr(tempDir),
+		WorkingDirTouched:     true,
+	})
+	if syncErr != nil {
+		cleanupWorkingDir(w.app.Logger, tempDir)
+		return nil, syncErr
+	}
+	if updated != nil {
+		task = updated
+	}
 
 	response, rawResponse, err := w.client.GenerateVideoAsync(ctx, request)
 	if err != nil {
@@ -380,13 +413,13 @@ func (w *Worker) submitTask(ctx context.Context, task *domain.DigitalHumanTask, 
 		return nil, err
 	}
 
-	progress := mustJSON(domain.DigitalHumanProgress{
+	progress = mustJSON(domain.DigitalHumanProgress{
 		Current:    0,
 		Total:      0,
 		Percentage: 0,
 		Message:    firstNonEmptyString(response.Message, "数字人任务已提交，等待生成"),
 	})
-	updated, syncErr := w.app.Store.SyncDigitalHumanTaskExecution(ctx, task.ID, leaseToken, store.UpdateDigitalHumanTaskExecutionInput{
+	updated, syncErr = w.app.Store.SyncDigitalHumanTaskExecution(ctx, task.ID, leaseToken, store.UpdateDigitalHumanTaskExecutionInput{
 		Status:                stringPtr("running"),
 		RemoteTaskID:          stringPtr(response.TaskID),
 		RemoteTaskTouched:     true,
@@ -394,10 +427,6 @@ func (w *Worker) submitTask(ctx context.Context, task *domain.DigitalHumanTask, 
 		ProgressTouched:       true,
 		RemoteResponsePayload: rawResponse,
 		RemotePayloadTouched:  true,
-		StartedAt:             timePtr(time.Now().UTC()),
-		StartedTouched:        true,
-		WorkingDir:            stringPtr(tempDir),
-		WorkingDirTouched:     true,
 	})
 	if syncErr != nil {
 		return nil, syncErr
@@ -455,8 +484,103 @@ func (w *Worker) materializeTaskAssets(ctx context.Context, task *domain.Digital
 			return tempDir, GenerateRequest{}, goodsErr
 		}
 		request.GoodsAssetPath = stringPtr(goodsPath)
+	} else if task.GoodsTitle != nil || task.GoodsAsset != nil {
+		w.app.Logger.Warn("digital human customize task includes ignored goods fields",
+			"task_id", task.ID,
+			"has_goods_title", task.GoodsTitle != nil && strings.TrimSpace(*task.GoodsTitle) != "",
+			"has_goods_asset", task.GoodsAsset != nil,
+		)
 	}
 	return tempDir, request, nil
+}
+
+func normalizeGenerateRequest(req GenerateRequest) GenerateRequest {
+	normalized := req
+	normalized.Mode = strings.ToLower(strings.TrimSpace(normalized.Mode))
+	normalized.Source = strings.TrimSpace(normalized.Source)
+	normalized.GoodsText = strings.TrimSpace(normalized.GoodsText)
+	if normalized.LLMModel != nil {
+		if trimmed := strings.TrimSpace(*normalized.LLMModel); trimmed != "" {
+			normalized.LLMModel = stringPtr(trimmed)
+		} else {
+			normalized.LLMModel = nil
+		}
+	}
+	if normalized.RefAudio != nil {
+		if trimmed := strings.TrimSpace(*normalized.RefAudio); trimmed != "" {
+			normalized.RefAudio = stringPtr(trimmed)
+		} else {
+			normalized.RefAudio = nil
+		}
+	}
+	if normalized.Mode == "customize" {
+		normalized.GoodsTitle = nil
+		normalized.GoodsAssetPath = nil
+		return normalized
+	}
+	if normalized.GoodsTitle != nil {
+		if trimmed := strings.TrimSpace(*normalized.GoodsTitle); trimmed != "" {
+			normalized.GoodsTitle = stringPtr(trimmed)
+		} else {
+			normalized.GoodsTitle = nil
+		}
+	}
+	if normalized.GoodsAssetPath != nil {
+		if trimmed := strings.TrimSpace(*normalized.GoodsAssetPath); trimmed != "" {
+			normalized.GoodsAssetPath = stringPtr(trimmed)
+		} else {
+			normalized.GoodsAssetPath = nil
+		}
+	}
+	return normalized
+}
+
+func buildDigitalHumanRequestAuditPayload(existing json.RawMessage, request GenerateRequest) ([]byte, error) {
+	payload := map[string]any{
+		"submissionRequest": request,
+	}
+	if sourceRequest := extractDigitalHumanSourceRequestPayload(existing); len(sourceRequest) > 0 {
+		payload["sourceRequest"] = sourceRequest
+	}
+	return json.Marshal(payload)
+}
+
+func extractDigitalHumanSourceRequestPayload(existing json.RawMessage) json.RawMessage {
+	current := compactJSONPayload(existing)
+	for len(current) > 0 {
+		var auditEnvelope struct {
+			SourceRequest     json.RawMessage `json:"sourceRequest"`
+			SubmissionRequest json.RawMessage `json:"submissionRequest"`
+		}
+		if err := json.Unmarshal(current, &auditEnvelope); err != nil {
+			return current
+		}
+		if nestedSource := compactJSONPayload(auditEnvelope.SourceRequest); len(nestedSource) > 0 {
+			current = nestedSource
+			continue
+		}
+		if priorSubmission := compactJSONPayload(auditEnvelope.SubmissionRequest); len(priorSubmission) > 0 {
+			return priorSubmission
+		}
+		return current
+	}
+	return nil
+}
+
+func compactJSONPayload(raw json.RawMessage) json.RawMessage {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil
+	}
+	var decoded any
+	if err := json.Unmarshal(trimmed, &decoded); err != nil {
+		return nil
+	}
+	compact, err := json.Marshal(decoded)
+	if err != nil {
+		return nil
+	}
+	return compact
 }
 
 func (w *Worker) writeTempAsset(ctx context.Context, tempDir string, prefix string, asset domain.DigitalHumanAsset) (string, error) {

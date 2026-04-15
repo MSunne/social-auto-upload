@@ -46,3 +46,22 @@ func TestBootstrapSQLIncludesPromptOptimizeModel(t *testing.T) {
 		t.Fatal("expected bootstrapSQL to backfill old claude prompt optimize model values")
 	}
 }
+
+func TestBootstrapSQLDefinesDeviceIdentityColumnsAndIndex(t *testing.T) {
+	if strings.Contains(bootstrapSQL, "device_code TEXT NOT NULL UNIQUE") {
+		t.Fatal("expected bootstrapSQL to remove single-column uniqueness from device_code")
+	}
+	for _, snippet := range []string{
+		"agent_key TEXT NOT NULL",
+		"superseded_by_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL",
+		"superseded_at TIMESTAMPTZ",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_device_identity ON devices(device_code, agent_key)",
+		"SET agent_key = 'legacy::' || id",
+		"WHERE agent_key IS NULL OR TRIM(agent_key) = ''",
+		"ALTER TABLE devices DROP CONSTRAINT IF EXISTS devices_device_code_key",
+	} {
+		if !strings.Contains(bootstrapSQL, snippet) {
+			t.Fatalf("expected bootstrapSQL to contain %q", snippet)
+		}
+	}
+}

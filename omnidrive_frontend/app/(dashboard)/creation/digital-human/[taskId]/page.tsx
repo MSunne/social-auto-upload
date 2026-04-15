@@ -424,6 +424,27 @@ export default function DigitalHumanTaskDetailPage() {
                   label="远端 Task ID"
                   value={task.remoteTaskId}
                 />
+                {task.submissionEvidence ? (
+                  <InfoRow
+                    icon={<Sparkles className="h-3 w-3" />}
+                    label="提交模式"
+                    value={formatDigitalHumanMode(task.submissionEvidence.mode)}
+                  />
+                ) : null}
+                {task.submissionEvidence ? (
+                  <InfoRow
+                    icon={<Package className="h-3 w-3" />}
+                    label="提交商品图参数"
+                    value={task.submissionEvidence.hasGoodsAssetPath ? "已携带" : "未携带"}
+                  />
+                ) : null}
+                {task.submissionEvidence?.goodsTitle ? (
+                  <InfoRow
+                    icon={<Package className="h-3 w-3" />}
+                    label="提交商品标题"
+                    value={task.submissionEvidence.goodsTitle}
+                  />
+                ) : null}
                 <InfoRow
                   icon={<Calendar className="h-3 w-3" />}
                   label="创建时间"

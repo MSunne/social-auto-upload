@@ -17,6 +17,9 @@ PORT=3001
 NEXT_PUBLIC_OMNIDRIVE_ADMIN_API_BASE_URL=http://127.0.0.1:8410
 ```
 
+Production deployments must set `NEXT_PUBLIC_OMNIDRIVE_ADMIN_API_BASE_URL` to the public admin origin, for example `https://ad.aitoplus.com`.
+If it is omitted in a browser session on a non-localhost origin, the admin frontend now falls back to `window.location.origin` instead of `127.0.0.1`.
+
 - `PORT`: admin frontend startup port for `npm run dev` and `npm run start`
 - `NEXT_PUBLIC_OMNIDRIVE_ADMIN_API_BASE_URL`: admin backend host address
 

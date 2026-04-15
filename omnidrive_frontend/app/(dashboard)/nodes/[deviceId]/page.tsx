@@ -170,6 +170,7 @@ export default function NodeDetailPage({
   const bridgeState = getBridgeDisplayStatus(device, effectivePendingBridgeChecks);
   const bridgeMeta = getBridgeStatusMeta(bridgeState);
   const bridgeSummary = getBridgeSummary(bridgeState);
+  const isSuperseded = device.identityState === "superseded";
 
   return (
     <>
@@ -185,18 +186,33 @@ export default function NodeDetailPage({
 
       <PageHeader
         title={`${device.name} · 技能中心`}
-        subtitle={`设备编码 ${device.deviceCode}，在这里维护当前节点的生成技能、定时策略与参考素材。`}
+        subtitle={
+          isSuperseded
+            ? `设备编码 ${device.deviceCode}，当前记录已变更为历史节点，可继续查看，但需重新认领新设备后再创建新的技能与任务。`
+            : `设备编码 ${device.deviceCode}，在这里维护当前节点的生成技能、定时策略与参考素材。`
+        }
         actions={
           <button
             type="button"
             onClick={openCreateModal}
-            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-accent to-cyan px-4 py-2 text-sm font-semibold text-background"
+            disabled={isSuperseded}
+            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold ${
+              isSuperseded
+                ? "cursor-not-allowed border border-border bg-surface text-text-muted"
+                : "bg-gradient-to-r from-accent to-cyan text-background"
+            }`}
           >
             <Plus className="h-4 w-4" />
-            新增技能
+            {isSuperseded ? "历史节点" : "新增技能"}
           </button>
         }
       />
+
+      {isSuperseded ? (
+        <div className="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+          该设备身份已变更。管理员仍可看到它的真实在线与云桥状态；你可以继续查看历史技能与素材记录，但新的技能、任务和执行动作需要在重新认领的新设备上完成。
+        </div>
+      ) : null}
 
       <div className="mb-6 grid gap-4 md:grid-cols-3">
         <div className="rounded-2xl border border-border bg-surface p-4">
@@ -241,8 +257,12 @@ export default function NodeDetailPage({
         <EmptyState
           icon={<Cpu className="h-6 w-6" />}
           title="当前节点还没有技能"
-          description="先为这个节点创建技能，再上传参考图、卖点文本和定时执行策略。"
-          action={
+          description={
+            isSuperseded
+              ? "该节点已转为历史记录。重新认领新的设备身份后，再创建新的技能与执行计划。"
+              : "先为这个节点创建技能，再上传参考图、卖点文本和定时执行策略。"
+          }
+          action={isSuperseded ? undefined : (
             <button
               type="button"
               onClick={openCreateModal}
@@ -250,7 +270,7 @@ export default function NodeDetailPage({
             >
               创建第一个技能
             </button>
-          }
+          )}
         />
       ) : (
         <div className="overflow-hidden rounded-3xl border border-border bg-surface">

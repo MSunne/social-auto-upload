@@ -164,8 +164,8 @@ CREATE INDEX IF NOT EXISTS idx_phone_verification_codes_lookup
 CREATE TABLE IF NOT EXISTS devices (
     id TEXT PRIMARY KEY,
     owner_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
-    device_code TEXT NOT NULL UNIQUE,
-    agent_key TEXT,
+    device_code TEXT NOT NULL,
+    agent_key TEXT NOT NULL,
     name TEXT NOT NULL,
     local_ip TEXT,
     public_ip TEXT,
@@ -179,6 +179,8 @@ CREATE TABLE IF NOT EXISTS devices (
     runtime_payload JSONB,
     last_seen_at TIMESTAMPTZ,
     notes TEXT,
+    superseded_by_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
+    superseded_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -481,11 +483,19 @@ ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS digital_human_shopping
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS digital_human_speech_default_model TEXT NOT NULL DEFAULT 'qvq-max';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS prompt_optimize_model TEXT NOT NULL DEFAULT 'gemini-3.1-pro-preview';
 ALTER TABLE phone_verification_codes ADD COLUMN IF NOT EXISTS verification_code_hash TEXT;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS agent_key TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_chat_model TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_image_model TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS default_video_model TEXT;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS platform_capabilities JSONB;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS platform_capabilities_revision TEXT;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS superseded_by_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS superseded_at TIMESTAMPTZ;
+UPDATE devices
+SET agent_key = 'legacy::' || id
+WHERE agent_key IS NULL OR TRIM(agent_key) = '';
+ALTER TABLE devices ALTER COLUMN agent_key SET NOT NULL;
+ALTER TABLE devices DROP CONSTRAINT IF EXISTS devices_device_code_key;
 ALTER TABLE device_activation_configs ADD COLUMN IF NOT EXISTS activation_code_value TEXT;
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS device_id TEXT REFERENCES devices(id) ON DELETE SET NULL;
 ALTER TABLE product_skills ADD COLUMN IF NOT EXISTS fixed_duration_seconds INT;
@@ -1293,6 +1303,8 @@ CREATE TABLE IF NOT EXISTS audit_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_devices_owner_user_id ON devices(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_devices_device_code ON devices(device_code);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_device_identity ON devices(device_code, agent_key);
 CREATE INDEX IF NOT EXISTS idx_admin_user_roles_admin_user_id ON admin_user_roles(admin_user_id);
 CREATE INDEX IF NOT EXISTS idx_admin_user_roles_role_id ON admin_user_roles(role_id);
 CREATE INDEX IF NOT EXISTS idx_admin_role_permissions_permission_code ON admin_role_permissions(permission_code);

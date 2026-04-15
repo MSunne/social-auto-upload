@@ -30,6 +30,9 @@ func (h *AdminConsoleHandler) ListDigitalHumanTasks(w http.ResponseWriter, r *ht
 		render.Error(w, http.StatusInternalServerError, "Failed to load admin digital human tasks")
 		return
 	}
+	for index := range items {
+		decorateDigitalHumanTaskForResponse(&items[index].Task)
+	}
 
 	renderAdminList(w, page, total, items, summary, map[string]any{
 		"query":  strings.TrimSpace(r.URL.Query().Get("query")),
@@ -55,6 +58,7 @@ func (h *AdminConsoleHandler) DetailDigitalHumanTask(w http.ResponseWriter, r *h
 		render.Error(w, http.StatusNotFound, "Digital human task not found")
 		return
 	}
+	decorateDigitalHumanTaskForResponse(&record.Task)
 
 	render.JSON(w, http.StatusOK, record)
 }

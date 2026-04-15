@@ -139,12 +139,12 @@ func TestApplyPublishTargetAccountIDsSetsMultipleAccountIDs(t *testing.T) {
 	}
 }
 
-func TestBuildDigitalHumanSkillAIJobPayloadIncludesRootAccountID(t *testing.T) {
+func TestBuildDigitalHumanSkillAIJobPayloadIncludesRootAccountIDAndForcesCustomize(t *testing.T) {
 	accountID := "acc-dh-1"
 	rawConfig, err := json.Marshal(map[string]any{
 		"digitalHuman": map[string]any{
 			"mode":       "digital",
-			"goodsTitle": "测试商品",
+			"goodsTitle": "遗留商品标题",
 			"goodsText":  "测试商品文案",
 		},
 	})
@@ -185,6 +185,19 @@ func TestBuildDigitalHumanSkillAIJobPayloadIncludesRootAccountID(t *testing.T) {
 	}
 	if payload["accountId"] != accountID {
 		t.Fatalf("expected root accountId %q, got %#v", accountID, payload["accountId"])
+	}
+	digitalHumanConfig, ok := payload["digitalHumanConfig"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected digitalHumanConfig object, got %#v", payload["digitalHumanConfig"])
+	}
+	if digitalHumanConfig["mode"] != "customize" {
+		t.Fatalf("expected customize mode, got %#v", digitalHumanConfig["mode"])
+	}
+	if digitalHumanConfig["goodsTitle"] != "" {
+		t.Fatalf("expected goodsTitle to be stripped, got %#v", digitalHumanConfig["goodsTitle"])
+	}
+	if _, exists := digitalHumanConfig["goodsAsset"]; exists {
+		t.Fatalf("expected goodsAsset to be omitted for customize mode")
 	}
 	publishPayload, ok := payload["publishPayload"].(map[string]any)
 	if !ok {

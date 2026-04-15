@@ -22,7 +22,7 @@ import {
   User,
   X,
 } from "lucide-react";
-import { API_BASE_URL } from "@/lib/api";
+import { getApiBaseUrl } from "@/lib/api";
 import { safeLocalStorageGet } from "@/lib/browser-storage";
 import {
   buildFileAccept,
@@ -1315,7 +1315,7 @@ export default function ChatPage() {
 
     let createdJobId = "";
     try {
-      const response = await fetch(`${API_BASE_URL}/ai/chat/stream`, {
+      const response = await fetch(`${getApiBaseUrl()}/ai/chat/stream`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

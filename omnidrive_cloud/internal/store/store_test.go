@@ -54,6 +54,22 @@ func TestComputeDeviceBridgeStatusFallsOfflineWhenHeartbeatIsStale(t *testing.T)
 	}
 }
 
+func TestComputeDeviceIdentityState(t *testing.T) {
+	if got := computeDeviceIdentityState(nil, nil); got != "active" {
+		t.Fatalf("expected empty superseded markers to yield active, got %q", got)
+	}
+
+	replacementID := "device-new"
+	if got := computeDeviceIdentityState(&replacementID, nil); got != "superseded" {
+		t.Fatalf("expected superseded_by_device_id to yield superseded, got %q", got)
+	}
+
+	supersededAt := time.Now().UTC()
+	if got := computeDeviceIdentityState(nil, &supersededAt); got != "superseded" {
+		t.Fatalf("expected superseded_at to yield superseded, got %q", got)
+	}
+}
+
 func TestAIJobSelectColumnsForSummaryOmitsHeavyPayloads(t *testing.T) {
 	columns := aiJobSelectColumnsFor("ai_jobs", aiJobPayloadModeSummary)
 	if !strings.Contains(columns, "jsonb_build_object('skillName'") {

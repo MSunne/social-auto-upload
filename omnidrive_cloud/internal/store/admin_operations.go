@@ -185,6 +185,8 @@ func scanAdminDeviceRow(scan scanFn) (*domain.AdminDeviceRow, error) {
 	var runtimePayload []byte
 	var ownerUserID *string
 	var lastSeenAt *time.Time
+	var supersededByDeviceID *string
+	var supersededAt *time.Time
 	var ownerSummaryID *string
 	var ownerEmail *string
 	var ownerName *string
@@ -218,6 +220,8 @@ func scanAdminDeviceRow(scan scanFn) (*domain.AdminDeviceRow, error) {
 		&runtimePayload,
 		&lastSeenAt,
 		&notes,
+		&supersededByDeviceID,
+		&supersededAt,
 		&item.Device.CreatedAt,
 		&item.Device.UpdatedAt,
 		&item.Device.Load.AccountCount,
@@ -268,6 +272,9 @@ func scanAdminDeviceRow(scan scanFn) (*domain.AdminDeviceRow, error) {
 	item.Device.RuntimePayload = bytesOrNil(runtimePayload)
 	item.Device.LastSeenAt = lastSeenAt
 	item.Device.Notes = notes
+	item.Device.SupersededByDeviceID = supersededByDeviceID
+	item.Device.SupersededAt = supersededAt
+	item.Device.IdentityState = computeDeviceIdentityState(supersededByDeviceID, supersededAt)
 	item.Device.Status = computeDeviceStatus(lastSeenAt, runtimePayload)
 	item.Device.BridgeStatus = computeDeviceBridgeStatus(lastSeenAt, runtimePayload)
 

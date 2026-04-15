@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { PageHeader } from "@/components/ui/common";
-import { adminRuntimeConfig } from "@/lib/config";
+import { resolveAdminApiBaseUrl } from "@/lib/config";
 import { Send, Loader2, Bot, User, Trash2, Plus } from "lucide-react";
 
 interface ChatMessage {
@@ -11,9 +11,6 @@ interface ChatMessage {
   content: string;
   createdAt: Date;
 }
-
-const API_BASE = adminRuntimeConfig.apiBaseUrl;
-const CHAT_STREAM_URL = `${API_BASE}/api/admin/v1/ai/chat/stream`;
 
 export function AdminChatView() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -68,8 +65,9 @@ export function AdminChatView() {
         role: m.role,
         content: m.content,
       }));
+      const chatStreamUrl = `${resolveAdminApiBaseUrl()}/api/admin/v1/ai/chat/stream`;
 
-      const response = await fetch(CHAT_STREAM_URL, {
+      const response = await fetch(chatStreamUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

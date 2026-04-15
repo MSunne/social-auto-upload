@@ -52,12 +52,8 @@ const summarizeBridgeError = (value?: string | null) => {
 const getBridgeHealth = (
   deviceStatus: string,
   bridgeStatus: string | undefined,
-  isEnabled: boolean,
   runtimePayload?: DeviceRuntimePayload,
 ) => {
-  if (!isEnabled) {
-    return null;
-  }
   if (deviceStatus !== "online") {
     return {
       label: "等待设备恢复",
@@ -108,6 +104,25 @@ const getBridgeHealth = (
   return {
     label: "桥接状态未知",
     className: "text-[var(--color-text-secondary)] border-[var(--color-border)] bg-[var(--color-bg-secondary)]",
+  };
+};
+
+const getIdentityMeta = (identityState?: string, hasOwner?: boolean) => {
+  if (identityState === "superseded") {
+    return {
+      label: "历史身份",
+      className: "text-amber-300 border-amber-500/30 bg-amber-500/10",
+    };
+  }
+  if (!hasOwner) {
+    return {
+      label: "新身份",
+      className: "text-cyan-300 border-cyan-500/30 bg-cyan-500/10",
+    };
+  }
+  return {
+    label: "当前身份",
+    className: "text-emerald-300 border-emerald-500/30 bg-emerald-500/10",
   };
 };
 
@@ -412,10 +427,10 @@ export function DevicesView() {
               )}
               {data?.items.map((row) => {
                 const activationMeta = formatActivationStatus(row);
+                const identityMeta = getIdentityMeta(row.device.identityState, Boolean(row.owner));
                 const bridgeHealth = getBridgeHealth(
                   row.device.status,
                   row.device.bridgeStatus,
-                  row.device.isEnabled,
                   row.device.runtimePayload,
                 );
                 return (
@@ -451,10 +466,20 @@ export function DevicesView() {
                           />
                         </div>
                         <div>
-                          <div className="font-medium">{row.device.name}</div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="font-medium">{row.device.name}</div>
+                            <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-medium ${identityMeta.className}`}>
+                              {identityMeta.label}
+                            </span>
+                          </div>
                           <div className="mt-0.5 text-xs font-mono text-[var(--color-text-secondary)]">
                             {row.device.deviceCode}
                           </div>
+                          {row.device.identityState === "superseded" && row.device.supersededByDeviceId ? (
+                            <div className="mt-1 text-xs text-amber-300">
+                              已切换到新设备身份 {row.device.supersededByDeviceId.slice(0, 8)}
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     </td>

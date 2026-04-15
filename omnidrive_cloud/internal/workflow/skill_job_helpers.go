@@ -350,6 +350,7 @@ func buildDigitalHumanSkillAIJobPayload(
 	if err != nil {
 		return nil, err
 	}
+	config = normalizeDigitalHumanSkillConfig(config)
 	if strings.TrimSpace(config.Mode) == "" {
 		return nil, fmt.Errorf("digital human skill mode is required")
 	}
@@ -391,6 +392,16 @@ func buildDigitalHumanSkillAIJobPayload(
 		}
 	}
 	return json.Marshal(payload)
+}
+
+func normalizeDigitalHumanSkillConfig(config *digitalHumanSkillConfig) *digitalHumanSkillConfig {
+	if config == nil {
+		return &digitalHumanSkillConfig{Mode: "customize"}
+	}
+	return &digitalHumanSkillConfig{
+		Mode:      "customize",
+		GoodsText: strings.TrimSpace(config.GoodsText),
+	}
 }
 
 func parseDigitalHumanSkillConfig(raw []byte) (*digitalHumanSkillConfig, error) {
@@ -444,6 +455,9 @@ func collectDigitalHumanSkillAssets(assets []domain.ProductSkillAsset, mode stri
 	}
 	if strings.EqualFold(strings.TrimSpace(mode), "digital") && goodsAsset == nil {
 		return domain.ProductSkillAsset{}, nil, domain.ProductSkillAsset{}, fmt.Errorf("digital human skill digital mode requires goods image asset")
+	}
+	if !strings.EqualFold(strings.TrimSpace(mode), "digital") {
+		goodsAsset = nil
 	}
 	return *characterAsset, goodsAsset, *refAudioAsset, nil
 }

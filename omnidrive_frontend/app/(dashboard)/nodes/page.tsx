@@ -68,16 +68,21 @@ const statusConfig: Record<
 function Toggle({
   checked,
   onChange,
+  disabled = false,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       role="switch"
       aria-checked={checked}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`group relative inline-flex h-7 w-[52px] shrink-0 cursor-pointer items-center rounded-full border transition-all duration-300 ${
+      className={`group relative inline-flex h-7 w-[52px] shrink-0 items-center rounded-full border transition-all duration-300 ${
+        disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+      } ${
         checked
           ? "border-cyan/40 bg-gradient-to-r from-accent/80 to-cyan/80 shadow-[0_0_12px_rgba(0,245,212,0.3)]"
           : "border-border bg-surface-elevated hover:border-border"
@@ -314,6 +319,8 @@ export default function NodesPage() {
                     statusConfig[device.status] ?? statusConfig.unknown;
                   const bridgeState = getBridgeDisplayStatus(device, effectivePendingBridgeChecks);
                   const bridgeCfg = getBridgeStatusMeta(bridgeState);
+                  const isSuperseded = device.identityState === "superseded";
+                  const toggleChecked = toggleState[device.id] ?? device.isEnabled;
                   return (
                     <tr
                       key={device.id}
@@ -321,8 +328,13 @@ export default function NodesPage() {
                     >
                       {/* 名称 */}
                       <td className="px-5 py-4 font-medium text-text-primary">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span>{device.name}</span>
+                          {isSuperseded ? (
+                            <span className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-semibold text-amber-300">
+                              设备已变更
+                            </span>
+                          ) : null}
                           <button
                             type="button"
                             onClick={() => openRenameModal(device)}
@@ -355,6 +367,11 @@ export default function NodesPage() {
                           {bridgeState === "checking" ? (
                             <div className="max-w-xs text-xs text-amber-300/90">
                               绑定完成后正在检查云桥状态
+                            </div>
+                          ) : null}
+                          {isSuperseded ? (
+                            <div className="max-w-xs text-xs text-amber-300/90">
+                              当前记录仅保留历史查看，请重新认领新的设备身份后继续执行任务。
                             </div>
                           ) : null}
                         </div>
@@ -409,15 +426,16 @@ export default function NodesPage() {
                       <td className="px-5 py-4">
                         <div className="flex items-center gap-3">
                           <Toggle
-                            checked={toggleState[device.id] ?? device.isEnabled}
+                            checked={toggleChecked}
+                            disabled={isSuperseded}
                             onChange={(v) => {
                               setToggleState(prev => ({ ...prev, [device.id]: v }));
                             }}
                           />
                           <span className={`text-xs font-medium ${
-                            (toggleState[device.id] ?? device.isEnabled) ? "text-cyan" : "text-text-muted"
+                            toggleChecked ? "text-cyan" : "text-text-muted"
                           }`}>
-                            {(toggleState[device.id] ?? device.isEnabled) ? "已启用" : "已关闭"}
+                            {isSuperseded ? "历史节点" : toggleChecked ? "已启用" : "已关闭"}
                           </span>
                         </div>
                       </td>

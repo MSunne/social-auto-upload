@@ -426,6 +426,10 @@ func (s *Store) SyncDigitalHumanTaskExecution(ctx context.Context, taskID string
 	if input.RemoteTaskTouched {
 		remoteTaskID = input.RemoteTaskID
 	}
+	var requestPayload any
+	if input.RequestPayloadTouched {
+		requestPayload = nullableJSON(input.RequestPayload)
+	}
 	var resultAsset any
 	if input.ResultAssetTouched {
 		resultAsset = nullableJSON(input.ResultAsset)
@@ -478,49 +482,53 @@ func (s *Store) SyncDigitalHumanTaskExecution(ctx context.Context, taskID string
 		        WHEN $4 = TRUE THEN $5
 		        ELSE remote_task_id
 		    END,
-		    result_asset = CASE
+		    request_payload = CASE
 		        WHEN $6 = TRUE THEN $7::jsonb
+		        ELSE request_payload
+		    END,
+		    result_asset = CASE
+		        WHEN $8 = TRUE THEN $9::jsonb
 		        ELSE result_asset
 		    END,
 		    actual_duration_seconds = CASE
-		        WHEN $8 = TRUE THEN $9::int
+		        WHEN $10 = TRUE THEN $11::int
 		        ELSE actual_duration_seconds
 		    END,
 		    final_credits = CASE
-		        WHEN $10 = TRUE THEN $11::bigint
+		        WHEN $12 = TRUE THEN $13::bigint
 		        ELSE final_credits
 		    END,
 		    final_credits_millis = CASE
-		        WHEN $10 = TRUE THEN $12::bigint
+		        WHEN $12 = TRUE THEN $14::bigint
 		        ELSE final_credits_millis
 		    END,
 		    billing_status = CASE
-		        WHEN $13 = TRUE THEN $14::text
+		        WHEN $15 = TRUE THEN $16::text
 		        ELSE billing_status
 		    END,
 		    billing_payload = CASE
-		        WHEN $15 = TRUE THEN $16::jsonb
+		        WHEN $17 = TRUE THEN $18::jsonb
 		        ELSE billing_payload
 		    END,
 		    progress = CASE
-		        WHEN $17 = TRUE THEN $18::jsonb
+		        WHEN $19 = TRUE THEN $20::jsonb
 		        ELSE progress
 		    END,
 		    remote_response_payload = CASE
-		        WHEN $19 = TRUE THEN $20::jsonb
+		        WHEN $21 = TRUE THEN $22::jsonb
 		        ELSE remote_response_payload
 		    END,
-		    error_message = COALESCE($21::text, error_message),
+		    error_message = COALESCE($23::text, error_message),
 		    started_at = CASE
-		        WHEN $22 = TRUE THEN $23::timestamptz
+		        WHEN $24 = TRUE THEN $25::timestamptz
 		        ELSE started_at
 		    END,
 		    completed_at = CASE
-		        WHEN $24 = TRUE THEN $25::timestamptz
+		        WHEN $26 = TRUE THEN $27::timestamptz
 		        ELSE completed_at
 		    END,
 		    working_dir = CASE
-		        WHEN $26 = TRUE THEN $27::text
+		        WHEN $28 = TRUE THEN $29::text
 		        ELSE working_dir
 		    END,
 		    lease_token = CASE
@@ -535,7 +543,7 @@ func (s *Store) SyncDigitalHumanTaskExecution(ctx context.Context, taskID string
 		WHERE id = $1
 		  AND lease_token = $2
 		RETURNING `+digitalHumanTaskSelectColumns+`
-	`, taskID, leaseToken, input.Status, input.RemoteTaskTouched, remoteTaskID, input.ResultAssetTouched, resultAsset, input.ActualDurationTouched, actualDurationSeconds, input.FinalCreditsTouched, finalCreditsLegacy, finalCreditsMillis, input.BillingStatusTouched, billingStatus, input.BillingPayloadTouched, billingPayload, input.ProgressTouched, progress, input.RemotePayloadTouched, remotePayload, input.ErrorMessage, input.StartedTouched, startedAt, input.CompletedTouched, completedAt, input.WorkingDirTouched, workingDir)
+	`, taskID, leaseToken, input.Status, input.RemoteTaskTouched, remoteTaskID, input.RequestPayloadTouched, requestPayload, input.ResultAssetTouched, resultAsset, input.ActualDurationTouched, actualDurationSeconds, input.FinalCreditsTouched, finalCreditsLegacy, finalCreditsMillis, input.BillingStatusTouched, billingStatus, input.BillingPayloadTouched, billingPayload, input.ProgressTouched, progress, input.RemotePayloadTouched, remotePayload, input.ErrorMessage, input.StartedTouched, startedAt, input.CompletedTouched, completedAt, input.WorkingDirTouched, workingDir)
 
 	task, err := scanDigitalHumanTask(row)
 	if err != nil {

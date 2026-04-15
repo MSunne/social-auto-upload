@@ -251,17 +251,8 @@ func (h *MaterialHandler) SyncRoots(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, payload.DeviceCode, agentKey, true, false)
+	if !ok {
 		return
 	}
 
@@ -322,17 +313,8 @@ func (h *MaterialHandler) SyncDirectory(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, payload.DeviceCode, agentKey, true, false)
+	if !ok {
 		return
 	}
 
@@ -410,17 +392,8 @@ func (h *MaterialHandler) SyncFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	device, err := h.app.Store.GetDeviceByCode(r.Context(), payload.DeviceCode)
-	if err != nil {
-		render.Error(w, http.StatusInternalServerError, "Failed to load device")
-		return
-	}
-	if device == nil {
-		render.Error(w, http.StatusNotFound, "Device not found")
-		return
-	}
-	if !agentKeyMatches(device, agentKey) {
-		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+	device, ok := requireAgentDeviceByIdentity(w, r.Context(), h.app, payload.DeviceCode, agentKey, true, false)
+	if !ok {
 		return
 	}
 

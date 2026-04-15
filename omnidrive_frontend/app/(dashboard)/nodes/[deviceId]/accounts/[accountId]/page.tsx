@@ -689,6 +689,7 @@ export default function AccountTaskPage({
     [skills],
   );
   const isSkillRunModalOpen = isCreateOpen || Boolean(editingJob);
+  const isSuperseded = device?.identityState === "superseded";
 
   const handleDeleteTask = async (taskId: string, title: string) => {
     const confirmed = window.confirm(
@@ -834,7 +835,11 @@ export default function AccountTaskPage({
 
       <PageHeader
         title={`${account.accountName} · 任务列表`}
-        subtitle={`${device?.name || "当前节点"} / ${account.platform}。这里按执行时间展示该账号的生成与发布链路。`}
+        subtitle={
+          isSuperseded
+            ? `${device?.name || "当前节点"} / ${account.platform}。当前节点已变更为历史记录，可查看任务，但新的账号计划和发布执行需要在重新认领的新设备上完成。`
+            : `${device?.name || "当前节点"} / ${account.platform}。这里按执行时间展示该账号的生成与发布链路。`
+        }
         actions={
           <div className="flex items-center gap-2">
             <button
@@ -851,14 +856,25 @@ export default function AccountTaskPage({
             <button
               type="button"
               onClick={() => setIsCreateOpen(true)}
-              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-accent to-cyan px-4 py-2 text-sm font-semibold text-background"
+              disabled={Boolean(isSuperseded)}
+              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold ${
+                isSuperseded
+                  ? "cursor-not-allowed border border-border bg-surface text-text-muted"
+                  : "bg-gradient-to-r from-accent to-cyan text-background"
+              }`}
             >
               <Plus className="h-4 w-4" />
-              新增账号计划
+              {isSuperseded ? "历史节点" : "新增账号计划"}
             </button>
           </div>
         }
       />
+
+      {isSuperseded ? (
+        <div className="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+          该设备身份已变更。现有账号计划和历史任务仍可查看，但新的账号计划、发布任务和执行动作需要在重新认领的新设备上完成。
+        </div>
+      ) : null}
 
       <div className="mb-6 grid gap-4 md:grid-cols-3">
         <StatCard
@@ -914,7 +930,7 @@ export default function AccountTaskPage({
                   : "当前没有可用技能，请先去技能中心创建并启用技能。"
               }
               action={
-                enabledSkills.length > 0 ? (
+                enabledSkills.length > 0 && !isSuperseded ? (
                   <button
                     type="button"
                     onClick={() => setIsCreateOpen(true)}
@@ -1076,7 +1092,7 @@ export default function AccountTaskPage({
                   : "当前没有可用技能，请先去技能中心创建并启用技能。"
               }
               action={
-                enabledSkills.length > 0 ? (
+                enabledSkills.length > 0 && !isSuperseded ? (
                   <button
                     type="button"
                     onClick={() => setIsCreateOpen(true)}

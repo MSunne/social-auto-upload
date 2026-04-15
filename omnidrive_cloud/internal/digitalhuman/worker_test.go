@@ -2,11 +2,13 @@ package digitalhuman
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	appstate "omnidrive_cloud/internal/app"
@@ -115,6 +117,202 @@ func TestWorkerMaterializeTaskAssetsBuildsGenerateRequest(t *testing.T) {
 	}
 	if string(goodsBytes) != "goods-bytes" {
 		t.Fatalf("unexpected goods temp file content %q", string(goodsBytes))
+	}
+}
+
+func TestWorkerMaterializeTaskAssetsStripsCustomizeGoodsFields(t *testing.T) {
+	storageService, err := storage.New(config.Config{
+		LocalStorageDir: t.TempDir(),
+		PublicBaseURL:   "http://localhost:5409",
+	})
+	if err != nil {
+		t.Fatalf("storage.New returned error: %v", err)
+	}
+
+	characterObject, err := storageService.SaveBytes(t.Context(), "digital-human/test-user/task-2/character/character.jpg", "image/jpeg", []byte("character-bytes"))
+	if err != nil {
+		t.Fatalf("SaveBytes character returned error: %v", err)
+	}
+	audioObject, err := storageService.SaveBytes(t.Context(), "digital-human/test-user/task-2/ref/audio.m4a", "audio/mp4", []byte("audio-bytes"))
+	if err != nil {
+		t.Fatalf("SaveBytes audio returned error: %v", err)
+	}
+	goodsObject, err := storageService.SaveBytes(t.Context(), "digital-human/test-user/task-2/goods/goods.jpg", "image/jpeg", []byte("goods-bytes"))
+	if err != nil {
+		t.Fatalf("SaveBytes goods returned error: %v", err)
+	}
+
+	worker := &Worker{
+		app: &appstate.App{
+			Config:  config.Config{},
+			Logger:  slog.Default(),
+			Storage: storageService,
+		},
+	}
+
+	goodsTitle := "遗留商品标题"
+	task := &domain.DigitalHumanTask{
+		ID:          "task-2",
+		OwnerUserID: "test-user",
+		Mode:        "customize",
+		Source:      "runninghub",
+		GoodsTitle:  &goodsTitle,
+		GoodsText:   "真人视频口播文案",
+		CharacterAsset: domain.DigitalHumanAsset{
+			StorageKey: characterObject.StorageKey,
+			FileName:   "character.jpg",
+			MimeType:   "image/jpeg",
+		},
+		RefAudioAsset: domain.DigitalHumanAsset{
+			StorageKey: audioObject.StorageKey,
+			FileName:   "voice.m4a",
+			MimeType:   "audio/mp4",
+		},
+		GoodsAsset: &domain.DigitalHumanAsset{
+			StorageKey: goodsObject.StorageKey,
+			FileName:   "goods.jpg",
+			MimeType:   "image/jpeg",
+		},
+	}
+
+	tempDir, request, err := worker.materializeTaskAssets(t.Context(), task)
+	if err != nil {
+		t.Fatalf("materializeTaskAssets returned error: %v", err)
+	}
+	defer cleanupWorkingDir(slog.Default(), tempDir)
+
+	request = normalizeGenerateRequest(request)
+	if request.Mode != "customize" {
+		t.Fatalf("unexpected mode %q", request.Mode)
+	}
+	if request.GoodsTitle != nil {
+		t.Fatalf("expected customize request to strip goods title, got %#v", request.GoodsTitle)
+	}
+	if request.GoodsAssetPath != nil {
+		t.Fatalf("expected customize request to strip goods asset path, got %#v", request.GoodsAssetPath)
+	}
+	if request.RefAudio == nil || strings.TrimSpace(*request.RefAudio) == "" {
+		t.Fatal("expected ref audio path")
+	}
+}
+
+func TestBuildDigitalHumanRequestAuditPayloadPreservesSourceRequest(t *testing.T) {
+	existing, err := json.Marshal(map[string]any{
+		"mode":      "customize",
+		"goodsText": "初始文案",
+	})
+	if err != nil {
+		t.Fatalf("marshal existing payload: %v", err)
+	}
+
+	llmModel := "qvq-max"
+	audioPath := "/tmp/audio.m4a"
+	payload, err := buildDigitalHumanRequestAuditPayload(existing, normalizeGenerateRequest(GenerateRequest{
+		CharacterAssetPath: "/tmp/character.jpg",
+		LLMModel:           &llmModel,
+		Source:             "runninghub",
+		Mode:               "customize",
+		GoodsText:          "最终口播文案",
+		RefAudio:           &audioPath,
+	}))
+	if err != nil {
+		t.Fatalf("buildDigitalHumanRequestAuditPayload returned error: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("unmarshal audit payload: %v", err)
+	}
+	sourceRequest, ok := decoded["sourceRequest"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected sourceRequest object, got %#v", decoded["sourceRequest"])
+	}
+	if sourceRequest["goodsText"] != "初始文案" {
+		t.Fatalf("unexpected sourceRequest goodsText %#v", sourceRequest["goodsText"])
+	}
+	submissionRequest, ok := decoded["submissionRequest"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected submissionRequest object, got %#v", decoded["submissionRequest"])
+	}
+	if submissionRequest["mode"] != "customize" {
+		t.Fatalf("unexpected submission mode %#v", submissionRequest["mode"])
+	}
+	if _, exists := submissionRequest["goods_title"]; exists {
+		t.Fatalf("expected customize submission request to omit goods_title")
+	}
+	if _, exists := submissionRequest["goods_asset_path"]; exists {
+		t.Fatalf("expected customize submission request to omit goods_asset_path")
+	}
+}
+
+func TestBuildDigitalHumanRequestAuditPayloadDoesNotNestPreviousAuditEnvelope(t *testing.T) {
+	originalSource, err := json.Marshal(map[string]any{
+		"mode":      "customize",
+		"goodsText": "初始口播文案",
+		"sourceAIJob": map[string]any{
+			"id": "job-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal original payload: %v", err)
+	}
+
+	audioPath := "/tmp/audio-1.m4a"
+	firstPayload, err := buildDigitalHumanRequestAuditPayload(originalSource, normalizeGenerateRequest(GenerateRequest{
+		CharacterAssetPath: "/tmp/character-1.jpg",
+		Mode:               "customize",
+		Source:             "runninghub",
+		GoodsText:          "第一次提交",
+		RefAudio:           &audioPath,
+	}))
+	if err != nil {
+		t.Fatalf("build first audit payload: %v", err)
+	}
+
+	secondAudioPath := "/tmp/audio-2.m4a"
+	secondPayload, err := buildDigitalHumanRequestAuditPayload(firstPayload, normalizeGenerateRequest(GenerateRequest{
+		CharacterAssetPath: "/tmp/character-2.jpg",
+		Mode:               "customize",
+		Source:             "runninghub",
+		GoodsText:          "第二次提交",
+		RefAudio:           &secondAudioPath,
+	}))
+	if err != nil {
+		t.Fatalf("build second audit payload: %v", err)
+	}
+
+	thirdAudioPath := "/tmp/audio-3.m4a"
+	thirdPayload, err := buildDigitalHumanRequestAuditPayload(secondPayload, normalizeGenerateRequest(GenerateRequest{
+		CharacterAssetPath: "/tmp/character-3.jpg",
+		Mode:               "customize",
+		Source:             "runninghub",
+		GoodsText:          "第三次提交",
+		RefAudio:           &thirdAudioPath,
+	}))
+	if err != nil {
+		t.Fatalf("build third audit payload: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(thirdPayload, &decoded); err != nil {
+		t.Fatalf("unmarshal third audit payload: %v", err)
+	}
+	sourceRequest, ok := decoded["sourceRequest"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected sourceRequest object, got %#v", decoded["sourceRequest"])
+	}
+	if sourceRequest["goodsText"] != "初始口播文案" {
+		t.Fatalf("unexpected sourceRequest goodsText %#v", sourceRequest["goodsText"])
+	}
+	if _, exists := sourceRequest["sourceRequest"]; exists {
+		t.Fatalf("expected sourceRequest to keep original payload instead of nesting prior audit envelope")
+	}
+	submissionRequest, ok := decoded["submissionRequest"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected submissionRequest object, got %#v", decoded["submissionRequest"])
+	}
+	if submissionRequest["goods_text"] != "第三次提交" {
+		t.Fatalf("unexpected submissionRequest goods_text %#v", submissionRequest["goods_text"])
 	}
 }
 

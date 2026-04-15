@@ -221,6 +221,7 @@ export default function DeviceAccountsPage({
       </div>
     );
   }
+  const isSuperseded = device.identityState === "superseded";
 
   return (
     <>
@@ -233,6 +234,12 @@ export default function DeviceAccountsPage({
           <ArrowLeft className="h-4 w-4" /> 返回列表
         </Link>
       </div>
+
+      {isSuperseded ? (
+        <div className="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+          当前节点已变更为历史记录。账号与任务仍可查看，但新增账号、登录和后续执行请在重新认领的新设备上完成。
+        </div>
+      ) : null}
 
       {/* ───── Summary Stats ───── */}
       <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -382,10 +389,15 @@ export default function DeviceAccountsPage({
           </button>
           <button
             onClick={() => setIsAccountModalOpen(true)}
-            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-accent to-cyan px-4 py-2 text-sm font-bold text-white shadow-lg shadow-accent/25 transition-all hover:shadow-xl hover:shadow-accent/35 hover:-translate-y-0.5 active:translate-y-0 cursor-pointer"
+            disabled={isSuperseded}
+            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-all ${
+              isSuperseded
+                ? "cursor-not-allowed border border-border bg-surface text-text-muted"
+                : "bg-gradient-to-r from-accent to-cyan text-white shadow-lg shadow-accent/25 hover:shadow-xl hover:shadow-accent/35 hover:-translate-y-0.5 active:translate-y-0 cursor-pointer"
+            }`}
           >
             <Plus className="h-4 w-4" />
-            增加账号
+            {isSuperseded ? "历史节点" : "增加账号"}
           </button>
         </div>
       </div>

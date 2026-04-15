@@ -497,12 +497,14 @@ restart_service_if_needed() {
 
 verify_installation() {
   local browser_path
+  local verify_path
   [[ "${OMNIBULL_SETUP_VERIFY}" == "1" ]] || return 0
 
   log "running installation verification"
+  verify_path="${NODE_DIR}/bin:${PATH}"
   python3 --version >/dev/null
   "${NODE_DIR}/bin/node" --version >/dev/null
-  "${NODE_DIR}/bin/npm" --version >/dev/null
+  env PATH="${verify_path}" "${NODE_DIR}/bin/npm" --version >/dev/null
   google-chrome --version >/dev/null
   [[ -x "${CHROME_DESKTOP_FILE}" ]]
   systemctl is-active --quiet sau-stack.service

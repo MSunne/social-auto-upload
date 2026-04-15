@@ -486,6 +486,10 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 			render.Error(w, http.StatusNotFound, "Device not found")
 			return
 		}
+		if !device.IsEnabled {
+			render.Error(w, http.StatusConflict, "Device is disabled")
+			return
+		}
 		deviceID = &trimmed
 	}
 	storyboardEnabled := true
@@ -638,6 +642,10 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 			}
 			if device == nil {
 				render.Error(w, http.StatusNotFound, "Device not found")
+				return
+			}
+			if !device.IsEnabled {
+				render.Error(w, http.StatusConflict, "Device is disabled")
 				return
 			}
 			deviceID = &trimmed

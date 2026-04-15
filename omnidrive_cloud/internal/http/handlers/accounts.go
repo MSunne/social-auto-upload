@@ -205,6 +205,19 @@ func (h *AccountHandler) CreateSkillRun(w http.ResponseWriter, r *http.Request) 
 		render.Error(w, http.StatusNotFound, "Account not found")
 		return
 	}
+	device, err := h.app.Store.GetOwnedDevice(r.Context(), account.DeviceID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to validate device")
+		return
+	}
+	if device == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+	if !device.IsEnabled {
+		render.Error(w, http.StatusConflict, "Device is disabled")
+		return
+	}
 
 	skillID := strings.TrimSpace(payload.SkillID)
 	if skillID == "" {

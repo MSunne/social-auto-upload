@@ -29,6 +29,8 @@ func scanDevice(row pgx.Row) (*domain.Device, error) {
 	var runtimePayload []byte
 	var ownerUserID *string
 	var lastSeenAt *time.Time
+	var supersededByDeviceID *string
+	var supersededAt *time.Time
 
 	if err := row.Scan(
 		&device.ID,
@@ -48,6 +50,8 @@ func scanDevice(row pgx.Row) (*domain.Device, error) {
 		&runtimePayload,
 		&lastSeenAt,
 		&notes,
+		&supersededByDeviceID,
+		&supersededAt,
 		&device.CreatedAt,
 		&device.UpdatedAt,
 	); err != nil {
@@ -71,6 +75,9 @@ func scanDevice(row pgx.Row) (*domain.Device, error) {
 	device.RuntimePayload = bytesOrNil(runtimePayload)
 	device.LastSeenAt = lastSeenAt
 	device.Notes = notes
+	device.SupersededByDeviceID = supersededByDeviceID
+	device.SupersededAt = supersededAt
+	device.IdentityState = computeDeviceIdentityState(supersededByDeviceID, supersededAt)
 	device.Status = computeDeviceStatus(lastSeenAt, runtimePayload)
 	device.BridgeStatus = computeDeviceBridgeStatus(lastSeenAt, runtimePayload)
 	return &device, nil
@@ -92,6 +99,8 @@ func scanDeviceWithLoad(row pgx.Row) (*domain.Device, error) {
 	var runtimePayload []byte
 	var ownerUserID *string
 	var lastSeenAt *time.Time
+	var supersededByDeviceID *string
+	var supersededAt *time.Time
 
 	if err := row.Scan(
 		&device.ID,
@@ -111,6 +120,8 @@ func scanDeviceWithLoad(row pgx.Row) (*domain.Device, error) {
 		&runtimePayload,
 		&lastSeenAt,
 		&notes,
+		&supersededByDeviceID,
+		&supersededAt,
 		&device.CreatedAt,
 		&device.UpdatedAt,
 		&device.Load.AccountCount,
@@ -147,6 +158,9 @@ func scanDeviceWithLoad(row pgx.Row) (*domain.Device, error) {
 	device.RuntimePayload = bytesOrNil(runtimePayload)
 	device.LastSeenAt = lastSeenAt
 	device.Notes = notes
+	device.SupersededByDeviceID = supersededByDeviceID
+	device.SupersededAt = supersededAt
+	device.IdentityState = computeDeviceIdentityState(supersededByDeviceID, supersededAt)
 	device.Status = computeDeviceStatus(lastSeenAt, runtimePayload)
 	device.BridgeStatus = computeDeviceBridgeStatus(lastSeenAt, runtimePayload)
 
@@ -157,7 +171,7 @@ const deviceSelectColumns = `
 	id, owner_user_id, device_code, agent_key, name, local_ip, public_ip,
 	default_reasoning_model, default_chat_model, default_image_model, default_video_model,
 	platform_capabilities, platform_capabilities_revision,
-	is_enabled, runtime_payload, last_seen_at, notes,
+	is_enabled, runtime_payload, last_seen_at, notes, superseded_by_device_id, superseded_at,
 	created_at, updated_at
 `
 
@@ -165,7 +179,7 @@ const deviceSelectColumnsQualified = `
 	devices.id, devices.owner_user_id, devices.device_code, devices.agent_key, devices.name, devices.local_ip, devices.public_ip,
 	devices.default_reasoning_model, devices.default_chat_model, devices.default_image_model, devices.default_video_model,
 	devices.platform_capabilities, devices.platform_capabilities_revision,
-	devices.is_enabled, devices.runtime_payload, devices.last_seen_at, devices.notes,
+	devices.is_enabled, devices.runtime_payload, devices.last_seen_at, devices.notes, devices.superseded_by_device_id, devices.superseded_at,
 	devices.created_at, devices.updated_at
 `
 
@@ -246,7 +260,34 @@ func (s *Store) GetOwnedDevice(ctx context.Context, deviceID string, ownerUserID
 
 // 执行设备相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetDeviceByCode(ctx context.Context, deviceCode string) (*domain.Device, error) {
-	row := s.pool.QueryRow(ctx, "SELECT "+deviceSelectColumns+" FROM devices WHERE device_code = $1", deviceCode)
+	row := s.pool.QueryRow(ctx, `
+		SELECT `+deviceSelectColumns+`
+		FROM devices
+		WHERE device_code = $1
+		ORDER BY
+			CASE WHEN superseded_by_device_id IS NULL THEN 0 ELSE 1 END,
+			updated_at DESC
+		LIMIT 1
+	`, deviceCode)
+	device, err := scanDevice(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return device, nil
+}
+
+// 执行设备相关的数据库查询，依赖上下文和连接池返回当前业务状态。
+func (s *Store) GetDeviceByIdentity(ctx context.Context, deviceCode string, agentKey string) (*domain.Device, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT `+deviceSelectColumns+`
+		FROM devices
+		WHERE device_code = $1 AND agent_key = $2
+		ORDER BY updated_at DESC
+		LIMIT 1
+	`, deviceCode, agentKey)
 	device, err := scanDevice(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -260,11 +301,20 @@ func (s *Store) GetDeviceByCode(ctx context.Context, deviceCode string) (*domain
 // 执行设备相关的租约与并发控制操作，确保调度和执行状态保持一致。
 func (s *Store) ClaimDevice(ctx context.Context, deviceCode string, ownerUserID string) (*domain.Device, error) {
 	row := s.pool.QueryRow(ctx, `
+		WITH target AS (
+			SELECT id
+			FROM devices
+			WHERE device_code = $1
+			ORDER BY
+				CASE WHEN superseded_by_device_id IS NULL THEN 0 ELSE 1 END,
+				updated_at DESC
+			LIMIT 1
+		)
 		UPDATE devices
 		SET owner_user_id = $2,
 		    is_enabled = TRUE,
 		    updated_at = NOW()
-		WHERE device_code = $1
+		WHERE id = (SELECT id FROM target)
 		  AND (owner_user_id IS NULL OR owner_user_id = $2)
 		RETURNING `+deviceSelectColumns+`
 	`, deviceCode, ownerUserID)
@@ -277,6 +327,39 @@ func (s *Store) ClaimDevice(ctx context.Context, deviceCode string, ownerUserID 
 		return nil, err
 	}
 	return s.GetOwnedDevice(ctx, device.ID, ownerUserID)
+}
+
+// 根据设备身份更新心跳字段，避免不同写入路径重复维护同一组列。
+func updateHeartbeatDeviceRecord(ctx context.Context, tx pgx.Tx, deviceID string, input HeartbeatInput, runtimePayload []byte, now time.Time) (*domain.Device, error) {
+	row := tx.QueryRow(ctx, `
+		UPDATE devices
+		SET device_code = $2,
+		    name = $3,
+		    local_ip = COALESCE($4, devices.local_ip),
+		    public_ip = COALESCE($5, devices.public_ip),
+		    runtime_payload = $6,
+		    last_seen_at = $7,
+		    updated_at = NOW()
+		WHERE id = $1
+		RETURNING `+deviceSelectColumns+`
+	`, deviceID, input.DeviceCode, input.DeviceName, input.LocalIP, input.PublicIP, runtimePayload, now)
+	return scanDevice(row)
+}
+
+// 迁移设备激活配置到新身份，并重置为可重新认领状态。
+func transferDeviceActivationConfig(ctx context.Context, tx pgx.Tx, fromDeviceID string, toDeviceID string) error {
+	if _, err := tx.Exec(ctx, `
+		UPDATE device_activation_configs
+		SET device_id = $2,
+		    status = 'ready',
+		    activated_by_user_id = NULL,
+		    activated_at = NULL,
+		    updated_at = NOW()
+		WHERE device_id = $1
+	`, fromDeviceID, toDeviceID); err != nil {
+		return err
+	}
+	return nil
 }
 
 // 执行设备相关的数据库写入，维护持久化状态与后续业务流转。
@@ -312,75 +395,83 @@ func (s *Store) UpsertHeartbeatDevice(ctx context.Context, input HeartbeatInput)
 		runtimePayload = nil
 	}
 
-	if input.DeviceFingerprint != "" {
-		row := s.pool.QueryRow(ctx, `
-			WITH current_match AS (
-				SELECT id
-				FROM devices
-				WHERE device_code = $2
-				LIMIT 1
-			),
-			fingerprint_match AS (
-				SELECT id
-				FROM devices
-				WHERE COALESCE(runtime_payload->>'deviceFingerprint', '') = $1
-				ORDER BY updated_at DESC
-				LIMIT 1
-			)
-			UPDATE devices
-			SET device_code = $2,
-			    agent_key = CASE
-					WHEN devices.agent_key IS NULL OR devices.agent_key = $3
-					THEN $3
-					ELSE devices.agent_key
-				END,
-			    name = $4,
-			    local_ip = COALESCE($5, devices.local_ip),
-			    public_ip = COALESCE($6, devices.public_ip),
-			    runtime_payload = $7,
-			    last_seen_at = $8,
-			    updated_at = NOW()
-			WHERE id = (SELECT id FROM fingerprint_match)
-			  AND NOT EXISTS (SELECT 1 FROM current_match)
-			RETURNING `+deviceSelectColumns+`
-		`,
-			input.DeviceFingerprint,
-			input.DeviceCode,
-			input.AgentKey,
-			input.DeviceName,
-			input.LocalIP,
-			input.PublicIP,
-			runtimePayload,
-			now,
-		)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
 
-		device, err := scanDevice(row)
-		if err == nil {
+	existingByIdentity, err := scanDevice(tx.QueryRow(ctx, `
+		SELECT `+deviceSelectColumns+`
+		FROM devices
+		WHERE device_code = $1 AND agent_key = $2
+		ORDER BY updated_at DESC
+		LIMIT 1
+		FOR UPDATE
+	`, input.DeviceCode, input.AgentKey))
+	if err == nil {
+		device, updateErr := updateHeartbeatDeviceRecord(ctx, tx, existingByIdentity.ID, input, runtimePayload, now)
+		if updateErr != nil {
+			return nil, updateErr
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return device, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+
+	if input.DeviceFingerprint != "" {
+		deviceByFingerprint, fingerprintErr := scanDevice(tx.QueryRow(ctx, `
+			SELECT `+deviceSelectColumns+`
+			FROM devices
+			WHERE agent_key = $1
+			  AND COALESCE(runtime_payload->>'deviceFingerprint', '') = $2
+			ORDER BY updated_at DESC
+			LIMIT 1
+			FOR UPDATE
+		`, input.AgentKey, input.DeviceFingerprint))
+		if fingerprintErr == nil {
+			device, updateErr := updateHeartbeatDeviceRecord(ctx, tx, deviceByFingerprint.ID, input, runtimePayload, now)
+			if updateErr != nil {
+				return nil, updateErr
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return nil, err
+			}
 			return device, nil
 		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return nil, err
+		if !errors.Is(fingerprintErr, pgx.ErrNoRows) {
+			return nil, fingerprintErr
 		}
 	}
 
-	row := s.pool.QueryRow(ctx, `
+	var predecessor *domain.Device
+	predecessor, err = scanDevice(tx.QueryRow(ctx, `
+		SELECT `+deviceSelectColumns+`
+		FROM devices
+		WHERE device_code = $1
+		ORDER BY
+			CASE WHEN superseded_by_device_id IS NULL THEN 0 ELSE 1 END,
+			updated_at DESC
+		LIMIT 1
+		FOR UPDATE
+	`, input.DeviceCode))
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		predecessor = nil
+	}
+
+	created, err := scanDevice(tx.QueryRow(ctx, `
 		INSERT INTO devices (
 			id, device_code, agent_key, name, local_ip, public_ip, runtime_payload,
-			is_enabled, last_seen_at
+			is_enabled, last_seen_at, superseded_by_device_id, superseded_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE, $8)
-		ON CONFLICT (device_code) DO UPDATE
-		SET agent_key = CASE
-				WHEN devices.agent_key IS NULL OR devices.agent_key = EXCLUDED.agent_key
-				THEN EXCLUDED.agent_key
-				ELSE devices.agent_key
-			END,
-		    name = EXCLUDED.name,
-		    local_ip = COALESCE(EXCLUDED.local_ip, devices.local_ip),
-		    public_ip = COALESCE(EXCLUDED.public_ip, devices.public_ip),
-		    runtime_payload = EXCLUDED.runtime_payload,
-		    last_seen_at = EXCLUDED.last_seen_at,
-		    updated_at = NOW()
+		VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE, $8, NULL, NULL)
 		RETURNING `+deviceSelectColumns+`
 	`,
 		uuid.NewString(),
@@ -391,13 +482,31 @@ func (s *Store) UpsertHeartbeatDevice(ctx context.Context, input HeartbeatInput)
 		input.PublicIP,
 		runtimePayload,
 		now,
-	)
-
-	device, err := scanDevice(row)
+	))
 	if err != nil {
 		return nil, err
 	}
-	return device, nil
+
+	if predecessor != nil && predecessor.ID != created.ID {
+		if _, err := tx.Exec(ctx, `
+			UPDATE devices
+			SET superseded_by_device_id = $2,
+			    superseded_at = $3,
+			    is_enabled = FALSE,
+			    updated_at = NOW()
+			WHERE id = $1
+		`, predecessor.ID, created.ID, now); err != nil {
+			return nil, err
+		}
+		if err := transferDeviceActivationConfig(ctx, tx, predecessor.ID, created.ID); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return s.GetDeviceByIdentity(ctx, input.DeviceCode, input.AgentKey)
 }
 
 // 处理Unbind设备相关逻辑，结合当前上下文完成必要的状态转换或结果组装。

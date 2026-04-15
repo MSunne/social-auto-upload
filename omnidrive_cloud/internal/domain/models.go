@@ -33,6 +33,9 @@ type Device struct {
 	RuntimePayload               json.RawMessage      `json:"runtimePayload,omitempty"`
 	LastSeenAt                   *time.Time           `json:"lastSeenAt"`
 	Notes                        *string              `json:"notes"`
+	IdentityState                string               `json:"identityState"`
+	SupersededByDeviceID         *string              `json:"supersededByDeviceId,omitempty"`
+	SupersededAt                 *time.Time           `json:"supersededAt,omitempty"`
 	CreatedAt                    time.Time            `json:"createdAt"`
 	UpdatedAt                    time.Time            `json:"updatedAt"`
 	Status                       string               `json:"status"`
@@ -733,40 +736,48 @@ type DigitalHumanBillingPreview struct {
 	ShortfallCredits         float64 `json:"shortfallCredits"`
 }
 
+type DigitalHumanSubmissionEvidence struct {
+	Mode              string  `json:"mode"`
+	GoodsTitle        *string `json:"goodsTitle,omitempty"`
+	HasGoodsAssetPath bool    `json:"hasGoodsAssetPath"`
+	RemoteTaskID      *string `json:"remoteTaskId,omitempty"`
+}
+
 type DigitalHumanTask struct {
-	ID                       string                `json:"id"`
-	OwnerUserID              string                `json:"ownerUserId"`
-	AIJobID                  *string               `json:"aiJobId,omitempty"`
-	Mode                     string                `json:"mode"`
-	Source                   string                `json:"source"`
-	Status                   string                `json:"status"`
-	ModelName                string                `json:"modelName"`
-	RemoteTaskID             *string               `json:"remoteTaskId,omitempty"`
-	CharacterAsset           DigitalHumanAsset     `json:"characterAsset"`
-	GoodsAsset               *DigitalHumanAsset    `json:"goodsAsset,omitempty"`
-	RefAudioAsset            DigitalHumanAsset     `json:"refAudioAsset"`
-	ResultAsset              *DigitalHumanAsset    `json:"resultAsset,omitempty"`
-	GoodsTitle               *string               `json:"goodsTitle,omitempty"`
-	GoodsText                string                `json:"goodsText"`
-	EstimatedDurationSeconds int                   `json:"estimatedDurationSeconds"`
-	EstimatedCredits         float64               `json:"estimatedCredits"`
-	EstimatedCreditsMillis   int64                 `json:"-"`
-	ActualDurationSeconds    *int                  `json:"actualDurationSeconds,omitempty"`
-	FinalCredits             *float64              `json:"finalCredits,omitempty"`
-	FinalCreditsMillis       *int64                `json:"-"`
-	BillingStatus            string                `json:"billingStatus"`
-	BillingPayload           json.RawMessage       `json:"billingPayload,omitempty"`
-	Progress                 *DigitalHumanProgress `json:"progress,omitempty"`
-	RequestPayload           json.RawMessage       `json:"requestPayload,omitempty"`
-	RemoteResponsePayload    json.RawMessage       `json:"remoteResponsePayload,omitempty"`
-	ErrorMessage             *string               `json:"errorMessage,omitempty"`
-	StartedAt                *time.Time            `json:"startedAt,omitempty"`
-	CompletedAt              *time.Time            `json:"completedAt,omitempty"`
-	CreatedAt                time.Time             `json:"createdAt"`
-	UpdatedAt                time.Time             `json:"updatedAt"`
-	LeaseToken               *string               `json:"-"`
-	LeaseExpiresAt           *time.Time            `json:"-"`
-	WorkingDir               *string               `json:"-"`
+	ID                       string                          `json:"id"`
+	OwnerUserID              string                          `json:"ownerUserId"`
+	AIJobID                  *string                         `json:"aiJobId,omitempty"`
+	Mode                     string                          `json:"mode"`
+	Source                   string                          `json:"source"`
+	Status                   string                          `json:"status"`
+	ModelName                string                          `json:"modelName"`
+	RemoteTaskID             *string                         `json:"remoteTaskId,omitempty"`
+	CharacterAsset           DigitalHumanAsset               `json:"characterAsset"`
+	GoodsAsset               *DigitalHumanAsset              `json:"goodsAsset,omitempty"`
+	RefAudioAsset            DigitalHumanAsset               `json:"refAudioAsset"`
+	ResultAsset              *DigitalHumanAsset              `json:"resultAsset,omitempty"`
+	GoodsTitle               *string                         `json:"goodsTitle,omitempty"`
+	GoodsText                string                          `json:"goodsText"`
+	EstimatedDurationSeconds int                             `json:"estimatedDurationSeconds"`
+	EstimatedCredits         float64                         `json:"estimatedCredits"`
+	EstimatedCreditsMillis   int64                           `json:"-"`
+	ActualDurationSeconds    *int                            `json:"actualDurationSeconds,omitempty"`
+	FinalCredits             *float64                        `json:"finalCredits,omitempty"`
+	FinalCreditsMillis       *int64                          `json:"-"`
+	BillingStatus            string                          `json:"billingStatus"`
+	BillingPayload           json.RawMessage                 `json:"billingPayload,omitempty"`
+	Progress                 *DigitalHumanProgress           `json:"progress,omitempty"`
+	RequestPayload           json.RawMessage                 `json:"requestPayload,omitempty"`
+	RemoteResponsePayload    json.RawMessage                 `json:"remoteResponsePayload,omitempty"`
+	SubmissionEvidence       *DigitalHumanSubmissionEvidence `json:"submissionEvidence,omitempty"`
+	ErrorMessage             *string                         `json:"errorMessage,omitempty"`
+	StartedAt                *time.Time                      `json:"startedAt,omitempty"`
+	CompletedAt              *time.Time                      `json:"completedAt,omitempty"`
+	CreatedAt                time.Time                       `json:"createdAt"`
+	UpdatedAt                time.Time                       `json:"updatedAt"`
+	LeaseToken               *string                         `json:"-"`
+	LeaseExpiresAt           *time.Time                      `json:"-"`
+	WorkingDir               *string                         `json:"-"`
 }
 
 type AgentAIJobPackage struct {
