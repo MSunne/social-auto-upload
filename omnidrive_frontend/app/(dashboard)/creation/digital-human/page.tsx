@@ -12,10 +12,8 @@ import {
   ImagePlus,
   LoaderCircle,
   Maximize2,
-  Mic,
   Package,
   RefreshCw,
-  ShoppingBag,
   Upload,
   UserRound,
   Video,
@@ -27,11 +25,17 @@ import {
   DIGITAL_HUMAN_IMAGE_ACCEPT,
   DIGITAL_HUMAN_REMINDER_TEXT,
   countUnicodeCharacters,
+  formatDigitalHumanCreditValue,
   formatDigitalHumanMode,
   isSuccessfulDigitalHumanTask,
   isTerminalDigitalHumanTask,
   validateDigitalHumanFile,
 } from "@/lib/digital-human";
+import {
+  isRecommendedDigitalHumanModel,
+  resolveDefaultDigitalHumanModel,
+  sortDigitalHumanModelsForMode,
+} from "@/lib/digital-human-models";
 import { getDigitalHumanTaskPollInterval } from "@/lib/long-task-poll";
 import {
   createDigitalHumanTask,
@@ -84,16 +88,6 @@ function formatFileSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatCreditValue(value?: number | null) {
-  if (typeof value !== "number" || Number.isNaN(value)) {
-    return "0";
-  }
-  return value.toLocaleString("zh-CN", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 3,
-  });
-}
-
 function clampProgress(task?: DigitalHumanTask | null) {
   if (!task) {
     return 0;
@@ -109,26 +103,6 @@ function clampProgress(task?: DigitalHumanTask | null) {
     return 12;
   }
   return 0;
-}
-
-function resolveDefaultDigitalHumanModel(
-  modelCatalog: DigitalHumanModelsResponse | undefined,
-  mode: "digital" | "customize",
-) {
-  if (!modelCatalog) {
-    return "";
-  }
-  const adminDefault = (modelCatalog.defaultModelByMode?.[mode] || "").trim();
-  if (adminDefault) {
-    return adminDefault;
-  }
-  if (modelCatalog.recommendedModelId?.trim()) {
-    return modelCatalog.recommendedModelId.trim();
-  }
-  if (modelCatalog.currentModelId?.trim()) {
-    return modelCatalog.currentModelId.trim();
-  }
-  return modelCatalog.models[0]?.id || "";
 }
 
 /* ─── Animation variants ─── */
@@ -411,7 +385,7 @@ function DropZone({
 
 export default function DigitalHumanCreationPage() {
   const queryClient = useQueryClient();
-  const [mode, setMode] = useState<"digital" | "customize">("customize");
+  const mode = "customize" as "digital" | "customize";
   const [characterImage, setCharacterImage] = useState<File | null>(null);
   const [goodsImage, setGoodsImage] = useState<File | null>(null);
   const [refAudio, setRefAudio] = useState<File | null>(null);
@@ -427,7 +401,6 @@ export default function DigitalHumanCreationPage() {
   const [debouncedGoodsText, setDebouncedGoodsText] = useState("");
 
   const characterPreview = useObjectUrl(characterImage);
-  const goodsPreview = useObjectUrl(goodsImage);
   const audioPreview = useObjectUrl(refAudio);
 
   const titleLength = countUnicodeCharacters(goodsTitle);
@@ -498,6 +471,11 @@ export default function DigitalHumanCreationPage() {
   const selectedModelName =
     selectedModelByMode[mode] || resolveDefaultDigitalHumanModel(digitalHumanModels, mode);
   const selectedModelOption = digitalHumanModels?.models.find((item) => item.id === selectedModelName) ?? null;
+  const selectedModelIsRecommended = isRecommendedDigitalHumanModel(digitalHumanModels, mode, selectedModelName);
+  const sortedDigitalHumanModels = useMemo(
+    () => sortDigitalHumanModelsForMode(digitalHumanModels?.models || [], digitalHumanModels, mode),
+    [digitalHumanModels, mode],
+  );
   const billingDisabled = Boolean(billingPreview && billingPreview.creditsPerSecond <= 0);
   const billingInsufficient = Boolean(
     hasGoodsText &&
@@ -506,23 +484,6 @@ export default function DigitalHumanCreationPage() {
       !billingPreview.canAfford,
   );
   const submitDisabled = createMutation.isPending || billingDisabled || billingInsufficient || !selectedModelName.trim();
-
-  function handleModeChange(nextMode: "digital" | "customize") {
-    setMode(nextMode);
-    if (nextMode === "customize") {
-      setGoodsImage(null);
-      setGoodsTitle("");
-      setErrors((current) => ({
-        ...current,
-        goodsImage: "",
-        goodsTitle: "",
-      }));
-    }
-    setErrors((current) => ({
-      ...current,
-      modelName: "",
-    }));
-  }
 
   function validateForm() {
     const nextErrors: FormErrors = {};
@@ -624,7 +585,7 @@ export default function DigitalHumanCreationPage() {
       return;
     }
     if (billingPreview && !billingPreview.canAfford) {
-      setSubmitError(`当前积分不足，预计需要 ${formatCreditValue(billingPreview.estimatedCredits)} 积分，还差 ${formatCreditValue(billingPreview.shortfallCredits)} 积分`);
+      setSubmitError(`当前积分不足，预计需要 ${formatDigitalHumanCreditValue(billingPreview.estimatedCredits)} 积分，还差 ${formatDigitalHumanCreditValue(billingPreview.shortfallCredits)} 积分`);
       return;
     }
 
@@ -678,9 +639,9 @@ export default function DigitalHumanCreationPage() {
                   {mode === "digital" ? "带货模式默认模型来自后台设置" : "口播模式默认模型来自后台设置"}
                 </p>
               </div>
-              {selectedModelOption?.isRecommended ? (
+              {selectedModelIsRecommended ? (
                 <span className="rounded-full bg-emerald-400/12 px-2.5 py-1 text-xs font-medium text-emerald-300">
-                  推荐模型
+                  当前模式默认
                 </span>
               ) : null}
             </div>
@@ -699,10 +660,10 @@ export default function DigitalHumanCreationPage() {
                 disabled={digitalHumanModelsLoading}
               >
                 {!digitalHumanModels?.models.length ? <option value="">暂无可用模型</option> : null}
-                {digitalHumanModels?.models.map((item) => (
+                {sortedDigitalHumanModels.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.id}
-                    {item.isRecommended ? "（推荐）" : ""}
+                    {isRecommendedDigitalHumanModel(digitalHumanModels, mode, item.id) ? "（当前模式默认）" : ""}
                     {item.isCurrent ? "（当前）" : ""}
                   </option>
                 ))}
@@ -818,7 +779,7 @@ export default function DigitalHumanCreationPage() {
                   setErrors((current) => ({ ...current, goodsText: "" }));
                 }}
                 rows={5}
-                placeholder="请输入真人口播文案，系统将根据文案内容生成对应时长的口播视频..."
+                placeholder="请输入真人视频文案，系统将根据文案内容生成对应时长的视频..."
                 className="mt-2 w-full resize-y rounded-2xl border border-accent/20 bg-accent/[0.03] px-4 py-3 text-sm leading-7 text-text-primary outline-none transition-all duration-300 focus:border-accent/50 focus:bg-accent/[0.05] focus:shadow-[0_0_16px_rgba(177,73,255,0.1)] placeholder:text-text-muted/50"
                 style={{ minHeight: "120px" }}
               />
@@ -843,15 +804,15 @@ export default function DigitalHumanCreationPage() {
                       预计时长 <span className="font-semibold text-text-primary">{billingPreview.estimatedDurationSeconds}</span> 秒
                     </span>
                     <span>
-                      预计消耗 <span className="font-semibold text-accent">{formatCreditValue(billingPreview.estimatedCredits)}</span> 积分
+                      预计消耗 <span className="font-semibold text-accent">{formatDigitalHumanCreditValue(billingPreview.estimatedCredits)}</span> 积分
                     </span>
                     <span>
-                      当前余额 <span className="font-semibold text-text-primary">{formatCreditValue(billingPreview.creditBalance)}</span> 积分
+                      当前余额 <span className="font-semibold text-text-primary">{formatDigitalHumanCreditValue(billingPreview.creditBalance)}</span> 积分
                     </span>
                     <span className="text-xs text-text-muted">按 4 字/秒估算，实际结算以成品视频时长为准</span>
                     {billingInsufficient ? (
                       <span className="rounded-full bg-danger/10 px-2 py-0.5 text-xs font-medium text-danger">
-                        余额不足，还差 {formatCreditValue(billingPreview.shortfallCredits)} 积分
+                        余额不足，还差 {formatDigitalHumanCreditValue(billingPreview.shortfallCredits)} 积分
                       </span>
                     ) : (
                       <span className="rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success">
@@ -862,7 +823,7 @@ export default function DigitalHumanCreationPage() {
                 ) : (
                   <div className="flex flex-wrap items-center gap-3 text-xs text-text-muted">
                     <span>
-                      当前费率 {formatCreditValue(billingPreview?.creditsPerSecond ?? 0)} 积分/秒
+                      当前费率 {formatDigitalHumanCreditValue(billingPreview?.creditsPerSecond ?? 0)} 积分/秒
                     </span>
                     <span>按 4 字/秒估算，输入文案后将展示预计消耗</span>
                     {isBillingPreviewFetching ? <span className="text-accent">正在计算...</span> : null}
@@ -911,7 +872,7 @@ export default function DigitalHumanCreationPage() {
               </span>
             ) : billingInsufficient && billingPreview ? (
               <span className="text-xs text-danger">
-                当前积分不足，还差 {formatCreditValue(billingPreview.shortfallCredits)} 积分。
+                当前积分不足，还差 {formatDigitalHumanCreditValue(billingPreview.shortfallCredits)} 积分。
               </span>
             ) : (
               <span className="text-xs text-text-muted">

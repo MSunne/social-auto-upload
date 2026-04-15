@@ -56,6 +56,8 @@ const (
 	defaultSkillVideoSubtitleRule    = "默认不要字幕"
 	defaultSkillStoryboardPrompt     = "你是内容创作分镜与脚本优化助手。请结合用户目标、参考图片和参考文本，输出适合继续交给图片、视频或文本模型执行的精炼脚本。输出中需要保留主体、场景、镜头、风格、文案和节奏等关键信息。"
 	skillOutputDigitalHuman          = "数字人口播"
+	skillOutputRealVideo             = "真人视频"
+	skillOutputRealSpeech            = "真人口播"
 	skillAssetCharacterImage         = "digital_human_character_image"
 	skillAssetGoodsImage             = "digital_human_goods_image"
 	skillAssetRefAudio               = "digital_human_ref_audio"
@@ -113,7 +115,7 @@ func ResolveSkillStoryboardPromptTemplate(skill domain.ProductSkill, jobType str
 
 // 映射技能输出Type作业Type，把外部配置转换为当前业务可识别的表示。
 func MapSkillOutputTypeToJobType(outputType string) (string, bool) {
-	switch strings.TrimSpace(outputType) {
+	switch NormalizeSkillOutputType(outputType) {
 	case "image", "image_text", "图文模式":
 		return "image", true
 	case "video", "video_text", "视文模式":
@@ -128,7 +130,23 @@ func MapSkillOutputTypeToJobType(outputType string) (string, bool) {
 }
 
 func IsDigitalHumanSkillOutput(outputType string) bool {
-	return strings.TrimSpace(outputType) == skillOutputDigitalHuman
+	return NormalizeSkillOutputType(outputType) == skillOutputDigitalHuman
+}
+
+// 规范化技能输出类型，兼容历史别名并确保后续新写入值保持一致。
+func NormalizeSkillOutputType(outputType string) string {
+	switch strings.TrimSpace(outputType) {
+	case "image", "image_text", "图文模式":
+		return "图文模式"
+	case "video", "video_text", "视文模式":
+		return "视文模式"
+	case "chat", "text", "text_only", "文本格式":
+		return "文本格式"
+	case "digital_human", skillOutputDigitalHuman, skillOutputRealVideo, skillOutputRealSpeech:
+		return skillOutputDigitalHuman
+	default:
+		return strings.TrimSpace(outputType)
+	}
 }
 
 // 根据Auto发布计算账号Allowed，供技能作业helpers链路复用关键派生结果。

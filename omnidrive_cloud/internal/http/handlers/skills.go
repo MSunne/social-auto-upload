@@ -111,7 +111,7 @@ const videoTextWorkflowCode = "video_text"
 
 // 判断是否属于视频Text输出Type，供当前链路选择后续处理策略。
 func isVideoTextOutputType(outputType string) bool {
-	switch strings.TrimSpace(outputType) {
+	switch workflow.NormalizeSkillOutputType(outputType) {
 	case "video", "video_text", "视文模式":
 		return true
 	default:
@@ -121,10 +121,7 @@ func isVideoTextOutputType(outputType string) bool {
 
 // 根据技能计算工作流输出Type，供技能链路复用关键派生结果。
 func workflowOutputTypeForSkill(outputType string) string {
-	if isVideoTextOutputType(outputType) {
-		return "视文模式"
-	}
-	return strings.TrimSpace(outputType)
+	return workflow.NormalizeSkillOutputType(outputType)
 }
 
 // 规范化Fixed时长Seconds，统一技能链路的输入格式和后续处理行为。
@@ -470,7 +467,7 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	payload.Name = strings.TrimSpace(payload.Name)
 	payload.Description = strings.TrimSpace(payload.Description)
-	payload.OutputType = strings.TrimSpace(payload.OutputType)
+	payload.OutputType = workflow.NormalizeSkillOutputType(payload.OutputType)
 	payload.ModelName = strings.TrimSpace(payload.ModelName)
 	payload.Topics = normalizeSkillTopics(payload.Topics)
 	if payload.Name == "" || payload.Description == "" || payload.OutputType == "" || payload.ModelName == "" {
@@ -610,7 +607,9 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	nextOutputType := existing.OutputType
 	if payload.OutputType != nil && strings.TrimSpace(*payload.OutputType) != "" {
-		nextOutputType = strings.TrimSpace(*payload.OutputType)
+		normalizedOutputType := workflow.NormalizeSkillOutputType(*payload.OutputType)
+		nextOutputType = normalizedOutputType
+		payload.OutputType = &normalizedOutputType
 	}
 	nextModelName := existing.ModelName
 	if payload.ModelName != nil && strings.TrimSpace(*payload.ModelName) != "" {

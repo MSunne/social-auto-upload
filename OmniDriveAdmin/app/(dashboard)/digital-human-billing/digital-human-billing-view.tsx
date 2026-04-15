@@ -11,12 +11,21 @@ type Notice = {
   text: string;
 };
 
-function formatModelLabel(modelId: string, options: Array<{ id: string; isRecommended: boolean; isCurrent: boolean }>) {
+function formatModelLabel(modelId: string, options: Array<{ id: string; isCurrent: boolean }>) {
   const option = options.find((item) => item.id === modelId);
   if (!option) {
     return modelId || "未配置";
   }
-  return `${option.id}${option.isRecommended ? "（推荐）" : ""}${option.isCurrent ? "（当前）" : ""}`;
+  return `${option.id}${option.isCurrent ? "（当前）" : ""}`;
+}
+
+function firstNonEmptyValue(...values: Array<string | null | undefined>) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
 }
 
 export function DigitalHumanBillingView() {
@@ -29,16 +38,16 @@ export function DigitalHumanBillingView() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const creditsInputValue =
     creditsPerSecond ?? String(config?.digitalHumanCreditsPerSecond ?? 0);
-  const shoppingModelValue =
-    shoppingDefaultModel
-    ?? config?.digitalHumanShoppingDefaultModel
-    ?? modelCatalog?.defaultModelByMode.digital
-    ?? "";
-  const speechModelValue =
-    speechDefaultModel
-    ?? config?.digitalHumanSpeechDefaultModel
-    ?? modelCatalog?.defaultModelByMode.customize
-    ?? "";
+  const shoppingModelValue = firstNonEmptyValue(
+    shoppingDefaultModel,
+    config?.digitalHumanShoppingDefaultModel,
+    modelCatalog?.defaultModelByMode.digital,
+  );
+  const speechModelValue = firstNonEmptyValue(
+    speechDefaultModel,
+    config?.digitalHumanSpeechDefaultModel,
+    modelCatalog?.defaultModelByMode.customize,
+  );
 
   const currentValue = useMemo(() => {
     const trimmed = creditsInputValue.trim();
@@ -178,7 +187,6 @@ export function DigitalHumanBillingView() {
                   {modelCatalog?.models.map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.id}
-                      {item.isRecommended ? "（推荐）" : ""}
                       {item.isCurrent ? "（当前）" : ""}
                     </option>
                   ))}
@@ -203,7 +211,6 @@ export function DigitalHumanBillingView() {
                   {modelCatalog?.models.map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.id}
-                      {item.isRecommended ? "（推荐）" : ""}
                       {item.isCurrent ? "（当前）" : ""}
                     </option>
                   ))}
@@ -268,11 +275,22 @@ export function DigitalHumanBillingView() {
                   {formatModelLabel(speechDefaultModel || config.digitalHumanSpeechDefaultModel, modelCatalog?.models || [])}
                 </p>
               </div>
+              <div>
+                <p className="text-xs text-[var(--color-text-secondary)]">当前服务模型</p>
+                <p className="mt-1 font-medium">
+                  {formatModelLabel(modelCatalog?.currentModelId || "", modelCatalog?.models || [])}
+                </p>
+                {modelCatalog?.provider ? (
+                  <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                    服务商 {modelCatalog.provider}
+                  </p>
+                ) : null}
+              </div>
             </div>
 
             <ul className="space-y-2 text-sm text-[var(--color-text-secondary)]">
-              <li>`qvq-max` 始终会在前台标记为推荐模型。</li>
               <li>默认模型只负责预填，前台和技能编辑器都允许用户手动改模型。</li>
+              <li>前台当前模式默认模型以这里保存的配置为准；未配置时会回退到当前服务模型。</li>
               <li>任务失败时会退回全部预扣积分，成功后按实际成片时长结算。</li>
             </ul>
           </div>

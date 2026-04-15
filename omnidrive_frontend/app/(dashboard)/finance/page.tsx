@@ -32,7 +32,7 @@ const JOB_TYPE_OPTIONS = [
   { value: "chat", label: "聊天" },
   { value: "image", label: "作图" },
   { value: "video", label: "视频" },
-  { value: "digital_human", label: "真人口播生成" },
+  { value: "digital_human", label: "真人视频生成" },
 ];
 
 const STATUS_OPTIONS = [
@@ -69,7 +69,7 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   chat: "聊天",
   image: "作图",
   video: "视频",
-  digital_human: "真人口播生成",
+  digital_human: "真人视频生成",
 };
 
 function formatDateTime(value?: string | null) {

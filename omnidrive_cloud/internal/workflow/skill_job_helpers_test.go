@@ -204,12 +204,24 @@ func TestBuildDigitalHumanSkillAIJobPayloadIncludesRootAccountID(t *testing.T) {
 }
 
 func TestMapSkillOutputTypeToJobTypeReturnsDigitalHuman(t *testing.T) {
-	jobType, ok := MapSkillOutputTypeToJobType("数字人口播")
-	if !ok {
-		t.Fatalf("expected 数字人口播 to be supported")
+	cases := []string{"数字人口播", "真人口播", "真人视频", "digital_human"}
+	for _, outputType := range cases {
+		jobType, ok := MapSkillOutputTypeToJobType(outputType)
+		if !ok {
+			t.Fatalf("expected %q to be supported", outputType)
+		}
+		if jobType != "digital_human" {
+			t.Fatalf("expected %q to map to digital_human job type, got %q", outputType, jobType)
+		}
 	}
-	if jobType != "digital_human" {
-		t.Fatalf("expected digital_human job type, got %q", jobType)
+}
+
+func TestNormalizeSkillOutputTypeLegacyRealVideoAliases(t *testing.T) {
+	if normalized := NormalizeSkillOutputType("真人口播"); normalized != "数字人口播" {
+		t.Fatalf("expected 真人口播 to normalize to 数字人口播, got %q", normalized)
+	}
+	if normalized := NormalizeSkillOutputType("真人视频"); normalized != "数字人口播" {
+		t.Fatalf("expected 真人视频 to normalize to 数字人口播, got %q", normalized)
 	}
 }
 

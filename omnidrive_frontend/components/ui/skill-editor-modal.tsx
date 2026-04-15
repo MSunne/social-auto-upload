@@ -28,6 +28,7 @@ import {
   createSkill,
   deleteSkill,
   deleteSkillAsset,
+  getDigitalHumanBillingPreview,
   getSkillEditorDefaults,
   listAIModels,
   listDigitalHumanModels,
@@ -37,11 +38,18 @@ import {
 } from "@/lib/services";
 import type {
   AIModel,
+  DigitalHumanBillingPreview,
   DigitalHumanModelsResponse,
   Skill,
   SkillAsset,
   SkillEditorDefaults,
 } from "@/lib/types";
+import { formatDigitalHumanCreditValue } from "@/lib/digital-human";
+import {
+  isRecommendedDigitalHumanModel,
+  resolveDefaultDigitalHumanModel,
+  sortDigitalHumanModelsForMode,
+} from "@/lib/digital-human-models";
 import { getModelDisplayName } from "@/lib/model-display";
 import { buildFileAccept, resolveSupportedFileTypes } from "@/lib/ai-file-types";
 import { cn } from "@/lib/utils";
@@ -49,7 +57,7 @@ import {
   getModelReferenceLimit,
   isDigitalHumanSkillOutput,
   mapSkillOutputToModelCategory,
-  normalizeSkillOutputLabel,
+  normalizeSkillOutputValue,
 } from "@/lib/workflow";
 
 type SkillEditorModalProps = {
@@ -129,9 +137,9 @@ const OUTPUT_OPTIONS: OutputOption[] = [
     tone: "text-amber-200",
   },
   {
-    value: "真人口播",
-    label: "真人口播",
-    hint: "带货口播、人物口播视频",
+    value: "数字人口播",
+    label: "真人视频",
+    hint: "带货视频、真人口播、数字人视频",
     icon: Mic,
     tone: "text-emerald-300",
   },
@@ -148,7 +156,7 @@ const EMPTY_FORM: SkillFormState = {
   coverPromptUsesSystemDefault: true,
   outputType: "图文模式",
   modelName: "",
-  digitalHumanMode: "digital",
+  digitalHumanMode: "customize",
   digitalHumanGoodsTitle: "",
   digitalHumanGoodsText: "",
   storyboardEnabled: true,
@@ -162,7 +170,7 @@ function parseDigitalHumanConfig(referencePayload: Record<string, unknown> | nul
       : referencePayload || {};
   const rawMode = typeof base.mode === "string" ? base.mode.trim() : "";
   return {
-    mode: rawMode === "customize" ? "customize" : "digital",
+    mode: rawMode === "digital" ? "digital" : "customize",
     goodsTitle: typeof base.goodsTitle === "string" ? base.goodsTitle : "",
     goodsText: typeof base.goodsText === "string" ? base.goodsText : "",
   } as const;
@@ -190,7 +198,7 @@ function buildSkillFormState(skill?: Skill | null, coverPromptDefault = ""): Ski
     topicsText: (skill.topics || []).join("，"),
     coverPromptTemplate: customCoverPrompt || coverPromptDefault,
     coverPromptUsesSystemDefault: customCoverPrompt.length === 0,
-    outputType: normalizeSkillOutputLabel(skill.outputType),
+    outputType: normalizeSkillOutputValue(skill.outputType),
     modelName: skill.modelName || "",
     digitalHumanMode: digitalHumanConfig.mode,
     digitalHumanGoodsTitle: digitalHumanConfig.goodsTitle,
@@ -367,31 +375,11 @@ function getVendorColor(vendor?: string | null) {
 }
 
 function isVideoTextOutput(outputType: string) {
-  return normalizeSkillOutputLabel(outputType) === "视文模式";
+  return normalizeSkillOutputValue(outputType) === "视文模式";
 }
 
 function isDigitalHumanOutput(outputType: string) {
   return isDigitalHumanSkillOutput(outputType);
-}
-
-function resolveDigitalHumanDefaultModel(
-  modelCatalog: DigitalHumanModelsResponse | undefined,
-  mode: "digital" | "customize",
-) {
-  if (!modelCatalog) {
-    return "";
-  }
-  const defaultModel = (modelCatalog.defaultModelByMode?.[mode] || "").trim();
-  if (defaultModel) {
-    return defaultModel;
-  }
-  if (modelCatalog.recommendedModelId?.trim()) {
-    return modelCatalog.recommendedModelId.trim();
-  }
-  if (modelCatalog.currentModelId?.trim()) {
-    return modelCatalog.currentModelId.trim();
-  }
-  return modelCatalog.models[0]?.id || "";
 }
 
 function parseSkillVideoDurationSeconds(value: string) {
@@ -463,6 +451,7 @@ export function SkillEditorModal({
   const [coverPromptUnlockCountdown, setCoverPromptUnlockCountdown] = useState(0);
   const [coverPromptUnlocked, setCoverPromptUnlocked] = useState(false);
   const [digitalHumanModelExpanded, setDigitalHumanModelExpanded] = useState(false);
+  const [debouncedDigitalHumanGoodsText, setDebouncedDigitalHumanGoodsText] = useState("");
   const draftCreationRef = useRef<Promise<Skill> | null>(null);
   const currentSkillId = skill?.id ?? draftSkillId;
   const isDigitalHumanOutputType = isDigitalHumanOutput(form.outputType);
@@ -477,6 +466,16 @@ export function SkillEditorModal({
     queryKey: ["digitalHumanModels"],
     queryFn: () => listDigitalHumanModels(),
     enabled: isOpen && isDigitalHumanOutputType,
+  });
+  const {
+    data: digitalHumanBillingPreview,
+    error: digitalHumanBillingPreviewError,
+    isFetching: isDigitalHumanBillingPreviewFetching,
+  } = useQuery<DigitalHumanBillingPreview>({
+    queryKey: ["digitalHumanBillingPreview", "skill-editor", debouncedDigitalHumanGoodsText],
+    queryFn: () => getDigitalHumanBillingPreview(debouncedDigitalHumanGoodsText),
+    enabled: isOpen && isDigitalHumanOutputType,
+    refetchOnWindowFocus: false,
   });
 
   const { data: assets = [], isLoading: assetsLoading } = useQuery<SkillAsset[]>({
@@ -503,6 +502,10 @@ export function SkillEditorModal({
     () => digitalHumanModels?.models || [],
     [digitalHumanModels?.models],
   );
+  const sortedDigitalHumanModels = useMemo(
+    () => sortDigitalHumanModelsForMode(availableDigitalHumanModels, digitalHumanModels, form.digitalHumanMode),
+    [availableDigitalHumanModels, digitalHumanModels, form.digitalHumanMode],
+  );
   const selectedModel = useMemo(
     () => availableModels.find((item) => item.modelName === form.modelName) ?? null,
     [availableModels, form.modelName],
@@ -510,6 +513,10 @@ export function SkillEditorModal({
   const selectedDigitalHumanModel = useMemo(
     () => availableDigitalHumanModels.find((item) => item.id === form.modelName) ?? null,
     [availableDigitalHumanModels, form.modelName],
+  );
+  const selectedDigitalHumanModelIsRecommended = useMemo(
+    () => isRecommendedDigitalHumanModel(digitalHumanModels, form.digitalHumanMode, form.modelName),
+    [digitalHumanModels, form.digitalHumanMode, form.modelName],
   );
   const selectedOutput = useMemo(
     () => OUTPUT_OPTIONS.find((item) => item.value === form.outputType) ?? OUTPUT_OPTIONS[0],
@@ -592,6 +599,16 @@ export function SkillEditorModal({
   const totalVideoCount = videoAssets.length + uploadingVideos.length;
   const totalMediaCount = orderedMediaAssets.length + uploadingMedia.length;
   const totalTextCount = textAssets.length + uploadingTexts.length;
+  const hasDigitalHumanGoodsText = form.digitalHumanGoodsText.trim().length > 0;
+  const digitalHumanBillingDisabled = Boolean(
+    digitalHumanBillingPreview && digitalHumanBillingPreview.creditsPerSecond <= 0,
+  );
+  const digitalHumanBillingInsufficient = Boolean(
+    hasDigitalHumanGoodsText &&
+      digitalHumanBillingPreview &&
+      digitalHumanBillingPreview.creditsPerSecond > 0 &&
+      !digitalHumanBillingPreview.canAfford,
+  );
   const visibleModelName = isDigitalHumanOutputType
     ? selectedDigitalHumanModel?.id || form.modelName || "未选择"
     : getModelDisplayName(selectedModel, "未选择");
@@ -608,10 +625,24 @@ export function SkillEditorModal({
     setCoverPromptWarningOpen(false);
     setCoverPromptUnlockCountdown(0);
     setCoverPromptUnlocked(false);
+    setDebouncedDigitalHumanGoodsText((skill && isDigitalHumanSkillOutput(skill.outputType))
+      ? parseDigitalHumanConfig(skill.referencePayload).goodsText.trim()
+      : "");
     draftCreationRef.current = null;
     // `coverPromptDefault` is hydrated separately below so late-loaded defaults do not clobber in-progress edits.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, skill]);
+
+  useEffect(() => {
+    if (!isOpen || !isDigitalHumanOutputType) {
+      setDebouncedDigitalHumanGoodsText("");
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setDebouncedDigitalHumanGoodsText(form.digitalHumanGoodsText.trim());
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [form.digitalHumanGoodsText, isDigitalHumanOutputType, isOpen]);
 
   useEffect(() => {
     if (!isOpen || !coverPromptDefault) {
@@ -667,7 +698,7 @@ export function SkillEditorModal({
     if (!isOpen || !isDigitalHumanOutputType || !digitalHumanModels) {
       return;
     }
-    const nextModelName = resolveDigitalHumanDefaultModel(digitalHumanModels, form.digitalHumanMode);
+    const nextModelName = resolveDefaultDigitalHumanModel(digitalHumanModels, form.digitalHumanMode);
     const modelExists = availableDigitalHumanModels.some((item) => item.id === form.modelName);
     if (!nextModelName || (form.modelName && modelExists)) {
       return;
@@ -755,7 +786,7 @@ export function SkillEditorModal({
     if (isDigitalHumanOutput(payload.outputType)) {
       const goodsText = form.digitalHumanGoodsText.trim();
       if (!goodsText) {
-        throw new Error("请先填写真人口播文案");
+        throw new Error("请先填写真人视频文案");
       }
       if (form.digitalHumanMode === "digital" && !form.digitalHumanGoodsTitle.trim()) {
         throw new Error("带货模式请先填写产品标题");
@@ -846,6 +877,16 @@ export function SkillEditorModal({
     mutationFn: async () => {
       const payload = buildSkillPayload();
       ensureSkillPayloadReady(payload, { requireDigitalHumanAssets: true });
+      if (isDigitalHumanOutput(payload.outputType)) {
+        if (digitalHumanBillingDisabled) {
+          throw new Error("真人视频计费暂未开放，请稍后再试");
+        }
+        if (digitalHumanBillingPreview && !digitalHumanBillingPreview.canAfford) {
+          throw new Error(
+            `当前积分不足，预计需要 ${formatDigitalHumanCreditValue(digitalHumanBillingPreview.estimatedCredits)} 积分，还差 ${formatDigitalHumanCreditValue(digitalHumanBillingPreview.shortfallCredits)} 积分`,
+          );
+        }
+      }
       return currentSkillId
         ? updateSkill(currentSkillId, payload)
         : createSkill(payload);
@@ -885,6 +926,8 @@ export function SkillEditorModal({
   }
 
   const isBusy = saveMutation.isPending || uploadingAssets.length > 0;
+  const saveButtonDisabled =
+    isBusy || (isDigitalHumanOutputType && (!hasDigitalHumanGoodsText || digitalHumanBillingDisabled || digitalHumanBillingInsufficient));
 
   const handleClose = async () => {
     if (isBusy) {
@@ -907,7 +950,7 @@ export function SkillEditorModal({
     const nextCategory = mapSkillOutputToModelCategory(nextOutputType);
     const nextIsDigitalHuman = isDigitalHumanOutput(nextOutputType);
     const nextDefaultDigitalHumanModel = nextIsDigitalHuman
-      ? resolveDigitalHumanDefaultModel(digitalHumanModels, form.digitalHumanMode)
+      ? resolveDefaultDigitalHumanModel(digitalHumanModels, form.digitalHumanMode)
       : "";
     setForm((current) => ({
       ...current,
@@ -928,7 +971,7 @@ export function SkillEditorModal({
   };
 
   const handleDigitalHumanModeChange = (nextMode: "digital" | "customize") => {
-    const nextModelName = resolveDigitalHumanDefaultModel(digitalHumanModels, nextMode);
+    const nextModelName = resolveDefaultDigitalHumanModel(digitalHumanModels, nextMode);
     setForm((current) => ({
       ...current,
       digitalHumanMode: nextMode,
@@ -1036,7 +1079,7 @@ export function SkillEditorModal({
   const flowSteps = isDigitalHumanOutputType
     ? [
         "账号执行技能时自动复用人物主图、商品主图和参考音频",
-        form.digitalHumanMode === "digital" ? "按带货模式创建真人任务" : "按口播模式创建真人任务",
+        form.digitalHumanMode === "digital" ? "按带货模式创建真人视频任务" : "按口播模式创建真人视频任务",
         visibleModelName || "最终模型待选择",
       ]
     : form.storyboardEnabled
@@ -1256,8 +1299,8 @@ export function SkillEditorModal({
 
                   {isDigitalHumanOutputType ? (
                     <SectionCard
-                      title="口播设定"
-                      description="配置真人口播模式、产品信息和文案脚本。素材和文案将保存在技能自身，账号执行时会直接按当前配置创建真人任务。"
+                      title="真人视频设定"
+                      description="配置真人视频模式、产品信息和文案脚本。素材和文案会保存在技能自身，账号执行时会直接按当前配置创建真人视频任务。"
                     >
                       <div className="flex flex-wrap gap-2">
                         {[
@@ -1296,14 +1339,14 @@ export function SkillEditorModal({
                       ) : null}
 
                       <label className="space-y-2.5">
-                        <span className="text-sm font-medium text-white">口播文案</span>
+                        <span className="text-sm font-medium text-white">视频文案</span>
                         <textarea
                           value={form.digitalHumanGoodsText}
                           onChange={(event) =>
                             setForm((current) => ({ ...current, digitalHumanGoodsText: event.target.value }))
                           }
                           rows={5}
-                          placeholder="填写真人口播文案，系统会按这段文案生成最终视频。"
+                          placeholder="填写真人视频文案，系统会按这段文案生成最终视频。"
                           className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
                         />
                       </label>
@@ -1311,8 +1354,8 @@ export function SkillEditorModal({
                   ) : null}
 
                   <SectionCard
-                    title={isDigitalHumanOutputType ? "执行模型" : "模型与时长"}
-                    description={isDigitalHumanOutputType ? "选择真人口播的执行模型。系统已根据当前模式推荐最优模型，通常无需手动更换。" : "选择最终执行模型并设置视频时长。模型和时长紧密耦合，在同一区域方便对照。"}
+                    title={isDigitalHumanOutputType ? "真人视频模型" : "模型与时长"}
+                    description={isDigitalHumanOutputType ? "选择真人视频的执行模型，并查看当前模式默认模型、单次任务计费和余额状态。" : "选择最终执行模型并设置视频时长。模型和时长紧密耦合，在同一区域方便对照。"}
                   >
                     {isDigitalHumanOutputType ? (
                       digitalHumanModelsLoading ? (
@@ -1332,17 +1375,17 @@ export function SkillEditorModal({
                                   <div className="min-w-0">
                                     <div className="flex flex-wrap items-center gap-2">
                                       <p className="text-base font-semibold text-white">{form.modelName || "未选择"}</p>
-                                      {activeModel?.isRecommended ? (
-                                        <span className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/12 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">✦ 推荐</span>
+                                      {selectedDigitalHumanModelIsRecommended ? (
+                                        <span className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/12 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">当前模式默认</span>
                                       ) : null}
                                       {activeModel?.isCurrent ? (
                                         <span className="inline-flex items-center rounded-full border border-white/10 bg-white/6 px-2.5 py-0.5 text-[11px] font-semibold text-text-secondary">当前服务模型</span>
                                       ) : null}
                                     </div>
                                     <p className="mt-2 text-sm leading-6 text-text-secondary">
-                                      {activeModel?.isRecommended
-                                        ? "系统推荐模型，适合作为当前模式的默认执行模型。"
-                                        : "已固定为该模型，保存后作为真人口播默认执行模型。"}
+                                      {selectedDigitalHumanModelIsRecommended
+                                        ? "这个模型来自当前模式在 Admin 中保存的默认模型。"
+                                        : "已固定为该模型，保存后会按这个模型执行真人视频任务。"}
                                     </p>
                                   </div>
                                   <SelectionBadge selected />
@@ -1363,16 +1406,13 @@ export function SkillEditorModal({
                         /* ── Expanded: full model list with recommended first ── */
                         <div className="space-y-3">
                           <div className="grid gap-4 lg:grid-cols-2">
-                            {[...availableDigitalHumanModels]
-                              .sort((a, b) => {
-                                if (a.isRecommended && !b.isRecommended) return -1;
-                                if (!a.isRecommended && b.isRecommended) return 1;
-                                if (a.isCurrent && !b.isCurrent) return -1;
-                                if (!a.isCurrent && b.isCurrent) return 1;
-                                return 0;
-                              })
-                              .map((model) => {
+                            {sortedDigitalHumanModels.map((model) => {
                               const selected = model.id === form.modelName;
+                              const recommended = isRecommendedDigitalHumanModel(
+                                digitalHumanModels,
+                                form.digitalHumanMode,
+                                model.id,
+                              );
                               return (
                                 <button
                                   key={model.id}
@@ -1392,15 +1432,15 @@ export function SkillEditorModal({
                                     <div className="min-w-0">
                                       <div className="flex flex-wrap items-center gap-2">
                                         <p className="text-base font-semibold text-white">{model.id}</p>
-                                        {model.isRecommended ? (
-                                          <span className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/12 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">✦ 推荐</span>
+                                        {recommended ? (
+                                          <span className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/12 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">当前模式默认</span>
                                         ) : null}
                                         {model.isCurrent ? <MiniPill>当前服务模型</MiniPill> : null}
                                       </div>
                                       <p className="mt-2 text-sm leading-6 text-text-secondary">
-                                        {model.isRecommended
-                                          ? "推荐模型，适合作为真人口播默认执行模型。"
-                                          : "可作为真人口播执行模型，由技能在保存时固定。"}
+                                        {recommended
+                                          ? "这个模型来自当前模式在 Admin 中保存的默认模型。"
+                                          : "可作为真人视频执行模型，由技能在保存时固定。"}
                                       </p>
                                     </div>
                                     <SelectionBadge selected={selected} />
@@ -1510,6 +1550,53 @@ export function SkillEditorModal({
                         <p className="mt-3 text-xs leading-5 text-text-secondary">
                           创建前即可看到当前技能单次预计扣费，实际扣费以任务入账结果为准。
                         </p>
+                      </div>
+                    ) : null}
+
+                    {isDigitalHumanOutputType ? (
+                      <div className="rounded-[24px] border border-white/10 bg-[#0d1729] p-4">
+                        {digitalHumanBillingPreviewError ? (
+                          <p className="text-xs text-warning">
+                            预计消耗读取失败，保存前服务端仍会重新校验计费和余额。
+                          </p>
+                        ) : digitalHumanBillingDisabled ? (
+                          <div className="space-y-1">
+                            <p className="text-sm font-medium text-warning">暂未开放计费配置</p>
+                            <p className="text-xs text-text-muted">
+                              OmniDriveAdmin 尚未设置真人视频每秒积分，当前无法保存这条技能。
+                            </p>
+                          </div>
+                        ) : hasDigitalHumanGoodsText && digitalHumanBillingPreview ? (
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-text-secondary">
+                            <span>
+                              预计时长 <span className="font-semibold text-text-primary">{digitalHumanBillingPreview.estimatedDurationSeconds}</span> 秒
+                            </span>
+                            <span>
+                              预计消耗 <span className="font-semibold text-accent">{formatDigitalHumanCreditValue(digitalHumanBillingPreview.estimatedCredits)}</span> 积分
+                            </span>
+                            <span>
+                              当前余额 <span className="font-semibold text-text-primary">{formatDigitalHumanCreditValue(digitalHumanBillingPreview.creditBalance)}</span> 积分
+                            </span>
+                            <span className="text-xs text-text-muted">按 4 字/秒估算，实际结算以成品视频时长为准</span>
+                            {digitalHumanBillingInsufficient ? (
+                              <span className="rounded-full bg-danger/10 px-2 py-0.5 text-xs font-medium text-danger">
+                                余额不足，还差 {formatDigitalHumanCreditValue(digitalHumanBillingPreview.shortfallCredits)} 积分
+                              </span>
+                            ) : (
+                              <span className="rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success">
+                                积分充足
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="flex flex-wrap items-center gap-3 text-xs text-text-muted">
+                            <span>
+                              当前费率 {formatDigitalHumanCreditValue(digitalHumanBillingPreview?.creditsPerSecond ?? 0)} 积分/秒
+                            </span>
+                            <span>输入真人视频文案后将展示预计时长和单次任务消耗</span>
+                            {isDigitalHumanBillingPreviewFetching ? <span className="text-accent">正在计算...</span> : null}
+                          </div>
+                        )}
                       </div>
                     ) : null}
 
@@ -1645,7 +1732,7 @@ export function SkillEditorModal({
                     title="参考素材"
                     description={
                       isDigitalHumanOutputType
-                        ? "真人口播会把人物主图、商品主图和参考音频保存在技能资产中，执行时自动复用。"
+                        ? "真人视频会把人物主图、商品主图和参考音频保存在技能资产中，执行时自动复用。"
                         : "图片和视频共用一条有序参考链，文本继续补充结构、卖点和限制条件。"
                     }
                   >
@@ -2032,7 +2119,7 @@ export function SkillEditorModal({
             <button
               type="button"
               onClick={() => saveMutation.mutate()}
-              disabled={isBusy}
+              disabled={saveButtonDisabled}
               className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-accent via-pink to-cyan px-5 py-2.5 text-sm font-semibold text-white shadow-[0_16px_40px_rgba(177,73,255,0.22)] transition-all hover:scale-[1.01] hover:shadow-[0_20px_48px_rgba(177,73,255,0.28)] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}

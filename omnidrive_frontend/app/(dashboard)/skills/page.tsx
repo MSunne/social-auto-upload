@@ -23,6 +23,7 @@ import type { Skill, SkillAsset } from "@/lib/types";
 import { PageHeader, EmptyState } from "@/components/ui/common";
 import { SkillEditorModal } from "@/components/ui/skill-editor-modal";
 import { cn } from "@/lib/utils";
+import { normalizeSkillOutputLabel, normalizeSkillOutputValue } from "@/lib/workflow";
 
 function SkillAssetPreview({ skillId }: { skillId: string }) {
   const [expanded, setExpanded] = useState(false);
@@ -188,24 +189,24 @@ export default function SkillsPage() {
   );
 
   const getOutputIcon = (outputType: string) => {
-    if (outputType === "video_text" || outputType === "视文模式") {
+    if (normalizeSkillOutputValue(outputType) === "视文模式") {
       return <Video className="h-5 w-5 text-accent" />;
     }
-    if (outputType === "文本格式") {
+    if (normalizeSkillOutputValue(outputType) === "文本格式") {
       return <MessageSquareText className="h-5 w-5 text-amber-200" />;
+    }
+    if (normalizeSkillOutputValue(outputType) === "数字人口播") {
+      return <Video className="h-5 w-5 text-emerald-300" />;
     }
     return <FileImage className="h-5 w-5 text-cyan" />;
   };
 
-  const getOutputLabel = (outputType: string) => {
-    if (outputType === "video_text" || outputType === "视文模式") return "视文模式";
-    if (outputType === "文本格式") return "纯文本";
-    return "图文模式";
-  };
+  const getOutputLabel = (outputType: string) => normalizeSkillOutputLabel(outputType);
 
   const getOutputColor = (outputType: string) => {
-    if (outputType === "video_text" || outputType === "视文模式") return "from-accent/15 border-accent/25";
-    if (outputType === "文本格式") return "from-amber-300/15 border-amber-300/25";
+    if (normalizeSkillOutputValue(outputType) === "视文模式") return "from-accent/15 border-accent/25";
+    if (normalizeSkillOutputValue(outputType) === "文本格式") return "from-amber-300/15 border-amber-300/25";
+    if (normalizeSkillOutputValue(outputType) === "数字人口播") return "from-emerald-400/15 border-emerald-400/25";
     return "from-cyan/15 border-cyan/25";
   };
 

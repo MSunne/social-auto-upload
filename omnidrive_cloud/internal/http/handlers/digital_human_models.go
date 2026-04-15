@@ -11,8 +11,6 @@ import (
 	"omnidrive_cloud/internal/http/render"
 )
 
-const digitalHumanRecommendedModelID = "qvq-max"
-
 type digitalHumanModelOption struct {
 	ID            string `json:"id"`
 	IsCurrent     bool   `json:"isCurrent"`
@@ -62,7 +60,7 @@ func loadDigitalHumanModelsResponse(ctx context.Context, app *appstate.App) (*di
 		models = append(models, digitalHumanModelOption{
 			ID:            modelID,
 			IsCurrent:     item.IsCurrent,
-			IsRecommended: modelID == digitalHumanRecommendedModelID,
+			IsRecommended: false,
 		})
 	}
 
@@ -81,7 +79,7 @@ func loadDigitalHumanModelsResponse(ctx context.Context, app *appstate.App) (*di
 	}
 
 	return &digitalHumanModelsResponse{
-		RecommendedModelID: digitalHumanRecommendedModelID,
+		RecommendedModelID: "",
 		CurrentModelID:     currentModelID,
 		Provider:           strings.TrimSpace(upstream.Provider),
 		DefaultModelByMode: defaults,
@@ -93,16 +91,13 @@ func resolveDigitalHumanDefaultModel(preferred string, currentModelID string, mo
 	if containsDigitalHumanModel(models, preferred) {
 		return preferred
 	}
-	if containsDigitalHumanModel(models, digitalHumanRecommendedModelID) {
-		return digitalHumanRecommendedModelID
-	}
 	if containsDigitalHumanModel(models, currentModelID) {
 		return currentModelID
 	}
 	if len(models) > 0 {
 		return models[0].ID
 	}
-	return firstNonEmptyDigitalHumanString(preferred, digitalHumanRecommendedModelID, currentModelID)
+	return firstNonEmptyDigitalHumanString(preferred, currentModelID)
 }
 
 func containsDigitalHumanModel(models []digitalHumanModelOption, modelName string) bool {
@@ -120,7 +115,7 @@ func containsDigitalHumanModel(models []digitalHumanModelOption, modelName strin
 
 func resolveDigitalHumanDefaultModelByMode(config *digitalHumanModelsResponse, mode string) string {
 	if config == nil {
-		return digitalHumanRecommendedModelID
+		return ""
 	}
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "digital":

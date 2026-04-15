@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import type { Skill } from "@/lib/types";
 import { getModelDisplayName } from "@/lib/model-display";
+import { normalizeSkillOutputLabel, normalizeSkillOutputValue } from "@/lib/workflow";
 
 interface AddTaskModalProps {
   isOpen: boolean;
@@ -197,15 +198,17 @@ export function AddTaskModal({
                                 </h5>
                                 <div className="mt-1 flex flex-wrap items-center gap-2">
                                   <span className="text-[10px] font-mono text-text-muted/50 drop-shadow-sm">{skill.id.replace('sk_', 'SK-884')}</span>
-                                  {skill.outputType === "image_text" ? (
-                                    <span className="rounded bg-gradient-to-r from-cyan/20 to-blue-500/20 px-2 py-0.5 text-[10px] font-bold text-cyan border border-cyan/20 shadow-sm">
-                                      图文模式
-                                    </span>
-                                  ) : (
-                                    <span className="rounded bg-gradient-to-r from-purple-500/20 to-pink-500/20 px-2 py-0.5 text-[10px] font-bold text-purple-300 border border-purple-500/20 shadow-sm">
-                                      视频模式
-                                    </span>
-                                  )}
+                                  <span
+                                    className={
+                                      normalizeSkillOutputValue(skill.outputType) === "图文模式"
+                                        ? "rounded bg-gradient-to-r from-cyan/20 to-blue-500/20 px-2 py-0.5 text-[10px] font-bold text-cyan border border-cyan/20 shadow-sm"
+                                        : normalizeSkillOutputValue(skill.outputType) === "数字人口播"
+                                          ? "rounded bg-gradient-to-r from-emerald-400/20 to-teal-400/20 px-2 py-0.5 text-[10px] font-bold text-emerald-300 border border-emerald-400/20 shadow-sm"
+                                          : "rounded bg-gradient-to-r from-purple-500/20 to-pink-500/20 px-2 py-0.5 text-[10px] font-bold text-purple-300 border border-purple-500/20 shadow-sm"
+                                    }
+                                  >
+                                    {normalizeSkillOutputLabel(skill.outputType)}
+                                  </span>
                                 </div>
                               </div>
                               <div className={`flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${gradientClass} shadow-lg ml-4`}>

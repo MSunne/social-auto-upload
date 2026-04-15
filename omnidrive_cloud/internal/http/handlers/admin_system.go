@@ -112,8 +112,8 @@ func defaultAdminSystemSettings(cfg config.Config) effectiveAdminSystemSettings 
 			CodeLength:         6,
 		},
 		DigitalHumanCreditsPerSecondMillis: 0,
-		DigitalHumanShoppingDefaultModel:   digitalHumanRecommendedModelID,
-		DigitalHumanSpeechDefaultModel:     digitalHumanRecommendedModelID,
+		DigitalHumanShoppingDefaultModel:   "",
+		DigitalHumanSpeechDefaultModel:     "",
 		DefaultChatModel:                   strings.TrimSpace(cfg.DefaultChatModel),
 		PromptOptimizeModel:                "gemini-3.1-pro-preview",
 		DefaultImageModel:                  strings.TrimSpace(cfg.DefaultImageModel),
@@ -724,17 +724,13 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 		render.Error(w, http.StatusBadRequest, "paymentChannels must contain at least one channel")
 		return
 	}
-	if strings.TrimSpace(settings.DigitalHumanShoppingDefaultModel) == "" {
-		settings.DigitalHumanShoppingDefaultModel = digitalHumanRecommendedModelID
-	}
-	if strings.TrimSpace(settings.DigitalHumanSpeechDefaultModel) == "" {
-		settings.DigitalHumanSpeechDefaultModel = digitalHumanRecommendedModelID
-	}
-	if nestedFieldTouched(raw, "digitalHumanShoppingDefaultModel") || nestedFieldTouched(raw, "digitalHumanSpeechDefaultModel") {
+	if nestedFieldTouched(raw, "digitalHumanShoppingDefaultModel") && strings.TrimSpace(settings.DigitalHumanShoppingDefaultModel) != "" {
 		if err := validateDigitalHumanModelName(r.Context(), h.app, settings.DigitalHumanShoppingDefaultModel); err != nil {
 			render.Error(w, http.StatusBadRequest, "digitalHumanShoppingDefaultModel "+err.Error())
 			return
 		}
+	}
+	if nestedFieldTouched(raw, "digitalHumanSpeechDefaultModel") && strings.TrimSpace(settings.DigitalHumanSpeechDefaultModel) != "" {
 		if err := validateDigitalHumanModelName(r.Context(), h.app, settings.DigitalHumanSpeechDefaultModel); err != nil {
 			render.Error(w, http.StatusBadRequest, "digitalHumanSpeechDefaultModel "+err.Error())
 			return

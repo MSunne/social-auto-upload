@@ -73,3 +73,51 @@ func TestValidateDigitalHumanMimeFallsBackToSniffedType(t *testing.T) {
 		t.Fatalf("expected sniffed content type, got %q", contentType)
 	}
 }
+
+func TestResolveDigitalHumanDefaultModelPrefersAdminDefaultOverCurrent(t *testing.T) {
+	models := []digitalHumanModelOption{
+		{ID: "model-a"},
+		{ID: "model-b", IsCurrent: true},
+	}
+
+	if got := resolveDigitalHumanDefaultModel("model-a", "model-b", models); got != "model-a" {
+		t.Fatalf("expected admin default to win, got %q", got)
+	}
+}
+
+func TestResolveDigitalHumanDefaultModelFallsBackToCurrentThenFirst(t *testing.T) {
+	models := []digitalHumanModelOption{
+		{ID: "model-a"},
+		{ID: "model-b", IsCurrent: true},
+	}
+
+	if got := resolveDigitalHumanDefaultModel("", "model-b", models); got != "model-b" {
+		t.Fatalf("expected current model fallback, got %q", got)
+	}
+
+	if got := resolveDigitalHumanDefaultModel("", "missing-model", models); got != "model-a" {
+		t.Fatalf("expected first available model fallback, got %q", got)
+	}
+}
+
+func TestResolveDigitalHumanDefaultModelByModeUsesModeSpecificAdminDefault(t *testing.T) {
+	config := &digitalHumanModelsResponse{
+		CurrentModelID: "current-model",
+		DefaultModelByMode: digitalHumanModeDefaults{
+			Digital:   "shopping-model",
+			Customize: "speech-model",
+		},
+		Models: []digitalHumanModelOption{
+			{ID: "shopping-model"},
+			{ID: "speech-model"},
+			{ID: "current-model", IsCurrent: true},
+		},
+	}
+
+	if got := resolveDigitalHumanDefaultModelByMode(config, "digital"); got != "shopping-model" {
+		t.Fatalf("expected digital mode default, got %q", got)
+	}
+	if got := resolveDigitalHumanDefaultModelByMode(config, "customize"); got != "speech-model" {
+		t.Fatalf("expected customize mode default, got %q", got)
+	}
+}
