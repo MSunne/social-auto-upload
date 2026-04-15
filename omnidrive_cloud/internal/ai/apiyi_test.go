@@ -818,10 +818,47 @@ func TestGenerateChatStreamAggregatesSSEChunks(t *testing.T) {
 	}
 }
 
-func TestGenerateChatStreamFailsWhenTerminalEventIsMissing(t *testing.T) {
+func TestGenerateChatStreamCompletesWhenTerminalEventIsMissingAfterContent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"半截回复\"},\"finish_reason\":\"\"}]}\n\n"))
+	}))
+	defer server.Close()
+
+	provider, err := NewAPIYIProvider(config.Config{
+		APIYIBaseURL: server.URL,
+		APIYIApiKey:  "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewAPIYIProvider returned error: %v", err)
+	}
+
+	result, err := provider.GenerateChatStream(context.Background(), ChatRequest{
+		Model:   "gpt-5.4",
+		BaseURL: server.URL,
+		APIKey:  "sk-chat",
+		Messages: []ChatMessage{
+			{Role: "user", Content: "say hello"},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("expected GenerateChatStream to tolerate EOF after content, got %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected GenerateChatStream to return a result")
+	}
+	if got := strings.TrimSpace(result.Text); got != "半截回复" {
+		t.Fatalf("expected partial content to be preserved, got %q", got)
+	}
+	if result.FinishReason != "stream_eof" {
+		t.Fatalf("expected finish reason stream_eof, got %q", result.FinishReason)
+	}
+}
+
+func TestGenerateChatStreamFailsWhenTerminalEventAndContentAreMissing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":\"\"}]}\n\n"))
 	}))
 	defer server.Close()
 
@@ -842,7 +879,7 @@ func TestGenerateChatStreamFailsWhenTerminalEventIsMissing(t *testing.T) {
 		},
 	}, nil)
 	if err == nil {
-		t.Fatal("expected GenerateChatStream to fail without terminal event")
+		t.Fatal("expected GenerateChatStream to fail without terminal event and without content")
 	}
 	if !strings.Contains(err.Error(), "terminal event") {
 		t.Fatalf("unexpected error %v", err)

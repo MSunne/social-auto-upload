@@ -28,9 +28,10 @@ func NewLConAIProvider(cfg config.Config) (*LConAIProvider, error) {
 
 	return &LConAIProvider{
 		APIYIProvider: &APIYIProvider{
-			baseURL:    baseURL,
-			apiKey:     strings.TrimSpace(cfg.APIYIApiKey),
-			httpClient: newAPIYIHTTPClient(),
+			baseURL:          baseURL,
+			apiKey:           strings.TrimSpace(cfg.APIYIApiKey),
+			httpClient:       newAPIYIHTTPClient(3 * time.Minute),
+			streamHTTPClient: newAPIYIHTTPClient(0),
 		},
 	}, nil
 }

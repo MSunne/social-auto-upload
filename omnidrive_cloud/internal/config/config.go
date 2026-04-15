@@ -35,6 +35,8 @@ type Config struct {
 	AIStaleQueueTimeoutSeconds    int
 	AIVideoPollSeconds            int
 	AIVideoTimeoutSeconds         int
+	AIChatStreamTimeoutSeconds    int
+	AIChatStreamHeartbeatSeconds  int
 	AIVideoStandardizeEnabled     bool
 	AIVideoFFmpegPath             string
 	DefaultChatModel              string
@@ -96,6 +98,8 @@ func Load() Config {
 		AIStaleQueueTimeoutSeconds:    envAsInt("OMNIDRIVE_AI_STALE_QUEUE_TIMEOUT_SECONDS", 600),
 		AIVideoPollSeconds:            envAsInt("OMNIDRIVE_AI_VIDEO_POLL_SECONDS", 6),
 		AIVideoTimeoutSeconds:         envAsInt("OMNIDRIVE_AI_VIDEO_TIMEOUT_SECONDS", 600),
+		AIChatStreamTimeoutSeconds:    envAsInt("OMNIDRIVE_AI_CHAT_STREAM_TIMEOUT_SECONDS", 600),
+		AIChatStreamHeartbeatSeconds:  envAsInt("OMNIDRIVE_AI_CHAT_STREAM_HEARTBEAT_SECONDS", 15),
 		AIVideoStandardizeEnabled:     envAsBool("OMNIDRIVE_AI_VIDEO_STANDARDIZE_ENABLED", true),
 		AIVideoFFmpegPath:             envOrDefault("OMNIDRIVE_AI_VIDEO_FFMPEG_PATH", "ffmpeg"),
 		DefaultChatModel:              envOrDefault("OMNIDRIVE_DEFAULT_CHAT_MODEL", "gemini-3.1-pro-preview"),

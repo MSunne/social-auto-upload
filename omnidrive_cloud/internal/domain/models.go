@@ -794,6 +794,24 @@ type AgentAIJobDeliveryItem struct {
 	ScheduleTimes *AIJobScheduleTimes `json:"scheduleTimes,omitempty"`
 }
 
+type AgentAIJobDeltaCursor struct {
+	UpdatedAfter string `json:"updatedAfter,omitempty"`
+	AfterID      string `json:"afterId,omitempty"`
+}
+
+type AgentAIJobDeltaItem struct {
+	Job           AIJob               `json:"job"`
+	Artifacts     []AIJobArtifact     `json:"artifacts"`
+	ScheduleTimes *AIJobScheduleTimes `json:"scheduleTimes,omitempty"`
+}
+
+type AgentAIJobDeltaResponse struct {
+	Items      []AgentAIJobDeltaItem  `json:"items"`
+	NextCursor *AgentAIJobDeltaCursor `json:"nextCursor,omitempty"`
+	HasMore    bool                   `json:"hasMore"`
+	ServerTime time.Time              `json:"serverTime"`
+}
+
 type BillingPackage struct {
 	ID                      string                      `json:"id"`
 	Name                    string                      `json:"name"`

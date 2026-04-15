@@ -250,9 +250,10 @@ OMNIDRIVE_AGENT_ENABLED = parse_bool(getattr(app_conf, 'OMNIDRIVE_AGENT_ENABLED'
 OMNIDRIVE_BASE_URL = str(getattr(app_conf, 'OMNIDRIVE_BASE_URL', '')).strip()
 OMNIDRIVE_AGENT_KEY = str(getattr(app_conf, 'OMNIDRIVE_AGENT_KEY', '')).strip()
 OMNIDRIVE_AGENT_POLL_INTERVAL = int(getattr(app_conf, 'OMNIDRIVE_AGENT_POLL_INTERVAL', 5))
+OMNIDRIVE_AGENT_AI_POLL_INTERVAL = int(getattr(app_conf, 'OMNIDRIVE_AGENT_AI_POLL_INTERVAL', 15))
 OMNIDRIVE_AGENT_HEARTBEAT_INTERVAL = int(getattr(app_conf, 'OMNIDRIVE_AGENT_HEARTBEAT_INTERVAL', 30))
 OMNIDRIVE_ACCOUNT_SYNC_INTERVAL = int(getattr(app_conf, 'OMNIDRIVE_ACCOUNT_SYNC_INTERVAL', 60))
-OMNIDRIVE_MATERIAL_SYNC_INTERVAL = int(getattr(app_conf, 'OMNIDRIVE_MATERIAL_SYNC_INTERVAL', 300))
+OMNIDRIVE_MATERIAL_SYNC_INTERVAL = int(getattr(app_conf, 'OMNIDRIVE_MATERIAL_SYNC_INTERVAL', 1800))
 OMNIDRIVE_SKILL_SYNC_INTERVAL = int(getattr(app_conf, 'OMNIDRIVE_SKILL_SYNC_INTERVAL', 120))
 OMNIDRIVE_PUBLISH_SYNC_INTERVAL = int(getattr(app_conf, 'OMNIDRIVE_PUBLISH_SYNC_INTERVAL', 5))
 OMNIDRIVE_MATERIAL_SYNC_MAX_FILES = int(getattr(app_conf, 'OMNIDRIVE_MATERIAL_SYNC_MAX_FILES', 1000))
@@ -871,6 +872,7 @@ def get_omnidrive_agent_config():
         "deviceCode": DEVICE_CODE,
         "agentKeyConfigured": bool(OMNIDRIVE_AGENT_KEY),
         "pollInterval": OMNIDRIVE_AGENT_POLL_INTERVAL,
+        "aiPollInterval": OMNIDRIVE_AGENT_AI_POLL_INTERVAL,
         "heartbeatInterval": OMNIDRIVE_AGENT_HEARTBEAT_INTERVAL,
         "accountSyncInterval": OMNIDRIVE_ACCOUNT_SYNC_INTERVAL,
         "materialSyncInterval": OMNIDRIVE_MATERIAL_SYNC_INTERVAL,
@@ -2329,10 +2331,11 @@ def ensure_omnidrive_agent_started():
     with omnidrive_agent_lock:
         if omnidrive_agent is None:
             agent_logger.info(
-                "starting omnidrive bridge device_code={} cloud_url={} poll_interval={} heartbeat_interval={}",
+                "starting omnidrive bridge device_code={} cloud_url={} poll_interval={} ai_poll_interval={} heartbeat_interval={}",
                 DEVICE_CODE,
                 OMNIDRIVE_BASE_URL,
                 OMNIDRIVE_AGENT_POLL_INTERVAL,
+                OMNIDRIVE_AGENT_AI_POLL_INTERVAL,
                 OMNIDRIVE_AGENT_HEARTBEAT_INTERVAL,
             )
             omnidrive_agent = OmniDriveBridge(
@@ -2349,6 +2352,7 @@ def ensure_omnidrive_agent_started():
                 generated_root_name=OMNIBULL_GENERATED_ROOT_NAME,
                 generated_root_path=OMNIBULL_GENERATED_ROOT_PATH,
                 poll_interval=OMNIDRIVE_AGENT_POLL_INTERVAL,
+                ai_poll_interval=OMNIDRIVE_AGENT_AI_POLL_INTERVAL,
                 heartbeat_interval=OMNIDRIVE_AGENT_HEARTBEAT_INTERVAL,
                 account_sync_interval=OMNIDRIVE_ACCOUNT_SYNC_INTERVAL,
                 material_sync_interval=OMNIDRIVE_MATERIAL_SYNC_INTERVAL,

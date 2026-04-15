@@ -33,18 +33,49 @@ func aiJobAccountIDExpression(alias string) string {
 }
 
 const (
-	aiJobPayloadModeFull    = "full"
-	aiJobPayloadModeSummary = "summary"
-	aiJobSummaryPromptLimit = 160
+	aiJobPayloadModeFull          = "full"
+	aiJobPayloadModeSummary       = "summary"
+	aiJobPayloadModeHistoryDetail = "history_detail"
+	aiJobArtifactModePreview      = "preview"
+	aiJobArtifactModeChat         = "chat"
+	aiJobSummaryPromptLimit       = 160
 )
 
 // 处理AI作业列表载荷Mode相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func aiJobListPayloadMode(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "":
+		return aiJobPayloadModeSummary
+	case aiJobPayloadModeFull:
+		return aiJobPayloadModeFull
+	case aiJobPayloadModeSummary:
+		return aiJobPayloadModeSummary
+	default:
+		return aiJobPayloadModeSummary
+	}
+}
+
+func aiJobDetailPayloadMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", aiJobPayloadModeFull:
 		return aiJobPayloadModeFull
 	case aiJobPayloadModeSummary:
 		return aiJobPayloadModeSummary
+	case aiJobPayloadModeHistoryDetail:
+		return aiJobPayloadModeHistoryDetail
+	default:
+		return aiJobPayloadModeFull
+	}
+}
+
+func aiJobArtifactMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", aiJobPayloadModeFull:
+		return aiJobPayloadModeFull
+	case aiJobArtifactModePreview:
+		return aiJobArtifactModePreview
+	case aiJobArtifactModeChat:
+		return aiJobArtifactModeChat
 	default:
 		return aiJobPayloadModeFull
 	}
@@ -53,6 +84,38 @@ func aiJobListPayloadMode(value string) string {
 // 处理AI作业输入载荷SelectColumn相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func aiJobInputPayloadSelectColumn(alias string, payloadMode string) string {
 	qualified := aiJobQualifiedColumn(alias, "input_payload")
+	jobType := aiJobQualifiedColumn(alias, "job_type")
+	switch strings.ToLower(strings.TrimSpace(payloadMode)) {
+	case aiJobPayloadModeHistoryDetail:
+		return fmt.Sprintf(
+			`CASE
+				WHEN %s = 'chat' THEN jsonb_strip_nulls(jsonb_build_object(
+					'messages', %s->'messages',
+					'attachments', %s->'attachments',
+					'skillName', %s->'skillName',
+					'conversationId', %s->'conversationId'
+				))
+				WHEN %s IN ('video', 'image') THEN jsonb_strip_nulls(jsonb_build_object(
+					'prompt', %s->'prompt',
+					'skillName', %s->'skillName'
+				))
+				ELSE jsonb_strip_nulls(jsonb_build_object(
+					'skillName', %s->'skillName',
+					'conversationId', %s->'conversationId'
+				))
+			END AS input_payload`,
+			jobType,
+			qualified,
+			qualified,
+			qualified,
+			qualified,
+			jobType,
+			qualified,
+			qualified,
+			qualified,
+			qualified,
+		)
+	}
 	if aiJobListPayloadMode(payloadMode) != aiJobPayloadModeSummary {
 		return qualified
 	}
@@ -80,6 +143,65 @@ func aiJobPromptSelectColumn(alias string, payloadMode string) string {
 // 处理AI作业输出载荷SelectColumn相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func aiJobOutputPayloadSelectColumn(alias string, payloadMode string) string {
 	qualified := aiJobQualifiedColumn(alias, "output_payload")
+	jobType := aiJobQualifiedColumn(alias, "job_type")
+	switch strings.ToLower(strings.TrimSpace(payloadMode)) {
+	case aiJobPayloadModeHistoryDetail:
+		return fmt.Sprintf(
+			`CASE
+				WHEN %s = 'chat' THEN jsonb_strip_nulls(jsonb_build_object(
+					'text', %s->'text',
+					'attachments', %s->'attachments',
+					'stage', %s->'stage'
+				))
+				WHEN %s = 'video' THEN jsonb_strip_nulls(jsonb_build_object(
+					'stage', %s->'stage',
+					'artifacts', %s->'artifacts',
+					'video', CASE
+						WHEN NULLIF(TRIM(COALESCE(%s->'video'->>'contentUrl', '')), '') IS NOT NULL THEN jsonb_build_object(
+							'contentUrl', %s->'video'->'contentUrl'
+						)
+						ELSE NULL
+					END,
+					'storyboard', CASE
+						WHEN NULLIF(TRIM(COALESCE(%s->'storyboard'->>'optimizedPrompt', '')), '') IS NOT NULL THEN jsonb_build_object(
+							'optimizedPrompt', %s->'storyboard'->'optimizedPrompt'
+						)
+						ELSE NULL
+					END
+				))
+				WHEN %s = 'image' THEN jsonb_strip_nulls(jsonb_build_object(
+					'stage', %s->'stage',
+					'artifacts', %s->'artifacts',
+					'storyboard', CASE
+						WHEN NULLIF(TRIM(COALESCE(%s->'storyboard'->>'optimizedPrompt', '')), '') IS NOT NULL THEN jsonb_build_object(
+							'optimizedPrompt', %s->'storyboard'->'optimizedPrompt'
+						)
+						ELSE NULL
+					END
+				))
+				ELSE jsonb_strip_nulls(jsonb_build_object(
+					'stage', %s->'stage'
+				))
+			END AS output_payload`,
+			jobType,
+			qualified,
+			qualified,
+			qualified,
+			jobType,
+			qualified,
+			qualified,
+			qualified,
+			qualified,
+			qualified,
+			qualified,
+			jobType,
+			qualified,
+			qualified,
+			qualified,
+			qualified,
+			qualified,
+		)
+	}
 	if aiJobListPayloadMode(payloadMode) != aiJobPayloadModeSummary {
 		return qualified
 	}
@@ -130,6 +252,89 @@ func aiJobSelectColumnsFor(alias string, payloadMode string) string {
 }
 
 var aiJobSelectColumns = aiJobSelectColumnsFor("ai_jobs", aiJobPayloadModeFull)
+
+func aiJobArtifactQualifiedColumn(alias string, column string) string {
+	trimmedAlias := strings.TrimSpace(alias)
+	if trimmedAlias == "" {
+		return column
+	}
+	return trimmedAlias + "." + column
+}
+
+func aiJobArtifactSelectColumnsFor(alias string, mode string) string {
+	textNullColumn := "NULL::text"
+	jsonNullColumn := "NULL::jsonb"
+	columns := []string{
+		aiJobArtifactQualifiedColumn(alias, "id"),
+		aiJobArtifactQualifiedColumn(alias, "job_id"),
+		aiJobArtifactQualifiedColumn(alias, "artifact_key"),
+		aiJobArtifactQualifiedColumn(alias, "artifact_type"),
+		aiJobArtifactQualifiedColumn(alias, "source"),
+		aiJobArtifactQualifiedColumn(alias, "title"),
+		aiJobArtifactQualifiedColumn(alias, "file_name"),
+		aiJobArtifactQualifiedColumn(alias, "mime_type"),
+		aiJobArtifactQualifiedColumn(alias, "storage_key"),
+		aiJobArtifactQualifiedColumn(alias, "public_url"),
+		aiJobArtifactQualifiedColumn(alias, "size_bytes"),
+		aiJobArtifactQualifiedColumn(alias, "text_content"),
+		aiJobArtifactQualifiedColumn(alias, "device_id"),
+		aiJobArtifactQualifiedColumn(alias, "root_name"),
+		aiJobArtifactQualifiedColumn(alias, "relative_path"),
+		aiJobArtifactQualifiedColumn(alias, "absolute_path"),
+		aiJobArtifactQualifiedColumn(alias, "payload"),
+		aiJobArtifactQualifiedColumn(alias, "created_at"),
+		aiJobArtifactQualifiedColumn(alias, "updated_at"),
+	}
+
+	switch aiJobArtifactMode(mode) {
+	case aiJobArtifactModePreview:
+		columns = []string{
+			aiJobArtifactQualifiedColumn(alias, "id"),
+			aiJobArtifactQualifiedColumn(alias, "job_id"),
+			aiJobArtifactQualifiedColumn(alias, "artifact_key"),
+			aiJobArtifactQualifiedColumn(alias, "artifact_type"),
+			aiJobArtifactQualifiedColumn(alias, "source"),
+			textNullColumn + " AS title",
+			aiJobArtifactQualifiedColumn(alias, "file_name"),
+			aiJobArtifactQualifiedColumn(alias, "mime_type"),
+			textNullColumn + " AS storage_key",
+			aiJobArtifactQualifiedColumn(alias, "public_url"),
+			aiJobArtifactQualifiedColumn(alias, "size_bytes"),
+			textNullColumn + " AS text_content",
+			textNullColumn + " AS device_id",
+			textNullColumn + " AS root_name",
+			textNullColumn + " AS relative_path",
+			textNullColumn + " AS absolute_path",
+			jsonNullColumn + " AS payload",
+			aiJobArtifactQualifiedColumn(alias, "created_at"),
+			aiJobArtifactQualifiedColumn(alias, "updated_at"),
+		}
+	case aiJobArtifactModeChat:
+		columns = []string{
+			aiJobArtifactQualifiedColumn(alias, "id"),
+			aiJobArtifactQualifiedColumn(alias, "job_id"),
+			aiJobArtifactQualifiedColumn(alias, "artifact_key"),
+			aiJobArtifactQualifiedColumn(alias, "artifact_type"),
+			aiJobArtifactQualifiedColumn(alias, "source"),
+			aiJobArtifactQualifiedColumn(alias, "title"),
+			aiJobArtifactQualifiedColumn(alias, "file_name"),
+			aiJobArtifactQualifiedColumn(alias, "mime_type"),
+			textNullColumn + " AS storage_key",
+			aiJobArtifactQualifiedColumn(alias, "public_url"),
+			aiJobArtifactQualifiedColumn(alias, "size_bytes"),
+			aiJobArtifactQualifiedColumn(alias, "text_content"),
+			textNullColumn + " AS device_id",
+			textNullColumn + " AS root_name",
+			textNullColumn + " AS relative_path",
+			textNullColumn + " AS absolute_path",
+			jsonNullColumn + " AS payload",
+			aiJobArtifactQualifiedColumn(alias, "created_at"),
+			aiJobArtifactQualifiedColumn(alias, "updated_at"),
+		}
+	}
+
+	return "\n\t" + strings.Join(columns, ",\n\t") + "\n"
+}
 
 const aiModelSelectColumns = `
 	id, vendor, model_name, model_alias, category, billing_mode, base_url, api_key, raw_rate, billing_amount,
@@ -570,8 +775,13 @@ func (s *Store) CreateAIJob(ctx context.Context, input CreateAIJobInput) (*domai
 
 // 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) GetAIJobByOwner(ctx context.Context, jobID string, ownerUserID string) (*domain.AIJob, error) {
+	return s.GetAIJobByOwnerWithPayloadMode(ctx, jobID, ownerUserID, aiJobPayloadModeFull)
+}
+
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
+func (s *Store) GetAIJobByOwnerWithPayloadMode(ctx context.Context, jobID string, ownerUserID string, payloadMode string) (*domain.AIJob, error) {
 	row := s.pool.QueryRow(ctx, `
-		SELECT `+aiJobSelectColumns+`
+		SELECT `+aiJobSelectColumnsFor("ai_jobs", aiJobDetailPayloadMode(payloadMode))+`
 		FROM ai_jobs
 		WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NULL
 	`, jobID, ownerUserID)
@@ -1149,6 +1359,70 @@ func (s *Store) ListAgentAIJobsByDevice(ctx context.Context, deviceID string, so
 		argIndex++
 	}
 	query += ` ORDER BY updated_at DESC`
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argIndex)
+		args = append(args, limit)
+	}
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.AIJob, 0)
+	for rows.Next() {
+		job, scanErr := scanAIJob(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *job)
+	}
+	return items, rows.Err()
+}
+
+// 执行Agent AI作业增量队列查询，依赖上下文和连接池返回设备仍需处理的变更项。
+func (s *Store) ListAgentAIJobsDeltaByDevice(ctx context.Context, deviceID string, sources []string, limit int, updatedAfter *time.Time, afterID string) ([]domain.AIJob, error) {
+	query := `
+		SELECT ` + aiJobSelectColumns + `
+		FROM ai_jobs
+		WHERE device_id = $1
+		  AND (
+		      status IN ('scheduled', 'queued', 'pending', 'waiting_recharge', 'running')
+		      OR (
+		          status IN ('success', 'completed', 'failed', 'cancelled')
+		          AND COALESCE(NULLIF(TRIM(delivery_status), ''), 'pending') = 'pending'
+		      )
+		  )
+	`
+	args := []any{deviceID}
+	argIndex := 2
+
+	normalizedSources := make([]string, 0, len(sources))
+	for _, source := range sources {
+		trimmed := strings.TrimSpace(source)
+		if trimmed == "" {
+			continue
+		}
+		normalizedSources = append(normalizedSources, trimmed)
+	}
+	if len(normalizedSources) > 0 {
+		query += fmt.Sprintf(" AND source = ANY($%d)", argIndex)
+		args = append(args, normalizedSources)
+		argIndex++
+	}
+	if updatedAfter != nil {
+		if strings.TrimSpace(afterID) != "" {
+			query += fmt.Sprintf(" AND (updated_at, id) > ($%d, $%d)", argIndex, argIndex+1)
+			args = append(args, *updatedAfter, strings.TrimSpace(afterID))
+			argIndex += 2
+		} else {
+			query += fmt.Sprintf(" AND updated_at > $%d", argIndex)
+			args = append(args, *updatedAfter)
+			argIndex++
+		}
+	}
+	query += ` ORDER BY updated_at ASC, id ASC`
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", argIndex)
 		args = append(args, limit)
@@ -1905,10 +2179,13 @@ func (s *Store) UpsertAIJobArtifacts(ctx context.Context, items []UpsertAIJobArt
 
 // 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAIJobArtifactsByOwner(ctx context.Context, jobID string, ownerUserID string) ([]domain.AIJobArtifact, error) {
+	return s.ListAIJobArtifactsByOwnerWithMode(ctx, jobID, ownerUserID, aiJobPayloadModeFull)
+}
+
+// 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
+func (s *Store) ListAIJobArtifactsByOwnerWithMode(ctx context.Context, jobID string, ownerUserID string, mode string) ([]domain.AIJobArtifact, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT a.id, a.job_id, a.artifact_key, a.artifact_type, a.source, a.title, a.file_name, a.mime_type,
-		       a.storage_key, a.public_url, a.size_bytes, a.text_content, a.device_id, a.root_name, a.relative_path,
-		       a.absolute_path, a.payload, a.created_at, a.updated_at
+		SELECT `+aiJobArtifactSelectColumnsFor("a", aiJobArtifactMode(mode))+`
 		FROM ai_job_artifacts a
 		INNER JOIN ai_jobs j ON j.id = a.job_id
 		WHERE a.job_id = $1 AND j.owner_user_id = $2 AND j.deleted_at IS NULL
@@ -1933,9 +2210,7 @@ func (s *Store) ListAIJobArtifactsByOwner(ctx context.Context, jobID string, own
 // 执行AI作业相关的数据库查询，依赖上下文和连接池返回当前业务状态。
 func (s *Store) ListAIJobArtifactsByJobID(ctx context.Context, jobID string) ([]domain.AIJobArtifact, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, job_id, artifact_key, artifact_type, source, title, file_name, mime_type, storage_key,
-		       public_url, size_bytes, text_content, device_id, root_name, relative_path, absolute_path, payload,
-		       created_at, updated_at
+		SELECT `+aiJobArtifactSelectColumnsFor("", aiJobPayloadModeFull)+`
 		FROM ai_job_artifacts
 		WHERE job_id = $1
 		ORDER BY created_at ASC

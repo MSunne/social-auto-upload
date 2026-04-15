@@ -4,6 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
+
+	aiclient "omnidrive_cloud/internal/ai"
+	appstate "omnidrive_cloud/internal/app"
+	"omnidrive_cloud/internal/config"
 )
 
 func TestStripChatAttachmentDraftsRemovesAttachments(t *testing.T) {
@@ -90,5 +95,60 @@ func TestNormalizeStreamChatProviderError(t *testing.T) {
 	}
 	if got := normalizeStreamChatProviderError(nil); got != "" {
 		t.Fatalf("expected nil error to normalize to empty string, got %q", got)
+	}
+}
+
+func TestStreamChatGenerationTimeoutUsesConfig(t *testing.T) {
+	handler := &AIHandler{
+		app: &appstate.App{
+			Config: config.Config{
+				AIChatStreamTimeoutSeconds: 42,
+			},
+		},
+	}
+	if got := handler.streamChatGenerationTimeout(); got != 42*time.Second {
+		t.Fatalf("expected chat stream timeout to follow config, got %s", got)
+	}
+}
+
+func TestStreamChatHeartbeatIntervalDefaults(t *testing.T) {
+	handler := &AIHandler{}
+	if got := handler.streamChatHeartbeatInterval(); got != defaultStreamChatHeartbeatInterval {
+		t.Fatalf("expected default heartbeat interval %s, got %s", defaultStreamChatHeartbeatInterval, got)
+	}
+}
+
+func TestStartStreamChatHeartbeatEmitsPeriodically(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	emits := make(chan struct{}, 4)
+	stop := startStreamChatHeartbeat(ctx, 10*time.Millisecond, func() error {
+		emits <- struct{}{}
+		return nil
+	}, nil)
+	defer stop()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-emits:
+		case <-time.After(200 * time.Millisecond):
+			t.Fatalf("expected heartbeat emit %d", i+1)
+		}
+	}
+}
+
+func TestClassifyStreamChatTermination(t *testing.T) {
+	if got := classifyStreamChatTermination(nil, context.DeadlineExceeded, false); got != "timeout" {
+		t.Fatalf("expected timeout classification, got %q", got)
+	}
+	if got := classifyStreamChatTermination(&aiclient.ChatResult{FinishReason: "stream_eof"}, nil, false); got != "eof_after_delta" {
+		t.Fatalf("expected eof_after_delta classification, got %q", got)
+	}
+	if got := classifyStreamChatTermination(&aiclient.ChatResult{FinishReason: "stop"}, nil, false); got != "finish_reason" {
+		t.Fatalf("expected finish_reason classification, got %q", got)
+	}
+	if got := classifyStreamChatTermination(nil, nil, true); got != "write_error" {
+		t.Fatalf("expected write_error classification, got %q", got)
 	}
 }

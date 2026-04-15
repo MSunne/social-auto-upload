@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hashlib
 import json
 import mimetypes
 import shutil
@@ -19,7 +20,7 @@ import conf as app_conf
 from conf import BASE_DIR
 from utils.device_meta import get_local_ip
 from utils.log import agent_logger, log_throttled
-from utils.materials import list_material_directory, list_material_roots, read_material_file
+from utils.materials import list_material_directory, list_material_roots, read_material_file, stat_material_path
 from utils.platform_capabilities import (
     PLATFORM_ALIAS_MAP as LOGIN_PLATFORM_ALIAS_MAP,
     PLATFORM_NAME_BY_TYPE,
@@ -65,6 +66,7 @@ class OmniDriveBridge:
         material_sync_interval=300,
         skill_sync_interval=120,
         publish_sync_interval=5,
+        ai_poll_interval=15,
         max_material_files=1000,
         material_preview_bytes=65536,
         http_timeout=15,
@@ -88,6 +90,7 @@ class OmniDriveBridge:
         self.material_sync_interval = max(60, int(material_sync_interval))
         self.skill_sync_interval = max(30, int(skill_sync_interval))
         self.publish_sync_interval = max(2, int(publish_sync_interval))
+        self.ai_poll_interval = max(5, int(ai_poll_interval))
         self.max_material_files = max(50, int(max_material_files))
         self.material_preview_bytes = max(1024, int(material_preview_bytes))
         self.http_timeout = max(5, int(http_timeout))
@@ -103,6 +106,7 @@ class OmniDriveBridge:
         self._login_startup_cleanup_done = False
         self._cloud_retry_after_monotonic = 0.0
         self._cloud_unavailable_message = None
+        self._remote_ai_delta_cursor = {"updatedAfter": None, "afterId": None}
         self._state = {
             "running": False,
             "deviceName": self.device_name,
@@ -123,6 +127,7 @@ class OmniDriveBridge:
             "lastLeaseRenewAt": None,
             "lastAISyncAt": None,
             "lastAIPollAt": None,
+            "lastAIPollCursor": None,
             "lastLoginPollAt": None,
             "lastLoginEventAt": None,
             "lastError": None,
@@ -136,6 +141,7 @@ class OmniDriveBridge:
             "importedCloudTasks": 0,
             "mirroredAITasks": 0,
             "importedAIResults": 0,
+            "apiTraffic": {},
             "activeLoginSessionCount": 0,
             "activeLoginSessions": [],
         }
@@ -159,13 +165,15 @@ class OmniDriveBridge:
             self._init_db()
             self._agent_started_at_epoch = time.time()
             self._login_startup_cleanup_done = False
+            self._remote_ai_delta_cursor = {"updatedAfter": None, "afterId": None}
             self._thread = threading.Thread(target=self._loop, daemon=True)
             self._thread.start()
             agent_logger.info(
-                "omnidrive bridge started device_code={} device_name={} poll_interval={} heartbeat_interval={} account_sync_interval={} material_sync_interval={} skill_sync_interval={} publish_sync_interval={}",
+                "omnidrive bridge started device_code={} device_name={} poll_interval={} ai_poll_interval={} heartbeat_interval={} account_sync_interval={} material_sync_interval={} skill_sync_interval={} publish_sync_interval={}",
                 self.device_code,
                 self.device_name,
                 self.poll_interval,
+                self.ai_poll_interval,
                 self.heartbeat_interval,
                 self.account_sync_interval,
                 self.material_sync_interval,
@@ -252,7 +260,7 @@ class OmniDriveBridge:
                     self._sync_local_ai_tasks()
                     self._sync_local_ai_publish_state()
                     last_ai_sync = now
-                if now - last_ai_poll >= self.poll_interval:
+                if now - last_ai_poll >= self.ai_poll_interval:
                     self._import_remote_ai_jobs()
                     last_ai_poll = now
                 self._sync_active_login_session()
@@ -296,6 +304,7 @@ class OmniDriveBridge:
 
     def _request(self, method, path, *, params=None, payload=None, track_bridge_health=True):
         self._ensure_cloud_endpoint_available()
+        request_bytes = self._estimate_request_bytes(payload)
         try:
             response = self._session.request(
                 method=method,
@@ -315,6 +324,8 @@ class OmniDriveBridge:
             if self._is_loopback_cloud_endpoint():
                 raise OmniDriveEndpointUnavailable(self._mark_cloud_unavailable(exc)) from exc
             raise
+        response_bytes = len(response.content or b"")
+        self._record_api_traffic(method, path, request_bytes, response_bytes, getattr(response, "status_code", None))
         response.raise_for_status()
         if self._is_loopback_cloud_endpoint():
             self._mark_cloud_reachable()
@@ -323,6 +334,33 @@ class OmniDriveBridge:
         if not response.content:
             return None
         return response.json()
+
+    def _estimate_request_bytes(self, payload):
+        if payload is None:
+            return 0
+        try:
+            return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8"))
+        except Exception:
+            return 0
+
+    def _record_api_traffic(self, method, path, request_bytes, response_bytes, status_code):
+        key = f"{str(method or '').upper()} {str(path or '').split('?', 1)[0]}"
+        try:
+            normalized_status_code = int(status_code)
+        except (TypeError, ValueError):
+            normalized_status_code = None
+        with self._state_lock:
+            traffic = dict(self._state.get("apiTraffic") or {})
+            item = dict(traffic.get(key) or {})
+            item["requests"] = int(item.get("requests") or 0) + 1
+            item["sentBytes"] = int(item.get("sentBytes") or 0) + int(request_bytes or 0)
+            item["receivedBytes"] = int(item.get("receivedBytes") or 0) + int(response_bytes or 0)
+            item["lastRequestBytes"] = int(request_bytes or 0)
+            item["lastResponseBytes"] = int(response_bytes or 0)
+            item["lastStatusCode"] = normalized_status_code
+            item["lastAt"] = self._iso_now()
+            traffic[key] = item
+            self._state["apiTraffic"] = traffic
 
     @staticmethod
     def _is_loopback_host(hostname):
@@ -676,7 +714,8 @@ class OmniDriveBridge:
         return parsed.isoformat()
 
     def _sync_materials(self):
-        roots = list_material_roots(self.material_roots)
+        root_map = self._generated_material_root_map()
+        roots = list_material_roots(root_map)
         self._request(
             "POST",
             "/api/v1/agent/materials/roots/sync",
@@ -686,22 +725,15 @@ class OmniDriveBridge:
             },
         )
 
-        synced_files = 0
-        for root_item in roots:
-            if synced_files >= self.max_material_files:
-                break
-            if not root_item.get("exists") or not root_item.get("isDirectory"):
-                continue
-            synced_files += self._sync_material_directory_tree(root_item["name"], "", synced_files)
-
+        synced_files = self._sync_generated_material_tree(root_map=root_map, roots_already_synced=True)
         self._update_state(
             syncedRoots=len(roots),
             syncedFiles=synced_files,
             lastMaterialSyncAt=self._now_string(),
         )
-        if roots or synced_files:
+        if synced_files:
             agent_logger.debug(
-                "omnidrive bridge synced materials roots={} files={} device_code={}",
+                "omnidrive bridge synced generated materials roots={} files={} device_code={}",
                 len(roots),
                 synced_files,
                 self.device_code,
@@ -712,69 +744,269 @@ class OmniDriveBridge:
                 "DEBUG",
                 f"omnidrive_agent.materials_idle:{self.device_code}",
                 max(self.material_sync_interval * 2, 180),
-                "omnidrive bridge material sync idle device_code={}",
+                "omnidrive bridge generated material sync idle device_code={}",
                 self.device_code,
             )
 
-    def _sync_material_directory_tree(self, root_name, relative_path, synced_files):
-        if synced_files >= self.max_material_files:
+    def _generated_material_root_map(self):
+        return {
+            self.generated_root_name: self.generated_root_path,
+        }
+
+    def _sync_generated_material_refs(self, artifact_refs):
+        generated_paths = sorted(
+            {
+                str(item.get("path") or "").strip()
+                for item in (artifact_refs or [])
+                if str(item.get("root") or "").strip() == self.generated_root_name and str(item.get("path") or "").strip()
+            }
+        )
+        if not generated_paths:
+            return 0
+        return self._sync_generated_material_tree(
+            root_map=self._generated_material_root_map(),
+            forced_paths=generated_paths,
+        )
+
+    def _sync_generated_material_tree(self, *, root_map=None, forced_paths=None, roots_already_synced=False):
+        root_map = root_map or self._generated_material_root_map()
+        root_name = self.generated_root_name
+        root_path = root_map.get(root_name)
+        if root_path is None:
+            self._replace_material_sync_state(root_name, {})
             return 0
 
-        listing = list_material_directory(
-            self.material_roots,
-            root_name=root_name,
-            relative_path=relative_path,
-            limit=self.max_material_files,
-        )
-        self._request(
-            "POST",
-            "/api/v1/agent/materials/directory/sync",
-            payload={
-                "deviceCode": self.device_code,
-                "root": listing["root"],
-                "rootPath": listing["rootPath"],
-                "path": listing["path"],
-                "absolutePath": listing["absolutePath"],
-                "entries": listing["entries"],
-            },
-        )
+        root_path = Path(root_path)
+        if not root_path.exists() or not root_path.is_dir():
+            self._replace_material_sync_state(root_name, {})
+            return 0
 
-        processed_files = 0
-        for entry in listing["entries"]:
-            if synced_files + processed_files >= self.max_material_files:
-                break
-            if entry["kind"] == "directory":
-                processed_files += self._sync_material_directory_tree(root_name, entry["relativePath"], synced_files + processed_files)
-                continue
+        snapshot = self._scan_material_snapshot(root_name, root_map=root_map)
+        previous = self._load_material_sync_state(root_name)
+        changed_paths = set(str(path).strip() for path in (forced_paths or []) if str(path).strip())
+        for relative_path, item in snapshot.items():
+            if previous.get(relative_path, {}).get("syncHash") != item.get("syncHash"):
+                changed_paths.add(relative_path)
+        deleted_paths = {
+            relative_path
+            for relative_path in previous.keys()
+            if relative_path not in snapshot
+        }
+        if not changed_paths and not deleted_paths:
+            return 0
 
-            file_preview = read_material_file(
-                self.material_roots,
-                root_name=root_name,
-                relative_path=entry["relativePath"],
-                max_bytes=self.material_preview_bytes,
+        if not roots_already_synced:
+            self._request(
+                "POST",
+                "/api/v1/agent/materials/roots/sync",
+                payload={
+                    "deviceCode": self.device_code,
+                    "roots": list_material_roots(root_map),
+                },
             )
+
+        affected_directories = {""}
+        for relative_path in changed_paths | deleted_paths:
+            normalized = str(relative_path or "").strip().replace("\\", "/").strip("/")
+            entry = snapshot.get(normalized) or previous.get(normalized) or {}
+            if entry.get("kind") == "directory" and normalized in snapshot:
+                affected_directories.add(normalized)
+            parent_path = self._material_parent_path(normalized)
+            while parent_path is not None:
+                affected_directories.add(parent_path)
+                if parent_path == "":
+                    break
+                parent_path = self._material_parent_path(parent_path)
+
+        synced_files = 0
+        for relative_path in sorted(affected_directories, key=lambda item: (item.count("/"), item)):
+            if relative_path and relative_path not in snapshot:
+                continue
+            listing = list_material_directory(
+                root_map,
+                root_name=root_name,
+                relative_path=relative_path,
+                limit=self.max_material_files,
+            )
+            self._request(
+                "POST",
+                "/api/v1/agent/materials/directory/sync",
+                payload={
+                    "deviceCode": self.device_code,
+                    "root": listing["root"],
+                    "rootPath": listing["rootPath"],
+                    "path": listing["path"],
+                    "absolutePath": listing["absolutePath"],
+                    "entries": listing["entries"],
+                },
+            )
+
+        for relative_path in sorted(changed_paths):
+            entry = snapshot.get(relative_path) or {}
+            if entry.get("kind") != "file":
+                continue
+            stat = stat_material_path(root_map, root_name=root_name, relative_path=relative_path)
+            file_entry = stat["entry"]
             self._request(
                 "POST",
                 "/api/v1/agent/materials/file/sync",
                 payload={
                     "deviceCode": self.device_code,
-                    "root": file_preview["root"],
-                    "rootPath": file_preview["rootPath"],
-                    "path": file_preview["path"],
-                    "absolutePath": file_preview["absolutePath"],
-                    "name": file_preview["name"],
-                    "size": file_preview["size"],
-                    "modifiedAt": file_preview["modifiedAt"],
-                    "mimeType": file_preview["mimeType"],
-                    "isText": file_preview["isText"],
-                    "truncated": file_preview["truncated"],
-                    "previewText": file_preview["previewText"],
-                    "extension": file_preview["extension"],
+                    "root": stat["root"],
+                    "rootPath": stat["rootPath"],
+                    "path": stat["path"],
+                    "absolutePath": stat["absolutePath"],
+                    "name": file_entry["name"],
+                    "size": file_entry["size"],
+                    "modifiedAt": file_entry["modifiedAt"],
+                    "mimeType": file_entry["mimeType"],
+                    "isText": False,
+                    "truncated": False,
+                    "previewText": None,
+                    "extension": file_entry["extension"],
                 },
             )
-            processed_files += 1
+            synced_files += 1
 
-        return processed_files
+        self._replace_material_sync_state(root_name, snapshot)
+        return synced_files
+
+    def _scan_material_snapshot(self, root_name, *, root_map=None):
+        root_map = root_map or self._generated_material_root_map()
+        snapshot = {}
+        pending_directories = [""]
+        scanned_files = 0
+
+        while pending_directories:
+            relative_path = pending_directories.pop(0)
+            listing = list_material_directory(
+                root_map,
+                root_name=root_name,
+                relative_path=relative_path,
+                limit=self.max_material_files,
+            )
+            snapshot[relative_path] = {
+                "kind": "directory",
+                "syncHash": self._directory_listing_sync_hash(listing["entries"]),
+            }
+            child_directories = []
+            for entry in listing["entries"]:
+                child_relative_path = str(entry.get("relativePath") or "").strip()
+                if not child_relative_path:
+                    continue
+                if entry["kind"] == "directory":
+                    snapshot.setdefault(
+                        child_relative_path,
+                        {
+                            "kind": "directory",
+                            "syncHash": None,
+                        },
+                    )
+                    child_directories.append(child_relative_path)
+                    continue
+
+                snapshot[child_relative_path] = {
+                    "kind": "file",
+                    "size": entry.get("size"),
+                    "modifiedAt": entry.get("modifiedAt"),
+                    "syncHash": self._material_entry_sync_hash(entry),
+                }
+                scanned_files += 1
+                if scanned_files >= self.max_material_files:
+                    break
+            if scanned_files >= self.max_material_files:
+                break
+            pending_directories.extend(child_directories)
+
+        return snapshot
+
+    @staticmethod
+    def _material_parent_path(relative_path):
+        normalized = str(relative_path or "").strip().replace("\\", "/").strip("/")
+        if not normalized:
+            return ""
+        parent = str(Path(normalized).parent).replace("\\", "/")
+        return "" if parent == "." else parent
+
+    @staticmethod
+    def _material_entry_sync_hash(entry):
+        payload = {
+            "kind": entry.get("kind"),
+            "relativePath": entry.get("relativePath"),
+            "size": entry.get("size"),
+            "modifiedAt": entry.get("modifiedAt"),
+            "extension": entry.get("extension"),
+            "mimeType": entry.get("mimeType"),
+        }
+        return hashlib.sha1(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+
+    def _directory_listing_sync_hash(self, entries):
+        payload = []
+        for entry in entries or []:
+            payload.append(
+                {
+                    "name": entry.get("name"),
+                    "kind": entry.get("kind"),
+                    "relativePath": entry.get("relativePath"),
+                    "size": entry.get("size"),
+                    "modifiedAt": entry.get("modifiedAt"),
+                    "extension": entry.get("extension"),
+                    "mimeType": entry.get("mimeType"),
+                }
+            )
+        return hashlib.sha1(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+
+    def _load_material_sync_state(self, root_name):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT relative_path, kind, size_bytes, modified_at, sync_hash, is_deleted
+                FROM omnidrive_material_sync_state
+                WHERE root_name = ?
+                """,
+                (root_name,),
+            )
+            rows = cursor.fetchall()
+        items = {}
+        for row in rows:
+            items[str(row["relative_path"] or "")] = {
+                "kind": row["kind"],
+                "size": row["size_bytes"],
+                "modifiedAt": row["modified_at"],
+                "syncHash": row["sync_hash"],
+                "isDeleted": bool(row["is_deleted"]),
+            }
+        return items
+
+    def _replace_material_sync_state(self, root_name, snapshot):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM omnidrive_material_sync_state WHERE root_name = ?", (root_name,))
+            for relative_path, item in snapshot.items():
+                cursor.execute(
+                    """
+                    INSERT INTO omnidrive_material_sync_state (
+                        root_name, relative_path, kind, size_bytes, modified_at, sync_hash,
+                        is_deleted, last_synced_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    """,
+                    (
+                        root_name,
+                        relative_path,
+                        item.get("kind"),
+                        item.get("size"),
+                        item.get("modifiedAt"),
+                        item.get("syncHash"),
+                    ),
+                )
+            conn.commit()
 
     def _sync_skills(self):
         payload = self._request("GET", f"/api/v1/agent/skills/{self.device_code}") or {}
@@ -934,7 +1166,11 @@ class OmniDriveBridge:
             )
 
     def _poll_remote_login_tasks(self):
-        queue_payload = self._request("GET", f"/api/v1/agent/login-tasks/{self.device_code}") or []
+        queue_payload = self._request(
+            "GET",
+            f"/api/v1/agent/login-tasks/{self.device_code}",
+            params={"limit": 20},
+        ) or []
         sessions = self._normalize_login_session_queue(queue_payload)
         sessions = self._cleanup_remote_login_sessions(sessions)
         active_remote_sessions = []
@@ -1613,7 +1849,11 @@ class OmniDriveBridge:
         return text or None
 
     def _import_remote_publish_tasks(self):
-        queue_payload = self._request("GET", f"/api/v1/agent/publish-tasks/{self.device_code}") or []
+        queue_payload = self._request(
+            "GET",
+            f"/api/v1/agent/publish-tasks/{self.device_code}",
+            params={"limit": 20},
+        ) or []
         queue = self._normalize_publish_task_queue(queue_payload)
         imported = 0
         last_error = None
@@ -1813,7 +2053,7 @@ class OmniDriveBridge:
     def _sync_local_ai_tasks(self):
         if not self.ai_task_manager:
             return 0
-        tasks = self.ai_task_manager.list_tasks_for_cloud_sync(limit=200)
+        tasks = self.ai_task_manager.list_tasks_for_cloud_sync(limit=50)
         mirrored = 0
         for task in tasks:
             source = str(task.get("source") or "").strip() or "local_ui"
@@ -1822,13 +2062,21 @@ class OmniDriveBridge:
             payload = self._build_sync_ai_task_payload(task)
             if not payload:
                 continue
+            payload_hash = self._stable_payload_hash(payload)
             data = self._request("POST", "/api/v1/agent/ai-jobs/sync", payload=payload) or {}
             job = data.get("job") or {}
             cloud_job_id = str(job.get("id") or "").strip()
             cloud_status = str(job.get("status") or "queued").strip() or "queued"
             message = job.get("message") or "AI 任务已同步到 OmniDrive 云端"
             if cloud_job_id:
-                self.ai_task_manager.update_cloud_binding(task["taskUuid"], cloud_job_id, cloud_status, message)
+                self.ai_task_manager.update_cloud_binding(
+                    task["taskUuid"],
+                    cloud_job_id,
+                    cloud_status,
+                    message,
+                    cloud_sync_hash=payload_hash,
+                    clear_cloud_sync_dirty=True,
+                )
                 mirrored += 1
         self._update_state(
             mirroredAITasks=mirrored,
@@ -1956,150 +2204,178 @@ class OmniDriveBridge:
     def _import_remote_ai_jobs(self):
         if not self.ai_task_manager:
             return 0
-        items = self._request(
-            "GET",
-            f"/api/v1/agent/ai-jobs/{self.device_code}",
-            params={"limit": 200},
-        ) or []
         imported = 0
-        for item in items:
-            job = item.get("job") or {}
-            artifacts = item.get("artifacts") or []
-            schedule_times = item.get("scheduleTimes") or {}
-            cloud_job_id = str(job.get("id") or "").strip()
-            local_task_id = self._resolve_remote_ai_local_task_id(job)
-            cloud_status = str(job.get("status") or "").strip()
-            if not cloud_job_id or not local_task_id:
-                continue
+        pages = 0
+        while pages < 3:
+            cursor = dict(self._remote_ai_delta_cursor)
+            params = {"limit": 20}
+            if cursor.get("updatedAfter"):
+                params["updatedAfter"] = cursor["updatedAfter"]
+            if cursor.get("afterId"):
+                params["afterId"] = cursor["afterId"]
+            payload = self._request(
+                "GET",
+                f"/api/v1/agent/ai-jobs/{self.device_code}/delta",
+                params=params,
+            ) or {}
+            if isinstance(payload, list):
+                items = payload
+                next_cursor = None
+                has_more = False
+            else:
+                items = payload.get("items") or []
+                next_cursor = payload.get("nextCursor") or None
+                has_more = bool(payload.get("hasMore"))
 
-            local_task = self.ai_task_manager.get_task(local_task_id)
-            if not local_task:
-                local_task = self._import_missing_remote_ai_task(job, schedule_times=schedule_times)
-                if not local_task:
+            if next_cursor:
+                self._remote_ai_delta_cursor = {
+                    "updatedAfter": next_cursor.get("updatedAfter"),
+                    "afterId": next_cursor.get("afterId"),
+                }
+                self._update_state(lastAIPollCursor=dict(self._remote_ai_delta_cursor))
+
+            for item in items:
+                job = item.get("job") or {}
+                artifacts = item.get("artifacts") or []
+                schedule_times = item.get("scheduleTimes") or {}
+                cloud_job_id = str(job.get("id") or "").strip()
+                local_task_id = self._resolve_remote_ai_local_task_id(job)
+                cloud_status = str(job.get("status") or "").strip()
+                if not cloud_job_id or not local_task_id:
                     continue
 
-            payload = job.get("inputPayload") or {}
-            if not isinstance(payload, dict):
-                payload = {}
-            payload = self._merge_remote_ai_publish_payload(payload, job)
-            payload = self._merge_remote_ai_schedule_payload(payload, schedule_times)
-            linked_publish_task_uuid = str(job.get("localPublishTaskId") or "").strip() or None
+                local_task = self.ai_task_manager.get_task(local_task_id)
+                if not local_task:
+                    local_task = self._import_missing_remote_ai_task(job, schedule_times=schedule_times)
+                    if not local_task:
+                        continue
 
-            local_task = self.ai_task_manager.update_cloud_binding(
-                local_task_id,
-                cloud_job_id,
-                cloud_status or local_task.get("cloudStatus") or "queued",
-                job.get("message"),
-                source=str(job.get("source") or "omnidrive_cloud").strip() or "omnidrive_cloud",
-                job_type=str(job.get("jobType") or "").strip(),
-                model_name=str(job.get("modelName") or "").strip(),
-                skill_id=str(job.get("skillId") or "").strip() or None,
-                prompt=str(job.get("prompt") or "").strip(),
-                payload=payload,
-                linked_publish_task_uuid=linked_publish_task_uuid,
-            )
+                payload_data = job.get("inputPayload") or {}
+                if not isinstance(payload_data, dict):
+                    payload_data = {}
+                payload_data = self._merge_remote_ai_publish_payload(payload_data, job)
+                payload_data = self._merge_remote_ai_schedule_payload(payload_data, schedule_times)
+                linked_publish_task_uuid = str(job.get("localPublishTaskId") or "").strip() or None
 
-            if cloud_status in {"queued", "running"}:
-                continue
-
-            if cloud_status in {"failed", "cancelled"}:
-                self.ai_task_manager.mark_cloud_state(local_task_id, cloud_status, job.get("message"))
-                continue
-
-            if cloud_status not in {"success", "completed"}:
-                continue
-
-            linked_publish_task_uuid = str(local_task.get("linkedPublishTaskUuid") or "").strip()
-            if linked_publish_task_uuid:
-                publish_payload = payload.get("publishPayload") or {}
-                intended_run_at = (
-                    publish_payload.get("runAt")
-                    or publish_payload.get("requestedRun")
-                    or payload.get("publishAt")
-                    or payload.get("runAt")
+                local_task = self.ai_task_manager.update_cloud_binding(
+                    local_task_id,
+                    cloud_job_id,
+                    cloud_status or local_task.get("cloudStatus") or "queued",
+                    job.get("message"),
+                    source=str(job.get("source") or "omnidrive_cloud").strip() or "omnidrive_cloud",
+                    job_type=str(job.get("jobType") or "").strip(),
+                    model_name=str(job.get("modelName") or "").strip(),
+                    skill_id=str(job.get("skillId") or "").strip() or None,
+                    prompt=str(job.get("prompt") or "").strip(),
+                    payload=payload_data,
+                    linked_publish_task_uuid=linked_publish_task_uuid,
                 )
-                intended_publish_at = (
-                    publish_payload.get("publishDate")
-                    or publish_payload.get("requestedRun")
-                    or payload.get("publishAt")
-                    or intended_run_at
-                )
-                self.publish_task_manager.realign_omnidrive_ai_task(
-                    linked_publish_task_uuid,
-                    intended_run_at,
-                    intended_publish_at,
-                )
-                continue
 
-            existing_artifact_refs = local_task.get("artifactRefs") or []
-            if existing_artifact_refs and str(local_task.get("status") or "").strip() == "output_ready":
-                continue
+                if cloud_status in {"queued", "running"}:
+                    continue
 
-            artifact_refs = self._download_ai_artifacts(local_task, artifacts)
-            if not artifact_refs:
-                self.ai_task_manager.mark_cloud_state(local_task_id, "failed", "云端 AI 任务没有可导入的有效产物")
-                self._request(
-                    "POST",
-                    f"/api/v1/agent/ai-jobs/{cloud_job_id}/delivery",
-                    payload={
-                        "deviceCode": self.device_code,
-                        "status": "failed",
-                        "message": "云端 AI 任务没有可导入的有效产物",
-                        "deliveredAt": self._iso_now(),
-                    },
-                )
-                continue
+                if cloud_status in {"failed", "cancelled"}:
+                    self.ai_task_manager.mark_cloud_state(local_task_id, cloud_status, job.get("message"))
+                    continue
 
-            if any(str(item.get("root") or "").strip() == self.generated_root_name for item in artifact_refs):
-                try:
-                    self._sync_materials()
-                except Exception as exc:
-                    log_throttled(
-                        agent_logger,
-                        "WARNING",
-                        f"omnidrive_agent.generated_material_sync_error:{self.device_code}",
-                        30,
-                        "omnidrive bridge generated material sync failed before publish import device_code={} error={}",
-                        self.device_code,
-                        exc,
+                if cloud_status not in {"success", "completed"}:
+                    continue
+
+                linked_publish_task_uuid = str(local_task.get("linkedPublishTaskUuid") or "").strip()
+                if linked_publish_task_uuid:
+                    publish_payload = payload_data.get("publishPayload") or {}
+                    intended_run_at = (
+                        publish_payload.get("runAt")
+                        or publish_payload.get("requestedRun")
+                        or payload_data.get("publishAt")
+                        or payload_data.get("runAt")
                     )
+                    intended_publish_at = (
+                        publish_payload.get("publishDate")
+                        or publish_payload.get("requestedRun")
+                        or payload_data.get("publishAt")
+                        or intended_run_at
+                    )
+                    self.publish_task_manager.realign_omnidrive_ai_task(
+                        linked_publish_task_uuid,
+                        intended_run_at,
+                        intended_publish_at,
+                    )
+                    continue
 
-            publish_task_uuid = self._enqueue_publish_from_ai_task(local_task, artifact_refs)
-            if publish_task_uuid:
-                self.ai_task_manager.mark_result_imported(
-                    local_task_id,
-                    artifact_refs,
-                    linked_publish_task_uuid=publish_task_uuid,
-                    message="AI 产物已回流 OmniBull，并进入 SAU 发布队列",
-                )
-                self._request(
-                    "POST",
-                    f"/api/v1/agent/ai-jobs/{cloud_job_id}/delivery",
-                    payload={
-                        "deviceCode": self.device_code,
-                        "status": "publish_queued",
-                        "message": "AI 产物已回流 OmniBull，并进入 SAU 发布队列",
-                        "localPublishTaskId": publish_task_uuid,
-                        "deliveredAt": self._iso_now(),
-                    },
-                )
-            else:
-                self.ai_task_manager.mark_result_imported(
-                    local_task_id,
-                    artifact_refs,
-                    message="AI 产物已回流 OmniBull，本地尚未生成发布任务",
-                )
-                self._request(
-                    "POST",
-                    f"/api/v1/agent/ai-jobs/{cloud_job_id}/delivery",
-                    payload={
-                        "deviceCode": self.device_code,
-                        "status": "imported",
-                        "message": "AI 产物已回流 OmniBull，本地尚未生成发布任务",
-                        "deliveredAt": self._iso_now(),
-                    },
-                )
-            imported += 1
+                existing_artifact_refs = local_task.get("artifactRefs") or []
+                if existing_artifact_refs and str(local_task.get("status") or "").strip() == "output_ready":
+                    continue
+
+                artifact_refs = self._download_ai_artifacts(local_task, artifacts)
+                if not artifact_refs:
+                    self.ai_task_manager.mark_cloud_state(local_task_id, "failed", "云端 AI 任务没有可导入的有效产物")
+                    self._request(
+                        "POST",
+                        f"/api/v1/agent/ai-jobs/{cloud_job_id}/delivery",
+                        payload={
+                            "deviceCode": self.device_code,
+                            "status": "failed",
+                            "message": "云端 AI 任务没有可导入的有效产物",
+                            "deliveredAt": self._iso_now(),
+                        },
+                    )
+                    continue
+
+                if any(str(item.get("root") or "").strip() == self.generated_root_name for item in artifact_refs):
+                    try:
+                        self._sync_generated_material_refs(artifact_refs)
+                    except Exception as exc:
+                        log_throttled(
+                            agent_logger,
+                            "WARNING",
+                            f"omnidrive_agent.generated_material_sync_error:{self.device_code}",
+                            30,
+                            "omnidrive bridge generated material sync failed before publish import device_code={} error={}",
+                            self.device_code,
+                            exc,
+                        )
+
+                publish_task_uuid = self._enqueue_publish_from_ai_task(local_task, artifact_refs)
+                if publish_task_uuid:
+                    self.ai_task_manager.mark_result_imported(
+                        local_task_id,
+                        artifact_refs,
+                        linked_publish_task_uuid=publish_task_uuid,
+                        message="AI 产物已回流 OmniBull，并进入 SAU 发布队列",
+                    )
+                    self._request(
+                        "POST",
+                        f"/api/v1/agent/ai-jobs/{cloud_job_id}/delivery",
+                        payload={
+                            "deviceCode": self.device_code,
+                            "status": "publish_queued",
+                            "message": "AI 产物已回流 OmniBull，并进入 SAU 发布队列",
+                            "localPublishTaskId": publish_task_uuid,
+                            "deliveredAt": self._iso_now(),
+                        },
+                    )
+                else:
+                    self.ai_task_manager.mark_result_imported(
+                        local_task_id,
+                        artifact_refs,
+                        message="AI 产物已回流 OmniBull，本地尚未生成发布任务",
+                    )
+                    self._request(
+                        "POST",
+                        f"/api/v1/agent/ai-jobs/{cloud_job_id}/delivery",
+                        payload={
+                            "deviceCode": self.device_code,
+                            "status": "imported",
+                            "message": "AI 产物已回流 OmniBull，本地尚未生成发布任务",
+                            "deliveredAt": self._iso_now(),
+                        },
+                    )
+                imported += 1
+
+            pages += 1
+            if not has_more or not items:
+                break
 
         self._update_state(
             importedAIResults=imported,
@@ -2116,7 +2392,7 @@ class OmniDriveBridge:
                 agent_logger,
                 "DEBUG",
                 f"omnidrive_agent.ai_poll_idle:{self.device_code}",
-                max(self.poll_interval * 20, 60),
+                max(self.ai_poll_interval * 4, 60),
                 "omnidrive bridge remote ai queue idle device_code={}",
                 self.device_code,
             )
@@ -2718,6 +2994,12 @@ class OmniDriveBridge:
             "runAt": self._to_rfc3339(payload.get("runAt")),
         }
 
+    @staticmethod
+    def _stable_payload_hash(payload):
+        return hashlib.sha1(
+            json.dumps(payload or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        ).hexdigest()
+
     def _download_ai_artifacts(self, local_task, artifacts):
         task_uuid = str(local_task.get("taskUuid") or "").strip()
         if not task_uuid:
@@ -3039,6 +3321,8 @@ class OmniDriveBridge:
                 "lastAccountSyncAt": self._state.get("lastAccountSyncAt"),
                 "lastPublishSyncAt": self._state.get("lastPublishSyncAt"),
                 "lastAIPollAt": self._state.get("lastAIPollAt"),
+                "lastAIPollCursor": self._state.get("lastAIPollCursor"),
+                "apiTraffic": self._state.get("apiTraffic"),
                 "lastLoginPollAt": self._state.get("lastLoginPollAt"),
             }
 
@@ -3062,7 +3346,7 @@ class OmniDriveBridge:
             "publishTasks": by_status,
             "publishTasksBySource": by_source,
             "aiTasks": self.ai_task_manager.summary() if self.ai_task_manager else {},
-            "materialRoots": len(self.material_roots),
+            "materialRoots": len(self._generated_material_root_map()),
             "activeLeaseCount": len(active_leases),
             "activeLeaseTaskIds": [binding.get("task_uuid") for binding in active_leases[:20]],
             "activeLoginSessionId": login_worker.get("sessionId") if login_worker else None,
@@ -3309,6 +3593,22 @@ class OmniDriveBridge:
                     last_synced_updated_at TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS omnidrive_material_sync_state (
+                    root_name TEXT NOT NULL,
+                    relative_path TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    size_bytes INTEGER,
+                    modified_at TEXT,
+                    sync_hash TEXT,
+                    is_deleted INTEGER NOT NULL DEFAULT 0,
+                    last_synced_at DATETIME,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (root_name, relative_path)
                 )
                 """
             )

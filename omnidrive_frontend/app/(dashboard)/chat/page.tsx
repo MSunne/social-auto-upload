@@ -78,6 +78,7 @@ type StreamEventPayload = {
   done?: boolean;
   error?: string;
   progressed?: boolean;
+  ping?: boolean;
 };
 
 type StreamReadState = {
@@ -697,6 +698,45 @@ function summarizeHistory(job: AIJob) {
   return `${getModelDisplayName(job, "聊天模型")} 对话`;
 }
 
+function historyJobNeedsArtifactHydration(job?: AIJob | null) {
+  if (!job) {
+    return false;
+  }
+
+  const inputPayload = (job.inputPayload || {}) as Record<string, unknown>;
+  const outputPayload = (job.outputPayload || {}) as Record<string, unknown>;
+  const rawRefs = Array.isArray(inputPayload.attachments) ? inputPayload.attachments : [];
+  const hasOutputText = typeof outputPayload.text === "string" && outputPayload.text.trim().length > 0;
+
+  if (!hasOutputText) {
+    return true;
+  }
+  if (rawRefs.length > 0) {
+    return false;
+  }
+
+  const rawMessages = Array.isArray(inputPayload.messages) ? inputPayload.messages : [];
+  return rawMessages.some((item) => {
+    if (!item || typeof item !== "object") {
+      return false;
+    }
+    const content = (item as Record<string, unknown>).content;
+    if (!Array.isArray(content)) {
+      return false;
+    }
+    return content.some((part) => {
+      if (!part || typeof part !== "object") {
+        return false;
+      }
+      const typedPart = part as Record<string, unknown>;
+      if (typedPart.type === "image_url") {
+        return true;
+      }
+      return typedPart.type === "file";
+    });
+  });
+}
+
 function attachmentIcon(kind: ChatAttachmentKind) {
   if (kind === "image") {
     return ImageIcon;
@@ -1093,16 +1133,21 @@ export default function ChatPage() {
   });
 
   const { data: selectedJob } = useQuery<AIJob, Error>({
-    queryKey: ["aiJob", selectedJobId],
-    queryFn: () => getAIJob(selectedJobId),
+    queryKey: ["aiJob", "historyDetail", selectedJobId],
+    queryFn: () => getAIJob(selectedJobId, { payloadMode: "history_detail" }),
     enabled: Boolean(selectedJobId),
     staleTime: CHAT_HISTORY_STALE_TIME,
   });
 
+  const selectedJobNeedsArtifacts = useMemo(
+    () => historyJobNeedsArtifactHydration(selectedJob),
+    [selectedJob],
+  );
+
   const { data: selectedJobArtifacts = [] } = useQuery<AIJobArtifact[], Error>({
-    queryKey: ["aiJobArtifacts", selectedJobId],
-    queryFn: () => getAIJobArtifacts(selectedJobId),
-    enabled: Boolean(selectedJobId),
+    queryKey: ["aiJobArtifacts", "chat", selectedJobId, selectedJobNeedsArtifacts ? "chat" : "skip"],
+    queryFn: () => getAIJobArtifacts(selectedJobId, { artifactMode: "chat" }),
+    enabled: Boolean(selectedJobId) && selectedJobNeedsArtifacts,
     staleTime: CHAT_HISTORY_STALE_TIME,
   });
 
@@ -1354,6 +1399,10 @@ export default function ChatPage() {
           return;
         }
 
+        if (event === "ping") {
+          return;
+        }
+
         if (event === "delta" && payload.delta) {
           receivedText += payload.delta;
           setMessages((previous) =>
@@ -1477,8 +1526,8 @@ export default function ChatPage() {
       void queryClient.invalidateQueries({ queryKey: ["walletLedger"] });
       const historyJobId = createdJobId || selectedJobId;
       if (historyJobId) {
-        void queryClient.invalidateQueries({ queryKey: ["aiJob", historyJobId] });
-        void queryClient.invalidateQueries({ queryKey: ["aiJobArtifacts", historyJobId] });
+        void queryClient.invalidateQueries({ queryKey: ["aiJob", "historyDetail", historyJobId] });
+        void queryClient.invalidateQueries({ queryKey: ["aiJobArtifacts", "chat", historyJobId] });
       }
     }
   }

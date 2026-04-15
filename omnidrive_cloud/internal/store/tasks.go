@@ -237,8 +237,8 @@ func (s *Store) CreatePublishTask(ctx context.Context, input CreatePublishTaskIn
 }
 
 // 执行任务相关的数据库查询，依赖上下文和连接池返回当前业务状态。
-func (s *Store) ListPendingPublishTasksByDevice(ctx context.Context, deviceID string) ([]domain.PublishTask, error) {
-	rows, err := s.pool.Query(ctx, `
+func (s *Store) ListPendingPublishTasksByDevice(ctx context.Context, deviceID string, limit int) ([]domain.PublishTask, error) {
+	query := `
 		SELECT id, device_id, account_id, skill_id, skill_revision, platform, account_name,
 		       title, content_text, media_payload, status, message, verification_payload,
 		       lease_owner_device_id, lease_token, lease_expires_at, attempt_count, cancel_requested_at,
@@ -250,7 +250,13 @@ func (s *Store) ListPendingPublishTasksByDevice(ctx context.Context, deviceID st
 	      OR (status IN ('running', 'cancel_requested') AND lease_owner_device_id = $1 AND lease_expires_at >= NOW())
 	  )
 		ORDER BY created_at ASC
-	`, deviceID)
+	`
+	args := []any{deviceID}
+	if limit > 0 {
+		query += ` LIMIT $2`
+		args = append(args, limit)
+	}
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

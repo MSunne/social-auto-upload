@@ -202,7 +202,7 @@ function VideoPreviewSurface({
         muted={!controls}
         loop={!compact}
         playsInline
-        preload={compact ? "metadata" : "auto"}
+        preload="metadata"
         onLoadedMetadata={compact ? handleReady : undefined}
         onLoadedData={handleReady}
         onCanPlay={handleReady}
@@ -334,8 +334,8 @@ export default function VideoHistoryPage() {
   }, [rawJobs, selectedJobId]);
 
   const { data: selectedJobDetail } = useQuery<AIJob>({
-    queryKey: ["aiJobDetail", selectedJobId],
-    queryFn: () => getAIJob(selectedJobId!),
+    queryKey: ["aiJobDetail", "historyDetail", selectedJobId],
+    queryFn: () => getAIJob(selectedJobId!, { payloadMode: "history_detail" }),
     enabled: !!selectedJobId,
     staleTime: 10_000,
   });
@@ -347,8 +347,8 @@ export default function VideoHistoryPage() {
   );
   const selectedPayloadPreview = getPrimaryPreviewFromJob(selectedJobView);
   const { data: selectedArtifacts } = useQuery<AIJobArtifact[]>({
-    queryKey: ["aiJobArtifacts", selectedJobId],
-    queryFn: () => getAIJobArtifacts(selectedJobId!),
+    queryKey: ["aiJobArtifacts", "preview", selectedJobId],
+    queryFn: () => getAIJobArtifacts(selectedJobId!, { artifactMode: "preview" }),
     enabled: !!selectedJobId && isTerminalJob(selectedJobView) && isSuccessJob(selectedJobView),
   });
 

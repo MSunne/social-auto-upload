@@ -105,11 +105,28 @@ cursor.execute('''CREATE TABLE IF NOT EXISTS omnidrive_ai_tasks (
     payload_json TEXT NOT NULL,
     cloud_job_id TEXT,
     cloud_status TEXT,
+    cloud_sync_dirty INTEGER NOT NULL DEFAULT 0,
+    last_cloud_sync_hash TEXT,
+    last_cloud_sync_at DATETIME,
     linked_publish_task_uuid TEXT,
     artifact_refs_json TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     finished_at DATETIME
+)
+''')
+
+cursor.execute('''CREATE TABLE IF NOT EXISTS omnidrive_material_sync_state (
+    root_name TEXT NOT NULL,
+    relative_path TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    size_bytes INTEGER,
+    modified_at TEXT,
+    sync_hash TEXT,
+    is_deleted INTEGER NOT NULL DEFAULT 0,
+    last_synced_at DATETIME,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (root_name, relative_path)
 )
 ''')
 

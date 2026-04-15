@@ -594,30 +594,35 @@ class OmniDriveBridgeTests(unittest.TestCase):
         delivery_updates = []
 
         def fake_request(method, path, *, params=None, payload=None):
-            if method == "GET" and path == "/api/v1/agent/ai-jobs/device-1":
-                return [
-                    {
-                        "job": {
-                            "id": "cloud-job-1",
-                            "status": "success",
-                            "source": "account_skill_binding",
-                            "jobType": "video",
-                            "modelName": "veo",
-                            "prompt": "生成春季广告视频",
-                            "inputPayload": {
-                                "publishPayload": {
-                                    "title": "春季广告",
-                                    "contentText": "新品上新",
-                                    "targets": [
-                                        {"platform": "抖音", "accountName": "账号A"},
-                                        {"platform": "快手", "accountName": "账号B"},
-                                    ],
-                                }
+            if method == "GET" and path == "/api/v1/agent/ai-jobs/device-1/delta":
+                self.assertEqual(params["limit"], 20)
+                return {
+                    "items": [
+                        {
+                            "job": {
+                                "id": "cloud-job-1",
+                                "status": "success",
+                                "source": "account_skill_binding",
+                                "jobType": "video",
+                                "modelName": "veo",
+                                "prompt": "生成春季广告视频",
+                                "inputPayload": {
+                                    "publishPayload": {
+                                        "title": "春季广告",
+                                        "contentText": "新品上新",
+                                        "targets": [
+                                            {"platform": "抖音", "accountName": "账号A"},
+                                            {"platform": "快手", "accountName": "账号B"},
+                                        ],
+                                    }
+                                },
                             },
-                        },
-                        "artifacts": [{"artifactKey": "video-1", "artifactType": "video"}],
-                    }
-                ]
+                            "artifacts": [{"artifactKey": "video-1", "artifactType": "video"}],
+                        }
+                    ],
+                    "nextCursor": {"updatedAfter": "2026-04-14T13:00:00Z", "afterId": "cloud-job-1"},
+                    "hasMore": False,
+                }
             if method == "POST" and path == "/api/v1/agent/ai-jobs/cloud-job-1/delivery":
                 delivery_updates.append(payload)
                 return {"ok": True}
@@ -635,7 +640,7 @@ class OmniDriveBridgeTests(unittest.TestCase):
 
         with mock.patch.object(bridge, "_request", side_effect=fake_request):
             with mock.patch.object(bridge, "_download_ai_artifacts", return_value=artifact_refs):
-                with mock.patch.object(bridge, "_sync_materials"):
+                with mock.patch.object(bridge, "_sync_generated_material_refs"):
                     with mock.patch.object(
                         bridge,
                         "_load_local_account_by_name",
@@ -698,18 +703,22 @@ class OmniDriveBridgeTests(unittest.TestCase):
         delivery_updates = []
 
         def fake_request(method, path, *, params=None, payload=None):
-            if method == "GET" and path == "/api/v1/agent/ai-jobs/device-1":
-                return [
-                    {
-                        "job": {
-                            "id": "cloud-job-1",
-                            "localTaskId": "local-ai-1",
-                            "status": "success",
-                            "message": "done",
-                        },
-                        "artifacts": [{"artifactKey": "video-1", "artifactType": "video"}],
-                    }
-                ]
+            if method == "GET" and path == "/api/v1/agent/ai-jobs/device-1/delta":
+                return {
+                    "items": [
+                        {
+                            "job": {
+                                "id": "cloud-job-1",
+                                "localTaskId": "local-ai-1",
+                                "status": "success",
+                                "message": "done",
+                            },
+                            "artifacts": [{"artifactKey": "video-1", "artifactType": "video"}],
+                        }
+                    ],
+                    "nextCursor": {"updatedAfter": "2026-04-14T13:00:01Z", "afterId": "cloud-job-1"},
+                    "hasMore": False,
+                }
             if method == "POST" and path == "/api/v1/agent/ai-jobs/cloud-job-1/delivery":
                 delivery_updates.append(payload)
                 return {"ok": True}
@@ -727,7 +736,7 @@ class OmniDriveBridgeTests(unittest.TestCase):
 
         with mock.patch.object(bridge, "_request", side_effect=fake_request):
             with mock.patch.object(bridge, "_download_ai_artifacts", return_value=artifact_refs):
-                with mock.patch.object(bridge, "_sync_materials") as sync_materials:
+                with mock.patch.object(bridge, "_sync_generated_material_refs") as sync_materials:
                     with mock.patch.object(bridge, "_enqueue_publish_from_ai_task", return_value="publish-1"):
                         imported = bridge._import_remote_ai_jobs()
 
@@ -845,24 +854,28 @@ class OmniDriveBridgeTests(unittest.TestCase):
         }
 
         def fake_request(method, path, *, params=None, payload=None):
-            if method == "GET" and path == "/api/v1/agent/ai-jobs/device-1":
-                return [
-                    {
-                        "job": {
-                            "id": "cloud-job-2",
-                            "status": "success",
-                            "source": "account_skill_binding",
-                            "jobType": "video",
-                            "modelName": "veo-updated",
-                            "skillId": "skill-new",
-                            "prompt": "新任务",
-                            "message": "AI 视频生成完成",
-                            "inputPayload": fresh_payload,
-                            "localPublishTaskId": "publish-task-1",
-                        },
-                        "artifacts": [],
-                    }
-                ]
+            if method == "GET" and path == "/api/v1/agent/ai-jobs/device-1/delta":
+                return {
+                    "items": [
+                        {
+                            "job": {
+                                "id": "cloud-job-2",
+                                "status": "success",
+                                "source": "account_skill_binding",
+                                "jobType": "video",
+                                "modelName": "veo-updated",
+                                "skillId": "skill-new",
+                                "prompt": "新任务",
+                                "message": "AI 视频生成完成",
+                                "inputPayload": fresh_payload,
+                                "localPublishTaskId": "publish-task-1",
+                            },
+                            "artifacts": [],
+                        }
+                    ],
+                    "nextCursor": {"updatedAfter": "2026-04-14T13:00:02Z", "afterId": "cloud-job-2"},
+                    "hasMore": False,
+                }
             raise AssertionError(f"unexpected request {method} {path}")
 
         with mock.patch.object(bridge, "_request", side_effect=fake_request):
@@ -916,39 +929,43 @@ class OmniDriveBridgeTests(unittest.TestCase):
         }
 
         def fake_request(method, path, *, params=None, payload=None):
-            if method == "GET" and path == "/api/v1/agent/ai-jobs/device-1":
-                return [
-                    {
-                        "job": {
-                            "id": "cloud-job-bound",
-                            "status": "success",
-                            "source": "account_skill_binding",
-                            "jobType": "video",
-                            "modelName": "veo-updated",
-                            "skillId": "skill-new",
-                            "prompt": "新任务",
-                            "message": "AI 视频生成完成",
-                            "inputPayload": {
-                                "publishPayload": {
-                                    "title": "酒馆的介绍视频",
-                                    "targets": [{"platform": "抖音", "accountName": "光001"}],
-                                }
+            if method == "GET" and path == "/api/v1/agent/ai-jobs/device-1/delta":
+                return {
+                    "items": [
+                        {
+                            "job": {
+                                "id": "cloud-job-bound",
+                                "status": "success",
+                                "source": "account_skill_binding",
+                                "jobType": "video",
+                                "modelName": "veo-updated",
+                                "skillId": "skill-new",
+                                "prompt": "新任务",
+                                "message": "AI 视频生成完成",
+                                "inputPayload": {
+                                    "publishPayload": {
+                                        "title": "酒馆的介绍视频",
+                                        "targets": [{"platform": "抖音", "accountName": "光001"}],
+                                    }
+                                },
+                                "localPublishTaskId": "publish-task-cloud",
                             },
-                            "localPublishTaskId": "publish-task-cloud",
-                        },
-                        "artifacts": [{"artifactKey": "video-1", "artifactType": "video"}],
-                        "scheduleTimes": {
-                            "createdAt": "2099-01-01T11:00:00Z",
-                            "updatedAt": "2099-01-01T11:45:19Z",
-                            "generateAt": "2099-01-01T11:45:19Z",
-                            "publishAt": "2099-01-01T11:48:19Z",
-                            "timezone": "Asia/Shanghai",
-                            "timeOfDay": "19:48:19",
-                            "repeatDaily": False,
-                            "generationLeadMinutes": 3,
-                        },
-                    }
-                ]
+                            "artifacts": [{"artifactKey": "video-1", "artifactType": "video"}],
+                            "scheduleTimes": {
+                                "createdAt": "2099-01-01T11:00:00Z",
+                                "updatedAt": "2099-01-01T11:45:19Z",
+                                "generateAt": "2099-01-01T11:45:19Z",
+                                "publishAt": "2099-01-01T11:48:19Z",
+                                "timezone": "Asia/Shanghai",
+                                "timeOfDay": "19:48:19",
+                                "repeatDaily": False,
+                                "generationLeadMinutes": 3,
+                            },
+                        }
+                    ],
+                    "nextCursor": {"updatedAfter": "2026-04-14T13:00:03Z", "afterId": "cloud-job-bound"},
+                    "hasMore": False,
+                }
             raise AssertionError(f"unexpected request {method} {path}")
 
         with mock.patch.object(bridge, "_request", side_effect=fake_request), \
@@ -1000,28 +1017,32 @@ class OmniDriveBridgeTests(unittest.TestCase):
 
         def fake_request(method, path, *, params=None, payload=None):
             request_calls.append((method, path, payload))
-            if method == "GET" and path == "/api/v1/agent/ai-jobs/device-1":
-                return [
-                    {
-                        "job": {
-                            "id": "cloud-job-3",
-                            "status": "success",
-                            "source": "account_skill_binding",
-                            "jobType": "video",
-                            "modelName": "veo",
-                            "skillId": "skill-old",
-                            "prompt": "已导入完成",
-                            "message": "done",
-                            "inputPayload": {
-                                "publishPayload": {
-                                    "title": "旧结果",
-                                    "targets": [{"platform": "抖音", "accountName": "D001"}],
-                                }
+            if method == "GET" and path == "/api/v1/agent/ai-jobs/device-1/delta":
+                return {
+                    "items": [
+                        {
+                            "job": {
+                                "id": "cloud-job-3",
+                                "status": "success",
+                                "source": "account_skill_binding",
+                                "jobType": "video",
+                                "modelName": "veo",
+                                "skillId": "skill-old",
+                                "prompt": "已导入完成",
+                                "message": "done",
+                                "inputPayload": {
+                                    "publishPayload": {
+                                        "title": "旧结果",
+                                        "targets": [{"platform": "抖音", "accountName": "D001"}],
+                                    }
+                                },
                             },
-                        },
-                        "artifacts": [{"artifactKey": "video-1", "artifactType": "video"}],
-                    }
-                ]
+                            "artifacts": [{"artifactKey": "video-1", "artifactType": "video"}],
+                        }
+                    ],
+                    "nextCursor": {"updatedAfter": "2026-04-14T13:00:04Z", "afterId": "cloud-job-3"},
+                    "hasMore": False,
+                }
             raise AssertionError(f"unexpected request {method} {path}")
 
         with mock.patch.object(bridge, "_request", side_effect=fake_request):
@@ -1069,6 +1090,122 @@ class OmniDriveBridgeTests(unittest.TestCase):
         self.assertEqual(mirrored, 1)
         self.assertEqual(len(sync_payloads), 1)
         self.assertEqual(sync_payloads[0]["id"], "local-ai-1")
+
+    def test_sync_local_ai_tasks_only_uploads_dirty_tasks_once(self):
+        db_path = self.temp_dir / "database.db"
+        ai_task_manager = OmniDriveAITaskManager(db_path)
+        ai_task_manager.init_db()
+        ai_task_manager.create_task(
+            {
+                "taskUuid": "local-ai-dirty-1",
+                "jobType": "video",
+                "modelName": "veo",
+                "prompt": "local dirty task",
+                "inputPayload": {"foo": "bar"},
+                "publishPayload": {"title": "dirty"},
+            }
+        )
+        bridge = self.make_bridge(ai_task_manager=ai_task_manager)
+        sync_payloads = []
+
+        def fake_request(method, path, *, params=None, payload=None):
+            if method == "POST" and path == "/api/v1/agent/ai-jobs/sync":
+                sync_payloads.append(payload)
+                return {"job": {"id": "cloud-local-1", "status": "queued", "message": "ok"}}
+            raise AssertionError(f"unexpected request {method} {path}")
+
+        with mock.patch.object(bridge, "_request", side_effect=fake_request):
+            mirrored_first = bridge._sync_local_ai_tasks()
+            mirrored_second = bridge._sync_local_ai_tasks()
+
+        task = ai_task_manager.get_task("local-ai-dirty-1")
+        self.assertEqual(mirrored_first, 1)
+        self.assertEqual(mirrored_second, 0)
+        self.assertEqual(len(sync_payloads), 1)
+        self.assertEqual(task["cloudJobId"], "cloud-local-1")
+        self.assertFalse(task["cloudSyncDirty"])
+        self.assertIsNotNone(task["lastCloudSyncHash"])
+        self.assertIsNotNone(task["lastCloudSyncAt"])
+
+    def test_import_remote_ai_jobs_uses_delta_cursor(self):
+        bridge = self.make_bridge(ai_task_manager=DummyAITaskManager())
+        request_params = []
+
+        def fake_request(method, path, *, params=None, payload=None):
+            if method == "GET" and path == "/api/v1/agent/ai-jobs/device-1/delta":
+                request_params.append(dict(params or {}))
+                if len(request_params) == 1:
+                    return {
+                        "items": [],
+                        "nextCursor": {"updatedAfter": "2026-04-14T13:00:05Z", "afterId": "job-9"},
+                        "hasMore": False,
+                    }
+                return {
+                    "items": [],
+                    "hasMore": False,
+                }
+            raise AssertionError(f"unexpected request {method} {path}")
+
+        with mock.patch.object(bridge, "_request", side_effect=fake_request):
+            bridge._import_remote_ai_jobs()
+            bridge._import_remote_ai_jobs()
+
+        self.assertEqual(request_params[0], {"limit": 20})
+        self.assertEqual(
+            request_params[1],
+            {"limit": 20, "updatedAfter": "2026-04-14T13:00:05Z", "afterId": "job-9"},
+        )
+        self.assertEqual(
+            bridge.status()["lastAIPollCursor"],
+            {"updatedAfter": "2026-04-14T13:00:05Z", "afterId": "job-9"},
+        )
+
+    def test_sync_materials_only_uses_generated_root_and_metadata(self):
+        materials_root = self.temp_dir / "materials"
+        materials_root.mkdir(parents=True, exist_ok=True)
+        (materials_root / "ignore.txt").write_text("ignore me", encoding="utf-8")
+
+        generated_root = self.temp_dir / "generated"
+        job_dir = generated_root / "job-1"
+        job_dir.mkdir(parents=True, exist_ok=True)
+        (job_dir / "video.mp4").write_bytes(b"video-bytes")
+
+        bridge = self.make_bridge()
+        bridge.material_roots = {
+            "materials": materials_root,
+            bridge.generated_root_name: generated_root,
+        }
+
+        request_calls = []
+
+        def fake_request(method, path, *, params=None, payload=None):
+            request_calls.append((method, path, payload))
+            return {"ok": True}
+
+        with mock.patch.object(bridge, "_request", side_effect=fake_request):
+            bridge._sync_materials()
+
+        root_sync_payloads = [payload for method, path, payload in request_calls if path == "/api/v1/agent/materials/roots/sync"]
+        directory_payloads = [payload for method, path, payload in request_calls if path == "/api/v1/agent/materials/directory/sync"]
+        file_payloads = [payload for method, path, payload in request_calls if path == "/api/v1/agent/materials/file/sync"]
+
+        self.assertTrue(root_sync_payloads)
+        self.assertEqual({item["name"] for item in root_sync_payloads[0]["roots"]}, {bridge.generated_root_name})
+        self.assertTrue(directory_payloads)
+        self.assertEqual({payload["root"] for payload in directory_payloads}, {bridge.generated_root_name})
+        self.assertEqual(len(file_payloads), 1)
+        self.assertEqual(file_payloads[0]["root"], bridge.generated_root_name)
+        self.assertIsNone(file_payloads[0]["previewText"])
+        self.assertFalse(file_payloads[0]["isText"])
+
+        request_calls.clear()
+        with mock.patch.object(bridge, "_request", side_effect=fake_request):
+            bridge._sync_materials()
+
+        repeated_directory_payloads = [payload for method, path, payload in request_calls if path == "/api/v1/agent/materials/directory/sync"]
+        repeated_file_payloads = [payload for method, path, payload in request_calls if path == "/api/v1/agent/materials/file/sync"]
+        self.assertEqual(repeated_directory_payloads, [])
+        self.assertEqual(repeated_file_payloads, [])
 
     def test_bridge_datetime_helpers_preserve_cloud_schedule_in_local_time(self):
         remote_run_at = "2026-03-20T13:34:45Z"

@@ -118,6 +118,50 @@ function getPromptDetail(job?: AIJob | null) {
   return buildAIJobTitle(job);
 }
 
+function ImagePreviewSurface({ src }: { src: string }) {
+  const [status, setStatus] = useState<"loading" | "ready" | "failed">("loading");
+
+  useEffect(() => {
+    setStatus("loading");
+  }, [src]);
+
+  return (
+    <div className="relative h-full w-full overflow-hidden">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt="preview"
+        loading="lazy"
+        decoding="async"
+        onLoad={() => setStatus("ready")}
+        onError={() => setStatus("failed")}
+        className={cn(
+          "h-full w-full object-contain transition-opacity duration-300",
+          status === "ready" ? "opacity-100" : "opacity-0",
+        )}
+      />
+      <div
+        className={cn(
+          "pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/90 text-text-muted transition-opacity duration-300",
+          status === "ready" ? "opacity-0" : "opacity-100",
+        )}
+      >
+        {status === "failed" ? (
+          <>
+            <AlertTriangle className="h-10 w-10 text-danger" />
+            <span className="text-sm font-medium text-danger">图片加载失败</span>
+          </>
+        ) : (
+          <>
+            <ImageIcon className="h-10 w-10 animate-pulse opacity-60" />
+            <span className="text-sm">图片加载中...</span>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 type FilterStatus = "all" | "processing" | "completed" | "failed";
 
 export default function ImageHistoryPage() {
@@ -185,8 +229,8 @@ export default function ImageHistoryPage() {
   }, [rawJobs, selectedJobId]);
 
   const { data: selectedJobDetail } = useQuery<AIJob>({
-    queryKey: ["aiJobDetail", selectedJobId],
-    queryFn: () => getAIJob(selectedJobId!),
+    queryKey: ["aiJobDetail", "historyDetail", selectedJobId],
+    queryFn: () => getAIJob(selectedJobId!, { payloadMode: "history_detail" }),
     enabled: !!selectedJobId,
     staleTime: 10_000,
   });
@@ -194,8 +238,8 @@ export default function ImageHistoryPage() {
   const selectedJobView = selectedJobDetail || selectedJob;
 
   const { data: selectedArtifacts = [] } = useQuery<AIJobArtifact[]>({
-    queryKey: ["aiJobArtifacts", selectedJobId],
-    queryFn: () => getAIJobArtifacts(selectedJobId!),
+    queryKey: ["aiJobArtifacts", "preview", selectedJobId],
+    queryFn: () => getAIJobArtifacts(selectedJobId!, { artifactMode: "preview" }),
     enabled: !!selectedJobId && isTerminalJob(selectedJobView) && isSuccessJob(selectedJobView),
   });
 
@@ -444,12 +488,7 @@ export default function ImageHistoryPage() {
                     <div className="relative aspect-square w-full overflow-hidden rounded-xl border border-border/50 bg-black shadow-lg">
                       {selectedPreviewItems.length > 0 ? (
                         <>
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={selectedPreviewItems[0].publicUrl!}
-                            alt="preview"
-                            className="h-full w-full object-contain"
-                          />
+                          <ImagePreviewSurface src={selectedPreviewItems[0].publicUrl!} />
                           <div className="pointer-events-none absolute left-4 top-4 flex items-center gap-2 rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 backdrop-blur-md">
                             <span
                               className={cn(

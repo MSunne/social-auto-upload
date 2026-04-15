@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"path"
 	"strconv"
@@ -284,6 +285,19 @@ func (h *MaterialHandler) SyncRoots(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusInternalServerError, "Failed to sync material roots")
 		return
 	}
+	payloadBytes := 0
+	if raw, marshalErr := json.Marshal(payload); marshalErr == nil {
+		payloadBytes = len(raw)
+	}
+	if h.app.Logger != nil {
+		h.app.Logger.Debug(
+			"agent material roots synced",
+			"device_id", device.ID,
+			"device_code", device.DeviceCode,
+			"root_count", len(items),
+			"payload_bytes", payloadBytes,
+		)
+	}
 	render.JSON(w, http.StatusOK, map[string]any{"synced": len(items)})
 }
 
@@ -355,6 +369,21 @@ func (h *MaterialHandler) SyncDirectory(w http.ResponseWriter, r *http.Request) 
 		render.Error(w, http.StatusInternalServerError, "Failed to sync material directory")
 		return
 	}
+	payloadBytes := 0
+	if raw, marshalErr := json.Marshal(payload); marshalErr == nil {
+		payloadBytes = len(raw)
+	}
+	if h.app.Logger != nil {
+		h.app.Logger.Debug(
+			"agent material directory synced",
+			"device_id", device.ID,
+			"device_code", device.DeviceCode,
+			"root_name", payload.Root,
+			"directory_path", payload.Path,
+			"entry_count", len(items),
+			"payload_bytes", payloadBytes,
+		)
+	}
 	render.JSON(w, http.StatusOK, map[string]any{"synced": len(items)})
 }
 
@@ -425,6 +454,20 @@ func (h *MaterialHandler) SyncFile(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to sync material file")
 		return
+	}
+	payloadBytes := 0
+	if raw, marshalErr := json.Marshal(payload); marshalErr == nil {
+		payloadBytes = len(raw)
+	}
+	if h.app.Logger != nil {
+		h.app.Logger.Debug(
+			"agent material file synced",
+			"device_id", device.ID,
+			"device_code", device.DeviceCode,
+			"root_name", payload.Root,
+			"relative_path", payload.Path,
+			"payload_bytes", payloadBytes,
+		)
 	}
 
 	render.JSON(w, http.StatusOK, item)

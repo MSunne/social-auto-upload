@@ -76,6 +76,54 @@ func TestAIJobSelectColumnsForSummaryOmitsHeavyPayloads(t *testing.T) {
 	}
 }
 
+func TestAIJobSelectColumnsForHistoryDetailKeepsOnlyHistoryFields(t *testing.T) {
+	columns := aiJobSelectColumnsFor("ai_jobs", aiJobPayloadModeHistoryDetail)
+	requiredSnippets := []string{
+		"ai_jobs.input_payload->'messages'",
+		"ai_jobs.input_payload->'attachments'",
+		"ai_jobs.output_payload->'text'",
+		"ai_jobs.output_payload->'artifacts'",
+		"ai_jobs.output_payload->'video'->>'contentUrl'",
+		"ai_jobs.output_payload->'storyboard'->>'optimizedPrompt'",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(columns, snippet) {
+			t.Fatalf("expected history detail columns to contain %q, got %q", snippet, columns)
+		}
+	}
+	for _, forbidden := range []string{"billing", "completedSegments", "referenceFrames"} {
+		if strings.Contains(columns, forbidden) {
+			t.Fatalf("expected history detail columns to omit %q, got %q", forbidden, columns)
+		}
+	}
+}
+
+func TestAIJobArtifactSelectColumnsForPreviewOmitsHeavyFields(t *testing.T) {
+	columns := aiJobArtifactSelectColumnsFor("a", aiJobArtifactModePreview)
+	if !strings.Contains(columns, "NULL::jsonb AS payload") {
+		t.Fatalf("expected preview artifact columns to omit payload, got %q", columns)
+	}
+	if !strings.Contains(columns, "NULL::text AS text_content") {
+		t.Fatalf("expected preview artifact columns to omit text_content, got %q", columns)
+	}
+	if !strings.Contains(columns, "NULL::text AS storage_key") {
+		t.Fatalf("expected preview artifact columns to omit storage_key, got %q", columns)
+	}
+	if !strings.Contains(columns, "a.public_url") {
+		t.Fatalf("expected preview artifact columns to keep public_url, got %q", columns)
+	}
+}
+
+func TestAIJobArtifactSelectColumnsForChatKeepsTextWithoutPayload(t *testing.T) {
+	columns := aiJobArtifactSelectColumnsFor("a", aiJobArtifactModeChat)
+	if !strings.Contains(columns, "a.text_content") {
+		t.Fatalf("expected chat artifact columns to keep text_content, got %q", columns)
+	}
+	if !strings.Contains(columns, "NULL::jsonb AS payload") {
+		t.Fatalf("expected chat artifact columns to omit payload, got %q", columns)
+	}
+}
+
 func TestAIJobAccountIDExpressionUsesRootAndNestedFallback(t *testing.T) {
 	expression := aiJobAccountIDExpression("ai_jobs")
 	if !strings.Contains(expression, "ai_jobs.input_payload->>'accountId'") {

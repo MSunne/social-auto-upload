@@ -24,6 +24,13 @@ type AgentHandler struct {
 	app *appstate.App
 }
 
+const (
+	agentQueueDefaultLimit   = 20
+	agentQueueMaximumLimit   = 50
+	agentAIDeltaDefaultLimit = 20
+	agentAIDeltaMaximumLimit = 50
+)
+
 // 规范化Agent账号同步状态，统一Agent链路的输入格式和后续处理行为。
 func normalizeAgentAccountSyncStatus(value string) (status string, isDelete bool, ok bool) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
@@ -59,6 +66,21 @@ func requestBaseURL(r *http.Request) string {
 		return ""
 	}
 	return fmt.Sprintf("%s://%s", scheme, host)
+}
+
+func parseAgentQueueLimit(raw string, defaultValue int, maxValue int) (int, error) {
+	limit := defaultValue
+	if strings.TrimSpace(raw) == "" {
+		return limit, nil
+	}
+	var parsed int
+	if _, err := fmt.Sscanf(strings.TrimSpace(raw), "%d", &parsed); err != nil || parsed < 1 {
+		return 0, fmt.Errorf("limit must be a positive integer")
+	}
+	if maxValue > 0 && parsed > maxValue {
+		return maxValue, nil
+	}
+	return parsed, nil
 }
 
 type heartbeatRequest struct {
@@ -481,7 +503,13 @@ func (h *AgentHandler) ListLoginTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items, err := h.app.Store.ListPendingLoginTasksByDevice(r.Context(), device.ID)
+	limit, err := parseAgentQueueLimit(r.URL.Query().Get("limit"), agentQueueDefaultLimit, agentQueueMaximumLimit)
+	if err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	items, err := h.app.Store.ListPendingLoginTasksByDevice(r.Context(), device.ID, limit)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load login tasks")
 		return
@@ -630,7 +658,13 @@ func (h *AgentHandler) ListPublishTasks(w http.ResponseWriter, r *http.Request) 
 
 	h.recordRecoveredPublishTasks(r.Context(), device)
 
-	items, err := h.app.Store.ListPendingPublishTasksByDevice(r.Context(), device.ID)
+	limit, err := parseAgentQueueLimit(r.URL.Query().Get("limit"), agentQueueDefaultLimit, agentQueueMaximumLimit)
+	if err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	items, err := h.app.Store.ListPendingPublishTasksByDevice(r.Context(), device.ID, limit)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load publish tasks")
 		return
@@ -682,6 +716,202 @@ func (h *AgentHandler) ListPublishTasks(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	render.JSON(w, http.StatusOK, readyItems)
+}
+
+func sanitizeAgentAIJobInputPayload(raw []byte) json.RawMessage {
+	payload := decodeRawPayloadMap(raw)
+	if len(payload) == 0 {
+		return nil
+	}
+	sanitized := map[string]any{}
+	for _, key := range []string{"origin", "localTaskId", "runAt", "scheduleConfig", "skillName", "conversationId"} {
+		if value, ok := payload[key]; ok && value != nil {
+			sanitized[key] = value
+		}
+	}
+	if publishPayload, ok := payload["publishPayload"].(map[string]any); ok && len(publishPayload) > 0 {
+		sanitized["publishPayload"] = publishPayload
+	}
+	if len(sanitized) == 0 {
+		return nil
+	}
+	encoded, err := json.Marshal(sanitized)
+	if err != nil {
+		return nil
+	}
+	return encoded
+}
+
+func sanitizeAgentAIJobOutputPayload(raw []byte) json.RawMessage {
+	payload := decodeRawPayloadMap(raw)
+	if len(payload) == 0 {
+		return nil
+	}
+	sanitized := map[string]any{}
+	if stage, ok := payload["stage"]; ok && stage != nil {
+		sanitized["stage"] = stage
+	}
+	if storyboardPayload, ok := payload["storyboard"].(map[string]any); ok {
+		if value := strings.TrimSpace(fmt.Sprintf("%v", storyboardPayload["optimizedContentText"])); value != "" && value != "<nil>" {
+			sanitized["storyboard"] = map[string]any{"optimizedContentText": value}
+		}
+	}
+	if publishPayload, ok := payload["publish"].(map[string]any); ok {
+		if value := strings.TrimSpace(fmt.Sprintf("%v", publishPayload["contentText"])); value != "" && value != "<nil>" {
+			sanitized["publish"] = map[string]any{"contentText": value}
+		}
+	}
+	if len(sanitized) == 0 {
+		return nil
+	}
+	encoded, err := json.Marshal(sanitized)
+	if err != nil {
+		return nil
+	}
+	return encoded
+}
+
+func sanitizeAgentAIJob(job domain.AIJob) domain.AIJob {
+	job.InputPayload = sanitizeAgentAIJobInputPayload(job.InputPayload)
+	job.OutputPayload = sanitizeAgentAIJobOutputPayload(job.OutputPayload)
+	return job
+}
+
+func sanitizeAgentAIArtifacts(artifacts []domain.AIJobArtifact) []domain.AIJobArtifact {
+	if len(artifacts) == 0 {
+		return []domain.AIJobArtifact{}
+	}
+	items := make([]domain.AIJobArtifact, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		items = append(items, domain.AIJobArtifact{
+			ID:           artifact.ID,
+			JobID:        artifact.JobID,
+			ArtifactKey:  artifact.ArtifactKey,
+			ArtifactType: artifact.ArtifactType,
+			FileName:     artifact.FileName,
+			MimeType:     artifact.MimeType,
+			PublicURL:    artifact.PublicURL,
+			SizeBytes:    artifact.SizeBytes,
+			CreatedAt:    artifact.CreatedAt,
+			UpdatedAt:    artifact.UpdatedAt,
+		})
+	}
+	return items
+}
+
+func parseAgentAIDeltaCursor(r *http.Request) (*time.Time, string, error) {
+	updatedAfterRaw := strings.TrimSpace(r.URL.Query().Get("updatedAfter"))
+	afterID := strings.TrimSpace(r.URL.Query().Get("afterId"))
+	if updatedAfterRaw == "" {
+		return nil, "", nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, updatedAfterRaw)
+	if err != nil {
+		return nil, "", fmt.Errorf("updatedAfter must be a valid RFC3339 timestamp")
+	}
+	utc := parsed.UTC()
+	return &utc, afterID, nil
+}
+
+// 处理AgentAI作业增量队列接口，解析请求参数并调用应用状态或存储层完成业务动作。
+func (h *AgentHandler) ListAIJobsDelta(w http.ResponseWriter, r *http.Request) {
+	deviceCode := strings.TrimSpace(chi.URLParam(r, "deviceCode"))
+	agentKey := strings.TrimSpace(r.Header.Get("X-Agent-Key"))
+	if deviceCode == "" || agentKey == "" {
+		render.Error(w, http.StatusBadRequest, "deviceCode and X-Agent-Key are required")
+		return
+	}
+
+	device, err := h.app.Store.GetDeviceByCode(r.Context(), deviceCode)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load device")
+		return
+	}
+	if device == nil {
+		render.Error(w, http.StatusNotFound, "Device not found")
+		return
+	}
+	if !agentKeyMatches(device, agentKey) {
+		render.Error(w, http.StatusForbidden, "Agent key mismatch")
+		return
+	}
+	if !device.IsEnabled {
+		render.Error(w, http.StatusConflict, "Device is disabled")
+		return
+	}
+
+	limit, err := parseAgentQueueLimit(r.URL.Query().Get("limit"), agentAIDeltaDefaultLimit, agentAIDeltaMaximumLimit)
+	if err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	updatedAfter, afterID, err := parseAgentAIDeltaCursor(r)
+	if err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	items, err := h.app.Store.ListAgentAIJobsDeltaByDevice(
+		r.Context(),
+		device.ID,
+		[]string{"omnibull_local", "account_skill_binding"},
+		limit+1,
+		updatedAfter,
+		afterID,
+	)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load AI job delta")
+		return
+	}
+
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+	resultItems := make([]domain.AgentAIJobDeltaItem, 0, len(items))
+	for _, job := range items {
+		artifacts, listErr := h.app.Store.ListAIJobArtifactsByJobID(r.Context(), job.ID)
+		if listErr != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to load AI job artifacts")
+			return
+		}
+		resultItems = append(resultItems, domain.AgentAIJobDeltaItem{
+			Job:           sanitizeAgentAIJob(job),
+			Artifacts:     sanitizeAgentAIArtifacts(artifacts),
+			ScheduleTimes: buildAIJobScheduleTimes(&job),
+		})
+	}
+
+	var nextCursor *domain.AgentAIJobDeltaCursor
+	if len(items) > 0 {
+		last := items[len(items)-1]
+		nextCursor = &domain.AgentAIJobDeltaCursor{
+			UpdatedAfter: last.UpdatedAt.UTC().Format(time.RFC3339Nano),
+			AfterID:      last.ID,
+		}
+	}
+
+	response := domain.AgentAIJobDeltaResponse{
+		Items:      resultItems,
+		NextCursor: nextCursor,
+		HasMore:    hasMore,
+		ServerTime: time.Now().UTC(),
+	}
+	responseBytes := 0
+	if raw, err := json.Marshal(response); err == nil {
+		responseBytes = len(raw)
+	}
+	if h.app.Logger != nil {
+		h.app.Logger.Debug(
+			"agent ai job delta served",
+			"device_id", device.ID,
+			"device_code", device.DeviceCode,
+			"item_count", len(resultItems),
+			"has_more", hasMore,
+			"response_bytes", responseBytes,
+		)
+	}
+	render.JSON(w, http.StatusOK, response)
 }
 
 // 处理Agent技能列表接口，解析请求参数并调用应用状态或存储层完成业务动作。
@@ -1083,14 +1313,10 @@ func (h *AgentHandler) ListAIJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := 100
-	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
-		var parsed int
-		if _, err := fmt.Sscanf(rawLimit, "%d", &parsed); err != nil || parsed < 1 {
-			render.Error(w, http.StatusBadRequest, "limit must be a positive integer")
-			return
-		}
-		limit = parsed
+	limit, err := parseAgentQueueLimit(r.URL.Query().Get("limit"), 100, 200)
+	if err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	items, err := h.app.Store.ListAgentAIJobsByDevice(r.Context(), device.ID, []string{"omnibull_local", "account_skill_binding"}, limit)
@@ -1117,6 +1343,19 @@ func (h *AgentHandler) ListAIJobs(w http.ResponseWriter, r *http.Request) {
 			Actions:       computeAIJobActions(&job, len(artifacts)),
 			ScheduleTimes: buildAIJobScheduleTimes(&job),
 		})
+	}
+	responseBytes := 0
+	if raw, marshalErr := json.Marshal(result); marshalErr == nil {
+		responseBytes = len(raw)
+	}
+	if h.app.Logger != nil {
+		h.app.Logger.Debug(
+			"agent ai job list served",
+			"device_id", device.ID,
+			"device_code", device.DeviceCode,
+			"item_count", len(result),
+			"response_bytes", responseBytes,
+		)
 	}
 	render.JSON(w, http.StatusOK, result)
 }

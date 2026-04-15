@@ -19,6 +19,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 	r.Use(authmiddleware.RequestLogger(app.Logger))
 	r.Use(chimiddleware.Recoverer)
 	r.Use(authmiddleware.CORS(app.Config))
+	r.Use(authmiddleware.Compression())
 
 	healthHandler := handlers.NewHealthHandler(app)
 	authHandler := handlers.NewAuthHandler(app)
@@ -193,6 +194,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 			agent.Get("/accounts/{deviceCode}", agentHandler.ListAccounts)
 			agent.Post("/accounts/sync", agentHandler.SyncAccount)
 			agent.Post("/accounts/retired-ack", agentHandler.AckRetiredAccounts)
+			agent.Get("/ai-jobs/{deviceCode}/delta", agentHandler.ListAIJobsDelta)
 			agent.Get("/ai-jobs/{deviceCode}", agentHandler.ListAIJobs)
 			agent.Post("/ai-jobs/sync", agentHandler.SyncAIJob)
 			agent.Post("/ai-jobs/{jobId}/delivery", agentHandler.UpdateAIJobDelivery)

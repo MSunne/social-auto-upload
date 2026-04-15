@@ -33,9 +33,10 @@ import (
 )
 
 type APIYIProvider struct {
-	baseURL    string
-	apiKey     string
-	httpClient *http.Client
+	baseURL          string
+	apiKey           string
+	httpClient       *http.Client
+	streamHTTPClient *http.Client
 }
 
 // 创建APIYI供应方相关实例，组装运行所需依赖并返回给上层流程复用。
@@ -49,9 +50,10 @@ func NewAPIYIProvider(cfg config.Config) (*APIYIProvider, error) {
 		return nil, fmt.Errorf("OMNIDRIVE_APIYI_API_KEY is required")
 	}
 	return &APIYIProvider{
-		baseURL:    baseURL,
-		apiKey:     apiKey,
-		httpClient: newAPIYIHTTPClient(),
+		baseURL:          baseURL,
+		apiKey:           apiKey,
+		httpClient:       newAPIYIHTTPClient(3 * time.Minute),
+		streamHTTPClient: newAPIYIHTTPClient(0),
 	}, nil
 }
 
@@ -132,7 +134,7 @@ func (p *APIYIProvider) GenerateChatStream(ctx context.Context, req ChatRequest,
 		return nil, err
 	}
 
-	resp, err := p.doRequest(httpReq)
+	resp, err := p.doStreamingRequest(httpReq)
 	if err != nil {
 		return nil, err
 	}
@@ -153,6 +155,7 @@ func (p *APIYIProvider) GenerateChatStream(ctx context.Context, req ChatRequest,
 	var fullText strings.Builder
 	var rawResponse bytes.Buffer
 	sawDoneMarker := false
+	sawContent := false
 	inReasoning := false
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
@@ -240,6 +243,7 @@ func (p *APIYIProvider) GenerateChatStream(ctx context.Context, req ChatRequest,
 		if combinedDelta == "" {
 			return nil
 		}
+		sawContent = true
 
 		if onChunk != nil {
 			return onChunk(ChatStreamChunk{
@@ -271,7 +275,11 @@ func (p *APIYIProvider) GenerateChatStream(ctx context.Context, req ChatRequest,
 		return nil, err
 	}
 	if !sawDoneMarker && strings.TrimSpace(result.FinishReason) == "" {
-		return nil, fmt.Errorf("provider stream ended before terminal event")
+		if sawContent {
+			result.FinishReason = "stream_eof"
+		} else {
+			return nil, fmt.Errorf("provider stream ended before terminal event")
+		}
 	}
 
 	if inReasoning {
@@ -1151,7 +1159,7 @@ func isRetryableProviderStatusError(statusCode int, body []byte) bool {
 }
 
 // 创建APIYIHTTP客户端相关实例，组装运行所需依赖并返回给上层流程复用。
-func newAPIYIHTTPClient() *http.Client {
+func newAPIYIHTTPClient(timeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ForceAttemptHTTP2 = true
 	transport.MaxIdleConns = 64
@@ -1160,7 +1168,7 @@ func newAPIYIHTTPClient() *http.Client {
 	transport.IdleConnTimeout = 90 * time.Second
 
 	return &http.Client{
-		Timeout:   3 * time.Minute,
+		Timeout:   timeout,
 		Transport: transport,
 	}
 }
@@ -1584,8 +1592,25 @@ func (p *APIYIProvider) newRetryableRequest(ctx context.Context, method string, 
 
 // 处理do请求相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func (p *APIYIProvider) doRequest(req *http.Request) (*http.Response, error) {
+	return p.doRequestWithClient(req, p.httpClient)
+}
+
+// 处理do流式请求相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
+func (p *APIYIProvider) doStreamingRequest(req *http.Request) (*http.Response, error) {
+	client := p.streamHTTPClient
+	if client == nil {
+		client = p.httpClient
+	}
+	return p.doRequestWithClient(req, client)
+}
+
+// 处理do请求客户端相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
+func (p *APIYIProvider) doRequestWithClient(req *http.Request, client *http.Client) (*http.Response, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request is required")
+	}
+	if client == nil {
+		return nil, fmt.Errorf("http client is required")
 	}
 
 	bodySnapshot := []byte(nil)
@@ -1609,7 +1634,7 @@ func (p *APIYIProvider) doRequest(req *http.Request) (*http.Response, error) {
 			time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
 		}
 
-		resp, err := p.httpClient.Do(currentReq)
+		resp, err := client.Do(currentReq)
 		if err == nil {
 			return resp, nil
 		}

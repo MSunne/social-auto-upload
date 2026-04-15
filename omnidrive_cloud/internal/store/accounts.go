@@ -611,14 +611,21 @@ func (s *Store) ListLoginSessionsByAccountTarget(ctx context.Context, ownerUserI
 }
 
 // 执行账号相关的数据库查询，依赖上下文和连接池返回当前业务状态。
-func (s *Store) ListPendingLoginTasksByDevice(ctx context.Context, deviceID string) ([]domain.LoginSession, error) {
-	rows, err := s.pool.Query(ctx, `
+func (s *Store) ListPendingLoginTasksByDevice(ctx context.Context, deviceID string, limit int) ([]domain.LoginSession, error) {
+	query := `
 		SELECT id, device_id, user_id, platform, account_name, status, qr_data,
 		       verification_payload, message, created_at, updated_at
 		FROM login_sessions
 		WHERE device_id = $1 AND status IN ('pending', 'running', 'verification_required')
 		ORDER BY created_at ASC
-	`, deviceID)
+	`
+	args := []any{deviceID}
+	if limit > 0 {
+		query += ` LIMIT $2`
+		args = append(args, limit)
+	}
+
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

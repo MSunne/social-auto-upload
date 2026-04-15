@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -89,6 +90,7 @@ type chatStreamResponse struct {
 	FinishReason string         `json:"finishReason,omitempty"`
 	Progressed   bool           `json:"progressed,omitempty"`
 	Done         bool           `json:"done,omitempty"`
+	Ping         bool           `json:"ping,omitempty"`
 	Error        string         `json:"error,omitempty"`
 }
 
@@ -120,7 +122,8 @@ type persistedChatAttachment struct {
 }
 
 const streamChatPersistenceTimeout = 10 * time.Second
-const streamChatGenerationTimeout = 3 * time.Minute
+const defaultStreamChatGenerationTimeout = 10 * time.Minute
+const defaultStreamChatHeartbeatInterval = 15 * time.Second
 const promptOptimizePurpose = "prompt_optimize"
 
 var defaultChatSupportedFileTypes = []string{
@@ -1099,13 +1102,49 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
-	if err := writeSSEEvent(w, flusher, "meta", chatStreamResponse{
+	var (
+		streamWriteMu     sync.Mutex
+		streamWriteFailed bool
+	)
+	writeStreamEvent := func(event string, payload chatStreamResponse) error {
+		streamWriteMu.Lock()
+		defer streamWriteMu.Unlock()
+		if streamWriteFailed {
+			return io.ErrClosedPipe
+		}
+		if err := writeSSEEvent(w, flusher, event, payload); err != nil {
+			streamWriteFailed = true
+			return err
+		}
+		return nil
+	}
+	canWriteStream := func() bool {
+		streamWriteMu.Lock()
+		defer streamWriteMu.Unlock()
+		return !streamWriteFailed
+	}
+
+	if err := writeStreamEvent("meta", chatStreamResponse{
 		JobID:     jobID,
 		ModelName: payload.ModelName,
 		Role:      "assistant",
 	}); err != nil {
 		return
 	}
+	stopHeartbeat := startStreamChatHeartbeat(r.Context(), h.streamChatHeartbeatInterval(), func() error {
+		return writeStreamEvent("ping", chatStreamResponse{
+			JobID:     jobID,
+			ModelName: payload.ModelName,
+			Ping:      true,
+		})
+	}, func(err error) {
+		h.app.Logger.Warn("stream chat failed to flush heartbeat SSE chunk, suppressing further stream writes",
+			"job_id", jobID,
+			"model_name", payload.ModelName,
+			"error", err,
+		)
+	})
+	defer stopHeartbeat()
 
 	sanitizedInputPayload, artifactInputs, attachmentRefs, err := h.prepareStreamChatPayload(r.Context(), user.ID, jobID, model, payload.Prompt, inputPayload)
 	if err != nil {
@@ -1117,7 +1156,7 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 			FinishedAt:      &failedAt,
 			FinishedTouched: true,
 		})
-		_ = writeSSEEvent(w, flusher, "error", chatStreamResponse{
+		_ = writeStreamEvent("error", chatStreamResponse{
 			JobID:     jobID,
 			ModelName: payload.ModelName,
 			Error:     err.Error(),
@@ -1135,7 +1174,7 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 				FinishedAt:      &failedAt,
 				FinishedTouched: true,
 			})
-			_ = writeSSEEvent(w, flusher, "error", chatStreamResponse{
+			_ = writeStreamEvent("error", chatStreamResponse{
 				JobID:     jobID,
 				ModelName: payload.ModelName,
 				Error:     "Failed to persist chat attachments",
@@ -1157,7 +1196,7 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 			FinishedAt:      &failedAt,
 			FinishedTouched: true,
 		})
-		_ = writeSSEEvent(w, flusher, "error", chatStreamResponse{
+		_ = writeStreamEvent("error", chatStreamResponse{
 			JobID:     jobID,
 			ModelName: payload.ModelName,
 			Error:     "Failed to save chat payload",
@@ -1175,7 +1214,7 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 			FinishedAt:      &failedAt,
 			FinishedTouched: true,
 		})
-		_ = writeSSEEvent(w, flusher, "error", chatStreamResponse{
+		_ = writeStreamEvent("error", chatStreamResponse{
 			JobID:     jobID,
 			ModelName: payload.ModelName,
 			Error:     err.Error(),
@@ -1200,7 +1239,7 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 			FinishedAt:      &failedAt,
 			FinishedTouched: true,
 		})
-		_ = writeSSEEvent(w, flusher, "error", chatStreamResponse{
+		_ = writeStreamEvent("error", chatStreamResponse{
 			JobID:     jobID,
 			ModelName: payload.ModelName,
 			Error:     "Failed to initialize AI provider",
@@ -1209,16 +1248,17 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sawDoneEvent := false
-	streamWriteFailed := false
+	chunkCount := 0
+	streamStartedAt := time.Now().UTC()
 	streamCtx, cancelStream := h.streamChatGenerationContext(r.Context())
 	defer cancelStream()
 	result, err := provider.GenerateChatStream(streamCtx, req, func(chunk aiclient.ChatStreamChunk) error {
-		if streamWriteFailed {
+		if !canWriteStream() {
 			return nil
 		}
 		if chunk.Done {
 			sawDoneEvent = true
-			if err := writeSSEEvent(w, flusher, "done", chatStreamResponse{
+			if err := writeStreamEvent("done", chatStreamResponse{
 				JobID:        jobID,
 				ModelName:    payload.ModelName,
 				Text:         chunk.Text,
@@ -1237,7 +1277,7 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		if chunk.Progressed {
-			if err := writeSSEEvent(w, flusher, "progress", chatStreamResponse{
+			if err := writeStreamEvent("progress", chatStreamResponse{
 				JobID:      jobID,
 				ModelName:  payload.ModelName,
 				Text:       chunk.Text,
@@ -1256,7 +1296,8 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 		if chunk.Delta == "" {
 			return nil
 		}
-		if err := writeSSEEvent(w, flusher, "delta", chatStreamResponse{
+		chunkCount++
+		if err := writeStreamEvent("delta", chatStreamResponse{
 			JobID:        jobID,
 			ModelName:    payload.ModelName,
 			Delta:        chunk.Delta,
@@ -1275,6 +1316,14 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
+		h.app.Logger.Warn("stream chat terminated with provider error",
+			"job_id", jobID,
+			"model_name", payload.ModelName,
+			"elapsed_ms", time.Since(streamStartedAt).Milliseconds(),
+			"chunk_count", chunkCount,
+			"termination_kind", classifyStreamChatTermination(nil, err, streamWriteFailed),
+			"error", err,
+		)
 		errMessage := normalizeStreamChatProviderError(err)
 		failedStatus := "failed"
 		failedAt := time.Now().UTC()
@@ -1289,15 +1338,15 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 			FinishedAt:      &failedAt,
 			FinishedTouched: true,
 		})
-		_ = writeSSEEvent(w, flusher, "error", chatStreamResponse{
+		_ = writeStreamEvent("error", chatStreamResponse{
 			JobID:     jobID,
 			ModelName: payload.ModelName,
 			Error:     errMessage,
 		})
 		return
 	}
-	if result != nil && !sawDoneEvent {
-		if err := writeSSEEvent(w, flusher, "done", chatStreamResponse{
+	if result != nil && !sawDoneEvent && canWriteStream() {
+		if err := writeStreamEvent("done", chatStreamResponse{
 			JobID:        jobID,
 			ModelName:    payload.ModelName,
 			Text:         result.Text,
@@ -1306,9 +1355,20 @@ func (h *AIHandler) StreamChat(w http.ResponseWriter, r *http.Request) {
 			FinishReason: result.FinishReason,
 			Done:         true,
 		}); err != nil {
-			return
+			h.app.Logger.Warn("stream chat failed to flush terminal SSE chunk after provider completion",
+				"job_id", jobID,
+				"model_name", payload.ModelName,
+				"error", err,
+			)
 		}
 	}
+	h.app.Logger.Info("stream chat completed",
+		"job_id", jobID,
+		"model_name", payload.ModelName,
+		"elapsed_ms", time.Since(streamStartedAt).Milliseconds(),
+		"chunk_count", chunkCount,
+		"termination_kind", classifyStreamChatTermination(result, nil, streamWriteFailed),
+	)
 
 	if result == nil {
 		result = &aiclient.ChatResult{}
@@ -1375,7 +1435,86 @@ func (h *AIHandler) streamChatGenerationContext(parent context.Context) (context
 	if parent != nil {
 		base = context.WithoutCancel(parent)
 	}
-	return context.WithTimeout(base, streamChatGenerationTimeout)
+	return context.WithTimeout(base, h.streamChatGenerationTimeout())
+}
+
+// 解析AI流式对话执行超时，根据当前配置和上下文确定最终使用结果。
+func (h *AIHandler) streamChatGenerationTimeout() time.Duration {
+	seconds := 0
+	if h != nil && h.app != nil {
+		seconds = h.app.Config.AIChatStreamTimeoutSeconds
+	}
+	if seconds <= 0 {
+		return defaultStreamChatGenerationTimeout
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+// 解析AI流式对话心跳间隔，根据当前配置和上下文确定最终使用结果。
+func (h *AIHandler) streamChatHeartbeatInterval() time.Duration {
+	seconds := 0
+	if h != nil && h.app != nil {
+		seconds = h.app.Config.AIChatStreamHeartbeatSeconds
+	}
+	if seconds <= 0 {
+		return defaultStreamChatHeartbeatInterval
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+// 处理启动流式对话心跳相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
+func startStreamChatHeartbeat(parent context.Context, interval time.Duration, emit func() error, onError func(error)) func() {
+	if interval <= 0 || emit == nil {
+		return func() {}
+	}
+	ctx, cancel := context.WithCancel(parent)
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := emit(); err != nil {
+					if onError != nil {
+						onError(err)
+					}
+					return
+				}
+			}
+		}
+	}()
+	return cancel
+}
+
+// 分类流式对话终止原因，供日志输出当前链路的结束方式。
+func classifyStreamChatTermination(result *aiclient.ChatResult, err error, streamWriteFailed bool) string {
+	if err != nil {
+		lowerMessage := strings.ToLower(strings.TrimSpace(err.Error()))
+		switch {
+		case errors.Is(err, context.DeadlineExceeded), strings.Contains(lowerMessage, "deadline exceeded"):
+			return "timeout"
+		case errors.Is(err, context.Canceled), strings.Contains(lowerMessage, "context canceled"):
+			return "canceled"
+		default:
+			return "error"
+		}
+	}
+	if streamWriteFailed {
+		return "write_error"
+	}
+	if result == nil {
+		return "done"
+	}
+	switch strings.TrimSpace(result.FinishReason) {
+	case "":
+		return "done"
+	case "stream_eof":
+		return "eof_after_delta"
+	default:
+		return "finish_reason"
+	}
 }
 
 // 规范化流式对话提供方错误，统一AI作业链路的输入格式和后续处理行为。
@@ -2017,6 +2156,32 @@ func buildChatAttachmentPromptParts(ref persistedChatAttachment) []map[string]an
 	return parts
 }
 
+func normalizeAIJobDetailPayloadMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "history_detail":
+		return "history_detail"
+	case "summary":
+		return "summary"
+	case "", "full":
+		return "full"
+	default:
+		return "full"
+	}
+}
+
+func normalizeAIArtifactMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "preview":
+		return "preview"
+	case "chat":
+		return "chat"
+	case "", "full":
+		return "full"
+	default:
+		return "full"
+	}
+}
+
 // 处理AI详情作业接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *AIHandler) DetailJob(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
@@ -2026,7 +2191,12 @@ func (h *AIHandler) DetailJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := h.app.Store.GetAIJobByOwner(r.Context(), jobID, user.ID)
+	job, err := h.app.Store.GetAIJobByOwnerWithPayloadMode(
+		r.Context(),
+		jobID,
+		user.ID,
+		normalizeAIJobDetailPayloadMode(r.URL.Query().Get("payloadMode")),
+	)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load AI job")
 		return
@@ -2126,7 +2296,12 @@ func (h *AIHandler) ListArtifacts(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusNotFound, "AI job not found")
 		return
 	}
-	items, err := h.app.Store.ListAIJobArtifactsByOwner(r.Context(), jobID, user.ID)
+	items, err := h.app.Store.ListAIJobArtifactsByOwnerWithMode(
+		r.Context(),
+		jobID,
+		user.ID,
+		normalizeAIArtifactMode(r.URL.Query().Get("artifactMode")),
+	)
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to load AI artifacts")
 		return

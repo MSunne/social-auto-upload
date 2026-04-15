@@ -116,20 +116,7 @@ def list_material_directory(root_map, root_name, relative_path="", limit=200):
 
     entries = []
     for entry in sorted(target.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower()))[:limit]:
-        stat = entry.stat()
-        mime_type, _ = mimetypes.guess_type(entry.name)
-        entries.append(
-            {
-                "name": entry.name,
-                "kind": "directory" if entry.is_dir() else "file",
-                "relativePath": entry.relative_to(resolved["rootPath"]).as_posix(),
-                "absolutePath": str(entry),
-                "size": stat.st_size,
-                "modifiedAt": _format_mtime(stat.st_mtime),
-                "extension": entry.suffix.lower(),
-                "mimeType": mime_type,
-            }
-        )
+        entries.append(_build_material_entry(entry, resolved["rootPath"]))
 
     return {
         "root": resolved["rootName"],
@@ -180,6 +167,20 @@ def read_material_file(root_map, root_name, relative_path, max_bytes=65536):
     }
 
 
+def stat_material_path(root_map, root_name, relative_path):
+    resolved = resolve_material_reference(root_map, root_name=root_name, relative_path=relative_path)
+    target = Path(resolved["absolutePath"])
+    if not target.exists():
+        raise FileNotFoundError("素材路径不存在")
+    return {
+        "root": resolved["rootName"],
+        "rootPath": str(resolved["rootPath"]),
+        "path": resolved["relativePath"],
+        "absolutePath": str(target),
+        "entry": _build_material_entry(target, resolved["rootPath"]),
+    }
+
+
 def _coerce_root_items(base_dir, configured_roots):
     if not configured_roots:
         return []
@@ -210,6 +211,21 @@ def _resolve_root_path(base_dir, value):
     else:
         path = path.resolve()
     return path
+
+
+def _build_material_entry(entry, root_path):
+    stat = entry.stat()
+    mime_type, _ = mimetypes.guess_type(entry.name)
+    return {
+        "name": entry.name,
+        "kind": "directory" if entry.is_dir() else "file",
+        "relativePath": entry.relative_to(root_path).as_posix(),
+        "absolutePath": str(entry),
+        "size": stat.st_size,
+        "modifiedAt": _format_mtime(stat.st_mtime),
+        "extension": entry.suffix.lower(),
+        "mimeType": mime_type,
+    }
 
 
 def _is_relative_to(path, root_path):

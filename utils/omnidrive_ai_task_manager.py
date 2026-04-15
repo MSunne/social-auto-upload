@@ -45,6 +45,9 @@ class OmniDriveAITaskManager:
                     payload_json TEXT NOT NULL,
                     cloud_job_id TEXT,
                     cloud_status TEXT,
+                    cloud_sync_dirty INTEGER NOT NULL DEFAULT 0,
+                    last_cloud_sync_hash TEXT,
+                    last_cloud_sync_at DATETIME,
                     linked_publish_task_uuid TEXT,
                     artifact_refs_json TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -53,6 +56,9 @@ class OmniDriveAITaskManager:
                 )
                 """
             )
+            self._ensure_column(cursor, "omnidrive_ai_tasks", "cloud_sync_dirty", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(cursor, "omnidrive_ai_tasks", "last_cloud_sync_hash", "TEXT")
+            self._ensure_column(cursor, "omnidrive_ai_tasks", "last_cloud_sync_at", "DATETIME")
             recovered = self._recover_interrupted_tasks(cursor)
             conn.commit()
         if recovered:
@@ -101,9 +107,10 @@ class OmniDriveAITaskManager:
                 """
                 INSERT INTO omnidrive_ai_tasks (
                     task_uuid, source, job_type, model_name, skill_id, prompt, status, message,
-                    payload_json, cloud_job_id, cloud_status, linked_publish_task_uuid, artifact_refs_json, finished_at
+                    payload_json, cloud_job_id, cloud_status, cloud_sync_dirty, last_cloud_sync_hash,
+                    last_cloud_sync_at, linked_publish_task_uuid, artifact_refs_json, finished_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task["taskUuid"],
@@ -117,6 +124,9 @@ class OmniDriveAITaskManager:
                     json.dumps(task["payload"], ensure_ascii=False),
                     task["cloudJobId"],
                     task["cloudStatus"],
+                    1,
+                    None,
+                    None,
                     task["linkedPublishTaskUuid"],
                     json.dumps(task["artifactRefs"], ensure_ascii=False),
                     task["finishedAt"],
@@ -151,9 +161,10 @@ class OmniDriveAITaskManager:
                 """
                 INSERT INTO omnidrive_ai_tasks (
                     task_uuid, source, job_type, model_name, skill_id, prompt, status, message,
-                    payload_json, cloud_job_id, cloud_status, linked_publish_task_uuid, artifact_refs_json, finished_at
+                    payload_json, cloud_job_id, cloud_status, cloud_sync_dirty, last_cloud_sync_hash,
+                    last_cloud_sync_at, linked_publish_task_uuid, artifact_refs_json, finished_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(task_uuid) DO UPDATE SET
                     source = excluded.source,
                     job_type = excluded.job_type,
@@ -165,6 +176,9 @@ class OmniDriveAITaskManager:
                     payload_json = excluded.payload_json,
                     cloud_job_id = excluded.cloud_job_id,
                     cloud_status = excluded.cloud_status,
+                    cloud_sync_dirty = 0,
+                    last_cloud_sync_hash = excluded.last_cloud_sync_hash,
+                    last_cloud_sync_at = excluded.last_cloud_sync_at,
                     linked_publish_task_uuid = COALESCE(excluded.linked_publish_task_uuid, omnidrive_ai_tasks.linked_publish_task_uuid),
                     artifact_refs_json = excluded.artifact_refs_json,
                     finished_at = excluded.finished_at,
@@ -190,6 +204,9 @@ class OmniDriveAITaskManager:
                     json.dumps(payload, ensure_ascii=False),
                     str(data.get("cloudJobId") or "").strip() or None,
                     cloud_status,
+                    0,
+                    None,
+                    None,
                     str(data.get("linkedPublishTaskUuid") or "").strip() or None,
                     json.dumps(artifact_refs, ensure_ascii=False),
                     self._finished_at_for_status(local_status),
@@ -257,7 +274,7 @@ class OmniDriveAITaskManager:
             cursor.execute(
                 """
                 SELECT * FROM omnidrive_ai_tasks
-                WHERE status IN ('queued_cloud', 'generating')
+                WHERE cloud_sync_dirty = 1
                 ORDER BY updated_at ASC, id ASC
                 LIMIT ?
                 """,
@@ -280,6 +297,8 @@ class OmniDriveAITaskManager:
         prompt=None,
         payload=None,
         linked_publish_task_uuid=None,
+        cloud_sync_hash=None,
+        clear_cloud_sync_dirty=False,
     ):
         current_task = self.get_task(task_uuid)
         current_status = str((current_task or {}).get("status") or "queued_cloud").strip() or "queued_cloud"
@@ -302,6 +321,18 @@ class OmniDriveAITaskManager:
                     payload_json = COALESCE(?, payload_json),
                     cloud_job_id = ?,
                     cloud_status = ?,
+                    cloud_sync_dirty = CASE
+                        WHEN ? THEN 0
+                        ELSE cloud_sync_dirty
+                    END,
+                    last_cloud_sync_hash = CASE
+                        WHEN ? THEN ?
+                        ELSE last_cloud_sync_hash
+                    END,
+                    last_cloud_sync_at = CASE
+                        WHEN ? THEN CURRENT_TIMESTAMP
+                        ELSE last_cloud_sync_at
+                    END,
                     status = ?,
                     linked_publish_task_uuid = CASE
                         WHEN ? THEN NULL
@@ -316,6 +347,8 @@ class OmniDriveAITaskManager:
                     updated_at = CASE
                         WHEN status IS NOT ?
                           OR cloud_status IS NOT ?
+                          OR cloud_sync_dirty IS NOT (CASE WHEN ? THEN 0 ELSE cloud_sync_dirty END)
+                          OR last_cloud_sync_hash IS NOT (CASE WHEN ? THEN ? ELSE last_cloud_sync_hash END)
                           OR message IS NOT COALESCE(?, message)
                           OR cloud_job_id IS NOT ?
                           OR linked_publish_task_uuid IS NOT (
@@ -338,6 +371,10 @@ class OmniDriveAITaskManager:
                     payload_json,
                     cloud_job_id,
                     cloud_status,
+                    1 if clear_cloud_sync_dirty else 0,
+                    1 if clear_cloud_sync_dirty else 0,
+                    cloud_sync_hash,
+                    1 if clear_cloud_sync_dirty else 0,
                     local_status,
                     1 if reset_delivery_state else 0,
                     linked_publish_task_uuid,
@@ -346,6 +383,9 @@ class OmniDriveAITaskManager:
                     finished_at,
                     local_status,
                     cloud_status,
+                    1 if clear_cloud_sync_dirty else 0,
+                    1 if clear_cloud_sync_dirty else 0,
+                    cloud_sync_hash,
                     message,
                     cloud_job_id,
                     1 if reset_delivery_state else 0,
@@ -597,6 +637,9 @@ class OmniDriveAITaskManager:
         item["skillId"] = item.pop("skill_id")
         item["cloudJobId"] = item.pop("cloud_job_id")
         item["cloudStatus"] = item.pop("cloud_status")
+        item["cloudSyncDirty"] = bool(item.pop("cloud_sync_dirty"))
+        item["lastCloudSyncHash"] = item.pop("last_cloud_sync_hash")
+        item["lastCloudSyncAt"] = item.pop("last_cloud_sync_at")
         item["linkedPublishTaskUuid"] = item.pop("linked_publish_task_uuid")
         local_created_at = item.pop("created_at")
         local_updated_at = item.pop("updated_at")
@@ -648,3 +691,11 @@ class OmniDriveAITaskManager:
         if status in FINAL_AI_TASK_STATUSES:
             return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         return None
+
+    @staticmethod
+    def _ensure_column(cursor, table_name, column_name, definition):
+        try:
+            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
