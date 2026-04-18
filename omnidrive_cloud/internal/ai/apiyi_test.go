@@ -1033,6 +1033,76 @@ func TestResolveChatProtocolSelection(t *testing.T) {
 	}); got != ChatProtocolAnthropicMessages {
 		t.Fatalf("expected explicit chatProtocol to win, got %q", got)
 	}
+	if got := resolveChatProtocol(ChatRequest{
+		Model:        "claude-opus-4-6-thinking",
+		BaseURL:      "https://api.apiyi.com/v1/chat/completions",
+		ChatProtocol: ChatProtocolAuto,
+	}); got != ChatProtocolOpenAIChatCompletions {
+		t.Fatalf("expected terminal openai baseURL to win, got %q", got)
+	}
+	if got := resolveChatProtocol(ChatRequest{
+		Model:        "gpt-5.4",
+		BaseURL:      "https://api.apiyi.com/v1/messages",
+		ChatProtocol: ChatProtocolAuto,
+	}); got != ChatProtocolAnthropicMessages {
+		t.Fatalf("expected terminal anthropic baseURL to win, got %q", got)
+	}
+	if got := resolveChatProtocol(ChatRequest{
+		Model:        "gpt-5.4",
+		BaseURL:      "https://api.apiyi.com/v1/messages",
+		ChatProtocol: ChatProtocolOpenAIChatCompletions,
+	}); got != ChatProtocolAnthropicMessages {
+		t.Fatalf("expected terminal baseURL to override conflicting explicit protocol, got %q", got)
+	}
+	if got := resolveChatProtocol(ChatRequest{
+		Model:        "claude-opus-4-6-thinking",
+		BaseURL:      "https://api.apiyi.com/v1/chat/completions",
+		ChatProtocol: ChatProtocolAnthropicMessages,
+	}); got != ChatProtocolOpenAIChatCompletions {
+		t.Fatalf("expected terminal baseURL to override conflicting explicit protocol, got %q", got)
+	}
+}
+
+func TestGenerateChatStreamUsesOpenAIEndpointForClaudeWhenBaseURLIsOpenAIChatCompletions(t *testing.T) {
+	var capturedPath string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"测试\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":2}}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	provider, err := NewAPIYIProvider(config.Config{
+		APIYIBaseURL: server.URL,
+		APIYIApiKey:  "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewAPIYIProvider returned error: %v", err)
+	}
+
+	result, err := provider.GenerateChatStream(context.Background(), ChatRequest{
+		Model:   "claude-opus-4-6-thinking",
+		BaseURL: server.URL + "/v1/chat/completions",
+		APIKey:  "sk-chat",
+		Messages: []ChatMessage{
+			{Role: "user", Content: "say test"},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("GenerateChatStream returned error: %v", err)
+	}
+
+	if capturedPath != "/v1/chat/completions" {
+		t.Fatalf("unexpected request path %q", capturedPath)
+	}
+	if result.ProtocolFamily != ChatProtocolOpenAIChatCompletions {
+		t.Fatalf("expected protocol family %q, got %q", ChatProtocolOpenAIChatCompletions, result.ProtocolFamily)
+	}
+	if strings.TrimSpace(result.Text) != "测试" {
+		t.Fatalf("unexpected result text %q", result.Text)
+	}
 }
 
 func TestGenerateChatStreamFailsWhenTerminalEventAndContentAreMissing(t *testing.T) {

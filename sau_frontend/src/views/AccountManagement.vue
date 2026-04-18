@@ -44,7 +44,7 @@
         <el-button @click="batchValidate" :loading="validating">
           <el-icon><CircleCheck /></el-icon> 批量验证
         </el-button>
-        <el-button @click="forceSync" :loading="syncing" type="success" plain>
+        <el-button @click="forceSync" :loading="syncing" :disabled="!omniDriveSyncAvailable" type="success" plain>
           <el-icon><UploadFilled /></el-icon> 同步至云端
         </el-button>
         <el-button @click="fetchAccounts">
@@ -129,6 +129,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useAccountStore } from '@/stores/account'
 import { accountApi } from '@/api/account'
+import { systemApi } from '@/api/system'
 import { createSSE } from '@/utils/request'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -136,12 +137,15 @@ const accountStore = useAccountStore()
 const loading = ref(false)
 const validating = ref(false)
 const syncing = ref(false)
+const omniDriveSyncAvailable = ref(false)
+const omniDriveSyncBlockedReason = ref('')
 const searchQuery = ref('')
 const showAddDialog = ref(false)
 
 const newAccount = ref({ platformType: null, name: '' })
 const loginState = ref({ started: false, messages: [] })
 const loginEventSource = ref(null)
+const loginTerminalState = ref('idle')
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5409'
 const authHeaders = computed(() => ({ Authorization: `Bearer ${localStorage.getItem('token') || ''}` }))
@@ -235,6 +239,10 @@ const openBackend = async (row) => {
 
 // Ask the local backend to push the latest account state to OmniDrive without blocking the UI.
 const forceSync = async () => {
+  if (!omniDriveSyncAvailable.value) {
+    ElMessage.warning(omniDriveSyncBlockedReason.value || '云端同步 Agent 未启用')
+    return
+  }
   syncing.value = true
   try {
     const res = await accountApi.forceSyncToCloud()
@@ -243,10 +251,24 @@ const forceSync = async () => {
     } else {
       ElMessage.warning(res?.msg || '同步请求已发送，请在云端查看')
     }
-  } catch { 
-    ElMessage.success('已触发云端同步，后台将自动重试')
+  } catch (error) {
+    const message = error?.response?.data?.msg || error?.message || '云端同步失败'
+    ElMessage.warning(message)
+  } finally {
+    syncing.value = false
   }
-  syncing.value = false
+}
+
+const fetchOmniDriveSyncAvailability = async () => {
+  try {
+    const res = await systemApi.getOmniDriveAgentStatus()
+    const config = res?.data?.config || {}
+    omniDriveSyncAvailable.value = Boolean(config.startEligible)
+    omniDriveSyncBlockedReason.value = config.blockedReason || ''
+  } catch {
+    omniDriveSyncAvailable.value = false
+    omniDriveSyncBlockedReason.value = '无法获取云端同步状态'
+  }
 }
 
 const resolveSseErrorMessage = (event, fallback = '登录失败，请重试') => {
@@ -265,6 +287,28 @@ const resolveSseErrorMessage = (event, fallback = '登录失败，请重试') =>
   return rawData?.payload?.message || rawData?.message || fallback
 }
 
+const finishLoginWithError = (message) => {
+  if (loginTerminalState.value !== 'running') return
+  loginTerminalState.value = 'failed'
+  const text = message || '登录失败，请重试'
+  loginState.value.messages.push({ text: `❌ ${text}`, type: 'error' })
+  loginState.value.started = false
+  closeLoginEventSource()
+  showAddDialog.value = false
+  ElMessage.error(text)
+}
+
+const finishLoginWithSuccess = () => {
+  if (loginTerminalState.value !== 'running') return
+  loginTerminalState.value = 'success'
+  loginState.value.messages.push({ text: '✅ 登录成功！', type: 'success' })
+  loginState.value.started = false
+  showAddDialog.value = false
+  closeLoginEventSource()
+  ElMessage.success('登录成功')
+  void fetchAccounts()
+}
+
 const createDefaultAccount = () => ({ platformType: null, name: '' })
 
 const closeLoginEventSource = () => {
@@ -276,6 +320,7 @@ const closeLoginEventSource = () => {
 
 const resetAddDialogState = ({ resetAccount = false } = {}) => {
   closeLoginEventSource()
+  loginTerminalState.value = 'idle'
   loginState.value = { started: false, messages: [] }
   if (resetAccount) newAccount.value = createDefaultAccount()
 }
@@ -303,41 +348,61 @@ const startLogin = () => {
   }
 
   closeLoginEventSource()
+  loginTerminalState.value = 'running'
   loginState.value = { started: true, messages: [{ text: '正在初始化登录…', type: 'info' }] }
   const sseUrl = accountApi.getLoginSSEUrl(platformType, newAccount.value.name)
   const es = createSSE(sseUrl, (payload) => {
+    const eventType = typeof payload === 'string' ? '' : payload?.type
+    if (payload === '200') {
+      finishLoginWithSuccess()
+      return
+    }
+    if (payload === 'CANCELLED') {
+      finishLoginWithError('本地登录浏览器已关闭，本次添加账号未完成')
+      return
+    }
+    if (payload === '500') {
+      finishLoginWithError('内部错误')
+      return
+    }
+    if (eventType === 'done') {
+      finishLoginWithSuccess()
+      return
+    }
+    if (eventType === 'login_failed') {
+      finishLoginWithError(payload?.payload?.message || payload?.message)
+      return
+    }
+    if (eventType === 'cancelled') {
+      finishLoginWithError(payload?.payload?.message || payload?.message || '本地登录浏览器已关闭，本次添加账号未完成')
+      return
+    }
     const message = typeof payload === 'string'
       ? payload
       : payload?.payload?.message || payload?.message
     if (message) loginState.value.messages.push({ text: message, type: 'info' })
   }, () => {
-    if (!loginState.value.started) return
-    loginState.value.messages.push({ text: '❌ 登录连接已中断，请关闭弹窗后重试', type: 'error' })
-    closeLoginEventSource()
-    loginState.value.started = false
+    if (loginTerminalState.value !== 'running') return
+    finishLoginWithError('登录连接已中断，请关闭弹窗后重试')
   })
   loginEventSource.value = es
   es.addEventListener('qr', (e) => {
     loginState.value.messages.push({ text: `二维码已生成，请扫码`, type: 'success' })
   })
   es.addEventListener('done', () => {
-    loginState.value.messages.push({ text: '✅ 登录成功！', type: 'success' })
-    closeLoginEventSource()
-    loginState.value.started = false
-    showAddDialog.value = false
-    ElMessage.success('登录成功')
-    fetchAccounts()
+    finishLoginWithSuccess()
   })
-  es.addEventListener('error', (event) => {
-    const errorMessage = resolveSseErrorMessage(event)
-    loginState.value.messages.push({ text: `❌ ${errorMessage}`, type: 'error' })
-    closeLoginEventSource()
-    loginState.value.started = false
+  es.addEventListener('login_failed', (event) => {
+    finishLoginWithError(resolveSseErrorMessage(event))
+  })
+  es.addEventListener('cancelled', (event) => {
+    finishLoginWithError(resolveSseErrorMessage(event, '本地登录浏览器已关闭，本次添加账号未完成'))
   })
 }
 
 
 onMounted(async () => {
+  await fetchOmniDriveSyncAvailability()
   await fetchPlatforms()
   await fetchAccounts()
 })

@@ -2,9 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildMediaToolResultContent,
   buildPublishMetadataInputPayload,
   getLongJobObservationRemainingMs,
   pollWorkspaceUntilFinal,
+  summarizeMediaToolPayload,
 } from "./index.js";
 
 test("buildPublishMetadataInputPayload returns normalized publish metadata", () => {
@@ -82,4 +84,103 @@ test("pollWorkspaceUntilFinal returns early when long-running observation window
   assert.equal(result.waitExpired, true);
   assert.equal(result.observationExpired, true);
   assert.equal(result.workspace.job.id, "job-1");
+});
+
+test("summarizeMediaToolPayload deduplicates artifact urls for video results", () => {
+  const summary = summarizeMediaToolPayload("video", {
+    job: {
+      id: "job-video-1",
+      jobType: "video",
+      modelName: "veo-3.1-fast-fl",
+      status: "success",
+    },
+    workspace: {
+      jobId: "job-video-1",
+      jobType: "video",
+      modelName: "veo-3.1-fast-fl",
+      status: "success",
+      publicUrls: ["https://cdn.example.com/video.mp4"],
+      artifacts: [
+        {
+          artifactType: "video",
+          fileName: "demo.mp4",
+          mimeType: "video/mp4",
+          publicUrl: "https://cdn.example.com/video.mp4",
+        },
+      ],
+    },
+  });
+
+  assert.equal(summary.jobType, "video");
+  assert.deepEqual(summary.details.publicUrls, ["https://cdn.example.com/video.mp4"]);
+  assert.match(summary.summaryText, /视频已生成完成/);
+  assert.match(summary.summaryText, /video\/mp4/);
+});
+
+test("buildMediaToolResultContent embeds generated image previews", async () => {
+  const content = await buildMediaToolResultContent(
+    "image",
+    {
+      job: {
+        id: "job-image-1",
+        jobType: "image",
+        modelName: "gemini-3-pro-image-preview",
+        status: "success",
+      },
+      workspace: {
+        jobId: "job-image-1",
+        jobType: "image",
+        modelName: "gemini-3-pro-image-preview",
+        status: "success",
+        publicUrls: ["https://cdn.example.com/result.png"],
+        artifacts: [
+          {
+            artifactType: "image",
+            fileName: "result.png",
+            mimeType: "image/png",
+            publicUrl: "https://cdn.example.com/result.png",
+          },
+        ],
+      },
+    },
+    {
+      fetchImpl: async () => ({
+        ok: true,
+        headers: {
+          get(name) {
+            if (name === "content-type") {
+              return "image/png";
+            }
+            return null;
+          },
+        },
+        async arrayBuffer() {
+          return Uint8Array.from([137, 80, 78, 71]).buffer;
+        },
+      }),
+    },
+  );
+
+  assert.equal(content[0].type, "text");
+  assert.match(content[0].text, /https:\/\/cdn\.example\.com\/result\.png/);
+  assert.equal(content[1].type, "image");
+  assert.equal(content[1].mimeType, "image/png");
+  assert.ok(content[1].data.length > 0);
+});
+
+test("buildMediaToolResultContent keeps video results as text-only content", async () => {
+  const content = await buildMediaToolResultContent("video", {
+    job: {
+      id: "job-video-2",
+      jobType: "video",
+      modelName: "veo-3.1-fast-fl",
+      status: "running",
+    },
+    nextStep: "视频默认异步生成，请使用 omnidrive_job_detail 轮询结果",
+  });
+
+  assert.equal(content.length, 1);
+  assert.equal(content[0].type, "text");
+  assert.match(content[0].text, /视频任务已提交/);
+  assert.match(content[0].text, /轮询结果/);
 });

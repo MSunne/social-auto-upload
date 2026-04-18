@@ -32,6 +32,12 @@ OMNIBULL_CORS_EXPOSE_HEADERS = "Content-Disposition,X-Accel-Buffering"
 OMNIBULL_CORS_ALLOW_CREDENTIALS = False
 OMNIBULL_CORS_MAX_AGE = 86400
 
+HERMES_PROFILE_NAME = "omnibull"
+HERMES_API_SERVER_BASE_URL = "http://127.0.0.1:8642"
+HERMES_API_SERVER_KEY = ""
+HERMES_API_SERVER_TIMEOUT = 60
+HERMES_SHARED_RUNTIME_CONFIG_PATH = BASE_DIR / "runtime" / "agent-runtime" / "hermes-openclaw-runtime.json"
+
 OMNIBULL_MATERIAL_ROOTS = {
     "localWorkspace": "/persistent/omnibull/workspace",
 }

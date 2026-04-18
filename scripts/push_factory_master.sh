@@ -7,6 +7,7 @@ ROOT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
 REMOTE_HOST="${OMNIBULL_FACTORY_HOST:-${1:-}}"
 REMOTE_USER="${OMNIBULL_FACTORY_USER:-${2:-sun}}"
+REMOTE_SSH_PORT="${OMNIBULL_FACTORY_SSH_PORT:-22}"
 REMOTE_APP_ROOT="${OMNIBULL_FACTORY_APP_ROOT:-/opt/omnibull/social-auto-upload}"
 REMOTE_TMP_DIR="${OMNIBULL_FACTORY_TMP_DIR:-/tmp/omnibull-factory-sync}"
 OMNIDRIVE_BASE_URL="${OMNIDRIVE_BASE_URL:-}"
@@ -23,6 +24,7 @@ Examples:
 Environment overrides:
   OMNIBULL_FACTORY_HOST        Remote host or IP.
   OMNIBULL_FACTORY_USER        Remote SSH user (default: sun).
+  OMNIBULL_FACTORY_SSH_PORT    Remote SSH port (default: 22).
   OMNIBULL_FACTORY_APP_ROOT    Remote code directory (default: /opt/omnibull/social-auto-upload).
   OMNIBULL_FACTORY_TMP_DIR     Remote temp extraction directory.
   OMNIDRIVE_BASE_URL           OmniDrive cloud URL passed into setup_factory_master.sh.
@@ -43,13 +45,26 @@ require_cmd() {
 }
 
 
+ssh_base() {
+  ssh -p "${REMOTE_SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$@"
+}
+
+
 prepare_remote_tree() {
-  ssh -o StrictHostKeyChecking=no "${REMOTE_USER}@${REMOTE_HOST}" "mkdir -p '${REMOTE_TMP_DIR}' '${REMOTE_APP_ROOT}'"
+  ssh_base -t "${REMOTE_USER}@${REMOTE_HOST}" "
+    set -e
+    mkdir -p '${REMOTE_TMP_DIR}'
+    sudo install -d -o '${REMOTE_USER}' -g '${REMOTE_USER}' -m 0755 \
+      '$(dirname "${REMOTE_APP_ROOT}")' \
+      '${REMOTE_APP_ROOT}'
+  "
 }
 
 
 push_archive() {
   COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 tar \
+    --disable-copyfile \
+    --no-xattrs \
     --exclude='.git' \
     --exclude='.venv' \
     --exclude='node_modules' \
@@ -65,13 +80,13 @@ push_archive() {
     --exclude='conf.py' \
     -C "${ROOT_DIR}" \
     -czf - . \
-    | ssh -o StrictHostKeyChecking=no "${REMOTE_USER}@${REMOTE_HOST}" \
+    | ssh_base "${REMOTE_USER}@${REMOTE_HOST}" \
       "rm -rf '${REMOTE_TMP_DIR}/src' && mkdir -p '${REMOTE_TMP_DIR}/src' && tar -xzf - -C '${REMOTE_TMP_DIR}/src'"
 }
 
 
 install_remote_tree() {
-  ssh -t -o StrictHostKeyChecking=no "${REMOTE_USER}@${REMOTE_HOST}" "
+  ssh_base -t "${REMOTE_USER}@${REMOTE_HOST}" "
     set -e
     find '${REMOTE_APP_ROOT}' -mindepth 1 -maxdepth 1 \
       ! -name 'conf.py' \
@@ -90,7 +105,7 @@ install_remote_tree() {
 run_remote_setup() {
   local setup_cmd
   setup_cmd="cd '${REMOTE_APP_ROOT}' && sudo -E OMNIDRIVE_BASE_URL='${OMNIDRIVE_BASE_URL}' bash '${REMOTE_APP_ROOT}/scripts/setup_factory_master.sh'"
-  ssh -t -o StrictHostKeyChecking=no "${REMOTE_USER}@${REMOTE_HOST}" "${setup_cmd}"
+  ssh_base -t "${REMOTE_USER}@${REMOTE_HOST}" "${setup_cmd}"
 }
 
 

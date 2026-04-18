@@ -47,6 +47,8 @@ SUCCESS_URL_HINTS = {
             "/creator-micro/content/post/video",
             "/creator-micro/content/publish",
             "/creator-micro/content/manage",
+            "/creator-micro/home",
+            "/",
         ),
     },
     4: {
@@ -264,7 +266,7 @@ async def cookie_auth_douyin(account_ref, *, headless=None):
             context = await browser.new_context(storage_state=storage_state)
             context = await set_init_script(context)
             page = await context.new_page()
-            await page.goto("https://creator.douyin.com/creator-micro/content/upload")
+            await page.goto("https://creator.douyin.com/creator-micro/content/upload", timeout=15000, wait_until="domcontentloaded")
             return await validate_active_page_detail(3, page, settle_seconds=1.5, retries=4, retry_delay_seconds=1.0)
         finally:
             await browser.close()
@@ -278,7 +280,7 @@ async def cookie_auth_tencent(account_ref, *, headless=None):
             context = await browser.new_context(storage_state=storage_state)
             context = await set_init_script(context)
             page = await context.new_page()
-            await page.goto("https://channels.weixin.qq.com/platform/post/create")
+            await page.goto("https://channels.weixin.qq.com/platform/post/create", timeout=15000, wait_until="domcontentloaded")
             return await validate_active_page_detail(2, page, settle_seconds=1.0, retries=4, retry_delay_seconds=1.0)
         finally:
             await browser.close()
@@ -292,7 +294,7 @@ async def cookie_auth_ks(account_ref, *, headless=None):
             context = await browser.new_context(storage_state=storage_state)
             context = await set_init_script(context)
             page = await context.new_page()
-            await page.goto("https://cp.kuaishou.com/article/publish/video")
+            await page.goto("https://cp.kuaishou.com/article/publish/video", timeout=15000, wait_until="domcontentloaded")
             return await validate_active_page_detail(4, page, settle_seconds=1.5, retries=4, retry_delay_seconds=1.0)
         finally:
             await browser.close()
@@ -306,7 +308,7 @@ async def cookie_auth_xhs(account_ref, *, headless=None):
             context = await browser.new_context(storage_state=storage_state)
             context = await set_init_script(context)
             page = await context.new_page()
-            await page.goto("https://creator.xiaohongshu.com/creator-micro/content/upload")
+            await page.goto("https://creator.xiaohongshu.com/creator-micro/content/upload", timeout=15000, wait_until="domcontentloaded")
             return await validate_active_page_detail(1, page, settle_seconds=1.5, retries=4, retry_delay_seconds=1.0)
         finally:
             await browser.close()

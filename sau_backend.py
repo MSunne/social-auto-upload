@@ -4,11 +4,12 @@ import os
 import re
 import secrets
 import sqlite3
+import subprocess
 import threading
 import time
 import uuid
 import socket
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib import error as urllib_error
 from urllib.parse import urlencode
 from urllib import request as urllib_request
@@ -113,7 +114,7 @@ OPENCLAW_OMNIDRIVE_RUNTIME_SYNC_INTERVAL_SECONDS = max(
 )
 OPENCLAW_OMNIDRIVE_MODEL_SYNC_INTERVAL_SECONDS = max(
     OPENCLAW_OMNIDRIVE_RUNTIME_SYNC_INTERVAL_SECONDS,
-    int(getattr(app_conf, "OPENCLAW_OMNIDRIVE_MODEL_SYNC_INTERVAL_SECONDS", 1800)),
+    int(getattr(app_conf, "OPENCLAW_OMNIDRIVE_MODEL_SYNC_INTERVAL_SECONDS", 300)),
 )
 OPENCLAW_OMNIDRIVE_TOKEN_REFRESH_MARGIN_SECONDS = max(
     30,
@@ -151,6 +152,11 @@ OMNIDRIVE_OPENAI_LOCAL_TOOL_SYSTEM_GUARD = str(
     )
     or ""
 ).strip()
+SOURCE_CATEGORY_OPENCLAW_DIRECT = "openclaw_direct"
+SOURCE_CATEGORY_OPENCLAW_VIA_HERMES = "openclaw_via_hermes"
+SOURCE_CATEGORY_HERMES_DIRECT = "hermes_direct"
+SOURCE_CATEGORY_HERMES_SCHEDULED = "hermes_scheduled"
+HERMES_SHARED_RUNTIME_VERSION = "omnibull-hermes-shared-runtime-v1"
 
 
 def parse_bool(value):
@@ -301,6 +307,44 @@ OMNIBULL_GENERATED_ROOT_NAME = str(getattr(app_conf, 'OMNIBULL_GENERATED_ROOT_NA
 OMNIBULL_GENERATED_ROOT_PATH = Path(BASE_DIR / "omnidriveSync" / "generated").resolve()
 OMNIBULL_GENERATED_ROOT_PATH.mkdir(parents=True, exist_ok=True)
 OMNIBULL_MATERIAL_ROOTS.setdefault(OMNIBULL_GENERATED_ROOT_NAME, OMNIBULL_GENERATED_ROOT_PATH)
+HERMES_PROFILE_NAME = str(getattr(app_conf, 'HERMES_PROFILE_NAME', 'omnibull')).strip() or 'omnibull'
+HERMES_API_SERVER_BASE_URL = (
+    str(getattr(app_conf, 'HERMES_API_SERVER_BASE_URL', '')).strip().rstrip("/")
+    or f"http://{str(getattr(app_conf, 'HERMES_API_SERVER_HOST', '127.0.0.1')).strip() or '127.0.0.1'}:{int(getattr(app_conf, 'HERMES_API_SERVER_PORT', 8642))}"
+)
+HERMES_API_SERVER_KEY = str(getattr(app_conf, 'HERMES_API_SERVER_KEY', '')).strip()
+HERMES_API_SERVER_TIMEOUT = max(5, int(getattr(app_conf, 'HERMES_API_SERVER_TIMEOUT', 60)))
+HERMES_SHARED_RUNTIME_CONFIG_PATH = Path(
+    getattr(
+        app_conf,
+        'HERMES_SHARED_RUNTIME_CONFIG_PATH',
+        BASE_DIR / "runtime" / "agent-runtime" / "hermes-openclaw-runtime.json",
+    )
+).expanduser()
+OPENCLAW_GATEWAY_DAILY_RELOAD_ENABLED = parse_bool(
+    getattr(app_conf, 'OPENCLAW_GATEWAY_DAILY_RELOAD_ENABLED', True)
+)
+OPENCLAW_GATEWAY_DAILY_RELOAD_HOUR = min(
+    23,
+    max(0, int(getattr(app_conf, 'OPENCLAW_GATEWAY_DAILY_RELOAD_HOUR', 0))),
+)
+OPENCLAW_GATEWAY_DAILY_RELOAD_MINUTE = min(
+    59,
+    max(0, int(getattr(app_conf, 'OPENCLAW_GATEWAY_DAILY_RELOAD_MINUTE', 0))),
+)
+OPENCLAW_GATEWAY_DAILY_RELOAD_DEFER_SECONDS = max(
+    60,
+    int(getattr(app_conf, 'OPENCLAW_GATEWAY_DAILY_RELOAD_DEFER_SECONDS', 300)),
+)
+OPENCLAW_GATEWAY_DAILY_RELOAD_TIMEOUT_SECONDS = max(
+    30,
+    int(getattr(app_conf, 'OPENCLAW_GATEWAY_DAILY_RELOAD_TIMEOUT_SECONDS', 180)),
+)
+OPENCLAW_GATEWAY_DAILY_RELOAD_COMMAND = (
+    str(getattr(app_conf, 'OPENCLAW_GATEWAY_DAILY_RELOAD_COMMAND', 'openclaw gateway restart')).strip()
+    or 'openclaw gateway restart'
+)
+HERMES_LOCAL_BRIDGE_CLIENT_PATH = Path(BASE_DIR / "scripts" / "hermes_local_bridge.py")
 OMNIBULL_RUNTIME_HEALTH = build_runtime_health(
     base_dir=BASE_DIR,
     material_roots=OMNIBULL_MATERIAL_ROOTS,
@@ -337,6 +381,11 @@ publish_task_manager = PublishTaskManager(
 openclaw_omnidrive_runtime_sync_thread = None
 openclaw_omnidrive_runtime_sync_lock = threading.Lock()
 openclaw_omnidrive_runtime_sync_stop = threading.Event()
+openclaw_omnidrive_last_model_sync_at = 0.0
+openclaw_omnidrive_last_model_sync_lock = threading.Lock()
+openclaw_gateway_daily_reload_thread = None
+openclaw_gateway_daily_reload_lock = threading.Lock()
+openclaw_gateway_daily_reload_stop = threading.Event()
 log_runtime_health(app_logger, OMNIBULL_RUNTIME_HEALTH)
 
 # 限制上传文件大小为160MB
@@ -712,6 +761,7 @@ def build_skill_status_payload():
     ensure_omnidrive_ai_task_manager_started()
     agent_status = cloud_agent.status() if cloud_agent else None
     omnidrive_agent_status = omnidrive_agent.status() if omnidrive_agent else None
+    shared_runtime = _load_shared_agent_runtime_config(refresh=False) or {}
 
     with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
         conn.row_factory = sqlite3.Row
@@ -760,6 +810,8 @@ def build_skill_status_payload():
         "cloudAgent": agent_status,
         "omniDriveAgentConfig": get_omnidrive_agent_config(),
         "omniDriveAgent": omnidrive_agent_status,
+        "hermesBridgeConfig": get_hermes_bridge_config(),
+        "sharedAgentRuntime": _sanitize_shared_runtime_config_for_response(shared_runtime) if shared_runtime else None,
         "accounts": {
             "total": account_total,
             "byStatus": account_statuses,
@@ -881,6 +933,18 @@ def get_omnidrive_agent_config():
         "maxMaterialFiles": OMNIDRIVE_MATERIAL_SYNC_MAX_FILES,
         "startEligible": blocked_reason is None,
         "blockedReason": blocked_reason,
+    }
+
+
+def get_hermes_bridge_config():
+    return {
+        "apiBaseUrl": HERMES_API_SERVER_BASE_URL,
+        "apiKeyConfigured": bool(HERMES_API_SERVER_KEY),
+        "timeoutSeconds": HERMES_API_SERVER_TIMEOUT,
+        "profile": HERMES_PROFILE_NAME,
+        "sharedRuntimeConfigPath": str(HERMES_SHARED_RUNTIME_CONFIG_PATH),
+        "localBridgeClientPath": str(HERMES_LOCAL_BRIDGE_CLIENT_PATH),
+        "routingMode": "shared_runtime_single_source",
     }
 
 
@@ -1015,6 +1079,192 @@ def get_omnidrive_device_session_data():
     }
 
 
+def _ensure_correlation_id(value=None):
+    normalized = str(value or "").strip()
+    return normalized or uuid.uuid4().hex
+
+
+def _resolve_source_category(value, fallback):
+    normalized = str(value or "").strip()
+    return normalized or fallback
+
+
+def _write_json_file(path, payload):
+    target = Path(path).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    serialized = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    with target.open("w", encoding="utf-8") as handle:
+        handle.write(serialized)
+    return str(target)
+
+
+def _read_json_file(path):
+    target = Path(path).expanduser()
+    if not target.exists():
+        return None
+    try:
+        with target.open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception:
+        return None
+
+
+def _sanitize_shared_runtime_config_for_response(payload):
+    sanitized = json.loads(json.dumps(payload or {}, ensure_ascii=False))
+    provider = sanitized.get("provider") if isinstance(sanitized.get("provider"), dict) else None
+    if provider is not None:
+        if provider.get("apiKey"):
+            provider["apiKey"] = "[REDACTED]"
+        if provider.get("accessToken"):
+            provider["accessToken"] = "[REDACTED]"
+    return sanitized
+
+
+def _build_shared_agent_runtime_config(model_items=None, api_base_url="", access_token="", device=None):
+    device = device if isinstance(device, dict) else {}
+    provider_base_url = _resolve_openclaw_omnidrive_provider_base_url(api_base_url)
+    models = _normalize_openclaw_omnidrive_models(model_items)
+    return {
+        "version": HERMES_SHARED_RUNTIME_VERSION,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "device": {
+            "deviceCode": DEVICE_CODE,
+            "deviceName": RESOLVED_DEVICE_NAME,
+            "boundDeviceId": str(device.get("id") or "").strip() or None,
+            "boundDeviceCode": str(device.get("deviceCode") or "").strip() or None,
+            "boundDeviceName": str(device.get("name") or "").strip() or None,
+        },
+        "provider": {
+            "name": "omnidrive",
+            "format": "openai-compatible",
+            "baseUrl": provider_base_url,
+            "apiKey": str(access_token or "").strip() or None,
+        },
+        "defaults": {
+            "chatModel": str(device.get("defaultChatModel") or "").strip() or None,
+            "imageModel": str(device.get("defaultImageModel") or "").strip() or None,
+            "videoModel": str(device.get("defaultVideoModel") or "").strip() or None,
+        },
+        "routing": {
+            "mode": "shared_runtime_single_source",
+            "chat": "omnidrive_dynamic",
+            "image": "omnidrive_dynamic",
+            "video": "omnidrive_dynamic",
+            "fallbackChat": "omnidrive_openai_proxy",
+        },
+        "openclaw": {
+            "configPaths": [str(path) for path in OPENCLAW_OMNIDRIVE_CONFIG_PATHS],
+        },
+        "hermes": {
+            "profile": HERMES_PROFILE_NAME,
+            "apiBaseUrl": HERMES_API_SERVER_BASE_URL,
+            "sharedConfigPath": str(HERMES_SHARED_RUNTIME_CONFIG_PATH),
+            "localBridgeClientPath": str(HERMES_LOCAL_BRIDGE_CLIENT_PATH),
+        },
+        "models": models,
+    }
+
+
+def sync_hermes_shared_runtime_config(model_items=None, api_base_url="", access_token="", device=None):
+    payload = _build_shared_agent_runtime_config(
+        model_items=model_items,
+        api_base_url=api_base_url,
+        access_token=access_token,
+        device=device,
+    )
+    path = _write_json_file(HERMES_SHARED_RUNTIME_CONFIG_PATH, payload)
+    return payload, [path]
+
+
+def _load_shared_agent_runtime_config(refresh=False):
+    if refresh:
+        try:
+            result = refresh_openclaw_omnidrive_runtime_config(include_models=True)
+            return result.get("sharedRuntime")
+        except Exception:
+            pass
+    return _read_json_file(HERMES_SHARED_RUNTIME_CONFIG_PATH)
+
+
+def hermes_api_json_request(method, path, payload=None, timeout=None, query=None, include_auth=True):
+    base_url = str(HERMES_API_SERVER_BASE_URL or "").strip().rstrip("/")
+    if not base_url:
+        raise RuntimeError("HERMES_API_SERVER_BASE_URL 未配置")
+
+    endpoint = f"{base_url}{path}"
+    if query:
+        cleaned = {key: value for key, value in (query or {}).items() if value not in (None, "")}
+        if cleaned:
+            endpoint = f"{endpoint}?{urlencode(cleaned)}"
+
+    headers = {
+        "Accept": "application/json",
+    }
+    if include_auth and HERMES_API_SERVER_KEY:
+        headers["Authorization"] = f"Bearer {HERMES_API_SERVER_KEY}"
+
+    data = None
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(payload).encode("utf-8")
+
+    req = urllib_request.Request(
+        endpoint,
+        method=method,
+        headers=headers,
+        data=data,
+    )
+    try:
+        with urllib_request.urlopen(req, timeout=timeout or HERMES_API_SERVER_TIMEOUT) as response:
+            raw_payload = response.read().decode("utf-8")
+            return response.status, json.loads(raw_payload) if raw_payload else {}
+    except urllib_error.HTTPError as exc:
+        raw_payload = exc.read().decode("utf-8")
+        try:
+            parsed = json.loads(raw_payload) if raw_payload else {}
+        except json.JSONDecodeError:
+            parsed = {"error": raw_payload or str(exc)}
+        return exc.code, parsed
+
+
+def _extract_hermes_response_text(payload):
+    if not isinstance(payload, dict):
+        return ""
+    output = payload.get("output") if isinstance(payload.get("output"), list) else []
+    parts = []
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("type") or "").strip() != "message":
+            continue
+        if str(item.get("role") or "").strip() != "assistant":
+            continue
+        content = item.get("content") if isinstance(item.get("content"), list) else []
+        for content_item in content:
+            if not isinstance(content_item, dict):
+                continue
+            if str(content_item.get("type") or "").strip() != "output_text":
+                continue
+            text = str(content_item.get("text") or "").strip()
+            if text:
+                parts.append(text)
+    return "\n".join(parts).strip()
+
+
+def _extract_hermes_chat_completion_text(payload):
+    if not isinstance(payload, dict):
+        return ""
+    choices = payload.get("choices") if isinstance(payload.get("choices"), list) else []
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+        text = message.get("content")
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+    return ""
+
+
 def _resolve_openclaw_omnidrive_provider_base_url(api_base_url):
     return f"{_resolve_omnidrive_api_base_url(api_base_url)}{OMNIDRIVE_OPENAI_PROXY_BASE_PATH}"
 
@@ -1034,6 +1284,19 @@ def _normalize_openclaw_omnidrive_models(models):
         normalized.append(model_id)
 
     return normalized
+
+
+def _mark_openclaw_omnidrive_model_sync(now=None):
+    global openclaw_omnidrive_last_model_sync_at
+    with openclaw_omnidrive_last_model_sync_lock:
+        openclaw_omnidrive_last_model_sync_at = float(now if now is not None else time.time())
+
+
+def _should_refresh_openclaw_omnidrive_model_cache(now=None):
+    current = float(now if now is not None else time.time())
+    with openclaw_omnidrive_last_model_sync_lock:
+        last_sync_at = float(openclaw_omnidrive_last_model_sync_at or 0.0)
+    return last_sync_at <= 0 or (current - last_sync_at) >= OPENCLAW_OMNIDRIVE_MODEL_SYNC_INTERVAL_SECONDS
 
 
 def _iter_openai_model_aliases(value):
@@ -1092,66 +1355,118 @@ def _build_openclaw_omnidrive_model_entry(model_id, include_api=False):
     return entry
 
 
+def _build_openclaw_omnidrive_default_alias(model_id, default_chat_model="", used_aliases=None):
+    model_id = str(model_id or "").strip()
+    if not model_id:
+        return ""
+
+    if model_id == str(default_chat_model or "").strip():
+        alias = "omni"
+    else:
+        alias = {
+            "gemini-3.1-pro-preview": "omni-gemini",
+            "gpt-5.4": "omni-gpt",
+            "qwen3.5-plus": "omni-qwen",
+        }.get(model_id)
+        if not alias:
+            slug = re.sub(r"[^a-z0-9]+", "-", model_id.lower()).strip("-")
+            alias = f"omni-{slug or 'model'}"
+
+    if isinstance(used_aliases, set):
+        base_alias = alias
+        suffix = 2
+        while alias in used_aliases:
+            alias = f"{base_alias}-{suffix}"
+            suffix += 1
+        used_aliases.add(alias)
+
+    return alias
+
+
+def _initialize_openclaw_omnidrive_provider(data, *, is_root_config):
+    container = (data.setdefault("models", {}) if is_root_config else data)
+    providers = container.setdefault("providers", {})
+    provider = providers.get("omnidrive")
+    if not isinstance(provider, dict):
+        provider = {}
+        providers["omnidrive"] = provider
+    provider.setdefault("api", "openai-completions")
+    if not isinstance(provider.get("models"), list):
+        provider["models"] = []
+    return provider
+
+
 def sync_openclaw_omnidrive_model_configs(models, api_base_url="", access_token="", default_chat_model=""):
     normalized_ids = _normalize_openclaw_omnidrive_models(models)
+    models_supplied = models is not None
     provider_base_url = _resolve_openclaw_omnidrive_provider_base_url(api_base_url)
     provider_api_key = str(access_token or "").strip()
     default_chat_model = str(default_chat_model or "").strip()
     changed_paths = []
 
     for path in OPENCLAW_OMNIDRIVE_CONFIG_PATHS:
-        if not path.exists():
-            continue
-        try:
-            with path.open("r", encoding="utf-8") as handle:
-                data = json.load(handle)
-        except Exception as exc:
-            app_logger.warning("skip OpenClaw model sync because config cannot be read path={} error={}", path, exc)
+        is_root_config = path.name == "openclaw.json"
+        if path.exists():
+            try:
+                with path.open("r", encoding="utf-8") as handle:
+                    data = json.load(handle)
+            except Exception as exc:
+                app_logger.warning("skip OpenClaw model sync because config cannot be read path={} error={}", path, exc)
+                continue
+        elif not is_root_config:
+            data = {}
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+            except Exception as exc:
+                app_logger.warning("skip OpenClaw model sync because config parent cannot be created path={} error={}", path, exc)
+                continue
+        else:
             continue
 
-        is_root_config = path.name == "openclaw.json"
-        providers = (data.setdefault("models", {}) if is_root_config else data).setdefault("providers", {})
-        provider = providers.get("omnidrive")
-        if not isinstance(provider, dict):
-            continue
+        provider = _initialize_openclaw_omnidrive_provider(data, is_root_config=is_root_config)
 
         if provider_base_url:
             provider["baseUrl"] = provider_base_url
         if provider_api_key:
             provider["apiKey"] = provider_api_key
 
-        if normalized_ids:
+        if models_supplied:
             provider["models"] = [
                 _build_openclaw_omnidrive_model_entry(model_id, include_api=not is_root_config)
                 for model_id in normalized_ids
             ]
 
         if is_root_config:
-            defaults_config = data.get("agents", {}).get("defaults", {})
+            defaults_config = data.setdefault("agents", {}).setdefault("defaults", {})
             defaults = defaults_config.get("models")
-            if isinstance(defaults, dict):
-                for legacy_key in (
-                    "omnidrive/default-chat",
-                    "omnidrive/default",
-                    "omnidrive/omnidrive-default-chat",
-                    "omnidrive/gemini-3-1-pro-preview",
-                    "omnidrive/gpt-5-4",
-                    "omnidrive/qwen3-5-plus",
-                ):
-                    defaults.pop(legacy_key, None)
-                alias_candidates = {}
-                if default_chat_model:
-                    alias_candidates[f"omnidrive/{default_chat_model}"] = "omni"
-                else:
-                    alias_candidates["omnidrive/default-chat"] = "omni"
-                for model_id, alias in (
-                    ("gemini-3.1-pro-preview", "omni-gemini"),
-                    ("gpt-5.4", "omni-gpt"),
-                    ("qwen3.5-plus", "omni-qwen"),
-                ):
-                    alias_candidates[f"omnidrive/{model_id}"] = alias
-                for key, alias in alias_candidates.items():
-                    defaults[key] = {"alias": alias}
+            if not isinstance(defaults, dict):
+                defaults = {}
+                defaults_config["models"] = defaults
+            if models_supplied:
+                for key in list(defaults.keys()):
+                    if str(key).startswith("omnidrive/"):
+                        defaults.pop(key, None)
+
+                omni_target_model = default_chat_model or (normalized_ids[0] if normalized_ids else "")
+                alias_model_ids = list(normalized_ids)
+                if omni_target_model and omni_target_model not in alias_model_ids:
+                    alias_model_ids.insert(0, omni_target_model)
+
+                used_aliases = set()
+                for model_id in alias_model_ids:
+                    alias = _build_openclaw_omnidrive_default_alias(
+                        model_id,
+                        default_chat_model=omni_target_model,
+                        used_aliases=used_aliases,
+                    )
+                    if alias:
+                        defaults[f"omnidrive/{model_id}"] = {"alias": alias}
+            elif default_chat_model:
+                for key, value in list(defaults.items()):
+                    alias = value.get("alias") if isinstance(value, dict) else None
+                    if str(key).startswith("omnidrive/") and alias == "omni":
+                        defaults.pop(key, None)
+                defaults[f"omnidrive/{default_chat_model}"] = {"alias": "omni"}
 
         serialized = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
         try:
@@ -1240,6 +1555,7 @@ def refresh_openclaw_omnidrive_runtime_config(include_models=False):
                 message = str(payload.get("error") or payload.get("message") or payload.get("msg") or "").strip()
             raise RuntimeError(message or "列出 OmniDrive 聊天模型失败")
         model_items = _extract_omnidrive_chat_models(payload)
+        _mark_openclaw_omnidrive_model_sync()
 
     changed_paths = sync_openclaw_omnidrive_model_configs(
         model_items,
@@ -1247,10 +1563,18 @@ def refresh_openclaw_omnidrive_runtime_config(include_models=False):
         access_token=session.get("accessToken"),
         default_chat_model=session.get("device", {}).get("defaultChatModel"),
     )
+    shared_runtime, shared_runtime_paths = sync_hermes_shared_runtime_config(
+        model_items,
+        api_base_url=session.get("apiBaseUrl"),
+        access_token=session.get("accessToken"),
+        device=session.get("device"),
+    )
     return {
         "session": session,
         "modelItems": model_items,
         "changedPaths": changed_paths,
+        "sharedRuntime": shared_runtime,
+        "sharedRuntimePaths": shared_runtime_paths,
     }
 
 
@@ -1343,6 +1667,165 @@ def ensure_openclaw_omnidrive_runtime_sync_started():
             OPENCLAW_OMNIDRIVE_MODEL_SYNC_INTERVAL_SECONDS,
             OPENCLAW_OMNIDRIVE_TOKEN_REFRESH_MARGIN_SECONDS,
         )
+
+
+def _compute_next_openclaw_gateway_daily_reload_epoch(now=None):
+    current = now or datetime.now()
+    if isinstance(current, (int, float)):
+        current = datetime.fromtimestamp(float(current))
+    scheduled = current.replace(
+        hour=OPENCLAW_GATEWAY_DAILY_RELOAD_HOUR,
+        minute=OPENCLAW_GATEWAY_DAILY_RELOAD_MINUTE,
+        second=0,
+        microsecond=0,
+    )
+    if scheduled <= current:
+        scheduled += timedelta(days=1)
+    return scheduled.timestamp()
+
+
+def _restart_openclaw_gateway_for_config_reload():
+    command = OPENCLAW_GATEWAY_DAILY_RELOAD_COMMAND
+    try:
+        completed = subprocess.run(
+            ["/bin/bash", "-lc", command],
+            capture_output=True,
+            text=True,
+            timeout=OPENCLAW_GATEWAY_DAILY_RELOAD_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except Exception as exc:
+        return {
+            "ok": False,
+            "command": command,
+            "error": str(exc),
+            "returncode": None,
+            "stdout": "",
+            "stderr": "",
+        }
+    return {
+        "ok": completed.returncode == 0,
+        "command": command,
+        "error": "",
+        "returncode": completed.returncode,
+        "stdout": str(completed.stdout or "").strip(),
+        "stderr": str(completed.stderr or "").strip(),
+    }
+
+
+def _attempt_openclaw_gateway_daily_reload():
+    ensure_publish_task_manager_started()
+    running_tasks = publish_task_manager.list_tasks(
+        limit=max(1, int(getattr(publish_task_manager, "worker_count", 1))),
+        status="running",
+    )
+    if running_tasks:
+        return {
+            "status": "deferred",
+            "delaySeconds": OPENCLAW_GATEWAY_DAILY_RELOAD_DEFER_SECONDS,
+            "runningTaskCount": len(running_tasks),
+            "taskUuids": [str(task.get("taskUuid") or "") for task in running_tasks if str(task.get("taskUuid") or "").strip()],
+        }
+
+    restart_result = _restart_openclaw_gateway_for_config_reload()
+    if restart_result.get("ok"):
+        return {
+            "status": "restarted",
+            "delaySeconds": 0,
+            "command": restart_result.get("command"),
+        }
+    return {
+        "status": "retry",
+        "delaySeconds": OPENCLAW_GATEWAY_DAILY_RELOAD_DEFER_SECONDS,
+        "command": restart_result.get("command"),
+        "returncode": restart_result.get("returncode"),
+        "error": restart_result.get("error"),
+        "stdout": restart_result.get("stdout"),
+        "stderr": restart_result.get("stderr"),
+    }
+
+
+def _openclaw_gateway_daily_reload_loop():
+    next_reload_at = _compute_next_openclaw_gateway_daily_reload_epoch()
+    app_logger.info(
+        "started OpenClaw gateway daily config reload schedule={} defer_seconds={} command={} next_reload_at={}",
+        f"{OPENCLAW_GATEWAY_DAILY_RELOAD_HOUR:02d}:{OPENCLAW_GATEWAY_DAILY_RELOAD_MINUTE:02d}",
+        OPENCLAW_GATEWAY_DAILY_RELOAD_DEFER_SECONDS,
+        OPENCLAW_GATEWAY_DAILY_RELOAD_COMMAND,
+        datetime.fromtimestamp(next_reload_at).isoformat(timespec="seconds"),
+    )
+
+    while not openclaw_gateway_daily_reload_stop.is_set():
+        now = time.time()
+        wait_seconds = max(30, int(min(300, max(0, next_reload_at - now))))
+        if openclaw_gateway_daily_reload_stop.wait(wait_seconds):
+            return
+
+        now = time.time()
+        if now < next_reload_at:
+            continue
+
+        try:
+            result = _attempt_openclaw_gateway_daily_reload()
+        except Exception as exc:
+            result = {
+                "status": "retry",
+                "delaySeconds": OPENCLAW_GATEWAY_DAILY_RELOAD_DEFER_SECONDS,
+                "error": str(exc),
+            }
+
+        status = str(result.get("status") or "").strip()
+        if status == "restarted":
+            next_reload_at = _compute_next_openclaw_gateway_daily_reload_epoch()
+            app_logger.info(
+                "OpenClaw gateway daily config reload succeeded next_reload_at={}",
+                datetime.fromtimestamp(next_reload_at).isoformat(timespec="seconds"),
+            )
+            continue
+
+        delay_seconds = max(60, int(result.get("delaySeconds") or OPENCLAW_GATEWAY_DAILY_RELOAD_DEFER_SECONDS))
+        next_reload_at = time.time() + delay_seconds
+        if status == "deferred":
+            app_logger.info(
+                "deferred OpenClaw gateway daily config reload running_publish_tasks={} next_retry_at={} task_uuids={}",
+                int(result.get("runningTaskCount") or 0),
+                datetime.fromtimestamp(next_reload_at).isoformat(timespec="seconds"),
+                ",".join(result.get("taskUuids") or []) or "-",
+            )
+        else:
+            app_logger.warning(
+                "OpenClaw gateway daily config reload failed command={} returncode={} error={} next_retry_at={} stdout={} stderr={}",
+                result.get("command") or OPENCLAW_GATEWAY_DAILY_RELOAD_COMMAND,
+                result.get("returncode"),
+                result.get("error") or "-",
+                datetime.fromtimestamp(next_reload_at).isoformat(timespec="seconds"),
+                _compact_log_text(result.get("stdout"), 300),
+                _compact_log_text(result.get("stderr"), 300),
+            )
+
+
+def ensure_openclaw_gateway_daily_reload_started():
+    global openclaw_gateway_daily_reload_thread
+
+    if not OPENCLAW_GATEWAY_DAILY_RELOAD_ENABLED:
+        return
+    if not any(path.exists() for path in OPENCLAW_OMNIDRIVE_CONFIG_PATHS):
+        return
+
+    with openclaw_gateway_daily_reload_lock:
+        if (
+            openclaw_gateway_daily_reload_thread is not None
+            and openclaw_gateway_daily_reload_thread.is_alive()
+        ):
+            return
+
+        openclaw_gateway_daily_reload_stop.clear()
+        openclaw_gateway_daily_reload_thread = threading.Thread(
+            target=_openclaw_gateway_daily_reload_loop,
+            name="openclaw-gateway-daily-reload",
+            daemon=True,
+        )
+        openclaw_gateway_daily_reload_thread.start()
 
 
 def _flatten_openai_message_content(content):
@@ -1681,50 +2164,103 @@ def _build_media_clarification_text(prompt, tool_map):
     return ""
 
 
+def _collect_omnidrive_media_result_details(payload):
+    parsed = payload if isinstance(payload, dict) else {}
+    job = parsed.get("job") if isinstance(parsed.get("job"), dict) else {}
+    workspace = parsed.get("workspace") if isinstance(parsed.get("workspace"), dict) else {}
+
+    artifact_items = []
+    for source in (workspace.get("artifacts"), parsed.get("artifacts")):
+        if not isinstance(source, list):
+            continue
+        for item in source:
+            if not isinstance(item, dict):
+                continue
+            artifact_items.append(item)
+
+    public_urls = []
+    seen_urls = set()
+    for source in (workspace.get("publicUrls"), parsed.get("publicUrls")):
+        if not isinstance(source, list):
+            continue
+        for item in source:
+            url = str(item or "").strip()
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                public_urls.append(url)
+
+    artifacts = []
+    for item in artifact_items:
+        public_url = str(item.get("publicUrl") or item.get("url") or "").strip()
+        if public_url and public_url not in seen_urls:
+            seen_urls.add(public_url)
+            public_urls.append(public_url)
+        artifacts.append(
+            {
+                "artifactType": str(item.get("artifactType") or "").strip(),
+                "mimeType": str(item.get("mimeType") or "").strip(),
+                "fileName": str(item.get("fileName") or item.get("title") or "").strip(),
+                "publicUrl": public_url,
+                "textContent": str(item.get("textContent") or "").strip(),
+            }
+        )
+
+    return {
+        "jobId": str(job.get("id") or workspace.get("jobId") or "").strip(),
+        "modelName": str(job.get("modelName") or workspace.get("modelName") or "").strip(),
+        "status": str(workspace.get("status") or job.get("status") or "").strip(),
+        "message": str(workspace.get("message") or parsed.get("message") or "").strip(),
+        "text": str(workspace.get("text") or "").strip(),
+        "nextStep": str(parsed.get("nextStep") or "").strip(),
+        "publicUrls": public_urls,
+        "artifacts": artifacts,
+    }
+
+
 def _summarize_openai_media_tool_result(tool_name, content):
     parsed = _safe_json_loads(content)
     if not isinstance(parsed, dict):
         return str(content or "").strip() or "工具执行完成。"
 
-    job = parsed.get("job") if isinstance(parsed.get("job"), dict) else {}
-    workspace = parsed.get("workspace") if isinstance(parsed.get("workspace"), dict) else {}
     noun = "视频" if tool_name == "omnidrive_video" else "图片"
-
-    job_id = str(job.get("id") or workspace.get("jobId") or "").strip()
-    model_name = str(job.get("modelName") or workspace.get("modelName") or "").strip()
-    status = str(workspace.get("status") or job.get("status") or "").strip()
-    message = str(workspace.get("message") or parsed.get("message") or "").strip()
-    text = str(workspace.get("text") or "").strip()
-    next_step = str(parsed.get("nextStep") or "").strip()
-
-    public_urls = []
-    for item in workspace.get("publicUrls") or []:
-        if isinstance(item, str) and item.strip():
-            public_urls.append(item.strip())
+    details = _collect_omnidrive_media_result_details(parsed)
 
     lines = []
-    if public_urls:
+    if details["publicUrls"]:
         lines.append(f"{noun}已生成完成。")
-    elif job_id:
+    elif details["jobId"]:
         lines.append(f"{noun}任务已提交。")
     else:
         lines.append(f"{noun}请求已处理。")
 
-    if job_id:
-        lines.append(f"任务 ID：{job_id}")
-    if model_name:
-        lines.append(f"模型：{model_name}")
-    if status:
-        lines.append(f"状态：{status}")
-    if public_urls:
+    if details["jobId"]:
+        lines.append(f"任务 ID：{details['jobId']}")
+    if details["modelName"]:
+        lines.append(f"模型：{details['modelName']}")
+    if details["status"]:
+        lines.append(f"状态：{details['status']}")
+    if details["publicUrls"]:
         lines.append("结果地址：")
-        lines.extend(public_urls[:3])
-    elif next_step:
-        lines.append(next_step)
-    if message:
-        lines.append(f"消息：{message}")
-    if text:
-        lines.append(text)
+        lines.extend(details["publicUrls"][:3])
+    elif details["nextStep"]:
+        lines.append(details["nextStep"])
+    if details["artifacts"]:
+        lines.append("结果明细：")
+        for artifact in details["artifacts"][:5]:
+            artifact_type = artifact["artifactType"] or "artifact"
+            file_name = artifact["fileName"] or "unnamed"
+            line = f"- {artifact_type} {file_name}"
+            if artifact["mimeType"]:
+                line += f" ({artifact['mimeType']})"
+            if artifact["publicUrl"]:
+                line += f": {artifact['publicUrl']}"
+            elif artifact["textContent"]:
+                line += f": {artifact['textContent'][:120]}"
+            lines.append(line)
+    if details["message"]:
+        lines.append(f"消息：{details['message']}")
+    if details["text"]:
+        lines.append(details["text"])
 
     return "\n".join(lines)
 
@@ -2881,14 +3417,18 @@ def login():
         print(f"清理队列: {id}")
         active_queues.pop(id, None)
     # 启动异步任务线程
-    thread = threading.Thread(target=run_async_function, args=(type,id,status_queue), daemon=True)
+    thread = threading.Thread(
+        target=run_async_function,
+        args=(type, id, status_queue, None, False),
+        daemon=True,
+    )
     thread.start()
     response = Response(sse_stream(status_queue,), mimetype='text/event-stream')
     response.headers['Cache-Control'] = 'no-cache'
     response.headers['X-Accel-Buffering'] = 'no'  # 关键：禁用 Nginx 缓冲
     response.headers['Content-Type'] = 'text/event-stream'
     response.headers['Connection'] = 'keep-alive'
-    response.headers['X-OmniBull-Platform'] = capability["label"]
+    response.headers['X-OmniBull-Platform'] = str(capability.get("type") or type)
     response.call_on_close(on_close)
     return response
 
@@ -2939,11 +3479,572 @@ def create_local_ai_task(data, source="local_ui"):
     return task
 
 
+def _shared_runtime_defaults():
+    runtime_config = _load_shared_agent_runtime_config(refresh=False) or {}
+    defaults = runtime_config.get("defaults") if isinstance(runtime_config.get("defaults"), dict) else {}
+    return {
+        "chatModel": str(defaults.get("chatModel") or "default-chat").strip() or "default-chat",
+        "imageModel": str(defaults.get("imageModel") or "").strip() or None,
+        "videoModel": str(defaults.get("videoModel") or "").strip() or None,
+    }
+
+
+def _build_openai_messages(prompt="", messages=None, system_prompt=None):
+    if isinstance(messages, list) and messages:
+        normalized_messages = []
+        for item in messages:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "").strip()
+            if not role:
+                continue
+            normalized_messages.append(
+                {
+                    "role": role,
+                    "content": item.get("content"),
+                }
+            )
+        if system_prompt and not any(str(item.get("role") or "").strip() == "system" for item in normalized_messages):
+            normalized_messages.insert(0, {"role": "system", "content": str(system_prompt)})
+        return normalized_messages
+
+    normalized = []
+    if system_prompt:
+        normalized.append({"role": "system", "content": str(system_prompt)})
+    normalized.append({"role": "user", "content": str(prompt or "").strip()})
+    return normalized
+
+
+def _public_source_to_internal_ai_source(source_category):
+    if source_category == SOURCE_CATEGORY_OPENCLAW_VIA_HERMES:
+        return "openclaw_skill"
+    return "local_ui"
+
+
+def _public_source_to_internal_publish_source(source_category):
+    if source_category == SOURCE_CATEGORY_OPENCLAW_VIA_HERMES:
+        return "openclaw_skill"
+    return "local_api"
+
+
+def _run_omnidrive_direct_chat(data, source_category, correlation_id):
+    defaults = _shared_runtime_defaults()
+    messages = _build_openai_messages(
+        prompt=data.get("prompt") or data.get("input") or "",
+        messages=data.get("messages"),
+        system_prompt=data.get("systemPrompt") or data.get("instructions"),
+    )
+    completion = create_omnidrive_openai_chat_completion(
+        {
+            "model": str(data.get("model") or data.get("modelName") or defaults["chatModel"]).strip() or defaults["chatModel"],
+            "messages": messages,
+            "tools": data.get("tools") or [],
+            "tool_choice": data.get("toolChoice"),
+        }
+    )
+    return {
+        "source": source_category,
+        "executionEngine": "openclaw_direct",
+        "correlationId": correlation_id,
+        "fallback": False,
+        "text": completion["text"],
+        "jobId": completion["jobId"],
+        "modelName": completion["modelName"],
+    }
+
+
+def _run_hermes_chat_request(data, source_category, correlation_id):
+    prompt = str(data.get("prompt") or data.get("input") or "").strip()
+    messages = data.get("messages") if isinstance(data.get("messages"), list) else None
+    system_prompt = str(data.get("systemPrompt") or data.get("instructions") or "").strip() or None
+    model_name = str(data.get("model") or data.get("modelName") or HERMES_PROFILE_NAME).strip() or HERMES_PROFILE_NAME
+    if not prompt and not messages:
+        raise ValueError("缺少 prompt 或 messages")
+
+    if messages:
+        request_payload = {
+            "model": model_name,
+            "messages": _build_openai_messages(messages=messages, system_prompt=system_prompt),
+            "stream": False,
+        }
+        status_code, response_payload = hermes_api_json_request("POST", "/v1/chat/completions", payload=request_payload)
+        if status_code >= 400:
+            message = str(response_payload.get("error") or response_payload.get("message") or response_payload.get("detail") or "").strip()
+            raise RuntimeError(message or "调用 Hermes chat/completions 失败")
+        text = _extract_hermes_chat_completion_text(response_payload)
+        if not text:
+            raise RuntimeError("Hermes chat/completions 返回结果为空")
+        return {
+            "source": source_category,
+            "executionEngine": "hermes",
+            "correlationId": correlation_id,
+            "fallback": False,
+            "text": text,
+            "jobId": None,
+            "modelName": str(response_payload.get("model") or model_name).strip() or model_name,
+            "response": response_payload,
+        }
+
+    request_payload = {
+        "model": model_name,
+        "input": prompt,
+        "store": parse_bool(data.get("store", True)),
+    }
+    if system_prompt:
+        request_payload["instructions"] = system_prompt
+    conversation = str(data.get("conversation") or "").strip()
+    previous_response_id = str(data.get("previousResponseId") or data.get("previous_response_id") or "").strip()
+    if conversation:
+        request_payload["conversation"] = conversation
+    if previous_response_id:
+        request_payload["previous_response_id"] = previous_response_id
+    status_code, response_payload = hermes_api_json_request("POST", "/v1/responses", payload=request_payload)
+    if status_code >= 400:
+        message = str(response_payload.get("error") or response_payload.get("message") or response_payload.get("detail") or "").strip()
+        raise RuntimeError(message or "调用 Hermes responses 失败")
+    text = _extract_hermes_response_text(response_payload)
+    if not text:
+        raise RuntimeError("Hermes responses 返回结果为空")
+    return {
+        "source": source_category,
+        "executionEngine": "hermes",
+        "correlationId": correlation_id,
+        "fallback": False,
+        "text": text,
+        "jobId": str(response_payload.get("id") or "").strip() or None,
+        "modelName": str(response_payload.get("model") or model_name).strip() or model_name,
+        "response": response_payload,
+    }
+
+
+def _enqueue_publish_from_bridge(data, *, source_category, execution_engine, correlation_id):
+    account_file_paths = resolve_account_file_paths(
+        account_ids=data.get("accountIds") or [],
+        account_file_paths=data.get("accountFilePaths") or [],
+    )
+    file_items = resolve_skill_file_items(data.get("files") or [])
+    publish_payload = {
+        "type": data.get("platformType"),
+        "title": str(data.get("title") or "").strip(),
+        "tags": data.get("tags") or [],
+        "accountList": account_file_paths,
+        "fileItems": file_items,
+        "runAt": data.get("runAt"),
+        "enableTimer": 1 if parse_bool(data.get("enableTimer")) else 0,
+        "videosPerDay": data.get("videosPerDay") or 1,
+        "startDays": data.get("startDays") or 0,
+        "dailyTimes": data.get("dailyTimes") or [],
+        "category": data.get("category"),
+        "isDraft": parse_bool(data.get("isDraft")),
+        "productLink": data.get("productLink") or "",
+        "productTitle": data.get("productTitle") or "",
+        "sourceCategory": source_category,
+        "executionEngine": execution_engine,
+        "correlationId": correlation_id,
+    }
+    thumbnail = data.get("thumbnail")
+    if thumbnail:
+        publish_payload["thumbnailItem"] = resolve_skill_file_items([thumbnail])[0]
+    ensure_publish_task_manager_started()
+    internal_source = _public_source_to_internal_publish_source(source_category)
+    return publish_task_manager.enqueue_from_request(publish_payload, source=internal_source)
+
+
+def _create_ai_task_from_bridge(data, *, source_category, execution_engine, correlation_id, default_job_type=None):
+    defaults = _shared_runtime_defaults()
+    ai_payload = dict(data or {})
+    ai_payload["jobType"] = str(ai_payload.get("jobType") or default_job_type or "").strip()
+    if not ai_payload["jobType"]:
+        raise ValueError("缺少 jobType")
+    if not str(ai_payload.get("prompt") or "").strip():
+        raise ValueError("缺少 prompt")
+    if not str(ai_payload.get("modelName") or "").strip():
+        if ai_payload["jobType"] == "image":
+            ai_payload["modelName"] = defaults["imageModel"]
+        elif ai_payload["jobType"] == "video":
+            ai_payload["modelName"] = defaults["videoModel"]
+        else:
+            ai_payload["modelName"] = defaults["chatModel"]
+    ai_payload["sourceCategory"] = source_category
+    ai_payload["executionEngine"] = execution_engine
+    ai_payload["correlationId"] = correlation_id
+    internal_source = _public_source_to_internal_ai_source(source_category)
+    return create_local_ai_task(ai_payload, source=internal_source)
+
+
+def _run_bridge_skill(data, *, source_category, execution_engine, correlation_id):
+    skill_name = str(data.get("skillName") or data.get("skill") or "").strip().lower()
+    action = str(data.get("action") or "list").strip().lower()
+    if not skill_name:
+        raise ValueError("缺少 skillName")
+
+    if skill_name == "omnibull-accounts":
+        if action == "list":
+            rows = fetch_account_rows()
+            if parse_bool(data.get("validateCookies")):
+                with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
+                    conn.row_factory = sqlite3.Row
+                    validated_rows = asyncio.run(validate_account_rows(conn, rows))
+                status_map = {row[0]: row[-1] for row in validated_rows}
+                payload = [serialize_account_detail(row, status_map.get(row["id"])) for row in rows]
+            else:
+                payload = [serialize_account_detail(row) for row in rows]
+            return {"items": payload}
+        if action == "detail":
+            account_id = int(data.get("accountId"))
+            rows = fetch_account_rows(account_ids=[account_id])
+            if not rows:
+                raise ValueError("账号不存在")
+            return {"item": serialize_account_detail(rows[0])}
+        if action == "validate":
+            account_ids = data.get("accountIds") or []
+            rows = fetch_account_rows(account_ids=account_ids if account_ids else None)
+            with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
+                conn.row_factory = sqlite3.Row
+                validated_rows = asyncio.run(validate_account_rows(conn, rows))
+            status_map = {row[0]: row[-1] for row in validated_rows}
+            payload = [serialize_account_detail(row, status_map.get(row["id"])) for row in rows]
+            return {"items": payload}
+        raise ValueError(f"不支持的 omnibull-accounts action: {action}")
+
+    if skill_name == "omnibull-materials":
+        if action == "roots":
+            return {"items": list_material_roots(OMNIBULL_MATERIAL_ROOTS)}
+        if action == "list":
+            return {
+                "item": list_material_directory(
+                    OMNIBULL_MATERIAL_ROOTS,
+                    root_name=data.get("root"),
+                    relative_path=data.get("path", ""),
+                    limit=data.get("limit", 200),
+                )
+            }
+        if action == "read":
+            return {
+                "item": read_material_file(
+                    OMNIBULL_MATERIAL_ROOTS,
+                    root_name=data.get("root"),
+                    relative_path=data.get("path", ""),
+                    max_bytes=data.get("maxBytes", 65536),
+                )
+            }
+        raise ValueError(f"不支持的 omnibull-materials action: {action}")
+
+    if skill_name == "omnibull-publish":
+        if action == "enqueue":
+            tasks = _enqueue_publish_from_bridge(
+                data,
+                source_category=source_category,
+                execution_engine=execution_engine,
+                correlation_id=correlation_id,
+            )
+            return {"taskCount": len(tasks), "tasks": tasks}
+        if action == "tasks":
+            ensure_publish_task_manager_started()
+            return {
+                "items": publish_task_manager.list_tasks(
+                    limit=data.get("limit", 100),
+                    status=data.get("status"),
+                )
+            }
+        if action == "task_detail":
+            ensure_publish_task_manager_started()
+            task = publish_task_manager.get_task(str(data.get("taskUuid") or "").strip())
+            if not task:
+                raise ValueError("任务不存在")
+            return {"item": task}
+        raise ValueError(f"不支持的 omnibull-publish action: {action}")
+
+    if skill_name == "omnidrive-chat":
+        return _run_omnidrive_direct_chat(data, source_category, correlation_id)
+
+    if skill_name == "omnidrive-image":
+        task = _create_ai_task_from_bridge(
+            data,
+            source_category=source_category,
+            execution_engine=execution_engine,
+            correlation_id=correlation_id,
+            default_job_type="image",
+        )
+        return {"item": task}
+
+    if skill_name == "omnidrive-video":
+        task = _create_ai_task_from_bridge(
+            data,
+            source_category=source_category,
+            execution_engine=execution_engine,
+            correlation_id=correlation_id,
+            default_job_type="video",
+        )
+        return {"item": task}
+
+    if skill_name == "omnidrive-jobs":
+        ensure_omnidrive_ai_task_manager_started()
+        if action == "detail":
+            task = omnidrive_ai_task_manager.get_task(str(data.get("taskUuid") or "").strip())
+            if not task:
+                raise ValueError("AI 任务不存在")
+            return {"item": task}
+        return {
+            "items": omnidrive_ai_task_manager.list_tasks(
+                limit=data.get("limit", 100),
+                status=data.get("status"),
+                source=data.get("source"),
+            )
+        }
+
+    raise ValueError(f"不支持的 Hermes skill: {skill_name}")
+
+
+@app.route('/api/hermes/status', methods=['GET'])
+def hermes_bridge_status():
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    ensure_omnidrive_agent_started()
+    ensure_openclaw_omnidrive_runtime_sync_started()
+
+    runtime_refresh_error = None
+    shared_runtime = _load_shared_agent_runtime_config(refresh=False)
+    try:
+        refreshed = refresh_openclaw_omnidrive_runtime_config(include_models=True)
+        shared_runtime = refreshed.get("sharedRuntime") or shared_runtime
+    except Exception as exc:
+        runtime_refresh_error = str(exc)
+
+    hermes_health = None
+    hermes_models = None
+    hermes_error = None
+    try:
+        health_status, hermes_health = hermes_api_json_request("GET", "/health", include_auth=False)
+        models_status, hermes_models = hermes_api_json_request("GET", "/v1/models")
+        hermes_ready = health_status < 400 and models_status < 400
+    except Exception as exc:
+        hermes_ready = False
+        hermes_error = str(exc)
+
+    return jsonify({
+        "code": 200,
+        "msg": "success",
+        "data": {
+            "source": SOURCE_CATEGORY_HERMES_DIRECT,
+            "executionEngine": "hermes",
+            "correlationId": _ensure_correlation_id(request.args.get("correlationId")),
+            "bridge": {
+                "ready": hermes_ready and bool(shared_runtime),
+                "fallbackChat": "omnidrive_openai_proxy",
+                "runtimeRefreshError": runtime_refresh_error,
+                "hermesError": hermes_error,
+            },
+            "hermesApi": {
+                "baseUrl": HERMES_API_SERVER_BASE_URL,
+                "profile": HERMES_PROFILE_NAME,
+                "reachable": hermes_ready,
+                "health": hermes_health,
+                "models": hermes_models,
+            },
+            "sharedRuntime": _sanitize_shared_runtime_config_for_response(shared_runtime) if shared_runtime else None,
+        },
+    }), 200
+
+
+@app.route('/api/hermes/chat', methods=['POST'])
+def hermes_bridge_chat():
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    data = request.get_json(silent=True) or {}
+    source_category = _resolve_source_category(data.get("source"), SOURCE_CATEGORY_HERMES_DIRECT)
+    correlation_id = _ensure_correlation_id(data.get("correlationId"))
+    try:
+        response_payload = _run_hermes_chat_request(data, source_category, correlation_id)
+    except Exception as exc:
+        try:
+            response_payload = _run_omnidrive_direct_chat(data, source_category, correlation_id)
+            response_payload["fallback"] = True
+            response_payload["fallbackReason"] = str(exc)
+        except Exception as fallback_exc:
+            return jsonify({
+                "code": 502,
+                "msg": f"Hermes 不可用且直连回退失败: {fallback_exc}",
+                "data": {
+                    "source": source_category,
+                    "executionEngine": "hermes",
+                    "correlationId": correlation_id,
+                    "fallback": False,
+                    "error": str(exc),
+                },
+            }), 502
+
+    return jsonify({"code": 200, "msg": "success", "data": response_payload}), 200
+
+
+@app.route('/api/hermes/jobs/<job_id>', methods=['GET'])
+def hermes_bridge_job_detail(job_id):
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    status_code, payload = hermes_api_json_request("GET", f"/v1/responses/{job_id}")
+    if status_code >= 400:
+        message = str(payload.get("error") or payload.get("message") or payload.get("detail") or "").strip()
+        return jsonify({"code": status_code, "msg": message or "查询 Hermes job 失败", "data": payload}), status_code
+
+    return jsonify({
+        "code": 200,
+        "msg": "success",
+        "data": {
+            "source": SOURCE_CATEGORY_HERMES_DIRECT,
+            "executionEngine": "hermes",
+            "correlationId": _ensure_correlation_id(request.args.get("correlationId")),
+            "jobId": str(payload.get("id") or job_id).strip() or job_id,
+            "status": str(payload.get("status") or "").strip() or None,
+            "text": _extract_hermes_response_text(payload),
+            "response": payload,
+        },
+    }), 200
+
+
+@app.route('/api/hermes/task/run', methods=['POST'])
+def hermes_bridge_task_run():
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    data = request.get_json(silent=True) or {}
+    source_category = _resolve_source_category(data.get("source"), SOURCE_CATEGORY_HERMES_DIRECT)
+    correlation_id = _ensure_correlation_id(data.get("correlationId"))
+    execution_engine = "hermes"
+    task_type = str(data.get("taskType") or data.get("action") or "run_skill").strip().lower()
+
+    try:
+        if task_type == "chat":
+            result = _run_hermes_chat_request(data, source_category, correlation_id)
+        elif task_type in {"skill", "run_skill"}:
+            result = _run_bridge_skill(
+                data,
+                source_category=source_category,
+                execution_engine=execution_engine,
+                correlation_id=correlation_id,
+            )
+        elif task_type == "publish":
+            tasks = _enqueue_publish_from_bridge(
+                data,
+                source_category=source_category,
+                execution_engine=execution_engine,
+                correlation_id=correlation_id,
+            )
+            result = {"taskCount": len(tasks), "tasks": tasks}
+        elif task_type == "ai":
+            task = _create_ai_task_from_bridge(
+                data,
+                source_category=source_category,
+                execution_engine=execution_engine,
+                correlation_id=correlation_id,
+            )
+            result = {"item": task}
+        else:
+            raise ValueError(f"不支持的 taskType: {task_type}")
+    except Exception as exc:
+        return jsonify({
+            "code": 400,
+            "msg": str(exc),
+            "data": {
+                "source": source_category,
+                "executionEngine": execution_engine,
+                "correlationId": correlation_id,
+                "taskType": task_type,
+            },
+        }), 400
+
+    if isinstance(result, dict):
+        result.setdefault("source", source_category)
+        result.setdefault("executionEngine", execution_engine)
+        result.setdefault("correlationId", correlation_id)
+
+    return jsonify({"code": 200, "msg": "success", "data": result}), 200
+
+
+@app.route('/api/hermes/task/schedule', methods=['POST'])
+def hermes_bridge_task_schedule():
+    auth_error = ensure_skill_api_authorized()
+    if auth_error:
+        return auth_error
+
+    data = request.get_json(silent=True) or {}
+    source_category = _resolve_source_category(data.get("source"), SOURCE_CATEGORY_HERMES_SCHEDULED)
+    correlation_id = _ensure_correlation_id(data.get("correlationId"))
+    execution_engine = "hermes"
+    task_type = str(data.get("taskType") or data.get("action") or "publish").strip().lower()
+
+    if not str(data.get("runAt") or "").strip() and not parse_bool(data.get("enableTimer")):
+        return jsonify({
+            "code": 400,
+            "msg": "schedule 需要 runAt 或 enableTimer",
+            "data": {
+                "source": source_category,
+                "executionEngine": execution_engine,
+                "correlationId": correlation_id,
+                "taskType": task_type,
+            },
+        }), 400
+
+    try:
+        if task_type in {"skill", "run_skill"}:
+            result = _run_bridge_skill(
+                data,
+                source_category=source_category,
+                execution_engine=execution_engine,
+                correlation_id=correlation_id,
+            )
+        elif task_type == "publish":
+            tasks = _enqueue_publish_from_bridge(
+                data,
+                source_category=source_category,
+                execution_engine=execution_engine,
+                correlation_id=correlation_id,
+            )
+            result = {"taskCount": len(tasks), "tasks": tasks}
+        elif task_type == "ai":
+            task = _create_ai_task_from_bridge(
+                data,
+                source_category=source_category,
+                execution_engine=execution_engine,
+                correlation_id=correlation_id,
+            )
+            result = {"item": task}
+        else:
+            raise ValueError(f"不支持的 taskType: {task_type}")
+    except Exception as exc:
+        return jsonify({
+            "code": 400,
+            "msg": str(exc),
+            "data": {
+                "source": source_category,
+                "executionEngine": execution_engine,
+                "correlationId": correlation_id,
+                "taskType": task_type,
+            },
+        }), 400
+
+    if isinstance(result, dict):
+        result.setdefault("source", source_category)
+        result.setdefault("executionEngine", execution_engine)
+        result.setdefault("correlationId", correlation_id)
+
+    return jsonify({"code": 200, "msg": "success", "data": result}), 200
+
 @app.route('/aiTasks', methods=['GET', 'POST'])
 def local_ai_tasks():
     if request.method == 'POST':
         try:
-            task = create_local_ai_task(request.get_json(silent=True) or {}, source="local_ui")
+            payload = request.get_json(silent=True) or {}
+            payload.setdefault("sourceCategory", "omnibull_local")
+            payload.setdefault("executionEngine", "omnibull")
+            payload.setdefault("correlationId", _ensure_correlation_id(payload.get("correlationId")))
+            task = create_local_ai_task(payload, source="local_ui")
             return jsonify({"code": 200, "msg": "success", "data": task}), 200
         except ValueError as exc:
             return jsonify({"code": 400, "msg": str(exc), "data": None}), 400
@@ -2981,6 +4082,7 @@ def skill_status():
 
     ensure_cloud_agent_started()
     ensure_omnidrive_agent_started()
+    ensure_openclaw_omnidrive_runtime_sync_started()
     payload = build_skill_status_payload()
     return jsonify({
         "code": 200,
@@ -3016,11 +4118,43 @@ def skill_omnidrive_session():
 
     try:
         device = payload.get("device") if isinstance(payload.get("device"), dict) else {}
+        model_items = None
+        if _should_refresh_openclaw_omnidrive_model_cache():
+            try:
+                model_status_code, model_payload = omnidrive_cloud_json_request(
+                    "GET",
+                    "/api/v1/ai/models",
+                    access_token=payload.get("accessToken"),
+                    query={"category": "chat"},
+                    timeout=30,
+                    api_base_url=payload.get("apiBaseUrl") or payload.get("cloudUrl"),
+                )
+                if model_status_code < 400:
+                    model_items = _extract_omnidrive_chat_models(model_payload)
+                    _mark_openclaw_omnidrive_model_sync()
+                else:
+                    message = ""
+                    if isinstance(model_payload, dict):
+                        message = str(model_payload.get("error") or model_payload.get("message") or "").strip()
+                    app_logger.warning(
+                        "skip OpenClaw OmniDrive model refresh after session fetch status={} message={}",
+                        model_status_code,
+                        message or "unknown error",
+                    )
+            except Exception as exc:
+                app_logger.warning("refresh OpenClaw OmniDrive models after session fetch failed error={}", exc)
+
         sync_openclaw_omnidrive_model_configs(
-            None,
+            model_items,
             api_base_url=payload.get("apiBaseUrl") or payload.get("cloudUrl"),
             access_token=payload.get("accessToken"),
             default_chat_model=device.get("defaultChatModel"),
+        )
+        sync_hermes_shared_runtime_config(
+            model_items,
+            api_base_url=payload.get("apiBaseUrl") or payload.get("cloudUrl"),
+            access_token=payload.get("accessToken"),
+            device=device,
         )
     except Exception as exc:
         app_logger.warning("sync OpenClaw OmniDrive runtime connection after session fetch failed error={}", exc)
@@ -3064,6 +4198,7 @@ def omnidrive_openai_models():
             access_token=session.get("accessToken"),
             default_chat_model=session.get("device", {}).get("defaultChatModel"),
         )
+        _mark_openclaw_omnidrive_model_sync()
     except Exception as exc:
         app_logger.warning("sync OpenClaw OmniDrive model list after models request failed error={}", exc)
 
@@ -3347,6 +4482,9 @@ def skill_ai_tasks():
     if request.method == 'POST':
         data = request.get_json(silent=True) or {}
         try:
+            data.setdefault("sourceCategory", SOURCE_CATEGORY_OPENCLAW_DIRECT)
+            data.setdefault("executionEngine", "openclaw")
+            data.setdefault("correlationId", _ensure_correlation_id(data.get("correlationId")))
             task = create_local_ai_task(data, source="openclaw_skill")
             return jsonify({"code": 200, "msg": "success", "data": task}), 200
         except ValueError as exc:
@@ -3414,6 +4552,9 @@ def skill_publish():
             "isDraft": parse_bool(data.get("isDraft")),
             "productLink": data.get("productLink") or "",
             "productTitle": data.get("productTitle") or "",
+            "sourceCategory": SOURCE_CATEGORY_OPENCLAW_DIRECT,
+            "executionEngine": "openclaw",
+            "correlationId": _ensure_correlation_id(data.get("correlationId")),
         }
         thumbnail = data.get("thumbnail")
         if thumbnail:
@@ -3496,6 +4637,9 @@ def postVideo():
 
     try:
         ensure_publish_task_manager_started()
+        data.setdefault("sourceCategory", "omnibull_local")
+        data.setdefault("executionEngine", "omnibull")
+        data.setdefault("correlationId", _ensure_correlation_id(data.get("correlationId")))
         tasks = publish_task_manager.enqueue_from_request(data, source="local_api")
     except ValueError as exc:
         return jsonify({
@@ -3572,6 +4716,9 @@ def postVideoBatch():
         for data in data_list:
             print("File List:", data.get('fileList', []))
             print("Account List:", data.get('accountList', []))
+            data.setdefault("sourceCategory", "omnibull_local")
+            data.setdefault("executionEngine", "omnibull")
+            data.setdefault("correlationId", _ensure_correlation_id(data.get("correlationId")))
             all_tasks.extend(publish_task_manager.enqueue_from_request(data, source="local_batch_api"))
     except ValueError as exc:
         return jsonify({"code": 400, "msg": str(exc), "data": None}), 400
@@ -3773,7 +4920,7 @@ def download_cookie():
 
 
 # 包装函数：在线程中运行异步函数
-def run_async_function(type,id,status_queue,command_queue=None):
+def run_async_function(type, id, status_queue, command_queue=None, keep_browser_open_on_success=False):
     """Run the platform login coroutine inside a worker thread and mirror status to SSE queues."""
     try:
         # First, attempt local fast-path validation if an existing cookie is present
@@ -3812,22 +4959,50 @@ def run_async_function(type,id,status_queue,command_queue=None):
             case '1':
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                loop.run_until_complete(xiaohongshu_cookie_gen(id, status_queue, command_queue))
+                loop.run_until_complete(
+                    xiaohongshu_cookie_gen(
+                        id,
+                        status_queue,
+                        command_queue,
+                        keep_browser_open_on_success,
+                    )
+                )
                 loop.close()
             case '2':
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                loop.run_until_complete(get_tencent_cookie(id,status_queue, command_queue))
+                loop.run_until_complete(
+                    get_tencent_cookie(
+                        id,
+                        status_queue,
+                        command_queue,
+                        keep_browser_open_on_success,
+                    )
+                )
                 loop.close()
             case '3':
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                loop.run_until_complete(douyin_cookie_gen(id,status_queue, command_queue))
+                loop.run_until_complete(
+                    douyin_cookie_gen(
+                        id,
+                        status_queue,
+                        command_queue,
+                        keep_browser_open_on_success,
+                    )
+                )
                 loop.close()
             case '4':
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                loop.run_until_complete(get_ks_cookie(id,status_queue, command_queue))
+                loop.run_until_complete(
+                    get_ks_cookie(
+                        id,
+                        status_queue,
+                        command_queue,
+                        keep_browser_open_on_success,
+                    )
+                )
                 loop.close()
             case _:
                 raise ValueError(f"unsupported login type: {type}")
@@ -3843,9 +5018,11 @@ if should_boot_background_services():
     ensure_omnidrive_agent_started()
     ensure_openclaw_omnidrive_models_synced()
     ensure_openclaw_omnidrive_runtime_sync_started()
+    ensure_openclaw_gateway_daily_reload_started()
 # SSE 流生成器函数
 def sse_stream(status_queue):
     """Convert queued login status messages into server-sent-event frames for the frontend."""
+    yield f": {' ' * 2048}\n\n"
     while True:
         if not status_queue.empty():
             msg = status_queue.get()
@@ -3857,7 +5034,12 @@ def sse_stream(status_queue):
                     yield f"event: qr\ndata: {data_str}\n\n"
                 elif event_type in {"error", "login_failed"}:
                     message = str(payload.get("message") or "").strip() or "登录失败，请重试"
-                    yield f"event: error\ndata: {message}\n\n"
+                    yield f"event: login_failed\ndata: {message}\n\n"
+                    yield "data: " + json.dumps({
+                        "type": "login_failed",
+                        "payload": {"message": message},
+                    }, ensure_ascii=False) + "\n\n"
+                    break
                 else:
                     yield f"event: {event_type}\ndata: {data_str}\n\n"
             elif isinstance(msg, str):
@@ -3865,10 +5047,25 @@ def sse_stream(status_queue):
                     yield f"event: qr\ndata: \n\n"
                 elif msg == "200":
                     yield f"event: done\ndata: 200\n\n"
+                    yield "data: " + json.dumps({
+                        "type": "done",
+                        "payload": {"message": "登录成功"},
+                    }, ensure_ascii=False) + "\n\n"
+                    break
                 elif msg == "CANCELLED":
-                    yield f"event: error\ndata: 本地登录浏览器已关闭，本次添加账号未完成\n\n"
+                    yield f"event: cancelled\ndata: 本地登录浏览器已关闭，本次添加账号未完成\n\n"
+                    yield "data: " + json.dumps({
+                        "type": "cancelled",
+                        "payload": {"message": "本地登录浏览器已关闭，本次添加账号未完成"},
+                    }, ensure_ascii=False) + "\n\n"
+                    break
                 elif msg == "500":
-                    yield f"event: error\ndata: 内部错误\n\n"
+                    yield f"event: login_failed\ndata: 内部错误\n\n"
+                    yield "data: " + json.dumps({
+                        "type": "login_failed",
+                        "payload": {"message": "内部错误"},
+                    }, ensure_ascii=False) + "\n\n"
+                    break
                 else:
                     yield f"data: {msg}\n\n"
         else:
@@ -3882,5 +5079,6 @@ if __name__ == '__main__':
     ensure_omnidrive_agent_started()
     ensure_openclaw_omnidrive_models_synced()
     ensure_openclaw_omnidrive_runtime_sync_started()
+    ensure_openclaw_gateway_daily_reload_started()
     backend_port = int(os.getenv("SAU_BACKEND_PORT", "5409"))
     app.run(host='0.0.0.0', port=backend_port, threaded=True)

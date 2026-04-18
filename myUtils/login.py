@@ -241,10 +241,70 @@ def save_login_account(account_type, user_name, file_name, status=1, storage_sta
     )
 
 
-async def locator_to_data_url(locator):
-    await locator.wait_for(state="visible", timeout=30000)
-    image_bytes = await locator.screenshot(type="png")
-    return "data:image/png;base64," + base64.b64encode(image_bytes).decode("utf-8")
+async def try_fast_persist_login_state(
+    context,
+    account_type,
+    account_name,
+    platform_label,
+    *,
+    page=None,
+    status_queue=None,
+    command_queue=None,
+    wait_timeout=3.0,
+    poll_interval=0.2,
+):
+    deadline = asyncio.get_running_loop().time() + max(wait_timeout, poll_interval)
+    last_cookie_count = None
+    last_origin_count = None
+
+    while True:
+        if page is not None and page.is_closed():
+            raise LoginCancelled()
+
+        await drain_remote_actions(page, command_queue, status_queue)
+        storage_state = await context.storage_state()
+        normalized_state = storage_state if isinstance(storage_state, dict) else None
+        cookies = (normalized_state or {}).get("cookies") if isinstance(normalized_state, dict) else None
+        origins = (normalized_state or {}).get("origins") if isinstance(normalized_state, dict) else None
+        cookie_count = len(cookies or []) if isinstance(cookies, list) else None
+        origin_count = len(origins or []) if isinstance(origins, list) else None
+        last_cookie_count = cookie_count
+        last_origin_count = origin_count
+
+        if isinstance(cookies, list) and (cookies or origins):
+            file_name = f"{uuid.uuid1()}.json"
+            save_login_account(account_type, account_name, file_name, 1, storage_state=storage_state)
+            login_logger.info(
+                "{} login storage saved via fast path account_name={} cookie_file={} cookie_count={} origin_count={}",
+                platform_label,
+                account_name,
+                file_name,
+                cookie_count,
+                origin_count or 0,
+            )
+            return file_name
+
+        if asyncio.get_running_loop().time() >= deadline:
+            login_logger.info(
+                "{} login storage fast path not ready account_name={} cookie_count={} origin_count={} falling_back_to_retry=true",
+                platform_label,
+                account_name,
+                last_cookie_count,
+                last_origin_count,
+            )
+            return None
+
+        await asyncio.sleep(poll_interval)
+
+
+async def locator_to_data_url(locator, timeout=15000):
+    try:
+        await locator.wait_for(state="visible", timeout=timeout)
+        image_bytes = await locator.screenshot(type="png")
+        return "data:image/png;base64," + base64.b64encode(image_bytes).decode("utf-8")
+    except Exception as exc:
+        login_logger.info("locator_to_data_url failed: {}", exc)
+        return None
 
 
 async def locator_to_data_url_if_visible(locator):
@@ -1803,20 +1863,35 @@ def push_login_failed_status(status_queue, command_queue, message):
     )
 
 
-async def close_login_browser_resources(page, context, browser):
+async def close_login_browser_resources(page, context, browser, *, close_timeout=5.0):
+    async def _close_with_timeout(close_coro_factory):
+        try:
+            await asyncio.wait_for(close_coro_factory(), timeout=close_timeout)
+        except Exception:
+            pass
+
     if page is not None:
-        try:
-            await page.close()
-        except Exception:
-            pass
+        async def _close_page():
+            try:
+                await page.close(run_before_unload=False)
+            except TypeError:
+                await page.close()
+
+        await _close_with_timeout(_close_page)
+
     if context is not None:
-        try:
-            await context.close()
-        except Exception:
-            pass
+        await _close_with_timeout(context.close)
     if browser is not None:
+        await _close_with_timeout(browser.close)
         try:
-            await browser.close()
+            if browser.is_connected():
+                process = getattr(browser, "process", None)
+                proc = process() if callable(process) else process
+                if proc is not None:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
         except Exception:
             pass
 
@@ -1843,13 +1918,15 @@ async def keep_local_login_browser_open(context, browser, *, poll_interval=1.0):
         await close_login_browser_resources(None, context, browser)
 
 
-async def finalize_successful_login(status_queue, page, context, browser, *, keep_browser_open=False):
-    if status_queue is not None:
-        status_queue.put("200")
-    if keep_browser_open:
+async def finalize_successful_login(status_queue, page, context, browser, *, keep_browser_open_on_success=False):
+    if keep_browser_open_on_success:
+        if status_queue is not None:
+            status_queue.put("200")
         await keep_local_login_browser_open(context, browser)
         return
     await close_login_browser_resources(page, context, browser)
+    if status_queue is not None:
+        status_queue.put("200")
 
 
 async def detect_login_qr_state(page, qr_locator=None, qr_action_root=None):
@@ -2122,7 +2199,7 @@ async def wait_for_login_result(
     verification_timeout=900,
     verification_settle_seconds=2.0,
     success_validator=None,
-    success_check_interval=2.5,
+    success_check_interval=0.5,
     allow_qr_hidden_success=True,
 ):
     loop = asyncio.get_running_loop()
@@ -2251,19 +2328,32 @@ async def wait_for_login_result(
             verification_cleared_since is not None and now - verification_cleared_since >= verification_settle_seconds
         )
 
-        if (
+        should_probe_success = bool(
             success_validator is not None
-            and verification_observed
-            and verification_settled
-            and now - last_success_check_at >= max(success_check_interval, 0.5)
-        ):
+            and now - last_success_check_at >= max(success_check_interval, 0.35)
+            and (
+                (verification_observed and verification_settled)
+                or qr_state.get("isScanned")
+                or (
+                    qr_locator is not None
+                    and not qr_visible
+                    and not qr_state.get("isExpired")
+                )
+                or url_changed_event.is_set()
+                or page.url != original_url
+            )
+        )
+
+        if should_probe_success:
             last_success_check_at = now
             try:
                 if await success_validator(page):
                     login_logger.info(
-                        "login success validator passed original_url={} current_url={}",
+                        "login success validator passed original_url={} current_url={} scanned={} verification_observed={}",
                         original_url,
                         page.url,
+                        qr_state.get("isScanned"),
+                        verification_observed,
                     )
                     return True
             except Exception:
@@ -2738,7 +2828,7 @@ async def open_platform_backend_session(account_type, account_name, account_ref,
             raise
 
 # 抖音登录
-async def douyin_cookie_gen(id,status_queue, command_queue=None):
+async def douyin_cookie_gen(id, status_queue, command_queue=None, keep_browser_open_on_success=False):
     url_changed_event = asyncio.Event()
     async def on_url_change():
         # 检查是否是主框架的变化
@@ -2757,8 +2847,11 @@ async def douyin_cookie_gen(id,status_queue, command_queue=None):
         original_url = page.url
         img_locator = page.get_by_role("img", name="二维码")
         qr_data = await locator_to_data_url(img_locator)
-        login_logger.info("douyin qr generated account_name={}", id)
-        status_queue.put(qr_data)
+        if qr_data:
+            login_logger.info("douyin qr generated account_name={}", id)
+            status_queue.put(qr_data)
+        else:
+            login_logger.info("douyin qr timeout account_name={}", id)
         # 监听页面的 'framenavigated' 事件，只关注主框架的变化
         page.on('framenavigated',
                 lambda frame: asyncio.create_task(on_url_change()) if frame == page.main_frame else None)
@@ -2795,8 +2888,9 @@ async def douyin_cookie_gen(id,status_queue, command_queue=None):
             push_login_failed_status(status_queue, command_queue, "抖音登录超时，请重试")
             await close_login_browser_resources(page, context, browser)
             return None
+        fast_saved_file = None
         try:
-            saved_file = await persist_login_state_with_retry(
+            fast_saved_file = await try_fast_persist_login_state(
                 context,
                 3,
                 id,
@@ -2810,22 +2904,40 @@ async def douyin_cookie_gen(id,status_queue, command_queue=None):
             await close_login_browser_resources(page, context, browser)
             status_queue.put("CANCELLED")
             return None
-        except LoginPersistFailed as exc:
-            login_logger.warning("douyin login state persist failed account_name={} error={}", id, exc)
-            push_login_failed_status(status_queue, command_queue, str(exc))
-            await close_login_browser_resources(page, context, browser)
-            return None
+        except Exception as exc:
+            login_logger.info("douyin fast persist unavailable account_name={} error={}", id, exc)
+        if fast_saved_file is None:
+            try:
+                await persist_login_state_with_retry(
+                    context,
+                    3,
+                    id,
+                    "douyin",
+                    page=page,
+                    status_queue=status_queue,
+                    command_queue=command_queue,
+                )
+            except LoginCancelled:
+                login_logger.info("douyin login cancelled while waiting cookie ready account_name={}", id)
+                await close_login_browser_resources(page, context, browser)
+                status_queue.put("CANCELLED")
+                return None
+            except LoginPersistFailed as exc:
+                login_logger.warning("douyin login state persist failed account_name={} error={}", id, exc)
+                push_login_failed_status(status_queue, command_queue, str(exc))
+                await close_login_browser_resources(page, context, browser)
+                return None
         await finalize_successful_login(
             status_queue,
             page,
             context,
             browser,
-            keep_browser_open=command_queue is None,
+            keep_browser_open_on_success=keep_browser_open_on_success,
         )
 
 
 # 视频号登录
-async def get_tencent_cookie(id,status_queue, command_queue=None):
+async def get_tencent_cookie(id, status_queue, command_queue=None, keep_browser_open_on_success=False):
     url_changed_event = asyncio.Event()
     async def on_url_change():
         # 检查是否是主框架的变化
@@ -2854,8 +2966,11 @@ async def get_tencent_cookie(id,status_queue, command_queue=None):
         img_locator = iframe_locator.get_by_role("img").first
 
         qr_data = await locator_to_data_url(img_locator)
-        login_logger.info("tencent qr generated account_name={}", id)
-        status_queue.put(qr_data)
+        if qr_data:
+            login_logger.info("tencent qr generated account_name={}", id)
+            status_queue.put(qr_data)
+        else:
+            login_logger.info("tencent qr timeout account_name={}", id)
 
         try:
             login_result = await wait_for_login_result(
@@ -2890,13 +3005,13 @@ async def get_tencent_cookie(id,status_queue, command_queue=None):
             push_login_failed_status(status_queue, command_queue, "视频号登录超时，请重试")
             await close_login_browser_resources(page, context, browser)
             return None
+        fast_saved_file = None
         try:
-            saved_file = await persist_login_state_with_retry(
+            fast_saved_file = await try_fast_persist_login_state(
                 context,
                 2,
                 id,
                 "tencent",
-                verify_timeout=60,
                 page=page,
                 status_queue=status_queue,
                 command_queue=command_queue,
@@ -2906,21 +3021,40 @@ async def get_tencent_cookie(id,status_queue, command_queue=None):
             await close_login_browser_resources(page, context, browser)
             status_queue.put("CANCELLED")
             return None
-        except LoginPersistFailed as exc:
-            login_logger.warning("tencent login state persist failed account_name={} error={}", id, exc)
-            push_login_failed_status(status_queue, command_queue, str(exc))
-            await close_login_browser_resources(page, context, browser)
-            return None
+        except Exception as exc:
+            login_logger.info("tencent fast persist unavailable account_name={} error={}", id, exc)
+        if fast_saved_file is None:
+            try:
+                await persist_login_state_with_retry(
+                    context,
+                    2,
+                    id,
+                    "tencent",
+                    verify_timeout=60,
+                    page=page,
+                    status_queue=status_queue,
+                    command_queue=command_queue,
+                )
+            except LoginCancelled:
+                login_logger.info("tencent login cancelled while waiting cookie ready account_name={}", id)
+                await close_login_browser_resources(page, context, browser)
+                status_queue.put("CANCELLED")
+                return None
+            except LoginPersistFailed as exc:
+                login_logger.warning("tencent login state persist failed account_name={} error={}", id, exc)
+                push_login_failed_status(status_queue, command_queue, str(exc))
+                await close_login_browser_resources(page, context, browser)
+                return None
         await finalize_successful_login(
             status_queue,
             page,
             context,
             browser,
-            keep_browser_open=command_queue is None,
+            keep_browser_open_on_success=keep_browser_open_on_success,
         )
 
 # 快手登录
-async def get_ks_cookie(id,status_queue, command_queue=None):
+async def get_ks_cookie(id, status_queue, command_queue=None, keep_browser_open_on_success=False):
     url_changed_event = asyncio.Event()
     async def on_url_change():
         # 检查是否是主框架的变化
@@ -2942,8 +3076,11 @@ async def get_ks_cookie(id,status_queue, command_queue=None):
         img_locator = page.get_by_role("img", name="qrcode")
         qr_data = await locator_to_data_url(img_locator)
         original_url = page.url
-        login_logger.info("kuaishou qr generated account_name={}", id)
-        status_queue.put(qr_data)
+        if qr_data:
+            login_logger.info("kuaishou qr generated account_name={}", id)
+            status_queue.put(qr_data)
+        else:
+            login_logger.info("kuaishou qr timeout account_name={}", id)
         # 监听页面的 'framenavigated' 事件，只关注主框架的变化
         page.on('framenavigated',
                 lambda frame: asyncio.create_task(on_url_change()) if frame == page.main_frame else None)
@@ -2981,8 +3118,9 @@ async def get_ks_cookie(id,status_queue, command_queue=None):
             push_login_failed_status(status_queue, command_queue, "快手登录超时，请重试")
             await close_login_browser_resources(page, context, browser)
             return None
+        fast_saved_file = None
         try:
-            saved_file = await persist_login_state_with_retry(
+            fast_saved_file = await try_fast_persist_login_state(
                 context,
                 4,
                 id,
@@ -2996,21 +3134,39 @@ async def get_ks_cookie(id,status_queue, command_queue=None):
             await close_login_browser_resources(page, context, browser)
             status_queue.put("CANCELLED")
             return None
-        except LoginPersistFailed as exc:
-            login_logger.warning("kuaishou login state persist failed account_name={} error={}", id, exc)
-            push_login_failed_status(status_queue, command_queue, str(exc))
-            await close_login_browser_resources(page, context, browser)
-            return None
+        except Exception as exc:
+            login_logger.info("kuaishou fast persist unavailable account_name={} error={}", id, exc)
+        if fast_saved_file is None:
+            try:
+                await persist_login_state_with_retry(
+                    context,
+                    4,
+                    id,
+                    "kuaishou",
+                    page=page,
+                    status_queue=status_queue,
+                    command_queue=command_queue,
+                )
+            except LoginCancelled:
+                login_logger.info("kuaishou login cancelled while waiting cookie ready account_name={}", id)
+                await close_login_browser_resources(page, context, browser)
+                status_queue.put("CANCELLED")
+                return None
+            except LoginPersistFailed as exc:
+                login_logger.warning("kuaishou login state persist failed account_name={} error={}", id, exc)
+                push_login_failed_status(status_queue, command_queue, str(exc))
+                await close_login_browser_resources(page, context, browser)
+                return None
         await finalize_successful_login(
             status_queue,
             page,
             context,
             browser,
-            keep_browser_open=command_queue is None,
+            keep_browser_open_on_success=keep_browser_open_on_success,
         )
 
 # 小红书登录
-async def xiaohongshu_cookie_gen(id,status_queue, command_queue=None):
+async def xiaohongshu_cookie_gen(id, status_queue, command_queue=None, keep_browser_open_on_success=False):
     url_changed_event = asyncio.Event()
 
     async def on_url_change():
@@ -3032,8 +3188,11 @@ async def xiaohongshu_cookie_gen(id,status_queue, command_queue=None):
         img_locator = page.get_by_role("img").nth(2)
         qr_data = await locator_to_data_url(img_locator)
         original_url = page.url
-        login_logger.info("xiaohongshu qr generated account_name={}", id)
-        status_queue.put(qr_data)
+        if qr_data:
+            login_logger.info("xiaohongshu qr generated account_name={}", id)
+            status_queue.put(qr_data)
+        else:
+            login_logger.info("xiaohongshu qr timeout account_name={}", id)
         # 监听页面的 'framenavigated' 事件，只关注主框架的变化
         page.on('framenavigated',
                 lambda frame: asyncio.create_task(on_url_change()) if frame == page.main_frame else None)
@@ -3071,8 +3230,9 @@ async def xiaohongshu_cookie_gen(id,status_queue, command_queue=None):
             push_login_failed_status(status_queue, command_queue, "小红书登录超时，请重试")
             await close_login_browser_resources(page, context, browser)
             return None
+        fast_saved_file = None
         try:
-            saved_file = await persist_login_state_with_retry(
+            fast_saved_file = await try_fast_persist_login_state(
                 context,
                 1,
                 id,
@@ -3086,17 +3246,35 @@ async def xiaohongshu_cookie_gen(id,status_queue, command_queue=None):
             await close_login_browser_resources(page, context, browser)
             status_queue.put("CANCELLED")
             return None
-        except LoginPersistFailed as exc:
-            login_logger.warning("xiaohongshu login state persist failed account_name={} error={}", id, exc)
-            push_login_failed_status(status_queue, command_queue, str(exc))
-            await close_login_browser_resources(page, context, browser)
-            return None
+        except Exception as exc:
+            login_logger.info("xiaohongshu fast persist unavailable account_name={} error={}", id, exc)
+        if fast_saved_file is None:
+            try:
+                await persist_login_state_with_retry(
+                    context,
+                    1,
+                    id,
+                    "xiaohongshu",
+                    page=page,
+                    status_queue=status_queue,
+                    command_queue=command_queue,
+                )
+            except LoginCancelled:
+                login_logger.info("xiaohongshu login cancelled while waiting cookie ready account_name={}", id)
+                await close_login_browser_resources(page, context, browser)
+                status_queue.put("CANCELLED")
+                return None
+            except LoginPersistFailed as exc:
+                login_logger.warning("xiaohongshu login state persist failed account_name={} error={}", id, exc)
+                push_login_failed_status(status_queue, command_queue, str(exc))
+                await close_login_browser_resources(page, context, browser)
+                return None
         await finalize_successful_login(
             status_queue,
             page,
             context,
             browser,
-            keep_browser_open=command_queue is None,
+            keep_browser_open_on_success=keep_browser_open_on_success,
         )
 
 # a = asyncio.run(xiaohongshu_cookie_gen(4,None))

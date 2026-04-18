@@ -30,6 +30,7 @@ class Target:
     local_dir: Path
     remote_dir: str
     rsync_excludes: tuple[str, ...]
+    start_port: int | None = None
 
 
 TARGETS: dict[str, Target] = {
@@ -51,6 +52,7 @@ TARGETS: dict[str, Target] = {
         name="omnidrive_frontend",
         local_dir=ROOT_DIR / "omnidrive_frontend",
         remote_dir="/www/wwwroot/aitoplus.com",
+        start_port=3000,
         rsync_excludes=(
             ".git",
             ".env",
@@ -64,6 +66,7 @@ TARGETS: dict[str, Target] = {
         name="OmniDriveAdmin",
         local_dir=ROOT_DIR / "OmniDriveAdmin",
         remote_dir="/www/wwwroot/omnidrive_admin",
+        start_port=3001,
         rsync_excludes=(
             ".git",
             ".env",
@@ -237,9 +240,10 @@ def restart_cloud_api() -> None:
         "su -s /bin/bash www -c 'cd /www/wwwroot/OmniDriveCloud && ./bin/omnidrive-bootstrap-db'; "
         "pkill -x omnidrive-api || true; "
         "sleep 1; "
-        "su -s /bin/bash www -c 'cd /www/wwwroot/OmniDriveCloud && "
-        "nohup ./bin/omnidrive-api >> /www/wwwroot/OmniDriveCloud/omnidrive-api.log 2>&1 </dev/null & "
-        "echo $! > /www/wwwroot/OmniDriveCloud/omnidrive-api.pid'; "
+        "setsid su -s /bin/bash www -c 'cd /www/wwwroot/OmniDriveCloud && "
+        "exec ./bin/omnidrive-api >> /www/wwwroot/OmniDriveCloud/omnidrive-api.log 2>&1' "
+        ">/dev/null 2>&1 </dev/null & "
+        "echo $! > /www/wwwroot/OmniDriveCloud/omnidrive-api.pid; "
         "sleep 3; "
         "curl -sf http://127.0.0.1:8410/health >/dev/null; "
         "curl -sf http://127.0.0.1:8410/ready >/dev/null"
@@ -250,15 +254,33 @@ def build_remote_next_app(target: Target) -> None:
     remote_shell(f"set -e; cd {target.remote_dir} && npm run build")
 
 
-def restart_remote_next_apps() -> None:
+def restart_remote_next_app(target: Target) -> None:
+    if target.start_port is None:
+        raise RuntimeError(f"target {target.name} does not define a start port")
+
+    pid_file = f"/tmp/{target.name}.next.pid"
     remote_shell(
         "set -e; "
-        "pkill -x next-server || true; "
+        f"cd {target.remote_dir}; "
+        f"if [ -f {pid_file} ]; then "
+        f"  kill $(cat {pid_file}) >/dev/null 2>&1 || true; "
+        "fi; "
+        "for _ in $(seq 1 20); do "
+        f"  if [ -f {pid_file} ] && kill -0 $(cat {pid_file}) >/dev/null 2>&1; then "
+        "    sleep 1; "
+        "  else "
+        "    break; "
+        "  fi; "
+        "done; "
+        f"if command -v fuser >/dev/null 2>&1; then fuser -k {target.start_port}/tcp >/dev/null 2>&1 || true; fi; "
         "sleep 1; "
-        "su -s /bin/bash www -c 'cd /www/wwwroot/aitoplus.com && "
-        "nohup npm run start >/www/wwwroot/aitoplus.com/start.log 2>&1 </dev/null &'; "
-        "su -s /bin/bash www -c 'cd /www/wwwroot/omnidrive_admin && "
-        "nohup npm run start >/www/wwwroot/omnidrive_admin/start.log 2>&1 </dev/null &'"
+        f"rm -f {pid_file}; "
+        f"setsid su -s /bin/bash www -c 'cd {target.remote_dir} && : > start.log && exec npm run start >start.log 2>&1' "
+        f">/dev/null 2>&1 </dev/null & echo $! > {pid_file}; "
+        f"for _ in $(seq 1 60); do if curl -sf http://127.0.0.1:{target.start_port}/ >/dev/null; then exit 0; fi; sleep 1; done; "
+        "echo 'failed to restart next app' >&2; "
+        "tail -n 80 start.log >&2; "
+        "exit 1"
     )
 
 
@@ -286,7 +308,7 @@ def sync_targets(changed_files: dict[str, set[str]], removed_files: dict[str, se
             log(f"syncing {name}")
             sync_target_files(TARGETS[name], changed_files[name], removed_files[name])
             build_remote_next_app(TARGETS[name])
-        restart_remote_next_apps()
+            restart_remote_next_app(TARGETS[name])
         log(f"synced {', '.join(frontend_targets)}")
 
 

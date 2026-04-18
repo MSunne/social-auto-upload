@@ -18,6 +18,8 @@
   - 这是 `OmniDrive` 的云端前端工程。
 - `openclaw_extensions/omnibull`
   - 这是本地 `OpenClaw` 调用 `OmniBull / SAU` 的插件工程。
+- `openclaw_extensions/hermes`
+  - 这是本地 `OpenClaw` 接入 `Hermes bridge` 的协作插件工程。
 - `projects`
   - 这是统一工程入口目录，收口了 `OmniBull`、`OmniDrive`、`OpenClaw` 相关活跃工程的快捷入口。
 - `sau_backend.py`、`uploader`、`myUtils`、`utils`
@@ -239,6 +241,7 @@
 仓库内补充文档：
 
 - [Codex 高效开发 SOP](/Volumes/mud/project/github/social-auto-upload/docs/codex_development_sop.md)
+- [OpenClaw 与 Hermes 深度融合接入说明](/Volumes/mud/project/github/social-auto-upload/docs/hermes_openclaw_integration.md)
 
 ## 🐾交流与支持
 

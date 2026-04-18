@@ -84,6 +84,15 @@ class OmniDriveAITaskManager:
             "jobType": job_type,
             "modelName": model_name,
         }
+        source_category = str(data.get("sourceCategory") or "").strip() or self._default_source_category(source)
+        execution_engine = str(data.get("executionEngine") or "").strip() or None
+        correlation_id = str(data.get("correlationId") or "").strip() or None
+        if source_category:
+            payload["sourceCategory"] = source_category
+        if execution_engine:
+            payload["executionEngine"] = execution_engine
+        if correlation_id:
+            payload["correlationId"] = correlation_id
         task = {
             "taskUuid": str(data.get("taskUuid") or uuid.uuid4()),
             "source": str(source or "local_ui").strip() or "local_ui",
@@ -152,6 +161,13 @@ class OmniDriveAITaskManager:
         cloud_status = str(data.get("cloudStatus") or data.get("status") or "").strip() or "queued"
         local_status = str(data.get("status") or "").strip() or self._map_cloud_to_local_status(cloud_status, current_status="scheduled")
         payload = data.get("payload") or {}
+        if isinstance(payload, dict):
+            source_value = str(data.get("source") or "omnidrive_cloud").strip() or "omnidrive_cloud"
+            payload.setdefault("sourceCategory", str(data.get("sourceCategory") or "").strip() or self._default_source_category(source_value))
+            if str(data.get("executionEngine") or "").strip():
+                payload.setdefault("executionEngine", str(data.get("executionEngine") or "").strip())
+            if str(data.get("correlationId") or "").strip():
+                payload.setdefault("correlationId", str(data.get("correlationId") or "").strip())
         artifact_refs = data.get("artifactRefs") or []
         message = str(data.get("message") or "").strip() or "等待 OmniDrive 云端执行"
 
@@ -659,6 +675,21 @@ class OmniDriveAITaskManager:
             str(schedule_times.get("generateAt") or "").strip() if schedule_times else ""
         ) or str(payload.get("runAt") or "").strip() or None
         publish_payload = payload.get("publishPayload") if isinstance(payload, dict) else None
+        item["sourceCategory"] = (
+            str(payload.get("sourceCategory") or "").strip()
+            if isinstance(payload, dict)
+            else ""
+        ) or OmniDriveAITaskManager._default_source_category(str(item.get("source") or "").strip())
+        item["executionEngine"] = (
+            str(payload.get("executionEngine") or "").strip()
+            if isinstance(payload, dict)
+            else ""
+        ) or None
+        item["correlationId"] = (
+            str(payload.get("correlationId") or "").strip()
+            if isinstance(payload, dict)
+            else ""
+        ) or None
         item["publishAt"] = (
             str(schedule_times.get("publishAt") or "").strip() if schedule_times else ""
         ) or str(payload.get("publishAt") or "").strip() or str(
@@ -666,6 +697,17 @@ class OmniDriveAITaskManager:
         ).strip() or None
         item["finishedAt"] = item.pop("finished_at")
         return item
+
+    @staticmethod
+    def _default_source_category(source):
+        normalized = str(source or "").strip()
+        if normalized == "openclaw_skill":
+            return "openclaw_direct"
+        if normalized.startswith("hermes_"):
+            return normalized
+        if normalized == "local_ui":
+            return "omnibull_local"
+        return normalized or "omnibull_local"
 
     @staticmethod
     def _map_cloud_to_local_status(cloud_status, current_status="queued_cloud"):

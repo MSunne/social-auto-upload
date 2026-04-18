@@ -1519,7 +1519,7 @@ class OmniDriveBridge:
 
         thread = threading.Thread(
             target=self.run_login_fn,
-            args=(str(platform_config["type"]), account_name, status_queue, command_queue),
+            args=(str(platform_config["type"]), account_name, status_queue, command_queue, False),
             daemon=True,
         )
         worker["thread"] = thread

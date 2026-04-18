@@ -25,17 +25,24 @@ COOKIE_DIR="${OMNIBULL_COOKIE_DIR:-${RUNTIME_DIR}/cookiesFile}"
 ARTIFACT_DIR="${OMNIBULL_ARTIFACT_DIR:-${RUNTIME_DIR}/taskArtifacts}"
 SYNC_DIR="${OMNIBULL_SYNC_DIR:-${WORKSPACE_DIR}/omnidriveSync}"
 DB_PATH="${OMNIBULL_DB_PATH:-${RUNTIME_DIR}/database.db}"
-CHROME_DESKTOP_FILE="${OMNIBULL_CHROME_DESKTOP_FILE:-${APP_HOME}/Desktop/Google Chrome.desktop}"
+CHROME_DESKTOP_FILE="${OMNIBULL_CHROME_DESKTOP_FILE:-}"
 LIGHTDM_AUTLOGIN_FILE="${OMNIBULL_LIGHTDM_AUTLOGIN_FILE:-/etc/lightdm/lightdm.conf.d/90-omnibull-autologin.conf}"
 ENV_FILE="${OMNIBULL_ENV_FILE:-/etc/omnibull/omnibull.env}"
 CONF_FILE="${OMNIBULL_CONF_FILE:-${APP_ROOT}/conf.py}"
 
 NODE_DIST_BASE_URL="${OMNIBULL_NODE_DIST_BASE_URL:-https://nodejs.org/dist/latest-v22.x}"
 CHROME_DEB_URL="${OMNIBULL_CHROME_DEB_URL:-https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb}"
+PIP_INDEX_URL="${OMNIBULL_PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}"
+NPM_REGISTRY="${OMNIBULL_NPM_REGISTRY:-https://registry.npmmirror.com}"
 OMNIDRIVE_BASE_URL="${OMNIDRIVE_BASE_URL:-}"
 OMNIBULL_CORS_ALLOWED_ORIGINS="${OMNIBULL_CORS_ALLOWED_ORIGINS:-}"
 OMNIBULL_SETUP_RESTART_SERVICE="${OMNIBULL_SETUP_RESTART_SERVICE:-1}"
 OMNIBULL_SETUP_VERIFY="${OMNIBULL_SETUP_VERIFY:-1}"
+APP_USER_SWITCH_TOOL=""
+APT_CMD=(apt-get)
+APT_TEMP_DIR=""
+OS_ID=""
+OS_CODENAME=""
 
 APT_PACKAGES=(
   python3
@@ -53,6 +60,16 @@ log() {
 }
 
 
+cleanup_apt_temp_dir() {
+  if [[ -n "${APT_TEMP_DIR}" && -d "${APT_TEMP_DIR}" ]]; then
+    rm -rf "${APT_TEMP_DIR}"
+  fi
+}
+
+
+trap cleanup_apt_temp_dir EXIT
+
+
 require_cmd() {
   local cmd="$1"
   if ! command -v "${cmd}" >/dev/null 2>&1; then
@@ -62,14 +79,154 @@ require_cmd() {
 }
 
 
+resolve_user_switch_tool() {
+  if command -v runuser >/dev/null 2>&1; then
+    APP_USER_SWITCH_TOOL="runuser"
+    return 0
+  fi
+  if command -v su >/dev/null 2>&1; then
+    APP_USER_SWITCH_TOOL="su"
+    return 0
+  fi
+  log "missing required command: runuser or su"
+  exit 1
+}
+
+
+run_as_app_user() {
+  local -a env_pairs=()
+  local -a cmd=()
+  local -a wrapped=(env)
+  local quoted=""
+
+  while [[ "$#" -gt 0 ]]; do
+    if [[ "$1" == "--" ]]; then
+      shift
+      break
+    fi
+    env_pairs+=("$1")
+    shift
+  done
+  cmd=("$@")
+  if [[ "${#cmd[@]}" -eq 0 ]]; then
+    log "run_as_app_user requires a command"
+    exit 1
+  fi
+
+  if [[ "${APP_USER_SWITCH_TOOL}" == "runuser" ]]; then
+    runuser -u "${APP_USER}" -- env "${env_pairs[@]}" "${cmd[@]}"
+    return 0
+  fi
+
+  if [[ "${#env_pairs[@]}" -gt 0 ]]; then
+    wrapped+=("${env_pairs[@]}")
+  fi
+  wrapped+=("${cmd[@]}")
+  printf -v quoted '%q ' "${wrapped[@]}"
+  su -s /bin/bash "${APP_USER}" -c "${quoted% }"
+}
+
+
+resolve_desktop_dir() {
+  local desktop_dir=""
+
+  if command -v xdg-user-dir >/dev/null 2>&1; then
+    desktop_dir="$(run_as_app_user HOME="${APP_HOME}" -- xdg-user-dir DESKTOP 2>/dev/null || true)"
+  fi
+
+  if [[ -z "${desktop_dir}" || "${desktop_dir}" == "${APP_HOME}" ]]; then
+    desktop_dir="${APP_HOME}/Desktop"
+  fi
+
+  printf '%s\n' "${desktop_dir}"
+}
+
+
+resolve_chrome_desktop_file() {
+  if [[ -n "${CHROME_DESKTOP_FILE}" ]]; then
+    printf '%s\n' "${CHROME_DESKTOP_FILE}"
+    return 0
+  fi
+
+  printf '%s/Google Chrome.desktop\n' "$(resolve_desktop_dir)"
+}
+
+
 ensure_prerequisites() {
   require_cmd apt-get
   require_cmd python3
   require_cmd tar
   require_cmd install
   require_cmd systemctl
-  require_cmd runuser
   require_cmd gsettings
+  resolve_user_switch_tool
+}
+
+
+load_os_release() {
+  OS_ID=""
+  OS_CODENAME=""
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    OS_ID="${ID:-}"
+    OS_CODENAME="${VERSION_CODENAME:-${UBUNTU_CODENAME:-${VERSION_ID:-}}}"
+  fi
+}
+
+
+build_aliyun_apt_sources() {
+  case "${OS_ID}" in
+    deepin)
+      [[ -n "${OS_CODENAME}" ]] || return 1
+      cat <<EOF
+deb https://mirrors.aliyun.com/deepin/ ${OS_CODENAME} main commercial community
+EOF
+      ;;
+    ubuntu)
+      [[ -n "${OS_CODENAME}" ]] || return 1
+      cat <<EOF
+deb https://mirrors.aliyun.com/ubuntu/ ${OS_CODENAME} main restricted universe multiverse
+deb https://mirrors.aliyun.com/ubuntu/ ${OS_CODENAME}-updates main restricted universe multiverse
+deb https://mirrors.aliyun.com/ubuntu/ ${OS_CODENAME}-backports main restricted universe multiverse
+deb https://mirrors.aliyun.com/ubuntu/ ${OS_CODENAME}-security main restricted universe multiverse
+EOF
+      ;;
+    debian)
+      [[ -n "${OS_CODENAME}" ]] || return 1
+      cat <<EOF
+deb https://mirrors.aliyun.com/debian/ ${OS_CODENAME} main contrib non-free non-free-firmware
+deb https://mirrors.aliyun.com/debian/ ${OS_CODENAME}-updates main contrib non-free non-free-firmware
+deb https://mirrors.aliyun.com/debian/ ${OS_CODENAME}-backports main contrib non-free non-free-firmware
+deb https://mirrors.aliyun.com/debian-security/ ${OS_CODENAME}-security main contrib non-free non-free-firmware
+EOF
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+
+configure_apt_command() {
+  local sources_file
+
+  load_os_release
+  sources_file="$(build_aliyun_apt_sources)" || {
+    log "using system apt sources for unsupported mirror preset: ${OS_ID:-unknown}"
+    return 0
+  }
+
+  cleanup_apt_temp_dir
+  APT_TEMP_DIR="$(mktemp -d)"
+  printf '%s\n' "${sources_file}" > "${APT_TEMP_DIR}/aliyun.sources.list"
+  APT_CMD=(
+    apt-get
+    -o "Dir::Etc::sourcelist=${APT_TEMP_DIR}/aliyun.sources.list"
+    -o Dir::Etc::sourceparts=-
+    -o Acquire::Retries=3
+  )
+  log "using Aliyun apt mirror for ${OS_ID} ${OS_CODENAME}"
 }
 
 
@@ -117,8 +274,8 @@ ensure_config_values() {
 install_system_packages() {
   log "installing required Debian/Deepin packages"
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update
-  apt-get install -y "${APT_PACKAGES[@]}"
+  "${APT_CMD[@]}" update
+  "${APT_CMD[@]}" install -y "${APT_PACKAGES[@]}"
 }
 
 
@@ -195,7 +352,7 @@ install_google_chrome() {
   log "installing Google Chrome stable"
   curl -fsSL "${CHROME_DEB_URL}" -o "${deb_path}"
   export DEBIAN_FRONTEND=noninteractive
-  apt-get install -y "${deb_path}"
+  "${APT_CMD[@]}" install -y "${deb_path}"
   rm -f "${deb_path}"
   trap - RETURN
 }
@@ -360,24 +517,29 @@ create_python_venv() {
   fi
 
   log "installing Python dependencies"
-  "${VENV_DIR}/bin/pip" install --upgrade pip
-  "${VENV_DIR}/bin/pip" install -r "${APP_ROOT}/requirements.txt"
+  PIP_CONFIG_FILE=/dev/null "${VENV_DIR}/bin/pip" install --index-url "${PIP_INDEX_URL}" --upgrade pip
+  PIP_CONFIG_FILE=/dev/null "${VENV_DIR}/bin/pip" install --index-url "${PIP_INDEX_URL}" -r "${APP_ROOT}/requirements.txt"
 }
 
 
 install_frontend_dependencies() {
   log "installing sau_frontend dependencies"
+  run_as_app_user HOME="${APP_HOME}" PATH="${NODE_DIR}/bin:/usr/bin:/bin" \
+    -- "${NODE_DIR}/bin/npm" config set registry "${NPM_REGISTRY}"
   if [[ -f "${APP_ROOT}/sau_frontend/package-lock.json" ]]; then
-    runuser -u "${APP_USER}" -- env HOME="${APP_HOME}" PATH="${NODE_DIR}/bin:/usr/bin:/bin" \
-      "${NODE_DIR}/bin/npm" --prefix "${APP_ROOT}/sau_frontend" ci
+    run_as_app_user HOME="${APP_HOME}" PATH="${NODE_DIR}/bin:/usr/bin:/bin" \
+      npm_config_registry="${NPM_REGISTRY}" \
+      -- "${NODE_DIR}/bin/npm" --prefix "${APP_ROOT}/sau_frontend" ci
   else
-    runuser -u "${APP_USER}" -- env HOME="${APP_HOME}" PATH="${NODE_DIR}/bin:/usr/bin:/bin" \
-      "${NODE_DIR}/bin/npm" --prefix "${APP_ROOT}/sau_frontend" install
+    run_as_app_user HOME="${APP_HOME}" PATH="${NODE_DIR}/bin:/usr/bin:/bin" \
+      npm_config_registry="${NPM_REGISTRY}" \
+      -- "${NODE_DIR}/bin/npm" --prefix "${APP_ROOT}/sau_frontend" install
   fi
 
   log "building sau_frontend preview assets"
-  runuser -u "${APP_USER}" -- env HOME="${APP_HOME}" PATH="${NODE_DIR}/bin:/usr/bin:/bin" \
-    "${NODE_DIR}/bin/npm" --prefix "${APP_ROOT}/sau_frontend" run build
+  run_as_app_user HOME="${APP_HOME}" PATH="${NODE_DIR}/bin:/usr/bin:/bin" \
+    npm_config_registry="${NPM_REGISTRY}" \
+    -- "${NODE_DIR}/bin/npm" --prefix "${APP_ROOT}/sau_frontend" run build
 }
 
 
@@ -404,6 +566,7 @@ initialize_database() {
 
 copy_chrome_shortcut() {
   local source_desktop
+  local target_desktop_file
   source_desktop=""
   if [[ -f /usr/share/applications/google-chrome.desktop ]]; then
     source_desktop="/usr/share/applications/google-chrome.desktop"
@@ -412,10 +575,11 @@ copy_chrome_shortcut() {
   fi
   [[ -n "${source_desktop}" ]] || return 0
 
-  mkdir -p "$(dirname "${CHROME_DESKTOP_FILE}")"
-  cp -f "${source_desktop}" "${CHROME_DESKTOP_FILE}"
-  chown "${APP_USER}:${APP_GROUP}" "${CHROME_DESKTOP_FILE}"
-  chmod 0755 "${CHROME_DESKTOP_FILE}"
+  target_desktop_file="$(resolve_chrome_desktop_file)"
+  mkdir -p "$(dirname "${target_desktop_file}")"
+  cp -f "${source_desktop}" "${target_desktop_file}"
+  chown "${APP_USER}:${APP_GROUP}" "${target_desktop_file}"
+  chmod 0755 "${target_desktop_file}"
 }
 
 
@@ -437,14 +601,14 @@ run_gsettings_as_app() {
   local user_id
   user_id="$(id -u "${APP_USER}")"
 
-  runuser -u "${APP_USER}" -- env \
+  run_as_app_user \
     HOME="${APP_HOME}" \
     DISPLAY=:0 \
     XAUTHORITY="${APP_HOME}/.Xauthority" \
     XDG_RUNTIME_DIR="/run/user/${user_id}" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${user_id}/bus" \
-    gsettings set "${schema}" "${key}" "${value}" >/dev/null 2>&1 \
-    || runuser -u "${APP_USER}" -- env HOME="${APP_HOME}" dbus-run-session \
+    -- gsettings set "${schema}" "${key}" "${value}" >/dev/null 2>&1 \
+    || run_as_app_user HOME="${APP_HOME}" -- dbus-run-session \
       gsettings set "${schema}" "${key}" "${value}" >/dev/null 2>&1 \
     || true
 }
@@ -495,35 +659,54 @@ restart_service_if_needed() {
 }
 
 
+wait_for_http_ready() {
+  local url="$1"
+  local timeout_seconds="${2:-60}"
+  local deadline=$((SECONDS + timeout_seconds))
+
+  while (( SECONDS < deadline )); do
+    if curl -fsS "${url}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+
+  log "timed out waiting for ${url}"
+  return 1
+}
+
+
 verify_installation() {
   local browser_path
+  local chrome_desktop_file
   local verify_path
+  local user_id
   [[ "${OMNIBULL_SETUP_VERIFY}" == "1" ]] || return 0
 
   log "running installation verification"
   verify_path="${NODE_DIR}/bin:${PATH}"
+  chrome_desktop_file="$(resolve_chrome_desktop_file)"
+  user_id="$(id -u "${APP_USER}")"
   python3 --version >/dev/null
   "${NODE_DIR}/bin/node" --version >/dev/null
   env PATH="${verify_path}" "${NODE_DIR}/bin/npm" --version >/dev/null
   google-chrome --version >/dev/null
-  [[ -x "${CHROME_DESKTOP_FILE}" ]]
+  [[ -x "${chrome_desktop_file}" ]]
   systemctl is-active --quiet sau-stack.service
-  curl -fsS "http://127.0.0.1:5409/omnidriveAgentStatus" >/dev/null
-  curl -fsS "http://127.0.0.1:5173" >/dev/null
+  wait_for_http_ready "http://127.0.0.1:5409/omnidriveAgentStatus"
+  wait_for_http_ready "http://127.0.0.1:5173/"
 
-  browser_path="$(runuser -u "${APP_USER}" -- env \
+  browser_path="$(run_as_app_user \
     HOME="${APP_HOME}" \
     DISPLAY=:0 \
     XAUTHORITY="${APP_HOME}/.Xauthority" \
-    XDG_RUNTIME_DIR="/run/user/$(id -u "${APP_USER}")" \
-    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u "${APP_USER}")/bus" \
+    XDG_RUNTIME_DIR="/run/user/${user_id}" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${user_id}/bus" \
     PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_DIR}" \
     SAU_LOG_DIR="${LOG_DIR}" \
-    "${VENV_DIR}/bin/python" - <<'PY'
-from utils.browser_hook import get_browser_options
-print(get_browser_options(headless=False)["executable_path"])
-PY
-  )"
+    -- "${VENV_DIR}/bin/python" -c \
+    'from utils.browser_hook import get_browser_options; print(get_browser_options(headless=False)["executable_path"])' \
+    | tail -n 1)"
   if [[ ! -x "${browser_path}" ]]; then
     log "browser verification failed; resolved path is not executable: ${browser_path}"
     exit 1
@@ -533,6 +716,7 @@ PY
 
 main() {
   ensure_prerequisites
+  configure_apt_command
   ensure_config_values
   install_system_packages
   install_node_runtime
@@ -546,9 +730,11 @@ main() {
   install_frontend_dependencies
   install_playwright_browser
   initialize_database
+  normalize_persistent_permissions
   copy_chrome_shortcut
   configure_desktop_policy
   install_service
+  normalize_persistent_permissions
   restart_service_if_needed
   verify_installation
   log "factory master setup completed"

@@ -423,7 +423,7 @@ function AIModelDrawerContent({
                 ))}
               </select>
               <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
-                聊天模型默认走自动识别。只有特殊渠道协议不稳定时，才建议在这里强制覆盖。
+                聊天模型优先按终态 Base URL 判断协议。这里只有在 Base URL 不是终态接口时，才建议手动强制覆盖。
               </p>
             </div>
           </div>
@@ -452,7 +452,7 @@ function AIModelDrawerContent({
               <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
                 {form.category === "image" || form.category === "video"
                   ? "作图/视频模型这里填写最终可调用接口地址；如果已填写模型级 Base URL，后端不会再自动补任何前缀或路径。"
-                  : "聊天模型按当前 provider 的接口格式填写；如使用 OpenAI 兼容接口，通常填写完整可调用地址。"}
+                  : "聊天模型这里填写终态接口地址。/v1/chat/completions 会固定按 OpenAI 兼容协议处理，/v1/messages 会固定按 Anthropic Messages 处理；chatProtocol=auto 只作为兜底。"}
               </p>
             </div>
             <div className="col-span-2">

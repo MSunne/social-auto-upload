@@ -207,7 +207,7 @@ class CloudAgent:
             ).start()
             threading.Thread(
                 target=self.run_login_fn,
-                args=(str(task["platformType"]), task["accountName"], status_queue, command_queue),
+                args=(str(task["platformType"]), task["accountName"], status_queue, command_queue, False),
                 daemon=True
             ).start()
             self.relay_fn(status_queue, bridge)

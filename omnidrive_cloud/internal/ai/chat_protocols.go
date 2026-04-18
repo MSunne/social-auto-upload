@@ -18,12 +18,9 @@ type sseFrame struct {
 }
 
 func resolveChatProtocol(req ChatRequest) string {
-	explicit := NormalizeChatProtocol(req.ChatProtocol)
-	if explicit != "" && explicit != ChatProtocolAuto {
-		return explicit
-	}
-	if isAnthropicMessagesBaseURL(req.BaseURL) {
-		return ChatProtocolAnthropicMessages
+	configured := ResolveConfiguredChatProtocol(req.BaseURL, req.ChatProtocol)
+	if configured != "" && configured != ChatProtocolAuto {
+		return configured
 	}
 	normalizedModel := strings.ToLower(strings.TrimSpace(req.Model))
 	for _, marker := range []string{"claude", "opus", "sonnet", "haiku"} {
@@ -32,6 +29,22 @@ func resolveChatProtocol(req ChatRequest) string {
 		}
 	}
 	return ChatProtocolOpenAIChatCompletions
+}
+
+// ResolveConfiguredChatProtocol resolves the configured chat protocol while honoring terminal base URLs first.
+func ResolveConfiguredChatProtocol(baseURL string, chatProtocol string) string {
+	if isOpenAIChatCompletionsBaseURL(baseURL) {
+		return ChatProtocolOpenAIChatCompletions
+	}
+	if isAnthropicMessagesBaseURL(baseURL) {
+		return ChatProtocolAnthropicMessages
+	}
+	return NormalizeChatProtocol(chatProtocol)
+}
+
+func isOpenAIChatCompletionsBaseURL(rawURL string) bool {
+	normalized := normalizeURLPathForMatch(rawURL)
+	return strings.HasSuffix(normalized, "/chat/completions") || strings.HasSuffix(normalized, "/v1/chat/completions")
 }
 
 func isAnthropicMessagesBaseURL(rawURL string) bool {

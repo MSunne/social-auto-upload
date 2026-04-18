@@ -396,6 +396,9 @@ class PublishTaskManager:
         platform_type = int(data.get("type"))
         capability = ensure_platform_operation_enabled(platform_type, "publish", db_path=self.db_path)
         platform_name = capability["label"]
+        source_category = str(data.get("sourceCategory") or "").strip() or self._default_source_category(source)
+        execution_engine = str(data.get("executionEngine") or "").strip() or None
+        correlation_id = str(data.get("correlationId") or "").strip() or None
 
         title = str(data.get("title") or "").strip()
         if not title:
@@ -489,7 +492,12 @@ class PublishTaskManager:
                     "productTitle": data.get("productTitle") or "",
                     "isDraft": bool(data.get("isDraft", False)),
                     "source": source,
+                    "sourceCategory": source_category,
                 }
+                if execution_engine:
+                    payload["executionEngine"] = execution_engine
+                if correlation_id:
+                    payload["correlationId"] = correlation_id
                 if thumbnail_payload:
                     payload.update(thumbnail_payload)
                 specs.append(
@@ -991,6 +999,12 @@ class PublishTaskManager:
             "id": row["id"],
             "taskUuid": row["task_uuid"],
             "source": row["source"],
+            "sourceCategory": (
+                str(payload.get("sourceCategory") or "").strip()
+                or self._default_source_category(row["source"])
+            ),
+            "executionEngine": str(payload.get("executionEngine") or "").strip() or None,
+            "correlationId": str(payload.get("correlationId") or "").strip() or None,
             "platformType": row["platform_type"],
             "platformName": row["platform_name"],
             "accountName": row["account_name"],
@@ -1012,6 +1026,17 @@ class PublishTaskManager:
             "verificationData": verification_data,
             "payload": payload,
         }
+
+    @staticmethod
+    def _default_source_category(source):
+        normalized = str(source or "").strip()
+        if normalized == "openclaw_skill":
+            return "openclaw_direct"
+        if normalized.startswith("hermes_"):
+            return normalized
+        if normalized == "local_api":
+            return "omnibull_local"
+        return normalized or "omnibull_local"
 
     def _save_artifact(self, task_uuid, screenshot_data):
         if not screenshot_data or "," not in screenshot_data:

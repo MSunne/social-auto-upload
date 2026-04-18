@@ -14,6 +14,9 @@
 - `openclaw_omnibull_extension`
   - 指向 `../openclaw_extensions/omnibull`
   - 这是本地 `OpenClaw` 调用 `OmniBull / SAU` 的插件工程
+- `openclaw_hermes_extension`
+  - 指向 `../openclaw_extensions/hermes`
+  - 这是本地 `OpenClaw` 调用 `Hermes bridge` 的插件工程
 
 补充说明：
 

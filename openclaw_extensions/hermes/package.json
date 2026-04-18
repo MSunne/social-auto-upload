@@ -1,0 +1,22 @@
+{
+  "name": "hermes",
+  "version": "0.1.0",
+  "description": "OpenClaw plugin for local Hermes bridge cooperation through OmniBull",
+  "type": "module",
+  "files": [
+    "index.js",
+    "index.test.mjs",
+    "openclaw.plugin.json",
+    "skills",
+    "README.md"
+  ],
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ],
+    "install": {
+      "localPath": "openclaw_extensions/hermes",
+      "defaultChoice": "link"
+    }
+  }
+}

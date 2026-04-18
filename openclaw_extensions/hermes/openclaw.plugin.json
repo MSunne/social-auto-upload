@@ -1,0 +1,23 @@
+{
+  "id": "hermes",
+  "skills": [
+    "./skills"
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "localOmniBullBaseUrl": {
+        "type": "string"
+      },
+      "localOmniBullApiKey": {
+        "type": "string"
+      },
+      "localOmniBullTimeoutMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 180000
+      }
+    }
+  }
+}

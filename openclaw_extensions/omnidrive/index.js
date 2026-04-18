@@ -11,6 +11,9 @@ const OPENCLAW_MAIN_CHAT_SOURCE = "openclaw_main_chat";
 const FINAL_AI_JOB_STATUSES = new Set(["success", "completed", "failed", "cancelled", "needs_verify"]);
 const LONG_JOB_OBSERVATION_WINDOW_MS = 5 * 60 * 1000;
 const LONG_JOB_OBSERVATION_POLL_INTERVAL_MS = 15 * 1000;
+const TOOL_MEDIA_FETCH_TIMEOUT_MS = 15000;
+const TOOL_MAX_EMBEDDED_IMAGE_BYTES = 8 * 1024 * 1024;
+const TOOL_MAX_EMBEDDED_IMAGE_COUNT = 1;
 
 let cachedSession = null;
 
@@ -53,13 +56,20 @@ function ensure(condition, message) {
   }
 }
 
-function toolResult(data) {
+function textBlock(text) {
+  return {
+    type: "text",
+    text: String(text || ""),
+  };
+}
+
+function toolResult(data, content = null) {
+  if (Array.isArray(content) && content.length > 0) {
+    return { content };
+  }
   return {
     content: [
-      {
-        type: "text",
-        text: JSON.stringify(data, null, 2),
-      },
+      textBlock(JSON.stringify(data, null, 2)),
     ],
   };
 }
@@ -473,6 +483,265 @@ function summarizeWorkspace(workspace) {
   };
 }
 
+function normalizeArtifactDetails(item) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+  const artifactType = String(item.artifactType || "").trim();
+  const mimeType = String(item.mimeType || "").trim();
+  const fileName = String(item.fileName || item.title || "").trim();
+  const publicUrl = String(item.publicUrl || item.url || "").trim();
+  const textContent = String(item.textContent || "").trim();
+  return {
+    artifactType,
+    mimeType,
+    fileName,
+    publicUrl,
+    textContent,
+  };
+}
+
+function collectMediaResultDetails(result = {}) {
+  const job = result?.job && typeof result.job === "object" ? result.job : {};
+  const workspace = result?.workspace && typeof result.workspace === "object" ? result.workspace : {};
+  const rawArtifacts = [];
+  for (const source of [workspace?.artifacts, result?.artifacts]) {
+    if (!Array.isArray(source)) {
+      continue;
+    }
+    for (const item of source) {
+      const normalized = normalizeArtifactDetails(item);
+      if (normalized) {
+        rawArtifacts.push(normalized);
+      }
+    }
+  }
+
+  const publicUrls = [];
+  const seenUrls = new Set();
+  for (const source of [workspace?.publicUrls, result?.publicUrls]) {
+    if (!Array.isArray(source)) {
+      continue;
+    }
+    for (const item of source) {
+      const url = String(item || "").trim();
+      if (url && !seenUrls.has(url)) {
+        seenUrls.add(url);
+        publicUrls.push(url);
+      }
+    }
+  }
+  for (const artifact of rawArtifacts) {
+    if (artifact.publicUrl && !seenUrls.has(artifact.publicUrl)) {
+      seenUrls.add(artifact.publicUrl);
+      publicUrls.push(artifact.publicUrl);
+    }
+  }
+
+  return {
+    jobId: String(job?.id || workspace?.jobId || "").trim(),
+    jobType: String(job?.jobType || workspace?.jobType || "").trim().toLowerCase(),
+    modelName: String(job?.modelName || workspace?.modelName || "").trim(),
+    status: String(workspace?.status || job?.status || "").trim(),
+    message: String(workspace?.message || result?.message || "").trim(),
+    text: String(workspace?.text || result?.text || "").trim(),
+    nextStep: String(result?.nextStep || "").trim(),
+    publicUrls,
+    artifacts: rawArtifacts,
+  };
+}
+
+function inferMediaJobType(preferredJobType, details) {
+  const explicit = String(preferredJobType || details?.jobType || "").trim().toLowerCase();
+  if (explicit === "image" || explicit === "video") {
+    return explicit;
+  }
+  for (const artifact of details?.artifacts || []) {
+    if (artifact.mimeType.startsWith("image/")) {
+      return "image";
+    }
+    if (artifact.mimeType.startsWith("video/")) {
+      return "video";
+    }
+  }
+  return "";
+}
+
+function summarizeMediaToolPayload(preferredJobType, result = {}) {
+  const details = collectMediaResultDetails(result);
+  const jobType = inferMediaJobType(preferredJobType, details);
+  const noun = jobType === "video" ? "视频" : "图片";
+  const lines = [];
+
+  if (details.publicUrls.length > 0) {
+    lines.push(`${noun}已生成完成。`);
+  } else if (details.jobId) {
+    lines.push(`${noun}任务已提交。`);
+  } else {
+    lines.push(`${noun}请求已处理。`);
+  }
+
+  if (details.jobId) {
+    lines.push(`任务 ID：${details.jobId}`);
+  }
+  if (details.modelName) {
+    lines.push(`模型：${details.modelName}`);
+  }
+  if (details.status) {
+    lines.push(`状态：${details.status}`);
+  }
+  if (details.publicUrls.length > 0) {
+    lines.push("结果地址：");
+    lines.push(...details.publicUrls.slice(0, 3));
+  } else if (details.nextStep) {
+    lines.push(details.nextStep);
+  }
+  if (details.artifacts.length > 0) {
+    lines.push("结果明细：");
+    for (const artifact of details.artifacts.slice(0, 5)) {
+      const typeLabel = artifact.artifactType || "artifact";
+      const fileLabel = artifact.fileName || "unnamed";
+      let line = `- ${typeLabel} ${fileLabel}`;
+      if (artifact.mimeType) {
+        line += ` (${artifact.mimeType})`;
+      }
+      if (artifact.publicUrl) {
+        line += `: ${artifact.publicUrl}`;
+      } else if (artifact.textContent) {
+        line += `: ${artifact.textContent.slice(0, 120)}`;
+      }
+      lines.push(line);
+    }
+  }
+  if (details.message) {
+    lines.push(`消息：${details.message}`);
+  }
+  if (details.text) {
+    lines.push(details.text);
+  }
+
+  return {
+    jobType,
+    details,
+    summaryText: lines.join("\n"),
+  };
+}
+
+function inferImageMimeType(url, fallbackMimeType = "") {
+  const normalizedFallback = String(fallbackMimeType || "").trim().split(";")[0].trim().toLowerCase();
+  if (normalizedFallback.startsWith("image/")) {
+    return normalizedFallback;
+  }
+  const lowerUrl = String(url || "").trim().toLowerCase();
+  if (lowerUrl.endsWith(".png")) {
+    return "image/png";
+  }
+  if (lowerUrl.endsWith(".jpg") || lowerUrl.endsWith(".jpeg")) {
+    return "image/jpeg";
+  }
+  if (lowerUrl.endsWith(".webp")) {
+    return "image/webp";
+  }
+  if (lowerUrl.endsWith(".gif")) {
+    return "image/gif";
+  }
+  return "";
+}
+
+function collectEmbeddedImageCandidates(details) {
+  const candidates = [];
+  const seen = new Set();
+  for (const artifact of details?.artifacts || []) {
+    if (!artifact.publicUrl) {
+      continue;
+    }
+    const mimeType = inferImageMimeType(artifact.publicUrl, artifact.mimeType);
+    if (!mimeType.startsWith("image/")) {
+      continue;
+    }
+    if (seen.has(artifact.publicUrl)) {
+      continue;
+    }
+    seen.add(artifact.publicUrl);
+    candidates.push({
+      url: artifact.publicUrl,
+      mimeType,
+    });
+  }
+  for (const url of details?.publicUrls || []) {
+    if (seen.has(url)) {
+      continue;
+    }
+    const mimeType = inferImageMimeType(url);
+    if (!mimeType.startsWith("image/")) {
+      continue;
+    }
+    seen.add(url);
+    candidates.push({ url, mimeType });
+  }
+  return candidates;
+}
+
+async function fetchImageContentBlock(url, fallbackMimeType = "", options = {}) {
+  const fetchImpl = typeof options.fetchImpl === "function" ? options.fetchImpl : fetch;
+  const timeoutMs = Number(options.timeoutMs || TOOL_MEDIA_FETCH_TIMEOUT_MS);
+  const maxBytes = Number(options.maxBytes || TOOL_MAX_EMBEDDED_IMAGE_BYTES);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetchImpl(url, { signal: controller.signal });
+    ensure(response?.ok, `加载图片失败: ${url}`);
+
+    const contentLength = Number(response.headers?.get?.("content-length") || 0);
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+      throw new Error(`图片过大，无法内嵌预览: ${url}`);
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length > maxBytes) {
+      throw new Error(`图片过大，无法内嵌预览: ${url}`);
+    }
+
+    const mimeType = inferImageMimeType(url, response.headers?.get?.("content-type") || fallbackMimeType);
+    ensure(mimeType.startsWith("image/"), `结果不是图片资源: ${url}`);
+    return {
+      type: "image",
+      mimeType,
+      data: buffer.toString("base64"),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function buildMediaToolResultContent(preferredJobType, result = {}, options = {}) {
+  const summary = summarizeMediaToolPayload(preferredJobType, result);
+  const content = [textBlock(summary.summaryText || JSON.stringify(result, null, 2))];
+  if (summary.jobType !== "image") {
+    return content;
+  }
+
+  let embeddedCount = 0;
+  for (const candidate of collectEmbeddedImageCandidates(summary.details)) {
+    if (embeddedCount >= TOOL_MAX_EMBEDDED_IMAGE_COUNT) {
+      break;
+    }
+    try {
+      content.push(await fetchImageContentBlock(candidate.url, candidate.mimeType, options));
+      embeddedCount += 1;
+    } catch {
+      // Keep the tool result usable even if the preview fetch fails.
+    }
+  }
+
+  return content;
+}
+
+async function buildMediaToolResult(preferredJobType, result = {}, options = {}) {
+  return toolResult(result, await buildMediaToolResultContent(preferredJobType, result, options));
+}
+
 function normalizeReferenceImages(items) {
   if (!Array.isArray(items)) {
     return [];
@@ -879,17 +1148,20 @@ async function executeImage(api, params) {
   const job = await createAIJob(api, payload, params || {});
   const wait = params.wait !== false;
   if (!wait) {
-    return toolResult({ job, nextStep: "使用 omnidrive_job_detail 查询结果" });
+    return buildMediaToolResult("image", { job, nextStep: "使用 omnidrive_job_detail 查询结果" });
   }
 
-  const workspace = await pollWorkspaceUntilFinal(api, job.id, {
+  const pollResult = await pollWorkspaceUntilFinal(api, job.id, {
     ...params,
     timeoutMs: params.timeoutMs || 120000,
     pollIntervalMs: params.pollIntervalMs || 3000,
   });
-  return toolResult({
+  return buildMediaToolResult("image", {
     job,
-    workspace: summarizeWorkspace(workspace),
+    workspace: summarizeWorkspace(pollResult.workspace),
+    ...(pollResult.waitExpired && !pollResult.terminal
+      ? { waitExpired: true, nextStep: "图片仍在生成中，请稍后使用 omnidrive_job_detail 查询结果" }
+      : {}),
   });
 }
 
@@ -926,7 +1198,7 @@ async function executeVideo(api, params) {
   const job = await createAIJob(api, payload, params || {});
   const wait = params.wait === true;
   if (!wait) {
-    return toolResult({ job, nextStep: "视频默认异步生成，请使用 omnidrive_job_detail 轮询结果" });
+    return buildMediaToolResult("video", { job, nextStep: "视频默认异步生成，请使用 omnidrive_job_detail 轮询结果" });
   }
 
   const pollResult = await pollWorkspaceUntilFinal(api, job.id, {
@@ -943,7 +1215,7 @@ async function executeVideo(api, params) {
     result.nextStep =
       "任务仍在 OmniDrive 云端执行，请稍后使用 omnidrive_job_detail 查询。若已配置发布目标，生成完成后会继续自动创建 OmniBull 发布任务。";
   }
-  return toolResult(result);
+  return buildMediaToolResult("video", result);
 }
 
 async function executeJobs(api, params) {
@@ -1002,6 +1274,10 @@ async function executeJobDetail(api, params) {
     result.waitExpired = true;
     result.nextStep =
       "任务仍在 OmniDrive 云端执行，请稍后继续使用 omnidrive_job_detail 查询。若已配置发布目标，生成完成后会继续自动创建 OmniBull 发布任务。";
+  }
+  const summary = summarizeMediaToolPayload("", result);
+  if (summary.jobType === "image" || summary.jobType === "video") {
+    return buildMediaToolResult(summary.jobType, result);
   }
   return toolResult(result);
 }
@@ -1233,4 +1509,14 @@ const plugin = {
 };
 
 export default plugin;
-export { buildPublishMetadataInputPayload, getLongJobObservationRemainingMs, isLongRunningJobType, pollWorkspaceUntilFinal };
+export {
+  buildMediaToolResultContent,
+  buildPublishMetadataInputPayload,
+  collectMediaResultDetails,
+  fetchImageContentBlock,
+  getLongJobObservationRemainingMs,
+  inferMediaJobType,
+  isLongRunningJobType,
+  pollWorkspaceUntilFinal,
+  summarizeMediaToolPayload,
+};

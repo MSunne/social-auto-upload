@@ -7,6 +7,8 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 APP_ROOT="${OMNIBULL_APP_ROOT:-/opt/omnibull/social-auto-upload}"
+APP_USER="${OMNIBULL_APP_USER:-sun}"
+APP_GROUP="${OMNIBULL_APP_GROUP:-${APP_USER}}"
 PERSISTENT_ROOT="${OMNIBULL_PERSISTENT_ROOT:-/persistent/omnibull}"
 RUNTIME_DIR="${OMNIBULL_RUNTIME_DIR:-${PERSISTENT_ROOT}/runtime}"
 WORKSPACE_DIR="${OMNIBULL_WORKSPACE_DIR:-${PERSISTENT_ROOT}/workspace}"
@@ -118,12 +120,22 @@ PY
 }
 
 
+normalize_persistent_permissions() {
+  log "normalizing ownership for mutable OmniBull state"
+  if [[ -d "${PERSISTENT_ROOT}" ]]; then
+    chown -R "${APP_USER}:${APP_GROUP}" "${PERSISTENT_ROOT}"
+    find "${PERSISTENT_ROOT}" -type d -exec chmod 0755 {} +
+  fi
+}
+
+
 main() {
   stop_services
   clear_device_identity
   clear_runtime_files
   clear_workspace_files
   reset_local_database
+  normalize_persistent_permissions
   restart_services
   log "factory capture preparation completed"
 }

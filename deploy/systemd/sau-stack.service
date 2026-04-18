@@ -10,8 +10,11 @@ User=sun
 Group=sun
 WorkingDirectory=/opt/omnibull/social-auto-upload
 Environment=HOME=/home/sun
+Environment=OMNIBULL_APP_USER=sun
+Environment=OMNIBULL_APP_GROUP=sun
 EnvironmentFile=-/etc/omnibull/omnibull.env
 ExecStartPre=+/usr/bin/install -d -o root -g sun -m 0775 /etc/omnibull
+ExecStartPre=+/opt/omnibull/social-auto-upload/scripts/ensure_omnibull_runtime_permissions.sh
 ExecStart=/opt/omnibull/social-auto-upload/scripts/sau_linux.sh run
 Restart=always
 RestartSec=5

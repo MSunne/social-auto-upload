@@ -127,11 +127,11 @@ func validateAIModelBillingMode(billingMode string) bool {
 	}
 }
 
-func normalizeAIModelChatProtocol(category string, value string) string {
+func normalizeAIModelChatProtocol(category string, value string, baseURL *string) string {
 	if normalizeAIModelCategory(category) != "chat" {
 		return aiclient.ChatProtocolAuto
 	}
-	normalized := aiclient.NormalizeChatProtocol(value)
+	normalized := aiclient.ResolveConfiguredChatProtocol(valueOrEmpty(baseURL), value)
 	if normalized == "" {
 		return ""
 	}
@@ -215,7 +215,7 @@ func normalizeCreateAIModelPayload(payload adminCreateAIModelRequest) (store.Cre
 		return store.CreateAIModelInput{}, errInvalidAIModelBillingMode
 	}
 	billingMode := normalizeAIModelBillingMode(category, rawBillingMode)
-	chatProtocol := normalizeAIModelChatProtocol(category, payload.ChatProtocol)
+	chatProtocol := normalizeAIModelChatProtocol(category, payload.ChatProtocol, payload.BaseURL)
 	if chatProtocol == "" {
 		return store.CreateAIModelInput{}, errInvalidAIModelChatProtocol
 	}
@@ -277,7 +277,7 @@ func normalizeCreateAIModelPayload(payload adminCreateAIModelRequest) (store.Cre
 }
 
 // 规范化更新AI模型载荷，统一管理端AI模型链路的输入格式和后续处理行为。
-func normalizeUpdateAIModelPayload(payload adminUpdateAIModelRequest) (store.UpdateAIModelInput, error) {
+func normalizeUpdateAIModelPayload(payload adminUpdateAIModelRequest, currentCategory string) (store.UpdateAIModelInput, error) {
 	if payload.ModelAlias != nil && strings.TrimSpace(valueOrEmpty(payload.ModelAlias)) == "" {
 		return store.UpdateAIModelInput{}, renderableError("modelAlias cannot be empty")
 	}
@@ -313,9 +313,13 @@ func normalizeUpdateAIModelPayload(payload adminUpdateAIModelRequest) (store.Upd
 		resolvedBillingMode := normalizeAIModelBillingMode(firstNonEmptyAdminValue(resolvedCategory, valueOrEmpty(payload.Category)), rawBillingMode)
 		input.BillingMode = &resolvedBillingMode
 	}
-	if payload.ChatProtocol != nil {
-		resolvedCategoryForProtocol := firstNonEmptyAdminValue(resolvedCategory, valueOrEmpty(payload.Category))
-		resolvedChatProtocol := normalizeAIModelChatProtocol(resolvedCategoryForProtocol, valueOrEmpty(payload.ChatProtocol))
+	resolvedCategoryForProtocol := firstNonEmptyAdminValue(resolvedCategory, normalizeAIModelCategory(currentCategory))
+	shouldUpdateChatProtocol := payload.ChatProtocol != nil
+	if normalizeAIModelCategory(resolvedCategoryForProtocol) == "chat" && payload.BaseURL != nil {
+		shouldUpdateChatProtocol = true
+	}
+	if shouldUpdateChatProtocol {
+		resolvedChatProtocol := normalizeAIModelChatProtocol(resolvedCategoryForProtocol, valueOrEmpty(payload.ChatProtocol), payload.BaseURL)
 		if resolvedChatProtocol == "" {
 			return store.UpdateAIModelInput{}, errInvalidAIModelChatProtocol
 		}
@@ -492,8 +496,18 @@ func (h *AdminAIHandler) UpdateModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	currentModel, err := h.app.Store.GetAIModelByID(r.Context(), modelID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to inspect AI model")
+		return
+	}
+	if currentModel == nil {
+		render.Error(w, http.StatusNotFound, "AI model not found")
+		return
+	}
+
 	admin := httpcontext.CurrentAdmin(r.Context())
-	input, err := normalizeUpdateAIModelPayload(payload)
+	input, err := normalizeUpdateAIModelPayload(payload, currentModel.Category)
 	if err != nil {
 		render.Error(w, http.StatusBadRequest, err.Error())
 		return

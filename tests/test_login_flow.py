@@ -92,7 +92,25 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(login_module.get_login_wait_timeout(command_queue=object()), 200)
         self.assertGreater(login_module.get_login_wait_timeout(command_queue=None), 200)
 
-    async def test_finalize_successful_login_keeps_local_browser_open_until_user_closes_it(self):
+    async def test_finalize_successful_login_closes_browser_resources_by_default(self):
+        status_queue = Queue()
+        page = mock.AsyncMock()
+        context = mock.AsyncMock()
+        browser = mock.AsyncMock()
+
+        await login_module.finalize_successful_login(
+            status_queue,
+            page,
+            context,
+            browser,
+        )
+
+        self.assertEqual(status_queue.get_nowait(), "200")
+        page.close.assert_awaited_once()
+        context.close.assert_awaited_once()
+        browser.close.assert_awaited_once()
+
+    async def test_finalize_successful_login_keeps_browser_open_when_explicitly_requested(self):
         status_queue = Queue()
         page = mock.AsyncMock()
         context = mock.AsyncMock()
@@ -108,7 +126,7 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
                 page,
                 context,
                 browser,
-                keep_browser_open=True,
+                keep_browser_open_on_success=True,
             )
 
         self.assertEqual(status_queue.get_nowait(), "200")
@@ -116,6 +134,37 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
         page.close.assert_not_awaited()
         context.close.assert_not_awaited()
         browser.close.assert_not_awaited()
+
+    async def test_try_fast_persist_login_state_polls_briefly_until_cookie_ready(self):
+        context = mock.Mock()
+        context.storage_state = mock.AsyncMock(side_effect=[
+            {"cookies": [], "origins": []},
+            {"cookies": [{"name": "sessionid"}], "origins": []},
+        ])
+        page = mock.Mock()
+        page.is_closed.return_value = False
+
+        with mock.patch.object(
+            login_module,
+            "save_login_account",
+        ) as save_login_account_mock, mock.patch.object(
+            login_module,
+            "drain_remote_actions",
+            new=mock.AsyncMock(),
+        ):
+            file_name = await login_module.try_fast_persist_login_state(
+                context,
+                3,
+                "测试账号",
+                "douyin",
+                page=page,
+                wait_timeout=0.5,
+                poll_interval=0.01,
+            )
+
+        self.assertTrue(file_name.endswith(".json"))
+        save_login_account_mock.assert_called_once()
+        self.assertEqual(context.storage_state.await_count, 2)
 
     def test_dedupe_verification_option_labels_prefers_specific_choices(self):
         labels = [
@@ -543,6 +592,64 @@ class LoginFlowTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result)
         self.assertGreaterEqual(success_validator.await_count, 2)
+
+    async def test_wait_for_login_result_uses_success_validator_after_qr_scanned_without_navigation(self):
+        page = _FakePage()
+        url_changed_event = threading.Event()
+
+        class _FakeLoop:
+            def __init__(self):
+                self._value = -1
+
+            def time(self):
+                self._value += 0.5
+                return self._value
+
+        async def immediate_sleep(_seconds):
+            return None
+
+        success_validator = mock.AsyncMock(return_value=True)
+
+        with mock.patch.object(
+            login_module.asyncio,
+            "get_running_loop",
+            return_value=_FakeLoop(),
+        ), mock.patch.object(
+            login_module,
+            "sync_login_qr_state",
+            new=mock.AsyncMock(return_value={"isExpired": False, "isScanned": True}),
+        ), mock.patch.object(
+            login_module,
+            "is_locator_visible",
+            new=mock.AsyncMock(return_value=False),
+        ), mock.patch.object(
+            login_module,
+            "detect_verification_challenge",
+            new=mock.AsyncMock(return_value=None),
+        ), mock.patch.object(
+            login_module,
+            "drain_remote_actions",
+            new=mock.AsyncMock(return_value=False),
+        ), mock.patch.object(
+            login_module.asyncio,
+            "sleep",
+            new=immediate_sleep,
+        ):
+            result = await login_module.wait_for_login_result(
+                page,
+                original_url=page.url,
+                url_changed_event=url_changed_event,
+                status_queue=None,
+                command_queue=None,
+                timeout=4,
+                qr_locator=mock.Mock(),
+                success_validator=success_validator,
+                success_check_interval=0,
+                allow_qr_hidden_success=False,
+            )
+
+        self.assertTrue(result)
+        success_validator.assert_awaited()
 
     async def test_wait_for_login_result_ignores_weak_verification_signal_while_waiting_scan(self):
         page = _FakePage()
