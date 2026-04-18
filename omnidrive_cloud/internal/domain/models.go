@@ -780,6 +780,61 @@ type DigitalHumanTask struct {
 	WorkingDir               *string                         `json:"-"`
 }
 
+type MixVideoAsset struct {
+	StorageKey string `json:"storageKey"`
+	PublicURL  string `json:"publicUrl"`
+	FileName   string `json:"fileName"`
+	MimeType   string `json:"mimeType"`
+	SizeBytes  *int64 `json:"sizeBytes,omitempty"`
+}
+
+type MixVideoProgress struct {
+	Current    int     `json:"current"`
+	Total      int     `json:"total"`
+	Percentage float64 `json:"percentage"`
+	Message    string  `json:"message,omitempty"`
+}
+
+type MixVideoBillingPreview struct {
+	CreditsPerSecond         float64 `json:"creditsPerSecond"`
+	EstimatedDurationSeconds int     `json:"estimatedDurationSeconds"`
+	EstimatedCredits         float64 `json:"estimatedCredits"`
+	CanAfford                bool    `json:"canAfford"`
+	CreditBalance            float64 `json:"creditBalance"`
+	ShortfallCredits         float64 `json:"shortfallCredits"`
+}
+
+type MixVideoTask struct {
+	ID                       string            `json:"id"`
+	OwnerUserID              string            `json:"ownerUserId"`
+	Source                   string            `json:"source"`
+	Status                   string            `json:"status"`
+	RemoteTaskID             *string           `json:"remoteTaskId,omitempty"`
+	SourceAssets             []MixVideoAsset   `json:"sourceAssets"`
+	RefAudioAsset            MixVideoAsset     `json:"refAudioAsset"`
+	ResultAsset              *MixVideoAsset    `json:"resultAsset,omitempty"`
+	ScriptText               string            `json:"scriptText"`
+	EstimatedDurationSeconds int               `json:"estimatedDurationSeconds"`
+	EstimatedCredits         float64           `json:"estimatedCredits"`
+	EstimatedCreditsMillis   int64             `json:"-"`
+	ActualDurationSeconds    *int              `json:"actualDurationSeconds,omitempty"`
+	FinalCredits             *float64          `json:"finalCredits,omitempty"`
+	FinalCreditsMillis       *int64            `json:"-"`
+	BillingStatus            string            `json:"billingStatus"`
+	BillingPayload           json.RawMessage   `json:"billingPayload,omitempty"`
+	Progress                 *MixVideoProgress `json:"progress,omitempty"`
+	RequestPayload           json.RawMessage   `json:"requestPayload,omitempty"`
+	RemoteResponsePayload    json.RawMessage   `json:"remoteResponsePayload,omitempty"`
+	ErrorMessage             *string           `json:"errorMessage,omitempty"`
+	StartedAt                *time.Time        `json:"startedAt,omitempty"`
+	CompletedAt              *time.Time        `json:"completedAt,omitempty"`
+	CreatedAt                time.Time         `json:"createdAt"`
+	UpdatedAt                time.Time         `json:"updatedAt"`
+	LeaseToken               *string           `json:"-"`
+	LeaseExpiresAt           *time.Time        `json:"-"`
+	WorkingDir               *string           `json:"-"`
+}
+
 type AgentAIJobPackage struct {
 	Job         AIJob               `json:"job"`
 	Skill       *ProductSkill       `json:"skill,omitempty"`

@@ -85,12 +85,16 @@ class OmniDriveOpenAIProxyHelpersTests(unittest.TestCase):
 
             data = json.loads(config_path.read_text(encoding="utf-8"))
             defaults = data["agents"]["defaults"]["models"]
+            provider = data["models"]["providers"]["omnidrive"]
 
             self.assertNotIn("omnidrive/gpt-5-4", defaults)
             self.assertNotIn("omnidrive/default-chat", defaults)
             self.assertEqual(defaults["omnidrive/gpt-5.4"]["alias"], "omni")
             self.assertEqual(defaults["omnidrive/qwen3.5-plus"]["alias"], "omni-qwen")
-            self.assertEqual(data["models"]["providers"]["omnidrive"]["apiKey"], "fresh-token")
+            self.assertEqual(provider["baseUrl"], "http://127.0.0.1:8410/openai/v1")
+            self.assertEqual(provider["api"], "openai-completions")
+            self.assertNotIn("apiKey", provider)
+            self.assertNotIn("models", provider)
 
     def test_sync_openclaw_configs_overwrites_model_cache_with_online_set(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -141,8 +145,9 @@ class OmniDriveOpenAIProxyHelpersTests(unittest.TestCase):
             defaults = data["agents"]["defaults"]["models"]
 
             self.assertEqual(provider["baseUrl"], "https://aitoplus.com/openai/v1")
-            self.assertEqual(provider["apiKey"], "fresh-token")
-            self.assertEqual([item["id"] for item in provider["models"]], ["claude-opus-4-6-thinking"])
+            self.assertEqual(provider["api"], "openai-completions")
+            self.assertNotIn("apiKey", provider)
+            self.assertNotIn("models", provider)
             self.assertEqual(defaults, {"omnidrive/claude-opus-4-6-thinking": {"alias": "omni"}})
 
     def test_sync_openclaw_configs_exposes_every_online_model_in_defaults(self):
@@ -225,15 +230,59 @@ class OmniDriveOpenAIProxyHelpersTests(unittest.TestCase):
             agent_models = json.loads(models_path.read_text(encoding="utf-8"))
 
             self.assertEqual(root_config["models"]["providers"]["omnidrive"]["baseUrl"], "https://aitoplus.com/openai/v1")
-            self.assertEqual(root_config["models"]["providers"]["omnidrive"]["apiKey"], "fresh-token")
+            self.assertEqual(root_config["models"]["providers"]["omnidrive"]["api"], "openai-completions")
+            self.assertNotIn("apiKey", root_config["models"]["providers"]["omnidrive"])
+            self.assertNotIn("models", root_config["models"]["providers"]["omnidrive"])
             self.assertEqual(root_config["agents"]["defaults"]["workspace"], "/tmp/openclaw-workspace")
             self.assertEqual(root_config["agents"]["defaults"]["models"]["omnidrive/deepseek-chat"]["alias"], "omni")
             self.assertEqual(root_config["agents"]["defaults"]["models"]["omnidrive/gpt-5.4"]["alias"], "omni-gpt")
             self.assertTrue(models_path.exists())
+            self.assertEqual(agent_models["providers"]["omnidrive"]["apiKey"], "fresh-token")
             self.assertEqual(
                 [item["id"] for item in agent_models["providers"]["omnidrive"]["models"]],
                 ["deepseek-chat", "gpt-5.4"],
             )
+
+    def test_sync_openclaw_configs_skips_writes_when_serialized_content_unchanged(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "openclaw.json"
+            models_path = Path(temp_dir) / "agents" / "main" / "agent" / "models.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "defaults": {
+                                "workspace": "/tmp/openclaw-workspace",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            original_paths = sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS
+            try:
+                sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS = (config_path, models_path)
+                first_changed_paths = sau_backend.sync_openclaw_omnidrive_model_configs(
+                    [{"modelName": "deepseek-chat"}, {"modelName": "gpt-5.4"}],
+                    api_base_url="https://aitoplus.com",
+                    access_token="fresh-token",
+                    default_chat_model="deepseek-chat",
+                )
+                second_changed_paths = sau_backend.sync_openclaw_omnidrive_model_configs(
+                    [{"modelName": "deepseek-chat"}, {"modelName": "gpt-5.4"}],
+                    api_base_url="https://aitoplus.com",
+                    access_token="fresh-token",
+                    default_chat_model="deepseek-chat",
+                )
+            finally:
+                sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS = original_paths
+
+            self.assertEqual(
+                first_changed_paths,
+                [str(config_path), str(models_path)],
+            )
+            self.assertEqual(second_changed_paths, [])
 
     def test_summarize_openai_media_tool_result_includes_urls_and_artifacts(self):
         content = json.dumps(

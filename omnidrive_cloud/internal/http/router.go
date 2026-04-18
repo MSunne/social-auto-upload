@@ -31,6 +31,7 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 	taskHandler := handlers.NewTaskHandler(app)
 	aiHandler := handlers.NewAIHandler(app)
 	digitalHumanHandler := handlers.NewDigitalHumanTaskHandler(app)
+	mixVideoHandler := handlers.NewMixVideoTaskHandler(app)
 	billingHandler := handlers.NewBillingHandler(app)
 	partnerHandler := handlers.NewPartnerHandler(app)
 	agentHandler := handlers.NewAgentHandler(app)
@@ -157,6 +158,13 @@ func NewRouter(app *appstate.App) stdhttp.Handler {
 				digitalHuman.Get("/tasks", digitalHumanHandler.List)
 				digitalHuman.Post("/tasks", digitalHumanHandler.Create)
 				digitalHuman.Get("/tasks/{taskId}", digitalHumanHandler.Detail)
+			})
+
+			private.Route("/mix-video", func(mixVideo chi.Router) {
+				mixVideo.Get("/billing-preview", mixVideoHandler.BillingPreview)
+				mixVideo.Get("/tasks", mixVideoHandler.List)
+				mixVideo.Post("/tasks", mixVideoHandler.Create)
+				mixVideo.Get("/tasks/{taskId}", mixVideoHandler.Detail)
 			})
 
 			private.Route("/billing", func(billing chi.Router) {

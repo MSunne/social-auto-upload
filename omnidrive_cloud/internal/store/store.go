@@ -798,6 +798,58 @@ type ListDigitalHumanTasksFilter struct {
 	Limit           int
 }
 
+type CreateMixVideoTaskInput struct {
+	ID                       string
+	OwnerUserID              string
+	Source                   string
+	Status                   string
+	SourceAssets             []byte
+	RefAudioAsset            []byte
+	ScriptText               string
+	EstimatedDurationSeconds int
+	EstimatedCreditsMillis   int64
+	BillingStatus            string
+	BillingPayload           []byte
+	Progress                 []byte
+	RequestPayload           []byte
+}
+
+type UpdateMixVideoTaskExecutionInput struct {
+	Status                *string
+	RemoteTaskID          *string
+	RemoteTaskTouched     bool
+	RequestPayload        []byte
+	RequestPayloadTouched bool
+	ResultAsset           []byte
+	ResultAssetTouched    bool
+	ActualDurationSeconds *int
+	ActualDurationTouched bool
+	FinalCreditsMillis    *int64
+	FinalCreditsTouched   bool
+	BillingStatus         *string
+	BillingStatusTouched  bool
+	BillingPayload        []byte
+	BillingPayloadTouched bool
+	Progress              []byte
+	ProgressTouched       bool
+	RemoteResponsePayload []byte
+	RemotePayloadTouched  bool
+	ErrorMessage          *string
+	StartedAt             *time.Time
+	StartedTouched        bool
+	CompletedAt           *time.Time
+	CompletedTouched      bool
+	WorkingDir            *string
+	WorkingDirTouched     bool
+}
+
+type ListMixVideoTasksFilter struct {
+	Status          string
+	BeforeUpdatedAt *time.Time
+	BeforeID        string
+	Limit           int
+}
+
 type LinkAIJobPublishTaskInput struct {
 	JobID       string
 	TaskID      string

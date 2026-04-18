@@ -204,6 +204,22 @@ export function SettingsView() {
                 </label>
               </div>
 
+              <InputField
+                label="混剪单价（积分 / 秒）"
+                type="number"
+                value={String(formData.mixVideoCreditsPerSecond ?? 0)}
+                onChange={(value) =>
+                  setFormData((current) => ({
+                    ...current,
+                    mixVideoCreditsPerSecond: value === "" ? 0 : Number(value),
+                  }))
+                }
+                placeholder="0.300"
+              />
+              <p className="-mt-2 text-xs text-[var(--color-text-secondary)]">
+                支持最多 3 位小数。创建混剪任务时先按文案预估预扣，完成后按成片时长结算。
+              </p>
+
               <div>
                 <label className="mb-1 block text-sm font-medium">系统管理员联系邮箱</label>
                 <input
@@ -560,6 +576,7 @@ function buildSystemConfigUpdatePayload(formData: Partial<AdminSystemConfig>) {
       dailyLimit: formData.smsRegistration?.dailyLimit ?? 10,
       codeLength: formData.smsRegistration?.codeLength ?? 6,
     },
+    mixVideoCreditsPerSecond: formData.mixVideoCreditsPerSecond ?? 0,
     defaultChatModel: formData.defaultChatModel ?? "",
     promptOptimizeModel: formData.promptOptimizeModel ?? "",
     defaultImageModel: formData.defaultImageModel ?? "",

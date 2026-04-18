@@ -825,6 +825,8 @@ type AdminSystemSettingsRecord struct {
 	SMSRegistration                    AdminSMSRegistrationConfig `json:"smsRegistration"`
 	DigitalHumanCreditsPerSecond       int64                      `json:"digitalHumanCreditsPerSecond"`
 	DigitalHumanCreditsPerSecondMillis int64                      `json:"-"`
+	MixVideoCreditsPerSecond           int64                      `json:"mixVideoCreditsPerSecond"`
+	MixVideoCreditsPerSecondMillis     int64                      `json:"-"`
 	DigitalHumanShoppingDefaultModel   string                     `json:"digitalHumanShoppingDefaultModel"`
 	DigitalHumanSpeechDefaultModel     string                     `json:"digitalHumanSpeechDefaultModel"`
 	DefaultChatModel                   string                     `json:"defaultChatModel"`
@@ -853,6 +855,7 @@ type AdminSystemConfig struct {
 	BillingManualSupport             AdminManualSupportConfig   `json:"billingManualSupport"`
 	SMSRegistration                  AdminSMSRegistrationConfig `json:"smsRegistration"`
 	DigitalHumanCreditsPerSecond     float64                    `json:"digitalHumanCreditsPerSecond"`
+	MixVideoCreditsPerSecond         float64                    `json:"mixVideoCreditsPerSecond"`
 	DigitalHumanShoppingDefaultModel string                     `json:"digitalHumanShoppingDefaultModel"`
 	DigitalHumanSpeechDefaultModel   string                     `json:"digitalHumanSpeechDefaultModel"`
 	DefaultChatModel                 string                     `json:"defaultChatModel"`

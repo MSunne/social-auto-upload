@@ -27,7 +27,7 @@
       "runningTaskCount": 0,
       "needsVerifyTaskCount": 0,
       "failedTaskCount": 0,
-      "aiJobCount": 9,
+      "aiJobCount": 12,
       "activeAiJobCount": 0
     }
   },
@@ -61,13 +61,13 @@
     "needsSync": false,
     "assetCount": 1,
     "message": null,
-    "lastSyncedAt": "2026-04-17T19:39:33.247+08:00",
+    "lastSyncedAt": "2026-04-18T16:13:28.25146+08:00",
     "createdAt": "2026-03-21T16:32:04.522283+08:00",
-    "updatedAt": "2026-04-17T19:39:33.444082+08:00"
+    "updatedAt": "2026-04-18T16:13:28.265952+08:00"
   },
   "cache": {
     "manifestPath": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/02f463ee-04ce-4dc9-ab99-d60900f4fd26/manifest.json",
     "assetsDir": "/Volumes/mud/project/github/social-auto-upload/omnidriveSync/skills/02f463ee-04ce-4dc9-ab99-d60900f4fd26/assets",
-    "syncedAt": "2026-04-17T11:41:32.768731Z"
+    "syncedAt": "2026-04-18T08:15:29.096200Z"
   }
 }

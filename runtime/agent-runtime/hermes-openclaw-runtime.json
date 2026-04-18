@@ -1,6 +1,6 @@
 {
   "version": "omnibull-hermes-shared-runtime-v1",
-  "updatedAt": "2026-04-18T01:17:51.400025+00:00",
+  "updatedAt": "2026-04-18T08:15:37.258802+00:00",
   "device": {
     "deviceCode": "5e:f9:01:22:73:09",
     "deviceName": "A001",
@@ -11,8 +11,8 @@
   "provider": {
     "name": "omnidrive",
     "format": "openai-compatible",
-    "baseUrl": "https://aitoplus.com/openai/v1",
-    "apiKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzY0Nzg2NzAsImlhdCI6MTc3NjQ3NTA3MCwic3ViIjoiODU0YzFlMTItODk2Zi00YzQzLWEzMzItNGZiNmZiMDIzNDAyIn0.Mq5b_708I9nijL3HSZz4pT8N0oyF-WfIZJlBOff0wRU"
+    "baseUrl": "http://127.0.0.1:8410/openai/v1",
+    "apiKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzY1MDM3MzcsImlhdCI6MTc3NjUwMDEzNywic3ViIjoiODU0YzFlMTItODk2Zi00YzQzLWEzMzItNGZiNmZiMDIzNDAyIn0.kXBTyI0gHowp3jA7qCWK6dqiEOLH1tG_FeCJyukpfCo"
   },
   "defaults": {
     "chatModel": "gemini-3.1-pro-preview",
@@ -39,13 +39,11 @@
     "localBridgeClientPath": "/Volumes/mud/project/github/social-auto-upload/scripts/hermes_local_bridge.py"
   },
   "models": [
-    "claude-opus-4-6-thinking",
+    "gemini-3.1-pro-preview",
     "deepseek-chat",
     "deepseek-r1",
-    "gemini-3.1-pro-preview",
     "glm-5",
     "gpt-5.4",
-    "MiniMax-M2.7",
     "qwen3.5-plus"
   ]
 }

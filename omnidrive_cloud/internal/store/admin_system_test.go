@@ -9,19 +9,19 @@ func TestScanAdminSystemSettingsIncludesPromptOptimizeModel(t *testing.T) {
 	now := time.Now().UTC()
 
 	record, err := scanAdminSystemSettings(func(dest ...any) error {
-		if len(dest) != 38 {
-			t.Fatalf("scanAdminSystemSettings destination count = %d, want %d", len(dest), 38)
+		if len(dest) != 40 {
+			t.Fatalf("scanAdminSystemSettings destination count = %d, want %d", len(dest), 40)
 		}
 
 		*(dest[0].(*string)) = "system"
 		*(dest[1].(*bool)) = true
 		*(dest[2].(*[]byte)) = []byte(`["manual_cs"]`)
-		*(dest[25].(*string)) = "default-chat-model"
-		*(dest[26].(*string)) = "gemini-3.1-pro-preview"
-		*(dest[27].(*string)) = "default-image-model"
-		*(dest[28].(*string)) = "default-video-model"
-		*(dest[36].(*time.Time)) = now
-		*(dest[37].(*time.Time)) = now
+		*(dest[27].(*string)) = "default-chat-model"
+		*(dest[28].(*string)) = "gemini-3.1-pro-preview"
+		*(dest[29].(*string)) = "default-image-model"
+		*(dest[30].(*string)) = "default-video-model"
+		*(dest[38].(*time.Time)) = now
+		*(dest[39].(*time.Time)) = now
 		return nil
 	})
 	if err != nil {

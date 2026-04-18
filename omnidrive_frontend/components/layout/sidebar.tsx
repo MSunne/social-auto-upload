@@ -20,6 +20,7 @@ import {
   ChevronRight,
   Zap,
   Layers,
+  Scissors,
 } from "lucide-react";
 
 const navGroups = [
@@ -38,6 +39,8 @@ const navGroups = [
       { href: "/creation/video/history", label: "视频历史", icon: History },
       { href: "/creation/digital-human", label: "真人视频", icon: Video },
       { href: "/creation/digital-human/history", label: "真人视频历史", icon: History },
+      { href: "/creation/mix-video", label: "混剪", icon: Scissors },
+      { href: "/creation/mix-video/history", label: "混剪历史", icon: History },
       { href: "/chat", label: "聊天助手", icon: MessageSquare },
     ],
   },

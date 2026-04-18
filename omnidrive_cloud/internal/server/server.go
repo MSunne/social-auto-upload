@@ -14,6 +14,7 @@ import (
 	"omnidrive_cloud/internal/database"
 	"omnidrive_cloud/internal/digitalhuman"
 	apphttp "omnidrive_cloud/internal/http"
+	"omnidrive_cloud/internal/mixvideo"
 	"omnidrive_cloud/internal/storage"
 	"omnidrive_cloud/internal/workflow"
 )
@@ -86,6 +87,14 @@ func New(cfg config.Config, logger *slog.Logger) (*http.Server, func(), error) {
 	}
 	stopDigitalHumanWorker := digitalHumanWorker.Start(context.Background())
 	cleanupFns = append(cleanupFns, stopDigitalHumanWorker)
+
+	mixVideoWorker, err := mixvideo.NewWorker(app)
+	if err != nil {
+		db.Close()
+		return nil, nil, fmt.Errorf("init mix video worker: %w", err)
+	}
+	stopMixVideoWorker := mixVideoWorker.Start(context.Background())
+	cleanupFns = append(cleanupFns, stopMixVideoWorker)
 
 	skillScheduler, err := workflow.NewSkillScheduler(app)
 	if err != nil {

@@ -28,6 +28,7 @@ type adminSystemConfigPatchRequest struct {
 	BillingManualSupport             *adminManualSupportPatchRequest   `json:"billingManualSupport"`
 	SMSRegistration                  *adminSMSRegistrationPatchRequest `json:"smsRegistration"`
 	DigitalHumanCreditsPerSecond     *float64                          `json:"digitalHumanCreditsPerSecond"`
+	MixVideoCreditsPerSecond         *float64                          `json:"mixVideoCreditsPerSecond"`
 	DigitalHumanShoppingDefaultModel *string                           `json:"digitalHumanShoppingDefaultModel"`
 	DigitalHumanSpeechDefaultModel   *string                           `json:"digitalHumanSpeechDefaultModel"`
 	DefaultChatModel                 *string                           `json:"defaultChatModel"`
@@ -73,6 +74,7 @@ type effectiveAdminSystemSettings struct {
 	BillingManualSupport               domain.AdminManualSupportConfig
 	SMSRegistration                    domain.AdminSMSRegistrationConfig
 	DigitalHumanCreditsPerSecondMillis int64
+	MixVideoCreditsPerSecondMillis     int64
 	DigitalHumanShoppingDefaultModel   string
 	DigitalHumanSpeechDefaultModel     string
 	DefaultChatModel                   string
@@ -112,6 +114,7 @@ func defaultAdminSystemSettings(cfg config.Config) effectiveAdminSystemSettings 
 			CodeLength:         6,
 		},
 		DigitalHumanCreditsPerSecondMillis: 0,
+		MixVideoCreditsPerSecondMillis:     300,
 		DigitalHumanShoppingDefaultModel:   "",
 		DigitalHumanSpeechDefaultModel:     "",
 		DefaultChatModel:                   strings.TrimSpace(cfg.DefaultChatModel),
@@ -252,6 +255,10 @@ func loadEffectiveAdminSystemSettings(ctx context.Context, app *appstate.App) (e
 	if settings.DigitalHumanCreditsPerSecondMillis <= 0 && record.DigitalHumanCreditsPerSecond > 0 {
 		settings.DigitalHumanCreditsPerSecondMillis = record.DigitalHumanCreditsPerSecond * store.DigitalHumanCreditMillisScale
 	}
+	settings.MixVideoCreditsPerSecondMillis = record.MixVideoCreditsPerSecondMillis
+	if settings.MixVideoCreditsPerSecondMillis <= 0 && record.MixVideoCreditsPerSecond > 0 {
+		settings.MixVideoCreditsPerSecondMillis = record.MixVideoCreditsPerSecond * store.CreditMillisScale
+	}
 	if value := strings.TrimSpace(record.DigitalHumanShoppingDefaultModel); value != "" {
 		settings.DigitalHumanShoppingDefaultModel = value
 	}
@@ -305,6 +312,7 @@ func buildAdminSystemConfigPayload(app *appstate.App, settings effectiveAdminSys
 		BillingManualSupport:             settings.BillingManualSupport,
 		SMSRegistration:                  settings.SMSRegistration,
 		DigitalHumanCreditsPerSecond:     store.DigitalHumanCreditsFromMillis(settings.DigitalHumanCreditsPerSecondMillis),
+		MixVideoCreditsPerSecond:         store.CreditsFromMillis(settings.MixVideoCreditsPerSecondMillis),
 		DigitalHumanShoppingDefaultModel: settings.DigitalHumanShoppingDefaultModel,
 		DigitalHumanSpeechDefaultModel:   settings.DigitalHumanSpeechDefaultModel,
 		DefaultChatModel:                 settings.DefaultChatModel,
@@ -654,6 +662,18 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 		}
 		settings.DigitalHumanCreditsPerSecondMillis = millis
 	}
+	if nestedFieldTouched(raw, "mixVideoCreditsPerSecond") {
+		if payload.MixVideoCreditsPerSecond == nil {
+			render.Error(w, http.StatusBadRequest, "mixVideoCreditsPerSecond must be a number")
+			return
+		}
+		millis, err := store.CreditsToMillis(*payload.MixVideoCreditsPerSecond)
+		if err != nil {
+			render.Error(w, http.StatusBadRequest, "mixVideoCreditsPerSecond "+err.Error())
+			return
+		}
+		settings.MixVideoCreditsPerSecondMillis = millis
+	}
 	if nestedFieldTouched(raw, "digitalHumanShoppingDefaultModel") {
 		settings.DigitalHumanShoppingDefaultModel = normalizePatchedString(payload.DigitalHumanShoppingDefaultModel)
 	}
@@ -842,6 +862,8 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 		SMSRegistrationCodeLength:          settings.SMSRegistration.CodeLength,
 		DigitalHumanCreditsPerSecond:       store.DigitalHumanRoundMillisToWholeCredits(settings.DigitalHumanCreditsPerSecondMillis),
 		DigitalHumanCreditsPerSecondMillis: settings.DigitalHumanCreditsPerSecondMillis,
+		MixVideoCreditsPerSecond:           store.RoundMillisToWholeCredits(settings.MixVideoCreditsPerSecondMillis),
+		MixVideoCreditsPerSecondMillis:     settings.MixVideoCreditsPerSecondMillis,
 		DigitalHumanShoppingDefaultModel:   settings.DigitalHumanShoppingDefaultModel,
 		DigitalHumanSpeechDefaultModel:     settings.DigitalHumanSpeechDefaultModel,
 		DefaultChatModel:                   settings.DefaultChatModel,

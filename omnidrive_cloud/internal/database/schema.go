@@ -479,6 +479,8 @@ ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_daily
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS sms_registration_code_length INT NOT NULL DEFAULT 6;
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS digital_human_credits_per_second BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS digital_human_credits_per_second_millis BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS mix_video_credits_per_second BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS mix_video_credits_per_second_millis BIGINT NOT NULL DEFAULT 300;
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS digital_human_shopping_default_model TEXT NOT NULL DEFAULT 'qvq-max';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS digital_human_speech_default_model TEXT NOT NULL DEFAULT 'qvq-max';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS prompt_optimize_model TEXT NOT NULL DEFAULT 'gemini-3.1-pro-preview';
@@ -717,6 +719,71 @@ ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS billing_payload JSONB N
 ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS ai_job_id TEXT REFERENCES ai_jobs(id) ON DELETE SET NULL;
 ALTER TABLE digital_human_tasks ADD COLUMN IF NOT EXISTS model_name TEXT NOT NULL DEFAULT 'qvq-max';
 CREATE INDEX IF NOT EXISTS idx_digital_human_tasks_ai_job ON digital_human_tasks (ai_job_id);
+
+CREATE TABLE IF NOT EXISTS mix_video_tasks (
+    id TEXT PRIMARY KEY,
+    owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source TEXT NOT NULL DEFAULT 'runninghub',
+    status TEXT NOT NULL DEFAULT 'queued',
+    remote_task_id TEXT,
+    source_assets JSONB NOT NULL DEFAULT '[]'::jsonb,
+    ref_audio_asset JSONB NOT NULL,
+    result_asset JSONB,
+    script_text TEXT NOT NULL,
+    estimated_duration_seconds INT NOT NULL DEFAULT 0,
+    estimated_credits BIGINT NOT NULL DEFAULT 0,
+    estimated_credits_millis BIGINT NOT NULL DEFAULT 0,
+    actual_duration_seconds INT,
+    final_credits BIGINT,
+    final_credits_millis BIGINT,
+    billing_status TEXT NOT NULL DEFAULT 'pending',
+    billing_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    progress JSONB,
+    request_payload JSONB,
+    remote_response_payload JSONB,
+    error_message TEXT,
+    lease_token TEXT,
+    lease_expires_at TIMESTAMPTZ,
+    working_dir TEXT,
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_mix_video_tasks_owner_updated
+    ON mix_video_tasks (owner_user_id, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_mix_video_tasks_owner_updated_id
+    ON mix_video_tasks (owner_user_id, updated_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_mix_video_tasks_status_lease
+    ON mix_video_tasks (status, lease_expires_at, created_at ASC);
+
+CREATE INDEX IF NOT EXISTS idx_mix_video_tasks_remote_task
+    ON mix_video_tasks (remote_task_id);
+
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS source_assets JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS ref_audio_asset JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS result_asset JSONB;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS script_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS estimated_duration_seconds INT NOT NULL DEFAULT 0;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS estimated_credits BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS estimated_credits_millis BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS actual_duration_seconds INT;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS final_credits BIGINT;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS final_credits_millis BIGINT;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS billing_status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS billing_payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS progress JSONB;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS request_payload JSONB;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS remote_response_payload JSONB;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS error_message TEXT;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS lease_token TEXT;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS working_dir TEXT;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS ai_job_publish_links (
     job_id TEXT NOT NULL REFERENCES ai_jobs(id) ON DELETE CASCADE,

@@ -35,6 +35,8 @@ type UpsertAdminSystemSettingsInput struct {
 	SMSRegistrationCodeLength          int
 	DigitalHumanCreditsPerSecond       int64
 	DigitalHumanCreditsPerSecondMillis int64
+	MixVideoCreditsPerSecond           int64
+	MixVideoCreditsPerSecondMillis     int64
 	DigitalHumanShoppingDefaultModel   string
 	DigitalHumanSpeechDefaultModel     string
 	DefaultChatModel                   string
@@ -79,6 +81,8 @@ func scanAdminSystemSettings(scan scanFn) (*domain.AdminSystemSettingsRecord, er
 		&item.SMSRegistration.CodeLength,
 		&item.DigitalHumanCreditsPerSecond,
 		&item.DigitalHumanCreditsPerSecondMillis,
+		&item.MixVideoCreditsPerSecond,
+		&item.MixVideoCreditsPerSecondMillis,
 		&item.DigitalHumanShoppingDefaultModel,
 		&item.DigitalHumanSpeechDefaultModel,
 		&item.DefaultChatModel,
@@ -137,6 +141,8 @@ func (s *Store) GetAdminSystemSettings(ctx context.Context) (*domain.AdminSystem
 			sms_registration_code_length,
 			digital_human_credits_per_second,
 			digital_human_credits_per_second_millis,
+			mix_video_credits_per_second,
+			mix_video_credits_per_second_millis,
 			digital_human_shopping_default_model,
 			digital_human_speech_default_model,
 			default_chat_model,
@@ -206,6 +212,8 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 			sms_registration_code_length,
 			digital_human_credits_per_second,
 			digital_human_credits_per_second_millis,
+			mix_video_credits_per_second,
+			mix_video_credits_per_second_millis,
 			digital_human_shopping_default_model,
 			digital_human_speech_default_model,
 			default_chat_model,
@@ -220,7 +228,7 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 			image_storyboard_model,
 			image_storyboard_reference_payload
 		)
-		VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33::jsonb, $34, $35, $36::jsonb)
+		VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34::jsonb, $35, $36, $37::jsonb)
 		ON CONFLICT (id) DO UPDATE
 		SET
 			ai_worker_enabled = EXCLUDED.ai_worker_enabled,
@@ -245,6 +253,8 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 			sms_registration_code_length = EXCLUDED.sms_registration_code_length,
 			digital_human_credits_per_second = EXCLUDED.digital_human_credits_per_second,
 			digital_human_credits_per_second_millis = EXCLUDED.digital_human_credits_per_second_millis,
+			mix_video_credits_per_second = EXCLUDED.mix_video_credits_per_second,
+			mix_video_credits_per_second_millis = EXCLUDED.mix_video_credits_per_second_millis,
 			digital_human_shopping_default_model = EXCLUDED.digital_human_shopping_default_model,
 			digital_human_speech_default_model = EXCLUDED.digital_human_speech_default_model,
 			default_chat_model = EXCLUDED.default_chat_model,
@@ -283,6 +293,8 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 			sms_registration_code_length,
 			digital_human_credits_per_second,
 			digital_human_credits_per_second_millis,
+			mix_video_credits_per_second,
+			mix_video_credits_per_second_millis,
 			digital_human_shopping_default_model,
 			digital_human_speech_default_model,
 			default_chat_model,
@@ -322,6 +334,8 @@ func (s *Store) UpsertAdminSystemSettings(ctx context.Context, input UpsertAdmin
 		input.SMSRegistrationCodeLength,
 		input.DigitalHumanCreditsPerSecond,
 		input.DigitalHumanCreditsPerSecondMillis,
+		input.MixVideoCreditsPerSecond,
+		input.MixVideoCreditsPerSecondMillis,
 		input.DigitalHumanShoppingDefaultModel,
 		input.DigitalHumanSpeechDefaultModel,
 		input.DefaultChatModel,

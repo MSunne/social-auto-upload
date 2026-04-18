@@ -1396,6 +1396,22 @@ def _initialize_openclaw_omnidrive_provider(data, *, is_root_config):
     return provider
 
 
+def _write_openclaw_omnidrive_config_if_changed(path, serialized):
+    existing = None
+    if path.exists():
+        try:
+            existing = path.read_text(encoding="utf-8")
+        except Exception as exc:
+            app_logger.warning("failed to read OpenClaw config before write path={} error={}", path, exc)
+
+    if existing == serialized:
+        return False
+
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write(serialized)
+    return True
+
+
 def sync_openclaw_omnidrive_model_configs(models, api_base_url="", access_token="", default_chat_model=""):
     normalized_ids = _normalize_openclaw_omnidrive_models(models)
     models_supplied = models is not None
@@ -1427,16 +1443,18 @@ def sync_openclaw_omnidrive_model_configs(models, api_base_url="", access_token=
 
         if provider_base_url:
             provider["baseUrl"] = provider_base_url
-        if provider_api_key:
+        if provider_api_key and not is_root_config:
             provider["apiKey"] = provider_api_key
 
-        if models_supplied:
+        if models_supplied and not is_root_config:
             provider["models"] = [
                 _build_openclaw_omnidrive_model_entry(model_id, include_api=not is_root_config)
                 for model_id in normalized_ids
             ]
 
         if is_root_config:
+            provider.pop("apiKey", None)
+            provider.pop("models", None)
             defaults_config = data.setdefault("agents", {}).setdefault("defaults", {})
             defaults = defaults_config.get("models")
             if not isinstance(defaults, dict):
@@ -1470,9 +1488,8 @@ def sync_openclaw_omnidrive_model_configs(models, api_base_url="", access_token=
 
         serialized = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
         try:
-            with path.open("w", encoding="utf-8") as handle:
-                handle.write(serialized)
-            changed_paths.append(str(path))
+            if _write_openclaw_omnidrive_config_if_changed(path, serialized):
+                changed_paths.append(str(path))
         except Exception as exc:
             app_logger.warning("failed to write OpenClaw model sync config path={} error={}", path, exc)
 

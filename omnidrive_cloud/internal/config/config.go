@@ -29,6 +29,8 @@ type Config struct {
 	APIYIApiKey                   string
 	DigitalHumanBaseURL           string
 	DigitalHumanPollSeconds       int
+	MixVideoBaseURL               string
+	MixVideoPollSeconds           int
 	AIWorkerEnabled               bool
 	AIWorkerPollSeconds           int
 	AIWorkerConcurrency           int
@@ -92,6 +94,8 @@ func Load() Config {
 		APIYIApiKey:                   envFirst("", "OMNIDRIVE_APIYI_API_KEY", "APIYI_API_KEY"),
 		DigitalHumanBaseURL:           envOrDefault("OMNIDRIVE_DIGITAL_HUMAN_BASE_URL", "http://127.0.0.1:8000"),
 		DigitalHumanPollSeconds:       envAsInt("OMNIDRIVE_DIGITAL_HUMAN_POLL_SECONDS", 5),
+		MixVideoBaseURL:               envOrDefault("OMNIDRIVE_MIX_VIDEO_BASE_URL", "http://127.0.0.1:8000"),
+		MixVideoPollSeconds:           envAsInt("OMNIDRIVE_MIX_VIDEO_POLL_SECONDS", 5),
 		AIWorkerEnabled:               envAsBool("OMNIDRIVE_AI_WORKER_ENABLED", true),
 		AIWorkerPollSeconds:           envAsInt("OMNIDRIVE_AI_WORKER_POLL_SECONDS", 5),
 		AIWorkerConcurrency:           envAsInt("OMNIDRIVE_AI_WORKER_CONCURRENCY", 2),
