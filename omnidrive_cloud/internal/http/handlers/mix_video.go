@@ -135,12 +135,73 @@ func (h *MixVideoTaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var (
+		deviceID       *string
+		accountID      *string
+		platform       *string
+		accountName    *string
+		runAt          *time.Time
+		publishPayload map[string]any
+	)
+	if rawAccountID := strings.TrimSpace(r.FormValue("accountId")); rawAccountID != "" {
+		account, err := h.app.Store.GetOwnedAccountByID(r.Context(), rawAccountID, user.ID)
+		if err != nil {
+			h.cleanupAssets(r.Context(), append(assets, *refAudioAsset)...)
+			render.Error(w, http.StatusInternalServerError, "Failed to validate publish account")
+			return
+		}
+		if account == nil {
+			h.cleanupAssets(r.Context(), append(assets, *refAudioAsset)...)
+			render.Error(w, http.StatusNotFound, "Publish account not found")
+			return
+		}
+		if providedPlatform := strings.TrimSpace(r.FormValue("platform")); providedPlatform != "" && providedPlatform != account.Platform {
+			h.cleanupAssets(r.Context(), append(assets, *refAudioAsset)...)
+			render.Error(w, http.StatusBadRequest, "platform does not match accountId")
+			return
+		}
+		if providedAccountName := strings.TrimSpace(r.FormValue("accountName")); providedAccountName != "" && providedAccountName != account.AccountName {
+			h.cleanupAssets(r.Context(), append(assets, *refAudioAsset)...)
+			render.Error(w, http.StatusBadRequest, "accountName does not match accountId")
+			return
+		}
+		deviceID = &account.DeviceID
+		accountID = &account.ID
+		platform = &account.Platform
+		accountName = &account.AccountName
+		if rawPublishAt := strings.TrimSpace(r.FormValue("publishAt")); rawPublishAt != "" {
+			parsed, parseErr := time.Parse(time.RFC3339, rawPublishAt)
+			if parseErr != nil {
+				h.cleanupAssets(r.Context(), append(assets, *refAudioAsset)...)
+				render.Error(w, http.StatusBadRequest, "publishAt must be RFC3339")
+				return
+			}
+			parsed = parsed.UTC()
+			runAt = &parsed
+		}
+		publishPayload = map[string]any{
+			"targets": []map[string]any{{
+				"accountId":   account.ID,
+				"platform":    account.Platform,
+				"accountName": account.AccountName,
+			}},
+			"contentText": scriptText,
+		}
+		if runAt != nil {
+			publishPayload["runAt"] = runAt.Format(time.RFC3339)
+		}
+	}
+
 	requestPayload := map[string]any{
 		"source":         mixVideoSource,
 		"scriptText":     scriptText,
 		"assets":         assets,
 		"refAudioAsset":  refAudioAsset,
 		"billingPreview": preview,
+	}
+	if publishPayload != nil {
+		requestPayload["accountId"] = *accountID
+		requestPayload["publishPayload"] = publishPayload
 	}
 
 	task, err := h.app.Store.CreateMixVideoTask(r.Context(), store.CreateMixVideoTaskInput{
@@ -151,6 +212,12 @@ func (h *MixVideoTaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 		SourceAssets:             mustJSONBytes(assets),
 		RefAudioAsset:            mustJSONBytes(refAudioAsset),
 		ScriptText:               scriptText,
+		DeviceID:                 deviceID,
+		SkillID:                  nil,
+		AccountID:                accountID,
+		Platform:                 platform,
+		AccountName:              accountName,
+		RunAt:                    runAt,
 		EstimatedDurationSeconds: preview.EstimatedDurationSeconds,
 		EstimatedCreditsMillis:   mustMixVideoCreditMillis(preview.EstimatedCredits),
 		BillingStatus:            "pending",

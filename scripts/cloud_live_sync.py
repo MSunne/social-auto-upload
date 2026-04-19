@@ -20,6 +20,9 @@ SSH_KEY_PATH = Path.home() / ".ssh" / "omnidrive_live_sync"
 REMOTE_HOST = "root@43.98.251.225"
 TMP_API_BINARY = Path("/tmp/omnidrive-api-live-sync")
 TMP_BOOTSTRAP_BINARY = Path("/tmp/omnidrive-bootstrap-db-live-sync")
+LOCAL_DEMO_SEED_SCRIPT = ROOT_DIR / "scripts" / "seed_omnidrive_mock_data.py"
+REMOTE_DEMO_SEED_SCRIPT = Path("/tmp/seed_omnidrive_mock_data.py")
+REMOTE_DEMO_SEED_ROOT = Path("/www/wwwroot/OmniDriveCloud/data/mock-seed")
 POLL_INTERVAL_SECONDS = float(os.environ.get("OMNIDRIVE_LIVE_SYNC_POLL_INTERVAL_SECONDS", "2"))
 DEBOUNCE_SECONDS = float(os.environ.get("OMNIDRIVE_LIVE_SYNC_DEBOUNCE_SECONDS", "2"))
 
@@ -288,7 +291,33 @@ def verify_remote_log_is_clean() -> None:
     remote_shell("grep -n 'conn busy' /www/wwwroot/OmniDriveCloud/omnidrive-api.log || true")
 
 
-def sync_targets(changed_files: dict[str, set[str]], removed_files: dict[str, set[str]]) -> None:
+def upload_demo_seed_script() -> None:
+    run_command(
+        [
+            "scp",
+            "-i",
+            str(SSH_KEY_PATH),
+            "-o",
+            "BatchMode=yes",
+            str(LOCAL_DEMO_SEED_SCRIPT),
+            f"{REMOTE_HOST}:{REMOTE_DEMO_SEED_SCRIPT}",
+        ]
+    )
+
+
+def seed_remote_demo_data() -> None:
+    upload_demo_seed_script()
+    remote_shell(
+        "set -e; "
+        f"mkdir -p {shlex.quote(str(REMOTE_DEMO_SEED_ROOT))}; "
+        "python3 "
+        f"{shlex.quote(str(REMOTE_DEMO_SEED_SCRIPT))} "
+        "--base-url http://127.0.0.1:8410 "
+        f"--seed-root {shlex.quote(str(REMOTE_DEMO_SEED_ROOT))}"
+    )
+
+
+def sync_targets(changed_files: dict[str, set[str]], removed_files: dict[str, set[str]], *, seed_demo_data: bool = False) -> None:
     target_names = {name for name in TARGETS if changed_files[name] or removed_files[name]}
     if not target_names:
         return
@@ -300,6 +329,8 @@ def sync_targets(changed_files: dict[str, set[str]], removed_files: dict[str, se
         upload_cloud_binaries()
         restart_cloud_api()
         verify_remote_log_is_clean()
+        if seed_demo_data:
+            seed_remote_demo_data()
         log("synced omnidrive_cloud")
 
     frontend_targets = [name for name in ("omnidrive_frontend", "OmniDriveAdmin") if name in target_names]
@@ -317,12 +348,15 @@ def ensure_prerequisites() -> None:
         raise RuntimeError(f"ssh key not found: {SSH_KEY_PATH}")
     for command in ("scp", "ssh", "go", "python3", "tar"):
         require_command(command)
+    if not LOCAL_DEMO_SEED_SCRIPT.exists():
+        raise RuntimeError(f"demo seed script not found: {LOCAL_DEMO_SEED_SCRIPT}")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Continuously sync local OmniDrive code to cloud.")
     parser.add_argument("--once", action="store_true", help="sync all cloud targets once and exit")
     parser.add_argument("--skip-initial-sync", action="store_true", help="start watching from the current local snapshot")
+    parser.add_argument("--seed-demo-data", action="store_true", help="run the OmniDrive demo seed on the 43 server after cloud sync")
     args = parser.parse_args()
 
     ensure_prerequisites()
@@ -332,7 +366,7 @@ def main() -> int:
     if not args.skip_initial_sync:
         initial_changes = {name: set(state[name].keys()) for name in TARGETS}
         initial_removals = {name: set() for name in TARGETS}
-        sync_targets(initial_changes, initial_removals)
+        sync_targets(initial_changes, initial_removals, seed_demo_data=args.seed_demo_data)
         state = capture_state()
     if args.once:
         log("cloud live sync completed once")
@@ -370,7 +404,7 @@ def main() -> int:
             pending_changes = {name: set() for name in TARGETS}
             pending_removals = {name: set() for name in TARGETS}
             try:
-                sync_targets(changes_to_sync, removals_to_sync)
+                sync_targets(changes_to_sync, removals_to_sync, seed_demo_data=args.seed_demo_data)
             except subprocess.CalledProcessError as exc:
                 log(f"sync failed with exit code {exc.returncode}; will retry")
                 for name in TARGETS:

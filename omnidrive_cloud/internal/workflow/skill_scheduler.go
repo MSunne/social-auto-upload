@@ -87,6 +87,9 @@ func (s *SkillScheduler) runOnce(ctx context.Context) {
 	if err := s.ensureRecurringAccountSkillRuns(ctx); err != nil {
 		s.app.Logger.Error("skill scheduler failed to ensure recurring account skill runs", "error", err)
 	}
+	if err := s.ensureRecurringAccountMixVideoRuns(ctx); err != nil {
+		s.app.Logger.Error("skill scheduler failed to ensure recurring account mix video runs", "error", err)
+	}
 
 	// Skill-level execution times are deprecated. New timed runs are created from
 	// account-bound skill tasks in OmniBull.
@@ -101,6 +104,19 @@ func (s *SkillScheduler) ensureRecurringAccountSkillRuns(ctx context.Context) er
 	for _, job := range jobs {
 		if err := s.ensureRecurringAccountSkillRun(ctx, job); err != nil {
 			s.app.Logger.Error("skill scheduler failed to ensure recurring account skill run", "job_id", job.ID, "error", err)
+		}
+	}
+	return nil
+}
+
+func (s *SkillScheduler) ensureRecurringAccountMixVideoRuns(ctx context.Context) error {
+	tasks, err := s.app.Store.ListRecurringAccountSkillTemplateMixVideoTasks(ctx, 200)
+	if err != nil {
+		return err
+	}
+	for _, task := range tasks {
+		if err := s.ensureRecurringAccountMixVideoRun(ctx, task); err != nil {
+			s.app.Logger.Error("skill scheduler failed to ensure recurring account mix video run", "task_id", task.ID, "error", err)
 		}
 	}
 	return nil
@@ -198,6 +214,110 @@ func (s *SkillScheduler) ensureRecurringAccountSkillRun(ctx context.Context, see
 		"skill_id", skill.ID,
 		"account_id", account.ID,
 		"time_of_day", config.TimeOfDay,
+		"publish_at", prepared.PublishAt.Format(time.RFC3339),
+	)
+	return nil
+}
+
+func (s *SkillScheduler) ensureRecurringAccountMixVideoRun(ctx context.Context, seed domain.MixVideoTask) error {
+	scheduleConfig, ok := ParseAccountSkillScheduleConfig(seed.RequestPayload)
+	if !ok || !scheduleConfig.RepeatDaily || strings.TrimSpace(scheduleConfig.ScheduleKey) == "" {
+		return nil
+	}
+	if seed.SkillID == nil || strings.TrimSpace(*seed.SkillID) == "" {
+		return nil
+	}
+	skill, err := s.app.Store.GetOwnedSkillByID(ctx, strings.TrimSpace(*seed.SkillID), seed.OwnerUserID)
+	if err != nil {
+		return err
+	}
+	if skill == nil || !skill.IsEnabled || skill.DeviceID == nil || strings.TrimSpace(*skill.DeviceID) == "" {
+		return nil
+	}
+	if seed.AccountID == nil || strings.TrimSpace(*seed.AccountID) == "" {
+		return nil
+	}
+	account, err := s.app.Store.GetOwnedAccountByID(ctx, strings.TrimSpace(*seed.AccountID), seed.OwnerUserID)
+	if err != nil {
+		return err
+	}
+	if account == nil || !AccountAllowedForAutoPublish(account.Status) {
+		return nil
+	}
+	runSettings, err := LoadMixVideoRunSettings(ctx, s.app)
+	if err != nil {
+		return err
+	}
+	publishAt, err := NextAccountSkillPublishAt(scheduleConfig.TimeOfDay, scheduleConfig.Timezone, time.Now())
+	if err != nil {
+		return err
+	}
+	prepared, err := PrepareAccountMixVideoRun(ctx, s.app, runSettings, *skill, *account, publishAt, scheduleConfig)
+	if err != nil {
+		return err
+	}
+	lockKey := storeKeyForRecurringAccountSkillRun(seed.OwnerUserID, scheduleConfig.ScheduleKey)
+	var createdTask *domain.MixVideoTask
+	if err := s.app.Store.WithAdvisoryLock(ctx, lockKey, func() error {
+		existingTask, err := s.app.Store.FindAccountSkillMixVideoTaskByScheduleSlot(ctx, seed.OwnerUserID, account.ID, scheduleConfig.ScheduleKey, prepared.GenerateAt)
+		if err != nil {
+			return err
+		}
+		if existingTask != nil {
+			return nil
+		}
+		task, err := s.app.Store.CreateMixVideoTask(ctx, store.CreateMixVideoTaskInput{
+			ID:                       uuid.NewString(),
+			OwnerUserID:              seed.OwnerUserID,
+			Source:                   "account_skill_binding",
+			Status:                   prepared.Status,
+			SourceAssets:             mustJSONBytes(prepared.SourceAssets),
+			RefAudioAsset:            mustJSONBytes(prepared.RefAudioAsset),
+			ScriptText:               prepared.ScriptText,
+			DeviceID:                 &account.DeviceID,
+			SkillID:                  &skill.ID,
+			AccountID:                &account.ID,
+			Platform:                 &account.Platform,
+			AccountName:              &account.AccountName,
+			RunAt:                    &prepared.GenerateAt,
+			SchedulePayload:          prepared.SchedulePayload,
+			EstimatedDurationSeconds: prepared.EstimatedDurationSeconds,
+			EstimatedCreditsMillis:   prepared.EstimatedCreditsMillis,
+			BillingStatus:            "pending",
+			BillingPayload: mustJSONBytes(map[string]any{
+				"creditsPerSecond":       prepared.BillingPreview.CreditsPerSecond,
+				"creditsPerSecondMillis": runSettings.CreditsPerSecondMillis,
+				"estimateCharsPerSecond": mixVideoEstimateCharsPerSecond,
+				"billingMessage":         "混剪任务待预扣积分",
+			}),
+			Progress: mustJSONBytes(domain.MixVideoProgress{
+				Message: prepared.Message,
+			}),
+			RequestPayload: prepared.RequestPayload,
+		})
+		if err != nil {
+			return err
+		}
+		precharged, err := s.app.Store.PrechargeMixVideoTask(ctx, task.ID)
+		if err != nil {
+			_ = s.app.Store.DeleteMixVideoTask(ctx, task.ID, seed.OwnerUserID)
+			return err
+		}
+		createdTask = precharged
+		return nil
+	}); err != nil {
+		return err
+	}
+	if createdTask == nil {
+		return nil
+	}
+	s.app.Logger.Info(
+		"skill scheduler created recurring account mix video run",
+		"seed_task_id", seed.ID,
+		"task_id", createdTask.ID,
+		"skill_id", skill.ID,
+		"account_id", account.ID,
+		"time_of_day", scheduleConfig.TimeOfDay,
 		"publish_at", prepared.PublishAt.Format(time.RFC3339),
 	)
 	return nil

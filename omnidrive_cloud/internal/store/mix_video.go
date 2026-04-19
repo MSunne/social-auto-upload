@@ -23,6 +23,14 @@ const mixVideoTaskSelectColumns = `
 	ref_audio_asset,
 	result_asset,
 	script_text,
+	device_id,
+	skill_id,
+	account_id,
+	platform,
+	account_name,
+	run_at,
+	schedule_payload,
+	local_publish_task_id,
 	estimated_duration_seconds,
 	estimated_credits,
 	estimated_credits_millis,
@@ -86,6 +94,14 @@ func scanMixVideoTask(row pgx.Row) (*domain.MixVideoTask, error) {
 	var sourceAssets []byte
 	var refAudioAsset []byte
 	var resultAsset []byte
+	var deviceID *string
+	var skillID *string
+	var accountID *string
+	var platform *string
+	var accountName *string
+	var runAt *time.Time
+	var schedulePayload []byte
+	var localPublishTaskID *string
 	var estimatedCreditsLegacy int64
 	var estimatedCreditsMillis int64
 	var actualDurationSeconds *int
@@ -112,6 +128,14 @@ func scanMixVideoTask(row pgx.Row) (*domain.MixVideoTask, error) {
 		&refAudioAsset,
 		&resultAsset,
 		&task.ScriptText,
+		&deviceID,
+		&skillID,
+		&accountID,
+		&platform,
+		&accountName,
+		&runAt,
+		&schedulePayload,
+		&localPublishTaskID,
 		&task.EstimatedDurationSeconds,
 		&estimatedCreditsLegacy,
 		&estimatedCreditsMillis,
@@ -159,6 +183,14 @@ func scanMixVideoTask(row pgx.Row) (*domain.MixVideoTask, error) {
 	task.SourceAssets = assets
 	task.RefAudioAsset = *refAudio
 	task.ResultAsset = result
+	task.DeviceID = normalizeOptionalString(deviceID)
+	task.SkillID = normalizeOptionalString(skillID)
+	task.AccountID = normalizeOptionalString(accountID)
+	task.Platform = normalizeOptionalString(platform)
+	task.AccountName = normalizeOptionalString(accountName)
+	task.RunAt = runAt
+	task.SchedulePayload = bytesOrNil(schedulePayload)
+	task.LocalPublishTaskID = normalizeOptionalString(localPublishTaskID)
 	if estimatedCreditsMillis <= 0 && estimatedCreditsLegacy > 0 {
 		estimatedCreditsMillis = estimatedCreditsLegacy * CreditMillisScale
 	}
@@ -195,6 +227,14 @@ func (s *Store) CreateMixVideoTask(ctx context.Context, input CreateMixVideoTask
 			source_assets,
 			ref_audio_asset,
 			script_text,
+			device_id,
+			skill_id,
+			account_id,
+			platform,
+			account_name,
+			run_at,
+			schedule_payload,
+			local_publish_task_id,
 			estimated_duration_seconds,
 			estimated_credits,
 			estimated_credits_millis,
@@ -203,9 +243,9 @@ func (s *Store) CreateMixVideoTask(ctx context.Context, input CreateMixVideoTask
 			progress,
 			request_payload
 		)
-		VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14::jsonb)
+		VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15, $16, $17, $18, $19, $20::jsonb, $21::jsonb, $22::jsonb)
 		RETURNING `+mixVideoTaskSelectColumns+`
-	`, input.ID, input.OwnerUserID, input.Source, input.Status, input.SourceAssets, input.RefAudioAsset, input.ScriptText, input.EstimatedDurationSeconds, estimatedCreditsLegacy, input.EstimatedCreditsMillis, input.BillingStatus, nullableJSON(input.BillingPayload), nullableJSON(input.Progress), nullableJSON(input.RequestPayload))
+	`, input.ID, input.OwnerUserID, input.Source, input.Status, input.SourceAssets, input.RefAudioAsset, input.ScriptText, input.DeviceID, input.SkillID, input.AccountID, input.Platform, input.AccountName, timePtrValue(input.RunAt), nullableJSON(input.SchedulePayload), input.LocalPublishTaskID, input.EstimatedDurationSeconds, estimatedCreditsLegacy, input.EstimatedCreditsMillis, input.BillingStatus, nullableJSON(input.BillingPayload), nullableJSON(input.Progress), nullableJSON(input.RequestPayload))
 
 	return scanMixVideoTask(row)
 }
@@ -215,7 +255,7 @@ func (s *Store) DeleteMixVideoTask(ctx context.Context, taskID string, ownerUser
 		DELETE FROM mix_video_tasks
 		WHERE id = $1
 		  AND owner_user_id = $2
-		  AND status = 'queued'
+		  AND status IN ('queued', 'scheduled')
 		  AND remote_task_id IS NULL
 	`, strings.TrimSpace(taskID), strings.TrimSpace(ownerUserID))
 	return err
@@ -307,11 +347,12 @@ func (s *Store) ListExecutableMixVideoTasks(ctx context.Context, limit int) ([]d
 		SELECT ` + mixVideoTaskSelectColumns + `
 		FROM mix_video_tasks
 		WHERE (
-		    status IN ('queued', 'running')
+		    (status = 'scheduled' AND run_at IS NOT NULL AND run_at <= NOW())
+		    OR status IN ('queued', 'running')
 		    OR (status = 'completed' AND billing_status = 'settlement_pending')
 		)
 		  AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
-		ORDER BY CASE WHEN status = 'queued' THEN 0 WHEN status = 'running' THEN 1 ELSE 2 END, created_at ASC, id ASC
+		ORDER BY CASE WHEN status = 'scheduled' THEN 0 WHEN status = 'queued' THEN 0 WHEN status = 'running' THEN 1 ELSE 2 END, created_at ASC, id ASC
 	`
 	args := []any{}
 	if limit > 0 {
@@ -344,7 +385,7 @@ func (s *Store) ClaimMixVideoTaskLease(ctx context.Context, taskID string, lease
 		    updated_at = NOW()
 		WHERE id = $1
 		  AND (
-		      status IN ('queued', 'running')
+		      ((status = 'scheduled' AND run_at IS NOT NULL AND run_at <= NOW()) OR status IN ('queued', 'running'))
 		      OR (status = 'completed' AND billing_status = 'settlement_pending')
 		  )
 		  AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
@@ -352,6 +393,182 @@ func (s *Store) ClaimMixVideoTaskLease(ctx context.Context, taskID string, lease
 	`, strings.TrimSpace(taskID), strings.TrimSpace(leaseToken), leaseExpiresAt.UTC())
 
 	task, err := scanMixVideoTask(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return task, nil
+}
+
+func (s *Store) LinkMixVideoTaskToPublishTask(ctx context.Context, input LinkMixVideoTaskPublishTaskInput) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE mix_video_tasks
+		SET local_publish_task_id = $2,
+		    updated_at = NOW()
+		WHERE id = $1
+		  AND owner_user_id = $3
+	`, strings.TrimSpace(input.TaskID), strings.TrimSpace(input.LocalPublishTaskID), strings.TrimSpace(input.OwnerUserID))
+	return err
+}
+
+func (s *Store) DeleteAccountSkillMixVideoRunPlanByOwner(ctx context.Context, taskID string, ownerUserID string, scheduleKey string, repeating bool) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+
+	if repeating && strings.TrimSpace(scheduleKey) != "" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE mix_video_tasks
+			SET schedule_payload = jsonb_set(
+			        jsonb_set(COALESCE(schedule_payload, '{}'::jsonb), '{repeatDaily}', 'false'::jsonb, true),
+			        '{scheduleKey}',
+			        to_jsonb(''::text),
+			        true
+			    ),
+			    request_payload = jsonb_set(
+			        jsonb_set(COALESCE(request_payload, '{}'::jsonb), '{scheduleConfig,repeatDaily}', 'false'::jsonb, true),
+			        '{scheduleConfig,scheduleKey}',
+			        to_jsonb(''::text),
+			        true
+			    ),
+			    updated_at = NOW()
+			WHERE owner_user_id = $1
+			  AND source = 'account_skill_binding'
+			  AND COALESCE(schedule_payload->>'scheduleKey', '') = $2
+		`, ownerUserID, strings.TrimSpace(scheduleKey)); err != nil {
+			return false, err
+		}
+	}
+
+	commandTag, err := tx.Exec(ctx, `
+		DELETE FROM mix_video_tasks
+		WHERE id = $1
+		  AND owner_user_id = $2
+		  AND source = 'account_skill_binding'
+		  AND local_publish_task_id IS NULL
+		  AND status IN ('scheduled', 'queued', 'failed', 'cancelled')
+	`, taskID, ownerUserID)
+	if err != nil {
+		return false, err
+	}
+	if commandTag.RowsAffected() == 0 {
+		return false, nil
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Store) ListRecurringAccountSkillTemplateMixVideoTasks(ctx context.Context, limit int) ([]domain.MixVideoTask, error) {
+	query := `
+		SELECT ` + mixVideoTaskSelectColumns + `
+		FROM (
+			SELECT DISTINCT ON (COALESCE(schedule_payload->>'scheduleKey', ''))
+				` + mixVideoTaskSelectColumns + `
+			FROM mix_video_tasks
+			WHERE source = 'account_skill_binding'
+			  AND COALESCE(schedule_payload->>'scheduleKey', '') <> ''
+			  AND COALESCE(schedule_payload->>'repeatDaily', 'false') = 'true'
+			ORDER BY COALESCE(schedule_payload->>'scheduleKey', ''), updated_at DESC, created_at DESC
+		) recurring_tasks
+		ORDER BY updated_at DESC, created_at DESC
+	`
+	args := []any{}
+	if limit > 0 {
+		query += ` LIMIT $1`
+		args = append(args, limit)
+	}
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.MixVideoTask, 0)
+	for rows.Next() {
+		task, scanErr := scanMixVideoTask(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *task)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) FindAccountSkillMixVideoTaskByScheduleSlot(ctx context.Context, ownerUserID string, accountID string, scheduleKey string, runAt time.Time) (*domain.MixVideoTask, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT `+mixVideoTaskSelectColumns+`
+		FROM mix_video_tasks
+		WHERE owner_user_id = $1
+		  AND source = 'account_skill_binding'
+		  AND COALESCE(schedule_payload->>'scheduleKey', '') = $2
+		  AND COALESCE(account_id, '') = $3
+		  AND run_at = $4
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, ownerUserID, strings.TrimSpace(scheduleKey), strings.TrimSpace(accountID), runAt.UTC())
+
+	task, err := scanMixVideoTask(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return task, nil
+}
+
+func (s *Store) FindActiveAccountSkillMixVideoTaskByRun(ctx context.Context, ownerUserID string, skillID string, deviceID string, accountID string, runAt time.Time) (*domain.MixVideoTask, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT `+mixVideoTaskSelectColumns+`
+		FROM mix_video_tasks
+		WHERE owner_user_id = $1
+		  AND source = 'account_skill_binding'
+		  AND skill_id = $2
+		  AND device_id = $3
+		  AND account_id = $4
+		  AND run_at = $5
+		  AND status IN ('scheduled', 'queued', 'running')
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, ownerUserID, skillID, deviceID, strings.TrimSpace(accountID), runAt.UTC())
+
+	task, err := scanMixVideoTask(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return task, nil
+}
+
+func (s *Store) FindReusablePublishTaskByMixVideoTarget(ctx context.Context, mixVideoTaskID string, ownerUserID string, deviceID string, platform string, accountName string) (*domain.PublishTask, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT pt.id, pt.device_id, pt.account_id, pt.skill_id, pt.skill_revision, pt.platform, pt.account_name,
+		       pt.title, pt.content_text, pt.media_payload, pt.status, pt.message, pt.verification_payload,
+		       pt.lease_owner_device_id, pt.lease_token, pt.lease_expires_at, pt.attempt_count, pt.cancel_requested_at,
+		       pt.run_at, pt.finished_at, pt.created_at, pt.updated_at
+		FROM publish_tasks pt
+		WHERE pt.device_id = $2
+		  AND pt.platform = $3
+		  AND pt.account_name = $4
+		  AND pt.status IN ('pending', 'scheduled', 'running', 'cancel_requested', 'needs_verify', 'success', 'completed')
+		  AND (
+		      pt.id = COALESCE((SELECT local_publish_task_id FROM mix_video_tasks WHERE id = $1 AND owner_user_id = $5), '')
+		      OR COALESCE(pt.media_payload->>'mixVideoTaskId', '') = $1
+		  )
+		ORDER BY pt.created_at DESC, pt.id DESC
+		LIMIT 1
+	`, mixVideoTaskID, deviceID, platform, accountName, ownerUserID)
+
+	task, err := scanPublishTask(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil

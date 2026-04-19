@@ -10,7 +10,9 @@ REMOTE_USER="${OMNIBULL_FACTORY_USER:-${2:-sun}}"
 REMOTE_SSH_PORT="${OMNIBULL_FACTORY_SSH_PORT:-22}"
 REMOTE_APP_ROOT="${OMNIBULL_FACTORY_APP_ROOT:-/opt/omnibull/social-auto-upload}"
 REMOTE_TMP_DIR="${OMNIBULL_FACTORY_TMP_DIR:-/tmp/omnibull-factory-sync}"
-OMNIDRIVE_BASE_URL="${OMNIDRIVE_BASE_URL:-}"
+OMNIDRIVE_BASE_URL="${OMNIDRIVE_BASE_URL:-https://aitoplus.com}"
+LOCAL_OPENCLAW_HOME="${OMNIBULL_LOCAL_OPENCLAW_HOME:-${HOME}/.openclaw}"
+LOCAL_OPENCLAW_BUNDLE_DIR=""
 
 
 usage() {
@@ -28,6 +30,7 @@ Environment overrides:
   OMNIBULL_FACTORY_APP_ROOT    Remote code directory (default: /opt/omnibull/social-auto-upload).
   OMNIBULL_FACTORY_TMP_DIR     Remote temp extraction directory.
   OMNIDRIVE_BASE_URL           OmniDrive cloud URL passed into setup_factory_master.sh.
+  OMNIBULL_LOCAL_OPENCLAW_HOME Local OpenClaw home to mirror (default: ~/.openclaw).
 
 Notes:
   - This script pushes the current workspace to the mother machine without using git.
@@ -50,6 +53,16 @@ ssh_base() {
 }
 
 
+cleanup_local_bundle() {
+  if [[ -n "${LOCAL_OPENCLAW_BUNDLE_DIR}" && -d "${LOCAL_OPENCLAW_BUNDLE_DIR}" ]]; then
+    rm -rf "${LOCAL_OPENCLAW_BUNDLE_DIR}"
+  fi
+}
+
+
+trap cleanup_local_bundle EXIT
+
+
 prepare_remote_tree() {
   ssh_base -t "${REMOTE_USER}@${REMOTE_HOST}" "
     set -e
@@ -58,6 +71,16 @@ prepare_remote_tree() {
       '$(dirname "${REMOTE_APP_ROOT}")' \
       '${REMOTE_APP_ROOT}'
   "
+}
+
+
+prepare_local_openclaw_bundle() {
+  LOCAL_OPENCLAW_BUNDLE_DIR="$(mktemp -d)"
+  python3 "${ROOT_DIR}/scripts/openclaw_factory_bundle.py" export \
+    --source-home "${LOCAL_OPENCLAW_HOME}" \
+    --output-dir "${LOCAL_OPENCLAW_BUNDLE_DIR}" \
+    --app-root "${REMOTE_APP_ROOT}" \
+    --omnidrive-base-url "${OMNIDRIVE_BASE_URL}" >/dev/null
 }
 
 
@@ -102,9 +125,16 @@ install_remote_tree() {
 }
 
 
+push_openclaw_bundle() {
+  tar -C "${LOCAL_OPENCLAW_BUNDLE_DIR}" -czf - . \
+    | ssh_base "${REMOTE_USER}@${REMOTE_HOST}" \
+      "rm -rf '${REMOTE_TMP_DIR}/openclaw-bundle' && mkdir -p '${REMOTE_TMP_DIR}/openclaw-bundle' && tar -xzf - -C '${REMOTE_TMP_DIR}/openclaw-bundle'"
+}
+
+
 run_remote_setup() {
   local setup_cmd
-  setup_cmd="cd '${REMOTE_APP_ROOT}' && sudo -E OMNIDRIVE_BASE_URL='${OMNIDRIVE_BASE_URL}' bash '${REMOTE_APP_ROOT}/scripts/setup_factory_master.sh'"
+  setup_cmd="cd '${REMOTE_APP_ROOT}' && sudo -E OMNIDRIVE_BASE_URL='${OMNIDRIVE_BASE_URL}' OMNIBULL_OPENCLAW_BUNDLE_DIR='${REMOTE_TMP_DIR}/openclaw-bundle' bash '${REMOTE_APP_ROOT}/scripts/setup_factory_master.sh'"
   ssh_base -t "${REMOTE_USER}@${REMOTE_HOST}" "${setup_cmd}"
 }
 
@@ -112,6 +142,7 @@ run_remote_setup() {
 main() {
   require_cmd ssh
   require_cmd tar
+  require_cmd python3
 
   if [[ -z "${REMOTE_HOST}" ]]; then
     usage
@@ -119,8 +150,10 @@ main() {
   fi
 
   prepare_remote_tree
+  prepare_local_openclaw_bundle
   push_archive
   install_remote_tree
+  push_openclaw_bundle
   run_remote_setup
 }
 

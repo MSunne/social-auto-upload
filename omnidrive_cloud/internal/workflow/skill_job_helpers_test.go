@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -216,6 +217,72 @@ func TestBuildDigitalHumanSkillAIJobPayloadIncludesRootAccountIDAndForcesCustomi
 	}
 }
 
+func TestResolveMixVideoSkillConfigDefaults(t *testing.T) {
+	raw, err := json.Marshal(map[string]any{
+		"mixVideo": map[string]any{
+			"publishTemplate": "平台简介基础模板",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal reference payload: %v", err)
+	}
+
+	config := ResolveMixVideoSkillConfig(domain.ProductSkill{
+		ReferencePayload: raw,
+	})
+	if !config.ScriptRewriteEnabled {
+		t.Fatal("expected script rewrite to default enabled")
+	}
+	if config.PublishTemplate != "平台简介基础模板" {
+		t.Fatalf("PublishTemplate = %q, want %q", config.PublishTemplate, "平台简介基础模板")
+	}
+}
+
+func TestCollectMixVideoSkillAssetsRequiresSingleRefAudio(t *testing.T) {
+	now := time.Now().UTC()
+	sourceAssets, refAudio, err := CollectMixVideoSkillAssets([]domain.ProductSkillAsset{
+		{ID: "video-1", AssetType: skillAssetMixVideoSourceVideo, FileName: "a.mp4", CreatedAt: now},
+		{ID: "video-2", AssetType: skillAssetMixVideoSourceVideo, FileName: "b.mp4", CreatedAt: now.Add(time.Second)},
+		{ID: "audio-1", AssetType: skillAssetMixVideoRefAudio, FileName: "voice.m4a", CreatedAt: now.Add(2 * time.Second)},
+	})
+	if err != nil {
+		t.Fatalf("CollectMixVideoSkillAssets returned error: %v", err)
+	}
+	if len(sourceAssets) != 2 {
+		t.Fatalf("expected 2 source assets, got %d", len(sourceAssets))
+	}
+	if refAudio == nil || refAudio.ID != "audio-1" {
+		t.Fatalf("unexpected refAudio: %#v", refAudio)
+	}
+
+	_, _, err = CollectMixVideoSkillAssets([]domain.ProductSkillAsset{
+		{ID: "video-1", AssetType: skillAssetMixVideoSourceVideo, FileName: "a.mp4", CreatedAt: now},
+	})
+	if err == nil || !strings.Contains(err.Error(), "reference audio") {
+		t.Fatalf("expected missing reference audio error, got %v", err)
+	}
+}
+
+func TestBuildMixVideoRewritePrompts(t *testing.T) {
+	scriptPrompt := BuildMixVideoScriptRewriteInput("全局脚本提示", "技能脚本提示", "请写一个混剪脚本")
+	if !strings.Contains(scriptPrompt, "全局脚本提示") {
+		t.Fatalf("expected admin script prompt in %q", scriptPrompt)
+	}
+	if !strings.Contains(scriptPrompt, "技能脚本提示") {
+		t.Fatalf("expected skill script prompt in %q", scriptPrompt)
+	}
+	if !strings.Contains(scriptPrompt, "请写一个混剪脚本") {
+		t.Fatalf("expected script template in %q", scriptPrompt)
+	}
+
+	publishPrompt := BuildMixVideoPublishIntroRewriteInput("全局简介提示", "技能简介提示", "平台简介模板", "最终脚本")
+	for _, expected := range []string{"全局简介提示", "技能简介提示", "平台简介模板", "最终脚本"} {
+		if !strings.Contains(publishPrompt, expected) {
+			t.Fatalf("expected %q in %q", expected, publishPrompt)
+		}
+	}
+}
+
 func TestMapSkillOutputTypeToJobTypeReturnsDigitalHuman(t *testing.T) {
 	cases := []string{"数字人口播", "真人口播", "真人视频", "digital_human"}
 	for _, outputType := range cases {
@@ -235,6 +302,22 @@ func TestNormalizeSkillOutputTypeLegacyRealVideoAliases(t *testing.T) {
 	}
 	if normalized := NormalizeSkillOutputType("真人视频"); normalized != "数字人口播" {
 		t.Fatalf("expected 真人视频 to normalize to 数字人口播, got %q", normalized)
+	}
+}
+
+func TestMapSkillOutputTypeToJobTypeReturnsMixVideo(t *testing.T) {
+	jobType, ok := MapSkillOutputTypeToJobType("混剪")
+	if !ok {
+		t.Fatal(`expected "混剪" to be supported`)
+	}
+	if jobType != "mix_video" {
+		t.Fatalf(`expected "混剪" to map to "mix_video", got %q`, jobType)
+	}
+}
+
+func TestNormalizeSkillOutputTypePreservesMixVideo(t *testing.T) {
+	if normalized := NormalizeSkillOutputType("混剪"); normalized != "混剪" {
+		t.Fatalf(`expected "混剪" to remain "混剪", got %q`, normalized)
 	}
 }
 

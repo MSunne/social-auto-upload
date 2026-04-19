@@ -27,39 +27,43 @@ type SkillHandler struct {
 }
 
 type createSkillRequest struct {
-	Name                 string      `json:"name"`
-	Description          string      `json:"description"`
-	OutputType           string      `json:"outputType"`
-	ModelName            string      `json:"modelName"`
-	FixedDurationSeconds *int        `json:"fixedDurationSeconds"`
-	PromptTemplate       *string     `json:"promptTemplate"`
-	PublishIntroEnabled  *bool       `json:"publishIntroEnabled"`
-	CoverPromptTemplate  *string     `json:"coverPromptTemplate"`
-	Topics               []string    `json:"topics"`
-	ReferencePayload     interface{} `json:"referencePayload"`
-	DeviceID             *string     `json:"deviceId"`
-	ExecutionTime        *string     `json:"executionTime"`
-	RepeatDaily          *bool       `json:"repeatDaily"`
-	StoryboardEnabled    *bool       `json:"storyboardEnabled"`
-	IsEnabled            *bool       `json:"isEnabled"`
+	Name                     string      `json:"name"`
+	Description              string      `json:"description"`
+	OutputType               string      `json:"outputType"`
+	ModelName                string      `json:"modelName"`
+	FixedDurationSeconds     *int        `json:"fixedDurationSeconds"`
+	PromptTemplate           *string     `json:"promptTemplate"`
+	StoryboardPromptTemplate *string     `json:"storyboardPromptTemplate"`
+	PublishPromptTemplate    *string     `json:"publishPromptTemplate"`
+	PublishIntroEnabled      *bool       `json:"publishIntroEnabled"`
+	CoverPromptTemplate      *string     `json:"coverPromptTemplate"`
+	Topics                   []string    `json:"topics"`
+	ReferencePayload         interface{} `json:"referencePayload"`
+	DeviceID                 *string     `json:"deviceId"`
+	ExecutionTime            *string     `json:"executionTime"`
+	RepeatDaily              *bool       `json:"repeatDaily"`
+	StoryboardEnabled        *bool       `json:"storyboardEnabled"`
+	IsEnabled                *bool       `json:"isEnabled"`
 }
 
 type updateSkillRequest struct {
-	Name                 *string     `json:"name"`
-	Description          *string     `json:"description"`
-	OutputType           *string     `json:"outputType"`
-	ModelName            *string     `json:"modelName"`
-	FixedDurationSeconds *int        `json:"fixedDurationSeconds"`
-	PromptTemplate       *string     `json:"promptTemplate"`
-	PublishIntroEnabled  *bool       `json:"publishIntroEnabled"`
-	CoverPromptTemplate  *string     `json:"coverPromptTemplate"`
-	Topics               []string    `json:"topics"`
-	ReferencePayload     interface{} `json:"referencePayload"`
-	DeviceID             *string     `json:"deviceId"`
-	ExecutionTime        *string     `json:"executionTime"`
-	RepeatDaily          *bool       `json:"repeatDaily"`
-	StoryboardEnabled    *bool       `json:"storyboardEnabled"`
-	IsEnabled            *bool       `json:"isEnabled"`
+	Name                     *string     `json:"name"`
+	Description              *string     `json:"description"`
+	OutputType               *string     `json:"outputType"`
+	ModelName                *string     `json:"modelName"`
+	FixedDurationSeconds     *int        `json:"fixedDurationSeconds"`
+	PromptTemplate           *string     `json:"promptTemplate"`
+	StoryboardPromptTemplate *string     `json:"storyboardPromptTemplate"`
+	PublishPromptTemplate    *string     `json:"publishPromptTemplate"`
+	PublishIntroEnabled      *bool       `json:"publishIntroEnabled"`
+	CoverPromptTemplate      *string     `json:"coverPromptTemplate"`
+	Topics                   []string    `json:"topics"`
+	ReferencePayload         interface{} `json:"referencePayload"`
+	DeviceID                 *string     `json:"deviceId"`
+	ExecutionTime            *string     `json:"executionTime"`
+	RepeatDaily              *bool       `json:"repeatDaily"`
+	StoryboardEnabled        *bool       `json:"storyboardEnabled"`
+	IsEnabled                *bool       `json:"isEnabled"`
 }
 
 type createSkillAssetRequest struct {
@@ -72,8 +76,10 @@ type createSkillAssetRequest struct {
 }
 
 type skillEditorDefaultsResponse struct {
-	CoverPromptTemplateDefault string                      `json:"coverPromptTemplateDefault"`
-	VideoTextDurationOptions   []skillEditorDurationOption `json:"videoTextDurationOptions"`
+	CoverPromptTemplateDefault  string                      `json:"coverPromptTemplateDefault"`
+	MixVideoScriptRewritePrompt string                      `json:"mixVideoScriptRewritePrompt"`
+	MixVideoPublishIntroPrompt  string                      `json:"mixVideoPublishIntroPrompt"`
+	VideoTextDurationOptions    []skillEditorDurationOption `json:"videoTextDurationOptions"`
 }
 
 type skillEditorDurationOption struct {
@@ -103,8 +109,6 @@ func sanitizeSkillSchedule(skill *domain.ProductSkill) {
 	skill.ExecutionTime = nil
 	skill.RepeatDaily = false
 	skill.NextRunAt = nil
-	skill.PublishPromptTemplate = nil
-	skill.StoryboardPromptTemplate = nil
 }
 
 const videoTextWorkflowCode = "video_text"
@@ -175,6 +179,27 @@ func validateSkillFixedDuration(ctx context.Context, app *appstate.App, outputTy
 	return resolveSkillFixedDurationConfig(ctx, app, modelName, normalized)
 }
 
+func validateMixVideoSkillConfig(ctx context.Context, app *appstate.App, outputType string, modelName string, promptTemplate *string, referencePayload []byte) error {
+	if !workflow.IsMixVideoSkillOutput(outputType) {
+		return nil
+	}
+	if strings.TrimSpace(normalizePatchedString(promptTemplate)) == "" {
+		return fmt.Errorf("promptTemplate is required for 混剪")
+	}
+	model, err := app.Store.GetAIModelByName(ctx, strings.TrimSpace(modelName))
+	if err != nil {
+		return err
+	}
+	if model == nil || !model.IsEnabled || strings.TrimSpace(model.Category) != "chat" {
+		return fmt.Errorf("mix video modelName must reference an enabled chat model")
+	}
+	config := workflow.ResolveMixVideoSkillConfig(domain.ProductSkill{ReferencePayload: referencePayload})
+	if strings.TrimSpace(config.PublishTemplate) == "" {
+		return fmt.Errorf("referencePayload.mixVideo.publishTemplate is required for 混剪")
+	}
+	return nil
+}
+
 // 解析技能Execution时间，为技能提供结构化输入。
 func parseSkillExecutionTime(raw string, now time.Time) (*time.Time, error) {
 	value := strings.TrimSpace(raw)
@@ -233,6 +258,20 @@ func normalizeSkillTopics(topics []string) []string {
 	return normalized
 }
 
+func firstNonNilString(primary *string, fallback *string) *string {
+	if primary != nil {
+		return primary
+	}
+	return fallback
+}
+
+func resolveUpdatedSkillReferencePayload(existing []byte, next []byte, touched bool) []byte {
+	if touched {
+		return next
+	}
+	return existing
+}
+
 // 处理技能列表接口，解析请求参数并调用应用状态或存储层完成业务动作。
 func (h *SkillHandler) List(w http.ResponseWriter, r *http.Request) {
 	user := httpcontext.CurrentUser(r.Context())
@@ -285,8 +324,10 @@ func (h *SkillHandler) EditorDefaults(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	render.JSON(w, http.StatusOK, skillEditorDefaultsResponse{
-		CoverPromptTemplateDefault: strings.TrimSpace(settings.VideoCoverPrompt),
-		VideoTextDurationOptions:   durationOptions,
+		CoverPromptTemplateDefault:  strings.TrimSpace(settings.VideoCoverPrompt),
+		MixVideoScriptRewritePrompt: strings.TrimSpace(settings.MixVideoScriptRewritePrompt),
+		MixVideoPublishIntroPrompt:  strings.TrimSpace(settings.MixVideoPublishIntroPrompt),
+		VideoTextDurationOptions:    durationOptions,
 	})
 }
 
@@ -510,6 +551,10 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := validateMixVideoSkillConfig(r.Context(), h.app, payload.OutputType, payload.ModelName, payload.PromptTemplate, referenceBytes); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	isEnabled := true
 	if payload.IsEnabled != nil {
@@ -520,6 +565,10 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 		publishIntroEnabled = *payload.PublishIntroEnabled
 	}
 
+	storyboardPromptTemplate := payload.StoryboardPromptTemplate
+	if storyboardPromptTemplate == nil && !workflow.IsMixVideoSkillOutput(payload.OutputType) {
+		storyboardPromptTemplate = stringPtr(workflow.DefaultSkillStoryboardPromptTemplate(payload.OutputType))
+	}
 	skill, err := h.app.Store.CreateSkill(r.Context(), store.CreateSkillInput{
 		ID:                       uuid.NewString(),
 		OwnerUserID:              user.ID,
@@ -530,7 +579,8 @@ func (h *SkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 		ModelName:                payload.ModelName,
 		FixedDurationSeconds:     normalizeFixedDurationSeconds(payload.FixedDurationSeconds),
 		PromptTemplate:           payload.PromptTemplate,
-		StoryboardPromptTemplate: stringPtr(workflow.DefaultSkillStoryboardPromptTemplate(payload.OutputType)),
+		StoryboardPromptTemplate: storyboardPromptTemplate,
+		PublishPromptTemplate:    payload.PublishPromptTemplate,
 		PublishIntroEnabled:      publishIntroEnabled,
 		CoverPromptTemplate:      stringPtr(normalizePatchedString(payload.CoverPromptTemplate)),
 		Topics:                   payload.Topics,
@@ -630,6 +680,10 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 		render.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := validateMixVideoSkillConfig(r.Context(), h.app, nextOutputType, nextModelName, firstNonNilString(payload.PromptTemplate, existing.PromptTemplate), resolveUpdatedSkillReferencePayload(existing.ReferencePayload, referenceBytes, referenceTouched)); err != nil {
+		render.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	var deviceID *string
 	deviceTouched := payload.DeviceID != nil
 	if deviceTouched {
@@ -654,28 +708,30 @@ func (h *SkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 	repeatDaily := false
 
 	skill, err := h.app.Store.UpdateSkill(r.Context(), skillID, user.ID, store.UpdateSkillInput{
-		Name:                 payload.Name,
-		Description:          payload.Description,
-		OutputType:           payload.OutputType,
-		ModelName:            payload.ModelName,
-		FixedDurationSeconds: nextFixedDurationSeconds,
-		FixedDurationTouched: payload.FixedDurationSeconds != nil || (payload.OutputType != nil && !isVideoTextOutputType(nextOutputType)),
-		PromptTemplate:       payload.PromptTemplate,
-		PublishIntroEnabled:  payload.PublishIntroEnabled,
-		CoverPromptTemplate:  stringPtr(normalizePatchedString(payload.CoverPromptTemplate)),
-		Topics:               payload.Topics,
-		TopicsTouched:        payload.Topics != nil,
-		ReferencePayload:     referenceBytes,
-		ReferenceTouched:     referenceTouched,
-		DeviceID:             deviceID,
-		DeviceTouched:        deviceTouched,
-		ExecutionTime:        nil,
-		ExecutionTouched:     true,
-		RepeatDaily:          &repeatDaily,
-		StoryboardEnabled:    payload.StoryboardEnabled,
-		NextRunAt:            nil,
-		NextRunTouched:       true,
-		IsEnabled:            payload.IsEnabled,
+		Name:                     payload.Name,
+		Description:              payload.Description,
+		OutputType:               payload.OutputType,
+		ModelName:                payload.ModelName,
+		FixedDurationSeconds:     nextFixedDurationSeconds,
+		FixedDurationTouched:     payload.FixedDurationSeconds != nil || (payload.OutputType != nil && !isVideoTextOutputType(nextOutputType)),
+		PromptTemplate:           payload.PromptTemplate,
+		StoryboardPromptTemplate: payload.StoryboardPromptTemplate,
+		PublishPromptTemplate:    payload.PublishPromptTemplate,
+		PublishIntroEnabled:      payload.PublishIntroEnabled,
+		CoverPromptTemplate:      stringPtr(normalizePatchedString(payload.CoverPromptTemplate)),
+		Topics:                   payload.Topics,
+		TopicsTouched:            payload.Topics != nil,
+		ReferencePayload:         referenceBytes,
+		ReferenceTouched:         referenceTouched,
+		DeviceID:                 deviceID,
+		DeviceTouched:            deviceTouched,
+		ExecutionTime:            nil,
+		ExecutionTouched:         true,
+		RepeatDaily:              &repeatDaily,
+		StoryboardEnabled:        payload.StoryboardEnabled,
+		NextRunAt:                nil,
+		NextRunTouched:           true,
+		IsEnabled:                payload.IsEnabled,
 	})
 	if err != nil {
 		render.Error(w, http.StatusInternalServerError, "Failed to update skill")

@@ -281,13 +281,12 @@
     },
     {
       "labels": [
+        "身份验证",
+        "为保障账号安全，请先完成身份验证，以确保为本人操作",
+        "和硕天成",
         "接收短信验证码",
-        "短信已发送至",
-        "157******69",
-        "重新发送",
-        "取消",
-        "无法验证通过？选择其他验证方式",
-        "接收短信验证码短信已发送至157******69重新发送取消无法验证通过？选择其他验证方式"
+        "发送短信验证",
+        "身份验证为保障账号安全，请先完成身份验证，以确保为本人操作和硕天成接收短信验证码发送短信验证"
       ],
       "tag": "div",
       "type": "",
@@ -297,91 +296,31 @@
     },
     {
       "labels": [
+        "身份验证",
+        "为保障账号安全，请先完成身份验证，以确保为本人操作",
+        "和硕天成",
         "接收短信验证码",
-        "短信已发送至",
-        "157******69",
-        "重新发送",
-        "取消",
-        "无法验证通过？选择其他验证方式",
-        "接收短信验证码短信已发送至157******69重新发送取消无法验证通过？选择其他验证方式"
+        "发送短信验证",
+        "身份验证为保障账号安全，请先完成身份验证，以确保为本人操作和硕天成接收短信验证码发送短信验证"
       ],
       "tag": "div",
       "type": "",
       "role": "",
       "className": "second_verify_panel_new-afowwi ",
       "disabled": false
-    },
-    {
-      "labels": [
-        "重新发送"
-      ],
-      "tag": "div",
-      "type": "",
-      "role": "",
-      "className": "uc_verification_component_button_input-mnqapa input-hngn0x ",
-      "disabled": false
-    },
-    {
-      "labels": [
-        "579542"
-      ],
-      "tag": "input",
-      "type": "tel",
-      "role": "",
-      "className": "input-lrnhmm button-input",
-      "disabled": false
-    },
-    {
-      "labels": [
-        "重新发送"
-      ],
-      "tag": "span",
-      "type": "",
-      "role": "",
-      "className": "button_text-kpmxee  ",
-      "disabled": false
-    },
-    {
-      "labels": [
-        "取消"
-      ],
-      "tag": "div",
-      "type": "",
-      "role": "",
-      "className": "button-mvfik9 ",
-      "disabled": false
-    },
-    {
-      "labels": [
-        "取消"
-      ],
-      "tag": "div",
-      "type": "",
-      "role": "",
-      "className": "uc_verification_component_btn-eqndat content-fpuout secondary-ognlhf   large-wt6qx5 ",
-      "disabled": false
-    },
-    {
-      "labels": [],
-      "tag": "div",
-      "type": "",
-      "role": "",
-      "className": "uc_verification_component_btn-eqndat content-fpuout primary-npo6wt  loading-rf2qte large-wt6qx5 ",
-      "disabled": false
     }
   ],
   "extra": {
-    "signature": "接收短信验证码|短信已发送至；157******69；取消；验证；无法验证通过？选择其他验证方式；选择其他验证方式|重新发送|请输入验证码|https://creator.douyin.com/",
+    "signature": "身份验证|为保障账号安全，请先完成身份验证，以确保为本人操作；和硕天成|接收短信验证码/发送短信验证||https://creator.douyin.com/",
     "payload": {
-      "title": "接收短信验证码",
-      "message": "短信已发送至；157******69；取消；验证；无法验证通过？选择其他验证方式；选择其他验证方式",
+      "title": "身份验证",
+      "message": "为保障账号安全，请先完成身份验证，以确保为本人操作；和硕天成",
       "options": [
-        "重新发送"
+        "接收短信验证码",
+        "发送短信验证"
       ],
-      "supportsTextInput": true,
-      "inputHints": [
-        "请输入验证码"
-      ]
+      "supportsTextInput": false,
+      "inputHints": []
     }
   }
 }

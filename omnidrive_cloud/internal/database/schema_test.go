@@ -45,6 +45,12 @@ func TestBootstrapSQLIncludesPromptOptimizeModel(t *testing.T) {
 	if !strings.Contains(bootstrapSQL, "claude-opus-4-6-thinking") {
 		t.Fatal("expected bootstrapSQL to backfill old claude prompt optimize model values")
 	}
+	if !strings.Contains(bootstrapSQL, "mix_video_script_rewrite_prompt") {
+		t.Fatal("expected bootstrapSQL to define mix_video_script_rewrite_prompt")
+	}
+	if !strings.Contains(bootstrapSQL, "mix_video_publish_intro_prompt") {
+		t.Fatal("expected bootstrapSQL to define mix_video_publish_intro_prompt")
+	}
 }
 
 func TestBootstrapSQLDefinesDeviceIdentityColumnsAndIndex(t *testing.T) {

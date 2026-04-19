@@ -34,3 +34,38 @@ func TestBuildAdminSystemConfigPayloadIncludesPromptOptimizeModel(t *testing.T) 
 		t.Fatalf("buildAdminSystemConfigPayload().PromptOptimizeModel = %q, want %q", payload.PromptOptimizeModel, settings.PromptOptimizeModel)
 	}
 }
+
+func TestDefaultAdminSystemSettingsIncludesMixVideoRewritePrompts(t *testing.T) {
+	settings := defaultAdminSystemSettings(config.Config{
+		DefaultChatModel:  "gemini-3.1-pro-preview",
+		DefaultImageModel: "gemini-3-pro-image-preview",
+		DefaultVideoModel: "veo-3.1-fast-fl",
+	})
+
+	if settings.MixVideoScriptRewritePrompt == "" {
+		t.Fatal("expected default mix video script rewrite prompt")
+	}
+	if settings.MixVideoPublishIntroPrompt == "" {
+		t.Fatal("expected default mix video publish intro prompt")
+	}
+}
+
+func TestBuildAdminSystemConfigPayloadIncludesMixVideoRewritePrompts(t *testing.T) {
+	cfg := config.Config{
+		AdminEmail:        "admin@example.com",
+		DefaultChatModel:  "gemini-3.1-pro-preview",
+		DefaultImageModel: "gemini-3-pro-image-preview",
+		DefaultVideoModel: "veo-3.1-fast-fl",
+	}
+	settings := defaultAdminSystemSettings(cfg)
+	settings.MixVideoScriptRewritePrompt = "script-rewrite"
+	settings.MixVideoPublishIntroPrompt = "publish-rewrite"
+
+	payload := buildAdminSystemConfigPayload(&appstate.App{Config: cfg}, settings)
+	if payload.MixVideoScriptRewritePrompt != settings.MixVideoScriptRewritePrompt {
+		t.Fatalf("buildAdminSystemConfigPayload().MixVideoScriptRewritePrompt = %q, want %q", payload.MixVideoScriptRewritePrompt, settings.MixVideoScriptRewritePrompt)
+	}
+	if payload.MixVideoPublishIntroPrompt != settings.MixVideoPublishIntroPrompt {
+		t.Fatalf("buildAdminSystemConfigPayload().MixVideoPublishIntroPrompt = %q, want %q", payload.MixVideoPublishIntroPrompt, settings.MixVideoPublishIntroPrompt)
+	}
+}

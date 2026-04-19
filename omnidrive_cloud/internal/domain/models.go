@@ -814,6 +814,14 @@ type MixVideoTask struct {
 	RefAudioAsset            MixVideoAsset     `json:"refAudioAsset"`
 	ResultAsset              *MixVideoAsset    `json:"resultAsset,omitempty"`
 	ScriptText               string            `json:"scriptText"`
+	DeviceID                 *string           `json:"deviceId,omitempty"`
+	SkillID                  *string           `json:"skillId,omitempty"`
+	AccountID                *string           `json:"accountId,omitempty"`
+	Platform                 *string           `json:"platform,omitempty"`
+	AccountName              *string           `json:"accountName,omitempty"`
+	RunAt                    *time.Time        `json:"runAt,omitempty"`
+	SchedulePayload          json.RawMessage   `json:"schedulePayload,omitempty"`
+	LocalPublishTaskID       *string           `json:"localPublishTaskId,omitempty"`
 	EstimatedDurationSeconds int               `json:"estimatedDurationSeconds"`
 	EstimatedCredits         float64           `json:"estimatedCredits"`
 	EstimatedCreditsMillis   int64             `json:"-"`

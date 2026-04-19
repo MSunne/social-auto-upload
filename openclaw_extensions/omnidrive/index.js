@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
 const DEFAULT_BASE_URL = "http://127.0.0.1:8410";
 const DEFAULT_TIMEOUT_MS = 45000;
 const DEFAULT_LOCAL_OMNIBULL_BASE_URL = "http://127.0.0.1:5409";
@@ -16,6 +19,20 @@ const TOOL_MAX_EMBEDDED_IMAGE_BYTES = 8 * 1024 * 1024;
 const TOOL_MAX_EMBEDDED_IMAGE_COUNT = 1;
 
 let cachedSession = null;
+const OPENCLAW_AVAILABLE_SKILLS = [
+  "omnidrive_auth",
+  "omnidrive_models",
+  "omnidrive_chat",
+  "omnidrive_image",
+  "omnidrive_video",
+  "omnidrive_mix_video",
+  "omnidrive_jobs",
+  "omnidrive_job_detail",
+  "omnibull_status",
+  "omnibull_accounts",
+  "omnibull_materials",
+  "omnibull_publish",
+];
 
 function resolveConfig(api) {
   const pluginConfig = api.pluginConfig || {};
@@ -61,6 +78,10 @@ function textBlock(text) {
     type: "text",
     text: String(text || ""),
   };
+}
+
+function isFormDataBody(body) {
+  return typeof FormData !== "undefined" && body instanceof FormData;
 }
 
 function toolResult(data, content = null) {
@@ -110,6 +131,7 @@ function summarizeCachedSession(session) {
     source: session.source || null,
     loggedInAt: session.loggedInAt || null,
     apiBaseUrl: session.apiBaseUrl || null,
+    authState: session.authState || null,
   };
 }
 
@@ -203,6 +225,38 @@ function buildPublishMetadataInputPayload(params = {}) {
   };
 }
 
+function normalizeMixVideoAssetInput(item, label) {
+  ensure(item && typeof item === "object", `${label} 必须是对象`);
+  const absolutePath = String(item.absolutePath || "").trim();
+  const url = String(item.url || "").trim();
+  ensure(absolutePath || url, `${label} 需要提供 absolutePath 或 url`);
+  return {
+    absolutePath: absolutePath || undefined,
+    url: url || undefined,
+    fileName: String(item.fileName || (absolutePath ? path.basename(absolutePath) : "")).trim() || undefined,
+    mimeType: String(item.mimeType || "").trim() || undefined,
+  };
+}
+
+function buildMixVideoCreateInput(params = {}) {
+  const scriptText = String(params.scriptText || "").trim();
+  ensure(scriptText, "缺少 scriptText");
+
+  const sourceVideos = Array.isArray(params.sourceVideos)
+    ? params.sourceVideos.map((item, index) => normalizeMixVideoAssetInput(item, `sourceVideos[${index}]`))
+    : [];
+  ensure(sourceVideos.length > 0, "至少需要一个 sourceVideos");
+
+  const refAudio = normalizeMixVideoAssetInput(params.refAudio || params.referenceAudio || {}, "refAudio");
+  const publish = buildPublishMetadataInputPayload(params || {});
+  return {
+    scriptText,
+    sourceVideos,
+    refAudio,
+    publish: Object.keys(publish).length > 0 ? publish : null,
+  };
+}
+
 function buildQuery(params) {
   const search = new URLSearchParams();
   Object.entries(params || {}).forEach(([key, value]) => {
@@ -230,7 +284,7 @@ async function requestLocalOmniBull(api, path, options = {}) {
   if (cfg.localOmniBullApiKey) {
     headers["X-Omnibull-Key"] = cfg.localOmniBullApiKey;
   }
-  if (options.body !== undefined && !headers["Content-Type"]) {
+  if (options.body !== undefined && !headers["Content-Type"] && !isFormDataBody(options.body)) {
     headers["Content-Type"] = "application/json";
   }
 
@@ -265,11 +319,15 @@ async function fetchLocalOmniDriveSession(api) {
   cachedSession = {
     accessToken,
     user: data.user || null,
+    device: data.device || null,
     email: data?.user?.email || null,
     source: "local_agent_session",
     loggedInAt: nowISO(),
     apiBaseUrl: apiBaseUrl || null,
     cloudUrl: apiBaseUrl || null,
+    authState: String(data.authState || "").trim() || "authorized",
+    reason: String(data.reason || "").trim(),
+    availableSkills: Array.isArray(data.availableSkills) ? data.availableSkills : [],
   };
   return cachedSession;
 }
@@ -309,7 +367,7 @@ async function rawRequest(api, path, options = {}, accessToken = "") {
   if (accessToken) {
     headers.Authorization = `Bearer ${accessToken}`;
   }
-  if (options.body !== undefined && !headers["Content-Type"]) {
+  if (options.body !== undefined && !headers["Content-Type"] && !isFormDataBody(options.body)) {
     headers["Content-Type"] = "application/json";
   }
 
@@ -398,6 +456,48 @@ async function ensureAccessToken(api, overrides = {}) {
   return session.accessToken;
 }
 
+async function refreshAccessTokenAfterUnauthorized(api, overrides = {}) {
+  clearCachedSession();
+  try {
+    const session = await fetchLocalOmniDriveSession(api);
+    return session.accessToken;
+  } catch {
+    // Fall through to explicit development fallbacks when the local bridge is unavailable.
+  }
+
+  const explicitToken = String(overrides.accessToken || "").trim();
+  if (explicitToken) {
+    return explicitToken;
+  }
+
+  const cfg = resolveConfig(api);
+  if (cfg.accessToken) {
+    cachedSession = {
+      accessToken: cfg.accessToken,
+      user: null,
+      email: cfg.email || null,
+      source: "config_access_token",
+      loggedInAt: null,
+      apiBaseUrl: cfg.baseUrl,
+      cloudUrl: cfg.baseUrl,
+      authState: "authorized",
+      reason: "",
+      availableSkills: [],
+    };
+    return cfg.accessToken;
+  }
+
+  const hasCredentials =
+    Boolean(String(overrides.email || "").trim() && String(overrides.password || "").trim()) ||
+    Boolean(cfg.email && cfg.password);
+  if (hasCredentials) {
+    const session = await performLogin(api, overrides);
+    return session.accessToken;
+  }
+
+  throw new Error("OmniDrive 会话已失效，且无法从本地 OmniBull 刷新会话");
+}
+
 async function requestJson(api, path, options = {}, authOptions = {}) {
   const authEnabled = authOptions.auth !== false;
   let accessToken = "";
@@ -411,12 +511,8 @@ async function requestJson(api, path, options = {}, authOptions = {}) {
     response.status === 401 &&
     authOptions.retryOnAuth !== false
   ) {
-    const cfg = resolveConfig(api);
-    if (cfg.email && cfg.password) {
-      clearCachedSession();
-      accessToken = await ensureAccessToken(api, authOptions);
-      response = await rawRequest(api, path, options, accessToken);
-    }
+    accessToken = await refreshAccessTokenAfterUnauthorized(api, authOptions);
+    response = await rawRequest(api, path, options, accessToken);
   }
 
   if (!response.ok) {
@@ -884,12 +980,18 @@ async function buildAuthStatusPayload(api, params = {}) {
   let authSource = cachedSession?.source || null;
   let boundDevice = null;
   let sessionUser = cachedSession?.user || null;
+  let availableSkills = Array.isArray(cachedSession?.availableSkills) ? cachedSession.availableSkills : [];
+  let authState = String(cachedSession?.authState || "").trim() || "blocked";
+  let authReason = String(cachedSession?.reason || "").trim();
 
   try {
     await ensureAccessToken(api, params || {});
     authenticated = Boolean(cachedSession?.accessToken || cfg.accessToken);
     authSource = cachedSession?.source || (cfg.accessToken ? "config_access_token" : null);
     sessionUser = cachedSession?.user || null;
+    availableSkills = Array.isArray(cachedSession?.availableSkills) ? cachedSession.availableSkills : availableSkills;
+    authState = String(cachedSession?.authState || "").trim() || "authorized";
+    authReason = String(cachedSession?.reason || "").trim();
     boundDevice = await resolveBoundOmniBullDevice(api, params || {});
   } catch {
     boundDevice = null;
@@ -902,9 +1004,22 @@ async function buildAuthStatusPayload(api, params = {}) {
   } else if (!boundDevice) {
     gatewayBlockedReason = "当前 OpenClaw 所在 OmniBull 未绑定或未启用";
   }
+  if (!authenticated) {
+    authState = "blocked";
+  } else if (!authState) {
+    authState = "authorized";
+  }
+  if (!authReason) {
+    authReason = gatewayBlockedReason || "";
+  }
+  if (authenticated && boundDevice && availableSkills.length === 0) {
+    availableSkills = [...OPENCLAW_AVAILABLE_SKILLS];
+  }
 
   return {
     authenticated,
+    authState,
+    reason: authReason,
     authSource,
     supportsHeadlessAgentSession: true,
     headlessAgentSessionActive,
@@ -917,6 +1032,7 @@ async function buildAuthStatusPayload(api, params = {}) {
     effectiveBaseUrl: cachedSession?.apiBaseUrl || cachedSession?.cloudUrl || cfg.baseUrl,
     localOmniBullBaseUrl: cfg.localOmniBullBaseUrl,
     boundDevice: summarizeBoundDevice(boundDevice),
+    availableSkills,
     recommendedMainChatRoute: {
       mode: "gateway",
       gatewayMethod: "omnidrive.chat",
@@ -1218,6 +1334,139 @@ async function executeVideo(api, params) {
   return buildMediaToolResult("video", result);
 }
 
+async function readMixVideoAssetData(asset) {
+  if (asset.absolutePath) {
+    return {
+      data: await readFile(asset.absolutePath),
+      fileName: asset.fileName || path.basename(asset.absolutePath),
+      mimeType: asset.mimeType || "",
+    };
+  }
+  const response = await fetch(asset.url);
+  ensure(response?.ok, `下载素材失败: ${asset.url}`);
+  return {
+    data: Buffer.from(await response.arrayBuffer()),
+    fileName:
+      asset.fileName ||
+      path.basename(new URL(asset.url).pathname || "asset.bin") ||
+      "asset.bin",
+    mimeType: String(response.headers?.get?.("content-type") || asset.mimeType || "").trim(),
+  };
+}
+
+async function buildMixVideoCreateFormData(payload) {
+  const formData = new FormData();
+  formData.set("scriptText", payload.scriptText);
+  for (const asset of payload.sourceVideos) {
+    const file = await readMixVideoAssetData(asset);
+    formData.append("assets[]", new Blob([file.data], { type: file.mimeType || undefined }), file.fileName || "asset.bin");
+  }
+  const refAudioFile = await readMixVideoAssetData(payload.refAudio);
+  formData.set("refAudio", new Blob([refAudioFile.data], { type: refAudioFile.mimeType || undefined }), refAudioFile.fileName || "audio.bin");
+  if (payload.publish) {
+    formData.set("accountId", payload.publish.accountId);
+    formData.set("platform", payload.publish.platform);
+    formData.set("accountName", payload.publish.accountName);
+    formData.set("publishAt", payload.publish.publishAt);
+  }
+  return formData;
+}
+
+function summarizeMixVideoToolPayload(action, payload = {}) {
+  const lines = [];
+  switch (String(action || "").trim()) {
+    case "billing_preview":
+      lines.push("混剪计费预估：");
+      if (payload.estimatedDurationSeconds !== undefined) {
+        lines.push(`预计时长：${payload.estimatedDurationSeconds}s`);
+      }
+      if (payload.estimatedCredits !== undefined) {
+        lines.push(`预计积分：${payload.estimatedCredits}`);
+      }
+      if (payload.creditBalance !== undefined) {
+        lines.push(`当前余额：${payload.creditBalance}`);
+      }
+      if (payload.shortfallCredits !== undefined && payload.shortfallCredits > 0) {
+        lines.push(`还差积分：${payload.shortfallCredits}`);
+      }
+      break;
+    case "tasks":
+      lines.push("混剪任务列表：");
+      for (const item of Array.isArray(payload) ? payload.slice(0, 10) : []) {
+        lines.push(`- ${item.id || "unknown"} | ${item.status || "unknown"} | ${item.accountName || item.source || ""}`.trim());
+      }
+      break;
+    case "task_detail":
+      lines.push("混剪任务详情：");
+      lines.push(`任务 ID：${payload.id || ""}`);
+      lines.push(`状态：${payload.status || ""}`);
+      if (payload.platform || payload.accountName) {
+        lines.push(`发布目标：${payload.platform || ""} ${payload.accountName || ""}`.trim());
+      }
+      if (payload.resultAsset?.publicUrl) {
+        lines.push(`成片地址：${payload.resultAsset.publicUrl}`);
+      }
+      if (payload.message) {
+        lines.push(`消息：${payload.message}`);
+      }
+      break;
+    default:
+      lines.push("混剪任务已创建。");
+      lines.push(`任务 ID：${payload.id || ""}`);
+      lines.push(`状态：${payload.status || ""}`);
+      if (payload.resultAsset?.publicUrl) {
+        lines.push(`成片地址：${payload.resultAsset.publicUrl}`);
+      }
+      if (payload.accountName || payload.platform) {
+        lines.push(`发布目标：${payload.platform || ""} ${payload.accountName || ""}`.trim());
+      }
+      break;
+  }
+  return {
+    summaryText: lines.filter(Boolean).join("\n"),
+    details: payload,
+  };
+}
+
+async function executeMixVideo(api, params) {
+  const action = String(params.action || "create").trim();
+  switch (action) {
+    case "billing_preview": {
+      const scriptText = String(params.scriptText || "").trim();
+      ensure(scriptText, "缺少 scriptText");
+      const preview = await requestJson(
+        api,
+        `/api/v1/mix-video/tasks/billing-preview${buildQuery({ scriptText })}`,
+        { method: "GET" },
+        params || {},
+      );
+      return toolResult(preview, [textBlock(summarizeMixVideoToolPayload(action, preview).summaryText)]);
+    }
+    case "tasks": {
+      const items = await requestJson(
+        api,
+        `/api/v1/mix-video/tasks${buildQuery({ status: params.status, limit: params.limit })}`,
+        { method: "GET" },
+        params || {},
+      );
+      return toolResult(items, [textBlock(summarizeMixVideoToolPayload(action, items).summaryText)]);
+    }
+    case "task_detail": {
+      const taskId = String(params.taskId || "").trim();
+      ensure(taskId, "缺少 taskId");
+      const item = await requestJson(api, `/api/v1/mix-video/tasks/${encodeURIComponent(taskId)}`, { method: "GET" }, params || {});
+      return toolResult(item, [textBlock(summarizeMixVideoToolPayload(action, item).summaryText)]);
+    }
+    case "create":
+    default: {
+      const payload = buildMixVideoCreateInput(params || {});
+      const formData = await buildMixVideoCreateFormData(payload);
+      const item = await requestJson(api, "/api/v1/mix-video/tasks", { method: "POST", body: formData }, params || {});
+      return toolResult(item, [textBlock(summarizeMixVideoToolPayload(action, item).summaryText)]);
+    }
+  }
+}
+
 async function executeJobs(api, params) {
   const items = await requestJson(
     api,
@@ -1464,6 +1713,32 @@ const plugin = {
     });
 
     api.registerTool({
+      name: "omnidrive_mix_video",
+      description: "使用 OmniDrive 云端混剪能力创建混剪任务，查询计费、任务列表和任务详情。",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          action: { type: "string", enum: ["create", "billing_preview", "tasks", "task_detail"] },
+          scriptText: { type: "string" },
+          sourceVideos: { type: "array", items: { type: "object" } },
+          refAudio: { type: "object" },
+          taskId: { type: "string" },
+          status: { type: "string" },
+          limit: { type: "integer", minimum: 1, maximum: 200 },
+          accountId: { type: "string" },
+          platform: { type: "string" },
+          accountName: { type: "string" },
+          publishAt: { type: "string" },
+          accessToken: { type: "string" },
+        },
+      },
+      async execute(_id, params) {
+        return executeMixVideo(api, params || {});
+      },
+    });
+
+    api.registerTool({
       name: "omnidrive_jobs",
       description: "查询 OmniDrive AI 任务列表，可按类型、状态、设备、技能过滤。",
       parameters: {
@@ -1510,13 +1785,18 @@ const plugin = {
 
 export default plugin;
 export {
+  buildAuthStatusPayload,
   buildMediaToolResultContent,
+  buildMixVideoCreateInput,
   buildPublishMetadataInputPayload,
+  clearCachedSession,
   collectMediaResultDetails,
   fetchImageContentBlock,
   getLongJobObservationRemainingMs,
   inferMediaJobType,
   isLongRunningJobType,
   pollWorkspaceUntilFinal,
+  requestJson,
+  summarizeMixVideoToolPayload,
   summarizeMediaToolPayload,
 };

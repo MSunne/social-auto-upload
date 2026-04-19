@@ -645,6 +645,9 @@ func (w *Worker) settleCompletedTask(ctx context.Context, task *domain.MixVideoT
 		if updated != nil {
 			task = updated
 		}
+		if _, autoErr := w.autoCreatePublishTaskFromMixVideoTask(ctx, task); autoErr != nil {
+			w.app.Logger.Error("mix video worker failed to auto create publish task", "task_id", task.ID, "error", autoErr)
+		}
 		return
 	}
 	finalCredits := w.finalCreditsForTask(task, actualDurationSeconds)

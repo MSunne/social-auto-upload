@@ -45,6 +45,23 @@ Nano Banana图片编辑官方文档：https://docs.apiyi.com/api-capabilities/na
 - `OpenClaw` 不是业务主存，它只是消费这两个系统能力的 Agent 入口。
 - `OmniDriveAdmin` 当前不是本期主线，先不作为业务实现中心。
 
+### 1.3 当前演示账号与 43 服务器口径
+
+- `OmniDrive` 开发演示账号固定为：
+  - 手机号：`18812345678`
+  - 名称：`禾硕AI`
+  - 密码：`123456`
+- 该账号的图片历史、视频历史、发布任务、登录链路演示数据，需要落到 `OmniDrive` 自己的数据库，而不是停留在前端 mock。
+- 平台账号依然遵循主责边界：
+  - `OmniBull` / agent 负责真实账号域和镜像同步
+  - `OmniDrive` 保存的是镜像状态，不是 Cookie 主存
+- 43 服务器同步演示数据时，不复制本地数据库文件。
+  - 正确方式是先同步代码，再在 43 服务器上执行同一套 demo seed
+  - 43 服务器信息见：`root@43.98.251.225`
+  - 相关脚本：
+    - `scripts/cloud_live_sync.py --once --seed-demo-data`
+    - `scripts/run_remote_omnidrive_demo_seed.sh`
+
 ## 2. 子工程地图
 
 ### 2.1 本地侧：OmniBull / SAU

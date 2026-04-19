@@ -45,6 +45,64 @@ go run ./cmd/omnidrive-api
 
 For production deployments that keep `OMNIDRIVE_AUTO_CREATE_SCHEMA=false`, run the bootstrap command explicitly before restarting the API so table/column drift does not break newer handlers.
 
+## Demo Seed
+
+Development mode now reserves one fixed OmniDrive demo account:
+
+- phone: `18812345678`
+- name: `禾硕AI`
+- password: `123456`
+
+The account is created by `EnsureDevelopmentSeedUsers` when:
+
+- `OMNIDRIVE_ENV=development`
+- `OMNIDRIVE_DEV_SEED_USERS=true`
+
+Related environment overrides:
+
+```bash
+OMNIDRIVE_DEMO_PHONE=18812345678
+OMNIDRIVE_DEMO_NAME=禾硕AI
+OMNIDRIVE_DEMO_PASSWORD=123456
+OMNIDRIVE_DEV_SEED_USER_PASSWORD=123456
+```
+
+To seed the full demo panel into the real OmniDrive database:
+
+```bash
+cd /Volumes/mud/project/github/social-auto-upload
+python3 scripts/seed_omnidrive_mock_data.py --base-url http://127.0.0.1:8410
+```
+
+The seed script is idempotent per environment through a persisted state file under `omnidrive_cloud/data/mock-seed/seed-state.json`. It writes real database records through the normal OmniDrive APIs:
+
+- mirrored platform accounts via agent sync
+- image and video AI job history via `/api/v1/ai/jobs`
+- publish tasks via `/api/v1/tasks`
+- login-session demo chains via admin validate + agent login events
+
+Expected seeded scale:
+
+- `12-14` mirrored platform accounts
+- `18` image AI jobs
+- `18` video AI jobs
+- `13` publish tasks
+- `6` login-session demo chains
+
+To seed the 43 server after syncing code, do not copy a local database file. Re-run the same seed remotely against the server-local database:
+
+```bash
+cd /Volumes/mud/project/github/social-auto-upload
+./scripts/run_remote_omnidrive_demo_seed.sh
+```
+
+Or bundle code sync + remote seed in one step:
+
+```bash
+cd /Volumes/mud/project/github/social-auto-upload
+python3 scripts/cloud_live_sync.py --once --seed-demo-data
+```
+
 ## AI Video Artifact Standardization
 
 Cloud-generated video artifacts are now standardized before they are saved as the final AI output artifact and before they are later mirrored into OmniBull.

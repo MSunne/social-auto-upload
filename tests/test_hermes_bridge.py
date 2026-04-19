@@ -20,28 +20,30 @@ class HermesSharedRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime_path = Path(temp_dir) / "runtime" / "hermes-openclaw-runtime.json"
             with mock.patch.object(sau_backend, "HERMES_SHARED_RUNTIME_CONFIG_PATH", runtime_path):
-                payload, paths = sau_backend.sync_hermes_shared_runtime_config(
-                    model_items=[
-                        {"modelName": "gpt-5.4"},
-                        {"modelName": "gpt-image-1"},
-                        {"modelName": "gpt-5.4"},
-                    ],
-                    api_base_url="https://cloud.example.com",
-                    access_token="secret-token",
-                    device={
-                        "id": "device-1",
-                        "deviceCode": "device-code-1",
-                        "name": "Factory OmniBull",
-                        "defaultChatModel": "gpt-5.4",
-                        "defaultImageModel": "gpt-image-1",
-                        "defaultVideoModel": "veo-3",
-                    },
-                )
+                with mock.patch.object(sau_backend, "SAU_BACKEND_PORT", 15409), \
+                     mock.patch.object(sau_backend, "OMNIBULL_API_KEY", ""):
+                    payload, paths = sau_backend.sync_hermes_shared_runtime_config(
+                        model_items=[
+                            {"modelName": "gpt-5.4"},
+                            {"modelName": "gpt-image-1"},
+                            {"modelName": "gpt-5.4"},
+                        ],
+                        api_base_url="https://cloud.example.com",
+                        access_token="secret-token",
+                        device={
+                            "id": "device-1",
+                            "deviceCode": "device-code-1",
+                            "name": "Factory OmniBull",
+                            "defaultChatModel": "gpt-5.4",
+                            "defaultImageModel": "gpt-image-1",
+                            "defaultVideoModel": "veo-3",
+                        },
+                    )
 
             self.assertEqual(paths, [str(runtime_path)])
             self.assertTrue(runtime_path.exists())
-            self.assertEqual(payload["provider"]["baseUrl"], "https://cloud.example.com/openai/v1")
-            self.assertEqual(payload["provider"]["apiKey"], "secret-token")
+            self.assertEqual(payload["provider"]["baseUrl"], "http://127.0.0.1:15409/openai/v1")
+            self.assertIsNone(payload["provider"].get("apiKey"))
             self.assertEqual(payload["defaults"]["chatModel"], "gpt-5.4")
             self.assertEqual(payload["defaults"]["imageModel"], "gpt-image-1")
             self.assertEqual(payload["defaults"]["videoModel"], "veo-3")
@@ -51,8 +53,8 @@ class HermesSharedRuntimeTests(unittest.TestCase):
             saved = json.loads(runtime_path.read_text(encoding="utf-8"))
             self.assertEqual(saved["defaults"]["chatModel"], "gpt-5.4")
             self.assertEqual(
-                sau_backend._sanitize_shared_runtime_config_for_response(saved)["provider"]["apiKey"],
-                "[REDACTED]",
+                sau_backend._sanitize_shared_runtime_config_for_response(saved)["provider"].get("apiKey"),
+                None,
             )
 
 

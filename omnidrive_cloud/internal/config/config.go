@@ -53,11 +53,26 @@ type Config struct {
 	AdminAccessTokenExpireMinutes int
 	DevSeedUsers                  bool
 	DevSeedUserPassword           string
+	DemoPhone                     string
+	DemoName                      string
+	DemoPassword                  string
 	AutoCreateSchema              bool
 	BillingManualSupportName      string
 	BillingManualSupportContact   string
 	BillingManualSupportQRCodeURL string
 	BillingManualSupportNote      string
+}
+
+func (c Config) GetDemoPhone() string {
+	return strings.TrimSpace(c.DemoPhone)
+}
+
+func (c Config) GetDemoName() string {
+	return strings.TrimSpace(c.DemoName)
+}
+
+func (c Config) GetDemoPassword() string {
+	return strings.TrimSpace(c.DemoPassword)
 }
 
 // 加载配置，供配置继续处理当前业务状态。
@@ -117,7 +132,10 @@ func Load() Config {
 		AdminPassword:                 envOrDefault("OMNIDRIVE_ADMIN_PASSWORD", "123456"),
 		AdminAccessTokenExpireMinutes: adminAccessTokenExpireMinutes,
 		DevSeedUsers:                  envAsBool("OMNIDRIVE_DEV_SEED_USERS", strings.EqualFold(strings.TrimSpace(environment), "development")),
-		DevSeedUserPassword:           envOrDefault("OMNIDRIVE_DEV_SEED_USER_PASSWORD", "demo123456"),
+		DevSeedUserPassword:           envFirst("123456", "OMNIDRIVE_DEV_SEED_USER_PASSWORD", "OMNIDRIVE_DEMO_PASSWORD"),
+		DemoPhone:                     envOrDefault("OMNIDRIVE_DEMO_PHONE", "18812345678"),
+		DemoName:                      envOrDefault("OMNIDRIVE_DEMO_NAME", "禾硕AI"),
+		DemoPassword:                  envOrDefault("OMNIDRIVE_DEMO_PASSWORD", "123456"),
 		AutoCreateSchema:              envAsBool("OMNIDRIVE_AUTO_CREATE_SCHEMA", true),
 		BillingManualSupportName:      envOrDefault("OMNIDRIVE_BILLING_MANUAL_SUPPORT_NAME", "客服充值"),
 		BillingManualSupportContact:   envOrDefault("OMNIDRIVE_BILLING_MANUAL_SUPPORT_CONTACT", ""),

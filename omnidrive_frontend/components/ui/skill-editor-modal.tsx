@@ -15,6 +15,7 @@ import {
   Loader2,
   MessageSquareText,
   Mic,
+  Scissors,
   Sparkles,
   Trash2,
   Upload,
@@ -50,6 +51,7 @@ import {
   sortDigitalHumanModelsForMode,
 } from "@/lib/digital-human-models";
 import { getModelDisplayName } from "@/lib/model-display";
+import { MIX_VIDEO_ASSET_ACCEPT, MIX_VIDEO_AUDIO_ACCEPT, validateMixVideoFile } from "@/lib/mix-video";
 import { buildFileAccept, resolveSupportedFileTypes } from "@/lib/ai-file-types";
 import { cn } from "@/lib/utils";
 import {
@@ -71,6 +73,9 @@ type SkillFormState = {
   name: string;
   description: string;
   promptTemplate: string;
+  storyboardPromptTemplate: string;
+  publishPromptTemplate: string;
+  mixVideoPublishTemplate: string;
   fixedDurationSeconds: string;
   publishIntroEnabled: boolean;
   topicsText: string;
@@ -82,6 +87,7 @@ type SkillFormState = {
   digitalHumanGoodsTitle: string;
   digitalHumanGoodsText: string;
   storyboardEnabled: boolean;
+  mixVideoScriptRewriteEnabled: boolean;
   isEnabled: boolean;
 };
 
@@ -91,7 +97,9 @@ type UploadAssetType =
   | "reference_text"
   | "digital_human_character_image"
   | "digital_human_goods_image"
-  | "digital_human_ref_audio";
+  | "digital_human_ref_audio"
+  | "mix_video_source_video"
+  | "mix_video_ref_audio";
 
 type UploadingAsset = {
   id: string;
@@ -142,12 +150,22 @@ const OUTPUT_OPTIONS: OutputOption[] = [
     icon: Mic,
     tone: "text-emerald-300",
   },
+  {
+    value: "混剪",
+    label: "混剪",
+    hint: "混剪、剪辑、二创视频",
+    icon: Scissors,
+    tone: "text-cyan",
+  },
 ];
 
 const EMPTY_FORM: SkillFormState = {
   name: "",
   description: "",
   promptTemplate: "",
+  storyboardPromptTemplate: "",
+  publishPromptTemplate: "",
+  mixVideoPublishTemplate: "",
   fixedDurationSeconds: "",
   publishIntroEnabled: true,
   topicsText: "",
@@ -159,6 +177,7 @@ const EMPTY_FORM: SkillFormState = {
   digitalHumanGoodsTitle: "",
   digitalHumanGoodsText: "",
   storyboardEnabled: true,
+  mixVideoScriptRewriteEnabled: true,
   isEnabled: true,
 };
 
@@ -174,20 +193,43 @@ function parseDigitalHumanConfig(referencePayload: Record<string, unknown> | nul
   } as const;
 }
 
-function buildSkillFormState(skill?: Skill | null, coverPromptDefault = ""): SkillFormState {
+function parseMixVideoConfig(referencePayload: Record<string, unknown> | null | undefined) {
+  const base =
+    referencePayload?.mixVideo && typeof referencePayload.mixVideo === "object"
+      ? (referencePayload.mixVideo as Record<string, unknown>)
+      : referencePayload || {};
+  return {
+    scriptRewriteEnabled:
+      typeof base.scriptRewriteEnabled === "boolean" ? base.scriptRewriteEnabled : true,
+    publishTemplate: typeof base.publishTemplate === "string" ? base.publishTemplate : "",
+  } as const;
+}
+
+function buildSkillFormState(
+  skill?: Skill | null,
+  coverPromptDefault = "",
+  mixVideoScriptPromptDefault = "",
+  mixVideoPublishPromptDefault = "",
+): SkillFormState {
   if (!skill) {
     return {
       ...EMPTY_FORM,
       coverPromptTemplate: coverPromptDefault,
+      storyboardPromptTemplate: mixVideoScriptPromptDefault,
+      publishPromptTemplate: mixVideoPublishPromptDefault,
       coverPromptUsesSystemDefault: true,
     };
   }
   const customCoverPrompt = (skill.coverPromptTemplate || "").trim();
   const digitalHumanConfig = parseDigitalHumanConfig(skill.referencePayload);
+  const mixVideoConfig = parseMixVideoConfig(skill.referencePayload);
   return {
     name: skill.name || "",
     description: skill.description || "",
     promptTemplate: skill.promptTemplate || "",
+    storyboardPromptTemplate: skill.storyboardPromptTemplate || mixVideoScriptPromptDefault,
+    publishPromptTemplate: skill.publishPromptTemplate || mixVideoPublishPromptDefault,
+    mixVideoPublishTemplate: mixVideoConfig.publishTemplate,
     fixedDurationSeconds:
       typeof skill.fixedDurationSeconds === "number" && skill.fixedDurationSeconds > 0
         ? String(skill.fixedDurationSeconds)
@@ -202,6 +244,7 @@ function buildSkillFormState(skill?: Skill | null, coverPromptDefault = ""): Ski
     digitalHumanGoodsTitle: digitalHumanConfig.goodsTitle,
     digitalHumanGoodsText: digitalHumanConfig.goodsText,
     storyboardEnabled: skill.storyboardEnabled !== false,
+    mixVideoScriptRewriteEnabled: mixVideoConfig.scriptRewriteEnabled,
     isEnabled: Boolean(skill.isEnabled),
   };
 }
@@ -297,6 +340,10 @@ function buildReferencePayload(
     goodsTitle: string;
     goodsText: string;
   } | null,
+  mixVideoConfig?: {
+    scriptRewriteEnabled: boolean;
+    publishTemplate: string;
+  } | null,
 ) {
   const nextPayload: Record<string, unknown> = {
     ...(basePayload || {}),
@@ -304,15 +351,26 @@ function buildReferencePayload(
   delete nextPayload.mode;
   delete nextPayload.goodsTitle;
   delete nextPayload.goodsText;
+  delete nextPayload.scriptRewriteEnabled;
+  delete nextPayload.publishTemplate;
   if (digitalHumanConfig) {
     delete nextPayload.referenceMediaOrder;
+    delete nextPayload.mixVideo;
     nextPayload.digitalHuman = {
       mode: digitalHumanConfig.mode,
       goodsTitle: digitalHumanConfig.goodsTitle.trim(),
       goodsText: digitalHumanConfig.goodsText.trim(),
     };
+  } else if (mixVideoConfig) {
+    delete nextPayload.digitalHuman;
+    delete nextPayload.referenceMediaOrder;
+    nextPayload.mixVideo = {
+      scriptRewriteEnabled: mixVideoConfig.scriptRewriteEnabled,
+      publishTemplate: mixVideoConfig.publishTemplate.trim(),
+    };
   } else {
     delete nextPayload.digitalHuman;
+    delete nextPayload.mixVideo;
     if (referenceMediaOrder.length > 0) {
       nextPayload.referenceMediaOrder = referenceMediaOrder;
     } else {
@@ -374,6 +432,10 @@ function getVendorColor(vendor?: string | null) {
 
 function isVideoTextOutput(outputType: string) {
   return normalizeSkillOutputValue(outputType) === "视文模式";
+}
+
+function isMixVideoOutput(outputType: string) {
+  return normalizeSkillOutputValue(outputType) === "混剪";
 }
 
 function isDigitalHumanOutput(outputType: string) {
@@ -452,6 +514,7 @@ export function SkillEditorModal({
   const [debouncedDigitalHumanGoodsText, setDebouncedDigitalHumanGoodsText] = useState("");
   const draftCreationRef = useRef<Promise<Skill> | null>(null);
   const currentSkillId = skill?.id ?? draftSkillId;
+  const isMixVideoOutputType = isMixVideoOutput(form.outputType);
   const isDigitalHumanOutputType = isDigitalHumanOutput(form.outputType);
 
   const modelCategory = mapSkillOutputToModelCategory(form.outputType);
@@ -487,6 +550,8 @@ export function SkillEditorModal({
     enabled: isOpen,
   });
   const coverPromptDefault = (skillEditorDefaults?.coverPromptTemplateDefault || "").trim();
+  const mixVideoScriptPromptDefault = (skillEditorDefaults?.mixVideoScriptRewritePrompt || "").trim();
+  const mixVideoPublishPromptDefault = (skillEditorDefaults?.mixVideoPublishIntroPrompt || "").trim();
   const videoTextDurationOptions = useMemo(
     () => skillEditorDefaults?.videoTextDurationOptions || [],
     [skillEditorDefaults?.videoTextDurationOptions],
@@ -548,6 +613,14 @@ export function SkillEditorModal({
     () => assets.filter((asset) => asset.assetType === "digital_human_ref_audio"),
     [assets],
   );
+  const mixVideoSourceAssets = useMemo(
+    () => assets.filter((asset) => asset.assetType === "mix_video_source_video"),
+    [assets],
+  );
+  const mixVideoAudioAssets = useMemo(
+    () => assets.filter((asset) => asset.assetType === "mix_video_ref_audio"),
+    [assets],
+  );
   const uploadingImages = useMemo(
     () => uploadingAssets.filter((item) => item.assetType === "reference_image"),
     [uploadingAssets],
@@ -557,7 +630,10 @@ export function SkillEditorModal({
     [uploadingAssets],
   );
   const uploadingMedia = useMemo(
-    () => uploadingAssets.filter((item) => item.assetType !== "reference_text"),
+    () =>
+      uploadingAssets.filter(
+        (item) => item.assetType === "reference_image" || item.assetType === "reference_video",
+      ),
     [uploadingAssets],
   );
   const uploadingTexts = useMemo(
@@ -570,6 +646,14 @@ export function SkillEditorModal({
   );
   const uploadingDigitalHumanAudios = useMemo(
     () => uploadingAssets.filter((item) => item.assetType === "digital_human_ref_audio"),
+    [uploadingAssets],
+  );
+  const uploadingMixVideoSources = useMemo(
+    () => uploadingAssets.filter((item) => item.assetType === "mix_video_source_video"),
+    [uploadingAssets],
+  );
+  const uploadingMixVideoAudios = useMemo(
+    () => uploadingAssets.filter((item) => item.assetType === "mix_video_ref_audio"),
     [uploadingAssets],
   );
   const orderedMediaAssets = useMemo(
@@ -590,6 +674,8 @@ export function SkillEditorModal({
   const totalMediaCount = orderedMediaAssets.length + uploadingMedia.length;
   const totalTextCount = textAssets.length + uploadingTexts.length;
   const hasDigitalHumanGoodsText = form.digitalHumanGoodsText.trim().length > 0;
+  const totalMixVideoSourceCount = mixVideoSourceAssets.length + uploadingMixVideoSources.length;
+  const totalMixVideoAudioCount = mixVideoAudioAssets.length + uploadingMixVideoAudios.length;
   const digitalHumanBillingDisabled = Boolean(
     digitalHumanBillingPreview && digitalHumanBillingPreview.creditsPerSecond <= 0,
   );
@@ -607,7 +693,7 @@ export function SkillEditorModal({
     if (!isOpen) {
       return;
     }
-    setForm(buildSkillFormState(skill, coverPromptDefault));
+    setForm(buildSkillFormState(skill, coverPromptDefault, mixVideoScriptPromptDefault, mixVideoPublishPromptDefault));
     setDraftSkillId(null);
     setDraftNeedsCleanup(false);
     setUploadingAssets([]);
@@ -651,6 +737,36 @@ export function SkillEditorModal({
       };
     });
   }, [isOpen, coverPromptDefault]);
+
+  useEffect(() => {
+    if (!isOpen || !mixVideoScriptPromptDefault) {
+      return;
+    }
+    setForm((current) => {
+      if (current.storyboardPromptTemplate.trim()) {
+        return current;
+      }
+      return {
+        ...current,
+        storyboardPromptTemplate: mixVideoScriptPromptDefault,
+      };
+    });
+  }, [isOpen, mixVideoScriptPromptDefault]);
+
+  useEffect(() => {
+    if (!isOpen || !mixVideoPublishPromptDefault) {
+      return;
+    }
+    setForm((current) => {
+      if (current.publishPromptTemplate.trim()) {
+        return current;
+      }
+      return {
+        ...current,
+        publishPromptTemplate: mixVideoPublishPromptDefault,
+      };
+    });
+  }, [isOpen, mixVideoPublishPromptDefault]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -741,6 +857,8 @@ export function SkillEditorModal({
     modelName: form.modelName.trim(),
     deviceId,
     promptTemplate: form.promptTemplate.trim() || null,
+    storyboardPromptTemplate: form.storyboardPromptTemplate.trim() || null,
+    publishPromptTemplate: form.publishPromptTemplate.trim() || null,
     fixedDurationSeconds: isVideoTextOutput(form.outputType) && form.fixedDurationSeconds
       ? Number(form.fixedDurationSeconds)
       : null,
@@ -760,17 +878,47 @@ export function SkillEditorModal({
             goodsText: form.digitalHumanGoodsText,
           }
         : null,
+      isMixVideoOutput(form.outputType)
+        ? {
+            scriptRewriteEnabled: form.mixVideoScriptRewriteEnabled,
+            publishTemplate: form.mixVideoPublishTemplate,
+          }
+        : null,
     ),
-    storyboardEnabled: form.storyboardEnabled,
+    storyboardEnabled: isMixVideoOutput(form.outputType) ? form.mixVideoScriptRewriteEnabled : form.storyboardEnabled,
     isEnabled: form.isEnabled,
   });
 
   const ensureSkillPayloadReady = (
     payload: ReturnType<typeof buildSkillPayload>,
-    options?: { requireDigitalHumanAssets?: boolean },
+    options?: { requireDigitalHumanAssets?: boolean; requireMixVideoAssets?: boolean },
   ) => {
     if (!payload.name || !payload.description || !payload.outputType || !payload.modelName) {
       throw new Error("请先填写完整的技能名称、简介、输出格式和模型，再上传素材");
+    }
+    if (isMixVideoOutput(payload.outputType)) {
+      if (!payload.promptTemplate?.trim()) {
+        throw new Error("请先填写混剪脚本模板");
+      }
+      if (!payload.referencePayload || typeof payload.referencePayload !== "object") {
+        throw new Error("请先填写平台简介模板");
+      }
+      const mixVideoPayload =
+        "mixVideo" in payload.referencePayload
+          ? (payload.referencePayload.mixVideo as Record<string, unknown> | undefined)
+          : undefined;
+      if (!String(mixVideoPayload?.publishTemplate || "").trim()) {
+        throw new Error("请先填写平台简介模板");
+      }
+      if (options?.requireMixVideoAssets) {
+        if (mixVideoSourceAssets.length === 0) {
+          throw new Error("请先上传至少 1 个源视频");
+        }
+        if (mixVideoAudioAssets.length !== 1) {
+          throw new Error("请保持恰好 1 个参考音频");
+        }
+      }
+      return;
     }
     if (isDigitalHumanOutput(payload.outputType)) {
       const goodsText = form.digitalHumanGoodsText.trim();
@@ -859,7 +1007,7 @@ export function SkillEditorModal({
   const saveMutation = useMutation({
     mutationFn: async () => {
       const payload = buildSkillPayload();
-      ensureSkillPayloadReady(payload, { requireDigitalHumanAssets: true });
+      ensureSkillPayloadReady(payload, { requireDigitalHumanAssets: true, requireMixVideoAssets: true });
       if (isDigitalHumanOutput(payload.outputType)) {
         if (digitalHumanBillingDisabled) {
           throw new Error("真人视频计费暂未开放，请稍后再试");
@@ -1033,6 +1181,35 @@ export function SkillEditorModal({
     void uploadFiles([nextFile], assetType);
   };
 
+  const handleMixVideoSourceSelection = (fileList: FileList | null) => {
+    const nextFiles = Array.from(fileList || []);
+    if (nextFiles.length === 0) {
+      return;
+    }
+    const accepted = nextFiles.filter((file) => {
+      const error = validateMixVideoFile(file, "asset");
+      if (error) {
+        window.alert(`${file.name}: ${error}`);
+        return false;
+      }
+      return true;
+    });
+    void uploadFiles(accepted, "mix_video_source_video");
+  };
+
+  const handleMixVideoAudioSelection = (fileList: FileList | null) => {
+    const nextFile = Array.from(fileList || [])[0];
+    if (!nextFile) {
+      return;
+    }
+    const error = validateMixVideoFile(nextFile, "audio");
+    if (error) {
+      window.alert(`${nextFile.name}: ${error}`);
+      return;
+    }
+    void uploadFiles([nextFile], "mix_video_ref_audio");
+  };
+
   const requestCoverPromptEditing = () => {
     if (coverPromptUnlocked) {
       return;
@@ -1055,6 +1232,12 @@ export function SkillEditorModal({
         "按口播模式创建真人视频任务",
         visibleModelName || "最终模型待选择",
       ]
+    : isMixVideoOutputType
+      ? [
+          "账号执行技能时自动复用固定视频和参考音频",
+          form.mixVideoScriptRewriteEnabled ? "先改写混剪脚本，再生成混剪成片" : "直接按脚本模板生成混剪成片",
+          form.publishIntroEnabled ? "成片后继续改写平台简介" : "沿用平台简介模板直接发布",
+        ]
     : form.storyboardEnabled
       ? [
           "客户输入素材、任务说明和简介",
@@ -1088,12 +1271,23 @@ export function SkillEditorModal({
                     {skill ? "编辑技能" : "新增技能"}
                   </h3>
                   <p className="mt-2 max-w-3xl text-sm leading-6 text-text-secondary">
-                    先选产出和模型，再决定是否开启分镜，然后上传参考素材。
+                    先选产出和模型，再决定是否启用改写或分镜，然后上传参考素材。
                   </p>
                 </div>
                 <div className="mt-1 flex flex-wrap gap-2">
                   <BadgeChip label={`节点 ${deviceId.slice(0, 8)}`} />
-                  <BadgeChip label={form.storyboardEnabled ? "分镜优化开启" : "分镜优化关闭"} active={form.storyboardEnabled} />
+                  <BadgeChip
+                    label={
+                      isMixVideoOutputType
+                        ? form.mixVideoScriptRewriteEnabled
+                          ? "脚本改写开启"
+                          : "脚本改写关闭"
+                        : form.storyboardEnabled
+                          ? "分镜优化开启"
+                          : "分镜优化关闭"
+                    }
+                    active={isMixVideoOutputType ? form.mixVideoScriptRewriteEnabled : form.storyboardEnabled}
+                  />
                   <BadgeChip label={form.isEnabled ? "技能启用中" : "技能已暂停"} active={form.isEnabled} tone="emerald" />
                 </div>
               </div>
@@ -1133,7 +1327,7 @@ export function SkillEditorModal({
 
                     <div className="space-y-2.5">
                       <span className="text-sm font-medium text-white">输出类型</span>
-                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                         {OUTPUT_OPTIONS.map((option) => {
                           const Icon = option.icon;
                           const selected = option.value === form.outputType;
@@ -1178,14 +1372,18 @@ export function SkillEditorModal({
                       </label>
 
                       <label className="space-y-2.5">
-                        <span className="text-sm font-medium text-white">任务说明</span>
+                        <span className="text-sm font-medium text-white">{isMixVideoOutputType ? "脚本模板" : "任务说明"}</span>
                         <textarea
                           value={form.promptTemplate}
                           onChange={(event) =>
                             setForm((current) => ({ ...current, promptTemplate: event.target.value }))
                           }
                           rows={4}
-                          placeholder="告诉系统重点表达什么，比如镜头感、节奏、品牌边界和禁用词。视文模式默认会补充“默认不要字幕”。"
+                          placeholder={
+                            isMixVideoOutputType
+                              ? "填写混剪脚本模板，系统会先按需要改写，再用于生成最终混剪成片。"
+                              : "告诉系统重点表达什么，比如镜头感、节奏、品牌边界和禁用词。视文模式默认会补充“默认不要字幕”。"
+                          }
                           className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
                         />
                       </label>
@@ -1290,9 +1488,63 @@ export function SkillEditorModal({
                     </SectionCard>
                   ) : null}
 
+                  {isMixVideoOutputType ? (
+                    <SectionCard
+                      title="混剪设定"
+                      description="混剪会固定保存源视频和参考音频。执行时先按脚本模板生成最终脚本，再根据开关决定是否改写平台简介。"
+                    >
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        <label className="space-y-2.5">
+                          <span className="text-sm font-medium text-white">脚本改写提示词</span>
+                          <textarea
+                            value={form.storyboardPromptTemplate}
+                            onChange={(event) =>
+                              setForm((current) => ({ ...current, storyboardPromptTemplate: event.target.value }))
+                            }
+                            rows={5}
+                            placeholder="覆盖 Admin 的全局脚本改写提示词。留空时仍会回退到系统默认。"
+                            className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
+                          />
+                        </label>
+
+                        <label className="space-y-2.5">
+                          <span className="text-sm font-medium text-white">平台简介模板</span>
+                          <textarea
+                            value={form.mixVideoPublishTemplate}
+                            onChange={(event) =>
+                              setForm((current) => ({ ...current, mixVideoPublishTemplate: event.target.value }))
+                            }
+                            rows={5}
+                            placeholder="单独填写发布简介基础模板，不直接复用混剪脚本模板。"
+                            className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
+                          />
+                        </label>
+
+                        <label className="space-y-2.5">
+                          <span className="text-sm font-medium text-white">平台简介改写提示词</span>
+                          <textarea
+                            value={form.publishPromptTemplate}
+                            onChange={(event) =>
+                              setForm((current) => ({ ...current, publishPromptTemplate: event.target.value }))
+                            }
+                            rows={5}
+                            placeholder="覆盖 Admin 的全局简介改写提示词。留空时仍会回退到系统默认。"
+                            className="w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm leading-6 text-white outline-none transition-all placeholder:text-text-muted focus:border-accent/40 focus:bg-white/8 focus:ring-4 focus:ring-accent/10"
+                          />
+                        </label>
+                      </div>
+                    </SectionCard>
+                  ) : null}
+
                   <SectionCard
-                    title={isDigitalHumanOutputType ? "真人视频模型" : "模型与时长"}
-                    description={isDigitalHumanOutputType ? "选择真人视频的执行模型，并查看 Admin 保存的默认模型、单次任务计费和余额状态。" : "选择最终执行模型并设置视频时长。模型和时长紧密耦合，在同一区域方便对照。"}
+                    title={isDigitalHumanOutputType ? "真人视频模型" : isMixVideoOutputType ? "改写模型" : "模型与时长"}
+                    description={
+                      isDigitalHumanOutputType
+                        ? "选择真人视频的执行模型，并查看 Admin 保存的默认模型、单次任务计费和余额状态。"
+                        : isMixVideoOutputType
+                          ? "混剪的 modelName 固定表示文案改写模型，仅允许选择启用中的聊天模型。"
+                          : "选择最终执行模型并设置视频时长。模型和时长紧密耦合，在同一区域方便对照。"
+                    }
                   >
                     {isDigitalHumanOutputType ? (
                       digitalHumanModelsLoading ? (
@@ -1454,15 +1706,23 @@ export function SkillEditorModal({
                                 <span className="inline-flex items-center rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-xs font-medium text-text-secondary">
                                   {formatBillingMode(model.billingMode)}
                                 </span>
-                                <span className="inline-flex items-center rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-xs font-medium text-text-secondary">
-                                  {modelSupportsImages && modelSupportsVideos ? "🖼️🎬 " : modelSupportsVideos ? "🎬 " : modelSupportsImages ? "🖼️ " : ""}
-                                  {describeSupportedMediaTypes(modelSupportsImages, modelSupportsVideos)}
-                                </span>
-                                {modelLimit > 0 ? (
+                                {!isMixVideoOutputType ? (
+                                  <>
+                                    <span className="inline-flex items-center rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-xs font-medium text-text-secondary">
+                                      {modelSupportsImages && modelSupportsVideos ? "🖼️🎬 " : modelSupportsVideos ? "🎬 " : modelSupportsImages ? "🖼️ " : ""}
+                                      {describeSupportedMediaTypes(modelSupportsImages, modelSupportsVideos)}
+                                    </span>
+                                    {modelLimit > 0 ? (
+                                      <span className="inline-flex items-center rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-xs font-medium text-text-secondary">
+                                        最多{modelLimit}个
+                                      </span>
+                                    ) : null}
+                                  </>
+                                ) : (
                                   <span className="inline-flex items-center rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-xs font-medium text-text-secondary">
-                                    最多{modelLimit}个
+                                    聊天模型 / 文案改写
                                   </span>
-                                ) : null}
+                                )}
                               </div>
                             </button>
                           );
@@ -1474,11 +1734,11 @@ export function SkillEditorModal({
                       <div className="rounded-[24px] border border-white/10 bg-[#0d1729] p-4">
                         <div className="flex items-center gap-2 text-sm font-medium text-white">
                           <Cpu className="h-4 w-4 text-cyan" />
-                          当前模型
+                          {isMixVideoOutputType ? "当前改写模型" : "当前模型"}
                         </div>
                         <div className="mt-3 grid gap-3 sm:grid-cols-2">
                           <SummaryLine
-                            label="执行模型"
+                            label={isMixVideoOutputType ? "改写模型" : "执行模型"}
                             value={visibleModelName}
                           />
                           <SummaryLine
@@ -1487,7 +1747,9 @@ export function SkillEditorModal({
                           />
                         </div>
                         <p className="mt-3 text-xs leading-5 text-text-secondary">
-                          创建前即可看到当前技能单次预计扣费，实际扣费以任务入账结果为准。
+                          {isMixVideoOutputType
+                            ? "这里展示脚本改写模型的单次调用费率，实际混剪结算仍以后端任务计费结果为准。"
+                            : "创建前即可看到当前技能单次预计扣费，实际扣费以任务入账结果为准。"}
                         </p>
                       </div>
                     ) : null}
@@ -1620,12 +1882,20 @@ export function SkillEditorModal({
                   {!isDigitalHumanOutputType ? (
                     <SectionCard
                       title="执行方式"
-                      description="决定技能是否生效、是否启用简介 AI 优化和分镜优化。"
+                      description={
+                        isMixVideoOutputType
+                          ? "决定技能是否生效，以及是否开启脚本改写和平台简介改写。"
+                          : "决定技能是否生效、是否启用简介 AI 优化和分镜优化。"
+                      }
                     >
                       <div className="grid gap-4 lg:grid-cols-3">
                         <SwitchCard
-                          title="简介 AI 优化"
-                          description="开启后，在每次发布前自动改写简介；关闭后沿用你填写的原始简介。"
+                          title={isMixVideoOutputType ? "平台简介自动改写" : "简介 AI 优化"}
+                          description={
+                            isMixVideoOutputType
+                              ? "开启后会在混剪完成后改写平台简介；关闭后沿用平台简介模板原文。"
+                              : "开启后，在每次发布前自动改写简介；关闭后沿用你填写的原始简介。"
+                          }
                           enabled={form.publishIntroEnabled}
                           enabledLabel="已启用"
                           disabledLabel="已关闭"
@@ -1638,16 +1908,22 @@ export function SkillEditorModal({
                           }
                         />
                         <SwitchCard
-                          title="AI 分镜优化"
-                          description="开启后，系统会先统一优化分镜、任务说明和发布简介，再交给最终模型。"
-                          enabled={form.storyboardEnabled}
+                          title={isMixVideoOutputType ? "脚本自动改写" : "AI 分镜优化"}
+                          description={
+                            isMixVideoOutputType
+                              ? "开启后会先改写混剪脚本，再生成最终成片；关闭后直接使用脚本模板。"
+                              : "开启后，系统会先统一优化分镜、任务说明和发布简介，再交给最终模型。"
+                          }
+                          enabled={isMixVideoOutputType ? form.mixVideoScriptRewriteEnabled : form.storyboardEnabled}
                           enabledLabel="已启用"
                           disabledLabel="已关闭"
                           accent="accent"
                           onToggle={() =>
                             setForm((current) => ({
                               ...current,
-                              storyboardEnabled: !current.storyboardEnabled,
+                              ...(isMixVideoOutputType
+                                ? { mixVideoScriptRewriteEnabled: !current.mixVideoScriptRewriteEnabled }
+                                : { storyboardEnabled: !current.storyboardEnabled }),
                             }))
                           }
                         />
@@ -1672,7 +1948,9 @@ export function SkillEditorModal({
                     description={
                       isDigitalHumanOutputType
                         ? "真人视频会把人物主图和参考音频保存在技能资产中，执行时自动复用。"
-                        : "图片和视频共用一条有序参考链，文本继续补充结构、卖点和限制条件。"
+                        : isMixVideoOutputType
+                          ? "混剪会固定保存源视频和 1 个参考音频，账号执行时直接按技能配置复用。"
+                          : "图片和视频共用一条有序参考链，文本继续补充结构、卖点和限制条件。"
                     }
                   >
                     {isDigitalHumanOutputType ? (
@@ -1776,6 +2054,114 @@ export function SkillEditorModal({
                               />
                             ))}
                             {!digitalHumanAudioAssets.length && !uploadingDigitalHumanAudios.length ? (
+                              <EmptyUploadState label="还没有参考音频。" />
+                            ) : null}
+                          </div>
+                        </UploadCard>
+                      </div>
+                    ) : isMixVideoOutputType ? (
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        <UploadCard
+                          title="源视频"
+                          hint={`至少 1 个固定源视频，当前已准备 ${totalMixVideoSourceCount} 个。`}
+                          icon={<Video className="h-5 w-5 text-cyan" />}
+                        >
+                          <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-cyan/30 bg-cyan/10 px-4 py-5 text-center transition-all hover:border-cyan/50 hover:bg-cyan/14">
+                            <div>
+                              <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan/15 text-cyan">
+                                <Upload className="h-5 w-5" />
+                              </div>
+                              <p className="mt-3 text-sm font-semibold text-white">上传源视频</p>
+                              <p className="mt-1 text-xs text-text-secondary">支持 mp4、mov、webm，多选后立即上传。</p>
+                            </div>
+                            <input
+                              type="file"
+                              accept={MIX_VIDEO_ASSET_ACCEPT}
+                              multiple
+                              className="hidden"
+                              onChange={(event) => {
+                                handleMixVideoSourceSelection(event.target.files);
+                                event.target.value = "";
+                              }}
+                            />
+                          </label>
+
+                          <div className="mt-4 space-y-3">
+                            {mixVideoSourceAssets.map((asset, index) => (
+                              <AssetRow
+                                key={asset.id}
+                                asset={asset}
+                                icon={<Video className="h-4 w-4 text-cyan" />}
+                                sequence={index + 1}
+                                deleting={deleteAssetMutation.isPending}
+                                onDelete={() => deleteAssetMutation.mutate(asset)}
+                              />
+                            ))}
+                            {uploadingMixVideoSources.map((item, index) => (
+                              <PendingRow
+                                key={item.id}
+                                label={item.file.name}
+                                icon={<Video className="h-4 w-4 text-cyan" />}
+                                file={item.file}
+                                sequence={mixVideoSourceAssets.length + index + 1}
+                                helperText="正在上传到云端..."
+                                onDelete={() => undefined}
+                                hideDelete
+                              />
+                            ))}
+                            {!mixVideoSourceAssets.length && !uploadingMixVideoSources.length ? (
+                              <EmptyUploadState label="还没有源视频。" />
+                            ) : null}
+                          </div>
+                        </UploadCard>
+
+                        <UploadCard
+                          title="参考音频"
+                          hint={`恰好 1 个固定参考音频，用于混剪配音与节奏参考，当前已准备 ${totalMixVideoAudioCount} 个。`}
+                          icon={<AudioLines className="h-5 w-5 text-amber-200" />}
+                        >
+                          {!mixVideoAudioAssets.length && !uploadingMixVideoAudios.length ? (
+                            <label className="flex cursor-pointer items-center justify-center rounded-[22px] border border-dashed border-amber-300/30 bg-amber-300/10 px-4 py-5 text-center transition-all hover:border-amber-300/50 hover:bg-amber-300/14">
+                              <div>
+                                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-300/15 text-amber-200">
+                                  <Upload className="h-5 w-5" />
+                                </div>
+                                <p className="mt-3 text-sm font-semibold text-white">上传参考音频</p>
+                                <p className="mt-1 text-xs text-text-secondary">支持 m4a、mp3、wav、aac。</p>
+                              </div>
+                              <input
+                                type="file"
+                                accept={MIX_VIDEO_AUDIO_ACCEPT}
+                                className="hidden"
+                                onChange={(event) => {
+                                  handleMixVideoAudioSelection(event.target.files);
+                                  event.target.value = "";
+                                }}
+                              />
+                            </label>
+                          ) : null}
+                          <div className="mt-4 space-y-3">
+                            {mixVideoAudioAssets.map((asset) => (
+                              <AssetRow
+                                key={asset.id}
+                                asset={asset}
+                                icon={<AudioLines className="h-4 w-4 text-amber-200" />}
+                                deleting={deleteAssetMutation.isPending}
+                                onDelete={() => deleteAssetMutation.mutate(asset)}
+                              />
+                            ))}
+                            {uploadingMixVideoAudios.map((item) => (
+                              <PendingRow
+                                key={item.id}
+                                label={item.file.name}
+                                icon={<AudioLines className="h-4 w-4 text-amber-200" />}
+                                file={item.file}
+                                helperText="正在上传到云端..."
+                                onDelete={() => undefined}
+                                hideDelete
+                              />
+                            ))}
+                            {!mixVideoAudioAssets.length && !uploadingMixVideoAudios.length ? (
                               <EmptyUploadState label="还没有参考音频。" />
                             ) : null}
                           </div>
@@ -1956,21 +2342,25 @@ export function SkillEditorModal({
                   <SidebarCard title="执行概览" icon={<Sparkles className="h-4 w-4 text-accent" />}>
                     <div className="grid gap-3">
                       <SummaryLine label="输出类型" value={selectedOutput.label} />
-                      <SummaryLine label="最终模型" value={visibleModelName} />
+                      <SummaryLine label={isMixVideoOutputType ? "改写模型" : "最终模型"} value={visibleModelName} />
                       <SummaryLine
                         label="参考素材"
                         value={
                           isDigitalHumanOutputType
                             ? `${digitalHumanCharacterAssets.length} 人物 / ${digitalHumanAudioAssets.length} 音频`
-                            : `${totalMediaCount} 媒体 / ${totalTextCount} 文`
+                            : isMixVideoOutputType
+                              ? `${mixVideoSourceAssets.length} 视频 / ${mixVideoAudioAssets.length} 音频`
+                              : `${totalMediaCount} 媒体 / ${totalTextCount} 文`
                         }
                       />
                       <SummaryLine
-                        label={isDigitalHumanOutputType ? "当前模式" : "媒体构成"}
+                        label={isDigitalHumanOutputType || isMixVideoOutputType ? "当前模式" : "媒体构成"}
                         value={
                           isDigitalHumanOutputType
                             ? "口播模式"
-                            : `${totalImageCount} 图 / ${totalVideoCount} 视频`
+                            : isMixVideoOutputType
+                              ? "固定素材混剪"
+                              : `${totalImageCount} 图 / ${totalVideoCount} 视频`
                         }
                       />
                     </div>

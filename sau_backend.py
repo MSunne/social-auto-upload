@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import json
 import os
 import re
@@ -93,7 +94,7 @@ NOISY_REQUEST_PREFIX_INTERVALS = {
 REQUEST_LOG_BODY_LIMIT = 500
 OMNIDRIVE_OPENAI_PROXY_BASE_PATH = "/openai/v1"
 OMNIDRIVE_OPENAI_PROXY_FINAL_JOB_STATUSES = {"success", "completed", "failed", "cancelled", "needs_verify"}
-OMNIDRIVE_OPENAI_SUPPORTED_TOOL_NAMES = {"omnidrive_image", "omnidrive_video"}
+OMNIDRIVE_OPENAI_SUPPORTED_TOOL_NAMES = {"omnidrive_image", "omnidrive_video", "omnidrive_mix_video"}
 OPENCLAW_OMNIDRIVE_CONFIG_PATHS = (
     Path.home() / ".openclaw" / "openclaw.json",
     Path.home() / ".openclaw" / "agents" / "main" / "agent" / "models.json",
@@ -108,6 +109,20 @@ OPENCLAW_OMNIDRIVE_MULTIMODAL_MODELS = {
     "gpt-5.4",
     "qwen3.5-plus",
 }
+OPENCLAW_OMNIDRIVE_AVAILABLE_SKILLS = [
+    "omnidrive_auth",
+    "omnidrive_models",
+    "omnidrive_chat",
+    "omnidrive_image",
+    "omnidrive_video",
+    "omnidrive_mix_video",
+    "omnidrive_jobs",
+    "omnidrive_job_detail",
+    "omnibull_status",
+    "omnibull_accounts",
+    "omnibull_materials",
+    "omnibull_publish",
+]
 OPENCLAW_OMNIDRIVE_RUNTIME_SYNC_INTERVAL_SECONDS = max(
     60,
     int(getattr(app_conf, "OPENCLAW_OMNIDRIVE_RUNTIME_SYNC_INTERVAL_SECONDS", 300)),
@@ -168,6 +183,11 @@ def parse_bool(value):
     if isinstance(value, (int, float)):
         return value != 0
     return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+OPENCLAW_OMNIDRIVE_RELOAD_GATEWAY_ON_MODEL_SYNC = parse_bool(
+    getattr(app_conf, "OPENCLAW_OMNIDRIVE_RELOAD_GATEWAY_ON_MODEL_SYNC", True)
+)
 
 
 def parse_csv(value, default=None):
@@ -271,6 +291,7 @@ OMNIBULL_PUBLISH_DISPATCH_INTERVAL_SECONDS = max(
 )
 OMNIBULL_TASK_RETENTION_DAYS = int(getattr(app_conf, 'OMNIBULL_TASK_RETENTION_DAYS', 7))
 OMNIBULL_API_KEY = DEVICE_IDENTITY.get("localApiKey") or str(getattr(app_conf, 'OMNIBULL_API_KEY', '')).strip()
+SAU_BACKEND_PORT = int(os.getenv("SAU_BACKEND_PORT", "5409"))
 OMNIBULL_MATERIAL_ROOTS = build_material_roots(
     BASE_DIR,
     getattr(app_conf, 'OMNIBULL_MATERIAL_ROOTS', None),
@@ -506,8 +527,24 @@ def extract_skill_api_key():
     return str(request.headers.get("X-Omnibull-Key") or "").strip()
 
 
+def _is_loopback_request():
+    normalized = str(request.remote_addr or "").strip()
+    if not normalized:
+        return False
+    if normalized.startswith("[") and "]" in normalized:
+        normalized = normalized[1:].split("]", 1)[0]
+    elif normalized.count(":") == 1 and "." in normalized:
+        normalized = normalized.rsplit(":", 1)[0]
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
 def ensure_skill_api_authorized():
     if not OMNIBULL_API_KEY:
+        return None
+    if _is_loopback_request():
         return None
     provided = extract_skill_api_key()
     if provided and secrets.compare_digest(provided, OMNIBULL_API_KEY):
@@ -762,6 +799,7 @@ def build_skill_status_payload():
     agent_status = cloud_agent.status() if cloud_agent else None
     omnidrive_agent_status = omnidrive_agent.status() if omnidrive_agent else None
     shared_runtime = _load_shared_agent_runtime_config(refresh=False) or {}
+    omnidrive_auth_summary = get_omnidrive_authorization_summary()
 
     with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
         conn.row_factory = sqlite3.Row
@@ -810,6 +848,12 @@ def build_skill_status_payload():
         "cloudAgent": agent_status,
         "omniDriveAgentConfig": get_omnidrive_agent_config(),
         "omniDriveAgent": omnidrive_agent_status,
+        "omnidriveAuthorized": omnidrive_auth_summary["omnidriveAuthorized"],
+        "omnidriveAuthState": omnidrive_auth_summary["authState"],
+        "omnidriveAuthReason": omnidrive_auth_summary["reason"],
+        "boundUser": omnidrive_auth_summary["boundUser"],
+        "boundDevice": omnidrive_auth_summary["boundDevice"],
+        "availableSkills": omnidrive_auth_summary["availableSkills"],
         "hermesBridgeConfig": get_hermes_bridge_config(),
         "sharedAgentRuntime": _sanitize_shared_runtime_config_for_response(shared_runtime) if shared_runtime else None,
         "accounts": {
@@ -1079,6 +1123,71 @@ def get_omnidrive_device_session_data():
     }
 
 
+def _summarize_bound_session_user(user):
+    if not isinstance(user, dict):
+        return None
+    user_id = str(user.get("id") or "").strip()
+    name = str(user.get("name") or "").strip()
+    email = str(user.get("email") or "").strip()
+    phone = str(user.get("phone") or "").strip()
+    if not any((user_id, name, email, phone)):
+        return None
+    return {
+        "id": user_id or None,
+        "name": name or None,
+        "email": email or None,
+        "phone": phone or None,
+    }
+
+
+def _summarize_bound_session_device(device):
+    if not isinstance(device, dict):
+        return None
+    device_id = str(device.get("id") or "").strip()
+    device_code = str(device.get("deviceCode") or "").strip()
+    name = str(device.get("name") or "").strip()
+    if not any((device_id, device_code, name)):
+        return None
+    return {
+        "id": device_id or None,
+        "deviceCode": device_code or None,
+        "name": name or None,
+        "isEnabled": device.get("isEnabled"),
+        "defaultChatModel": str(device.get("defaultChatModel") or "").strip() or None,
+        "defaultImageModel": str(device.get("defaultImageModel") or "").strip() or None,
+        "defaultVideoModel": str(device.get("defaultVideoModel") or "").strip() or None,
+    }
+
+
+def _build_omnidrive_authorization_summary(session_payload=None, reason=""):
+    authorized = isinstance(session_payload, dict) and bool(str(session_payload.get("accessToken") or "").strip())
+    clean_reason = str(reason or "").strip()
+    if authorized:
+        clean_reason = ""
+    return {
+        "authState": "authorized" if authorized else "blocked",
+        "reason": clean_reason,
+        "omnidriveAuthorized": authorized,
+        "boundUser": _summarize_bound_session_user(session_payload.get("user")) if isinstance(session_payload, dict) else None,
+        "boundDevice": _summarize_bound_session_device(session_payload.get("device")) if isinstance(session_payload, dict) else None,
+        "availableSkills": list(OPENCLAW_OMNIDRIVE_AVAILABLE_SKILLS if authorized else []),
+    }
+
+
+def get_omnidrive_authorization_summary():
+    try:
+        status_code, payload = fetch_omnidrive_device_session()
+    except Exception as exc:
+        return _build_omnidrive_authorization_summary(reason=str(exc))
+
+    if status_code >= 400:
+        message = ""
+        if isinstance(payload, dict):
+            message = str(payload.get("error") or payload.get("message") or payload.get("msg") or "").strip()
+        return _build_omnidrive_authorization_summary(reason=message or "获取 OmniDrive 设备会话失败")
+    return _build_omnidrive_authorization_summary(payload)
+
+
 def _ensure_correlation_id(value=None):
     normalized = str(value or "").strip()
     return normalized or uuid.uuid4().hex
@@ -1123,8 +1232,9 @@ def _sanitize_shared_runtime_config_for_response(payload):
 def _build_shared_agent_runtime_config(model_items=None, api_base_url="", access_token="", device=None):
     device = device if isinstance(device, dict) else {}
     provider_base_url = _resolve_openclaw_omnidrive_provider_base_url(api_base_url)
+    provider_api_key = str(OMNIBULL_API_KEY or "").strip() or None
     models = _normalize_openclaw_omnidrive_models(model_items)
-    return {
+    payload = {
         "version": HERMES_SHARED_RUNTIME_VERSION,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
         "device": {
@@ -1138,7 +1248,6 @@ def _build_shared_agent_runtime_config(model_items=None, api_base_url="", access
             "name": "omnidrive",
             "format": "openai-compatible",
             "baseUrl": provider_base_url,
-            "apiKey": str(access_token or "").strip() or None,
         },
         "defaults": {
             "chatModel": str(device.get("defaultChatModel") or "").strip() or None,
@@ -1163,6 +1272,9 @@ def _build_shared_agent_runtime_config(model_items=None, api_base_url="", access
         },
         "models": models,
     }
+    if provider_api_key:
+        payload["provider"]["apiKey"] = provider_api_key
+    return payload
 
 
 def sync_hermes_shared_runtime_config(model_items=None, api_base_url="", access_token="", device=None):
@@ -1266,7 +1378,7 @@ def _extract_hermes_chat_completion_text(payload):
 
 
 def _resolve_openclaw_omnidrive_provider_base_url(api_base_url):
-    return f"{_resolve_omnidrive_api_base_url(api_base_url)}{OMNIDRIVE_OPENAI_PROXY_BASE_PATH}"
+    return f"http://127.0.0.1:{SAU_BACKEND_PORT}{OMNIDRIVE_OPENAI_PROXY_BASE_PATH}"
 
 
 def _normalize_openclaw_omnidrive_models(models):
@@ -1416,7 +1528,7 @@ def sync_openclaw_omnidrive_model_configs(models, api_base_url="", access_token=
     normalized_ids = _normalize_openclaw_omnidrive_models(models)
     models_supplied = models is not None
     provider_base_url = _resolve_openclaw_omnidrive_provider_base_url(api_base_url)
-    provider_api_key = str(access_token or "").strip()
+    provider_api_key = str(OMNIBULL_API_KEY or "").strip()
     default_chat_model = str(default_chat_model or "").strip()
     changed_paths = []
 
@@ -1443,18 +1555,18 @@ def sync_openclaw_omnidrive_model_configs(models, api_base_url="", access_token=
 
         if provider_base_url:
             provider["baseUrl"] = provider_base_url
-        if provider_api_key and not is_root_config:
+        if provider_api_key:
             provider["apiKey"] = provider_api_key
+        else:
+            provider.pop("apiKey", None)
 
-        if models_supplied and not is_root_config:
+        if models_supplied:
             provider["models"] = [
-                _build_openclaw_omnidrive_model_entry(model_id, include_api=not is_root_config)
+                _build_openclaw_omnidrive_model_entry(model_id, include_api=True)
                 for model_id in normalized_ids
             ]
 
         if is_root_config:
-            provider.pop("apiKey", None)
-            provider.pop("models", None)
             defaults_config = data.setdefault("agents", {}).setdefault("defaults", {})
             defaults = defaults_config.get("models")
             if not isinstance(defaults, dict):
@@ -1580,6 +1692,11 @@ def refresh_openclaw_omnidrive_runtime_config(include_models=False):
         access_token=session.get("accessToken"),
         default_chat_model=session.get("device", {}).get("defaultChatModel"),
     )
+    if include_models and changed_paths:
+        _reload_openclaw_gateway_after_omnidrive_model_sync(
+            changed_paths,
+            reason="refresh_openclaw_omnidrive_runtime_config",
+        )
     shared_runtime, shared_runtime_paths = sync_hermes_shared_runtime_config(
         model_items,
         api_base_url=session.get("apiBaseUrl"),
@@ -1760,6 +1877,42 @@ def _attempt_openclaw_gateway_daily_reload():
         "stdout": restart_result.get("stdout"),
         "stderr": restart_result.get("stderr"),
     }
+
+
+def _reload_openclaw_gateway_after_omnidrive_model_sync(changed_paths, reason="omnidrive_model_sync"):
+    normalized_paths = [str(path).strip() for path in (changed_paths or []) if str(path).strip()]
+    if not normalized_paths or not OPENCLAW_OMNIDRIVE_RELOAD_GATEWAY_ON_MODEL_SYNC:
+        return None
+
+    result = _attempt_openclaw_gateway_daily_reload()
+    status = str((result or {}).get("status") or "").strip()
+    joined_paths = ",".join(normalized_paths)
+
+    if status == "restarted":
+        app_logger.info(
+            "reloaded OpenClaw gateway after OmniDrive model sync reason={} paths={} command={}",
+            reason,
+            joined_paths,
+            result.get("command") or OPENCLAW_GATEWAY_DAILY_RELOAD_COMMAND,
+        )
+    elif status == "deferred":
+        app_logger.info(
+            "deferred OpenClaw gateway reload after OmniDrive model sync reason={} paths={} delay_seconds={} running_task_count={}",
+            reason,
+            joined_paths,
+            result.get("delaySeconds"),
+            result.get("runningTaskCount"),
+        )
+    elif status:
+        app_logger.warning(
+            "OpenClaw gateway reload after OmniDrive model sync failed reason={} paths={} status={} returncode={} stderr={}",
+            reason,
+            joined_paths,
+            status,
+            result.get("returncode"),
+            result.get("stderr") or result.get("error") or "",
+        )
+    return result
 
 
 def _openclaw_gateway_daily_reload_loop():
@@ -2088,7 +2241,7 @@ def _prompt_is_media_capability_question(prompt):
     if not normalized:
         return False
 
-    media_keywords = ("视频", "video", "veo", "图片", "图像", "image", "海报", "封面", "壁纸", "做图", "画图")
+    media_keywords = ("视频", "video", "veo", "图片", "图像", "image", "海报", "封面", "壁纸", "做图", "画图", "混剪", "剪辑", "二创")
     capability_keywords = (
         "你能",
         "你可以",
@@ -2125,6 +2278,15 @@ def _select_openai_media_tool(prompt, tool_map):
     skip_keywords = ("脚本", "文案", "提示词", "prompt", "教程", "方案", "流程", "步骤")
     if any(keyword in normalized for keyword in skip_keywords):
         return None
+
+    if "omnidrive_mix_video" in tool_map and any(keyword in normalized for keyword in ("混剪", "剪辑", "二创", "混剪视频")):
+        return {
+            "toolName": "omnidrive_mix_video",
+            "arguments": {
+                "action": "create",
+                "scriptText": str(prompt or "").strip(),
+            },
+        }
 
     if "omnidrive_video" in tool_map and any(keyword in normalized for keyword in ("veo", "视频", "video", "短片")):
         return {
@@ -2163,6 +2325,12 @@ def _build_openai_tool_call(tool_name, arguments):
 
 def _build_media_clarification_text(prompt, tool_map):
     normalized = str(prompt or "").strip().lower()
+    if "omnidrive_mix_video" in tool_map and any(keyword in normalized for keyword in ("混剪", "剪辑", "二创", "混剪视频")):
+        return (
+            "可以，我能帮你发起 OmniDrive 混剪任务。"
+            "\n请直接告诉我混剪脚本文案，并附上源视频和参考音频；"
+            "\n如果你已经绑定了发布账号，也可以一并告诉我要发布到哪个账号和发布时间。"
+        )
     if "omnidrive_video" in tool_map and any(keyword in normalized for keyword in ("veo", "视频", "video", "短片")):
         return (
             "可以，我能帮你发起 OmniDrive 视频生成。"
@@ -2238,6 +2406,20 @@ def _summarize_openai_media_tool_result(tool_name, content):
     parsed = _safe_json_loads(content)
     if not isinstance(parsed, dict):
         return str(content or "").strip() or "工具执行完成。"
+
+    if tool_name == "omnidrive_mix_video":
+        lines = ["混剪任务已处理。"]
+        if parsed.get("id"):
+            lines.append(f"任务 ID：{parsed['id']}")
+        if parsed.get("status"):
+            lines.append(f"状态：{parsed['status']}")
+        result_asset = parsed.get("resultAsset") if isinstance(parsed.get("resultAsset"), dict) else {}
+        if result_asset.get("publicUrl"):
+            lines.append("成片地址：")
+            lines.append(str(result_asset.get("publicUrl")).strip())
+        if parsed.get("platform") or parsed.get("accountName"):
+            lines.append(f"发布目标：{str(parsed.get('platform') or '').strip()} {str(parsed.get('accountName') or '').strip()}".strip())
+        return "\n".join(lines)
 
     noun = "视频" if tool_name == "omnidrive_video" else "图片"
     details = _collect_omnidrive_media_result_details(parsed)
@@ -2500,7 +2682,7 @@ def _prepare_omnidrive_openai_chat_context(openai_payload):
         raise ValueError("messages 不能为空")
 
     tool_result = _extract_last_openai_tool_result(messages)
-    if tool_result and tool_result["toolName"] in {"omnidrive_image", "omnidrive_video"}:
+    if tool_result and tool_result["toolName"] in {"omnidrive_image", "omnidrive_video", "omnidrive_mix_video"}:
         return {
             "accessToken": access_token,
             "apiBaseUrl": api_base_url,
@@ -4127,10 +4309,11 @@ def skill_omnidrive_session():
         message = ""
         if isinstance(payload, dict):
             message = str(payload.get("error") or payload.get("message") or "").strip()
+        summary = _build_omnidrive_authorization_summary(reason=message or "获取 OmniDrive 设备会话失败")
         return jsonify({
             "code": status_code,
             "msg": message or "获取 OmniDrive 设备会话失败",
-            "data": payload if isinstance(payload, dict) else None,
+            "data": summary,
         }), status_code
 
     try:
@@ -4176,10 +4359,13 @@ def skill_omnidrive_session():
     except Exception as exc:
         app_logger.warning("sync OpenClaw OmniDrive runtime connection after session fetch failed error={}", exc)
 
+    response_payload = dict(payload) if isinstance(payload, dict) else {}
+    response_payload.update(_build_omnidrive_authorization_summary(payload))
+
     return jsonify({
         "code": 200,
         "msg": "success",
-        "data": payload,
+        "data": response_payload,
     }), 200
 
 
@@ -5097,5 +5283,4 @@ if __name__ == '__main__':
     ensure_openclaw_omnidrive_models_synced()
     ensure_openclaw_omnidrive_runtime_sync_started()
     ensure_openclaw_gateway_daily_reload_started()
-    backend_port = int(os.getenv("SAU_BACKEND_PORT", "5409"))
-    app.run(host='0.0.0.0', port=backend_port, threaded=True)
+    app.run(host='0.0.0.0', port=SAU_BACKEND_PORT, threaded=True)

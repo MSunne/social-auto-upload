@@ -7,6 +7,7 @@
 - `omnidrive_chat`
 - `omnidrive_image`
 - `omnidrive_video`
+- `omnidrive_mix_video`
 - `omnidrive_jobs`
 - `omnidrive_job_detail`
 
@@ -104,9 +105,11 @@ openclaw plugins enable omnidrive
 - 聊天场景优先调用 `omnidrive_chat`
 - 文生图、图生图调用 `omnidrive_image`
 - 文生视频、图生视频调用 `omnidrive_video`
+- 混剪 / 二创 / 剪辑任务调用 `omnidrive_mix_video`
 - 需要查看异步任务时，调用 `omnidrive_jobs` 或 `omnidrive_job_detail`
 - 视频长任务的 `wait=true` 只用于短观察窗口；超过 5 分钟后，插件会直接返回当前运行状态，云端继续执行
 - 若 `omnidrive_video` 同时传入 `accountId`、`platform`、`accountName`、`publishAt`，生成完成后会自动创建 OmniBull 发布任务
+- 若 `omnidrive_mix_video` 传入 `accountId`、`platform`、`accountName`、`publishAt`，混剪完成后会自动创建 OmniBull 发布任务
 
 ## 主聊天接入
 

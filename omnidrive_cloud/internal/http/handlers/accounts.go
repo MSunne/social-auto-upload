@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -264,6 +265,11 @@ func (h *AccountHandler) CreateSkillRun(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	if workflow.IsMixVideoSkillOutput(skill.OutputType) {
+		h.createMixVideoSkillRuns(w, r, user.ID, *account, *skill, slots, payload.PublishAt, settings)
+		return
+	}
+
 	createdJobs := make([]domain.AIJob, 0, len(slots)+1)
 	createdCount := 0
 	if len(slots) == 0 {
@@ -505,6 +511,213 @@ func (h *AccountHandler) CreateSkillRun(w http.ResponseWriter, r *http.Request) 
 	render.JSON(w, statusCode, createdJobs)
 }
 
+func (h *AccountHandler) createMixVideoSkillRuns(
+	w http.ResponseWriter,
+	r *http.Request,
+	ownerUserID string,
+	account domain.PlatformAccount,
+	skill domain.ProductSkill,
+	slots []workflow.AccountSkillScheduleConfig,
+	publishAtRaw *string,
+	settings effectiveAdminSystemSettings,
+) {
+	createdTasks := make([]domain.MixVideoTask, 0, len(slots)+1)
+	createdCount := 0
+	runSettings := workflow.MixVideoRunSettings{
+		CreditsPerSecondMillis: settings.MixVideoCreditsPerSecondMillis,
+		ScriptRewritePrompt:    settings.MixVideoScriptRewritePrompt,
+		PublishIntroPrompt:     settings.MixVideoPublishIntroPrompt,
+	}
+
+	createTask := func(prepared *workflow.PreparedAccountMixVideoRun, scheduleKey string) (*domain.MixVideoTask, bool, error) {
+		taskID := uuid.NewString()
+		lockKey := buildAccountSkillRunLockKey(ownerUserID, account.ID, skill.ID, prepared.GenerateAt, scheduleKey)
+		var (
+			task    *domain.MixVideoTask
+			created bool
+		)
+		err := h.app.Store.WithAdvisoryLock(r.Context(), lockKey, func() error {
+			var (
+				existing *domain.MixVideoTask
+				err      error
+			)
+			if strings.TrimSpace(scheduleKey) != "" {
+				existing, err = h.app.Store.FindAccountSkillMixVideoTaskByScheduleSlot(r.Context(), ownerUserID, account.ID, scheduleKey, prepared.GenerateAt)
+			} else {
+				existing, err = h.app.Store.FindActiveAccountSkillMixVideoTaskByRun(r.Context(), ownerUserID, skill.ID, account.DeviceID, account.ID, prepared.GenerateAt)
+			}
+			if err != nil {
+				return err
+			}
+			if existing != nil {
+				task = existing
+				return nil
+			}
+
+			createdTask, err := h.app.Store.CreateMixVideoTask(r.Context(), store.CreateMixVideoTaskInput{
+				ID:                       taskID,
+				OwnerUserID:              ownerUserID,
+				Source:                   "account_skill_binding",
+				Status:                   prepared.Status,
+				SourceAssets:             mustJSONBytes(prepared.SourceAssets),
+				RefAudioAsset:            mustJSONBytes(prepared.RefAudioAsset),
+				ScriptText:               prepared.ScriptText,
+				DeviceID:                 &account.DeviceID,
+				SkillID:                  &skill.ID,
+				AccountID:                &account.ID,
+				Platform:                 &account.Platform,
+				AccountName:              &account.AccountName,
+				RunAt:                    &prepared.GenerateAt,
+				SchedulePayload:          prepared.SchedulePayload,
+				LocalPublishTaskID:       nil,
+				EstimatedDurationSeconds: prepared.EstimatedDurationSeconds,
+				EstimatedCreditsMillis:   prepared.EstimatedCreditsMillis,
+				BillingStatus:            "pending",
+				BillingPayload: mustJSONBytes(map[string]any{
+					"creditsPerSecond":       prepared.BillingPreview.CreditsPerSecond,
+					"creditsPerSecondMillis": settings.MixVideoCreditsPerSecondMillis,
+					"estimateCharsPerSecond": 4,
+					"billingMessage":         "混剪任务待预扣积分",
+				}),
+				Progress: mustJSONBytes(domain.MixVideoProgress{
+					Message: prepared.Message,
+				}),
+				RequestPayload: prepared.RequestPayload,
+			})
+			if err != nil {
+				return err
+			}
+			precharged, err := h.app.Store.PrechargeMixVideoTask(r.Context(), createdTask.ID)
+			if err != nil {
+				_ = h.app.Store.DeleteMixVideoTask(r.Context(), createdTask.ID, ownerUserID)
+				return err
+			}
+			task = precharged
+			created = true
+			return nil
+		})
+		return task, created, err
+	}
+
+	if len(slots) == 0 {
+		if publishAtRaw == nil || strings.TrimSpace(*publishAtRaw) == "" {
+			render.Error(w, http.StatusBadRequest, "scheduleSlots is required")
+			return
+		}
+		publishAt, err := time.Parse(time.RFC3339, strings.TrimSpace(*publishAtRaw))
+		if err != nil {
+			render.Error(w, http.StatusBadRequest, "publishAt must be RFC3339")
+			return
+		}
+		prepared, err := workflow.PrepareAccountMixVideoRun(r.Context(), h.app, runSettings, skill, account, publishAt, nil)
+		if err != nil {
+			render.Error(w, http.StatusConflict, err.Error())
+			return
+		}
+		if !prepared.BillingPreview.CanAfford {
+			render.Error(w, http.StatusConflict, fmt.Sprintf("当前积分不足，预计需要 %s 积分，还差 %s 积分", formatMixVideoCredits(prepared.BillingPreview.EstimatedCredits), formatMixVideoCredits(prepared.BillingPreview.ShortfallCredits)))
+			return
+		}
+		task, created, err := createTask(prepared, "")
+		if err != nil {
+			if err == store.ErrMixVideoBillingInsufficientBalance {
+				render.Error(w, http.StatusConflict, fmt.Sprintf("当前积分不足，预计需要 %s 积分，还差 %s 积分", formatMixVideoCredits(prepared.BillingPreview.EstimatedCredits), formatMixVideoCredits(prepared.BillingPreview.ShortfallCredits)))
+				return
+			}
+			render.Error(w, http.StatusInternalServerError, "Failed to create account skill run")
+			return
+		}
+		if created {
+			createdCount++
+			recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+				OwnerUserID:  ownerUserID,
+				ResourceType: "mix_video_task",
+				ResourceID:   &task.ID,
+				Action:       "create",
+				Title:        "账号绑定混剪任务",
+				Source:       account.Platform,
+				Status:       task.Status,
+				Message:      auditStringPtr("已为账号创建混剪任务"),
+				Payload: mustJSONBytes(map[string]any{
+					"accountId":   account.ID,
+					"accountName": account.AccountName,
+					"deviceId":    account.DeviceID,
+					"skillId":     skill.ID,
+					"publishAt":   prepared.PublishAt,
+					"generateAt":  prepared.GenerateAt,
+					"source":      task.Source,
+				}),
+			})
+		}
+		createdTasks = append(createdTasks, *task)
+		statusCode := http.StatusOK
+		if created {
+			statusCode = http.StatusCreated
+		}
+		render.JSON(w, statusCode, createdTasks)
+		return
+	}
+
+	for _, slot := range slots {
+		publishAt, err := workflow.NextAccountSkillPublishAt(slot.TimeOfDay, slot.Timezone, time.Now())
+		if err != nil {
+			render.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		prepared, err := workflow.PrepareAccountMixVideoRun(r.Context(), h.app, runSettings, skill, account, publishAt, &slot)
+		if err != nil {
+			render.Error(w, http.StatusConflict, err.Error())
+			return
+		}
+		if !prepared.BillingPreview.CanAfford {
+			render.Error(w, http.StatusConflict, fmt.Sprintf("当前积分不足，预计需要 %s 积分，还差 %s 积分", formatMixVideoCredits(prepared.BillingPreview.EstimatedCredits), formatMixVideoCredits(prepared.BillingPreview.ShortfallCredits)))
+			return
+		}
+		task, created, err := createTask(prepared, slot.ScheduleKey)
+		if err != nil {
+			if err == store.ErrMixVideoBillingInsufficientBalance {
+				render.Error(w, http.StatusConflict, fmt.Sprintf("当前积分不足，预计需要 %s 积分，还差 %s 积分", formatMixVideoCredits(prepared.BillingPreview.EstimatedCredits), formatMixVideoCredits(prepared.BillingPreview.ShortfallCredits)))
+				return
+			}
+			render.Error(w, http.StatusInternalServerError, "Failed to create account skill run")
+			return
+		}
+		if created {
+			createdCount++
+			recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+				OwnerUserID:  ownerUserID,
+				ResourceType: "mix_video_task",
+				ResourceID:   &task.ID,
+				Action:       "create",
+				Title:        "账号绑定混剪任务",
+				Source:       account.Platform,
+				Status:       task.Status,
+				Message:      auditStringPtr("已为账号创建混剪任务"),
+				Payload: mustJSONBytes(map[string]any{
+					"accountId":             account.ID,
+					"accountName":           account.AccountName,
+					"deviceId":              account.DeviceID,
+					"skillId":               skill.ID,
+					"publishAt":             prepared.PublishAt,
+					"generateAt":            prepared.GenerateAt,
+					"timeOfDay":             slot.TimeOfDay,
+					"repeatDaily":           slot.RepeatDaily,
+					"scheduleKey":           slot.ScheduleKey,
+					"scheduleZone":          slot.Timezone,
+					"generationLeadMinutes": slot.GenerationLeadMinutes,
+				}),
+			})
+		}
+		createdTasks = append(createdTasks, *task)
+	}
+
+	statusCode := http.StatusOK
+	if createdCount == len(createdTasks) {
+		statusCode = http.StatusCreated
+	}
+	render.JSON(w, statusCode, createdTasks)
+}
+
 // 构建账号技能运行Lock键，为账号生成后续步骤所需的派生参数或载荷。
 func buildAccountSkillRunLockKey(ownerUserID string, accountID string, skillID string, generateAt time.Time, scheduleKey string) string {
 	if strings.TrimSpace(scheduleKey) != "" {
@@ -534,6 +747,65 @@ func (h *AccountHandler) DeleteSkillRun(w http.ResponseWriter, r *http.Request) 
 	}
 	if account == nil {
 		render.Error(w, http.StatusNotFound, "Account not found")
+		return
+	}
+
+	mixTask, err := h.app.Store.GetMixVideoTaskByOwner(r.Context(), jobID, user.ID)
+	if err != nil {
+		render.Error(w, http.StatusInternalServerError, "Failed to load account skill run")
+		return
+	}
+	if mixTask != nil && strings.TrimSpace(mixTask.Source) == "account_skill_binding" {
+		if mixTask.AccountID == nil || strings.TrimSpace(*mixTask.AccountID) != accountID {
+			render.Error(w, http.StatusNotFound, "Account skill run not found")
+			return
+		}
+		if strings.TrimSpace(stringValue(mixTask.LocalPublishTaskID)) != "" {
+			render.Error(w, http.StatusConflict, "任务已进入发布链路，不能直接删除")
+			return
+		}
+		if mixTask.Status == "running" {
+			render.Error(w, http.StatusConflict, "任务正在执行中，请稍后再试")
+			return
+		}
+		scheduleConfig, _ := workflow.ParseAccountSkillScheduleConfig(mixTask.RequestPayload)
+		scheduleKey := ""
+		repeating := false
+		if scheduleConfig != nil {
+			scheduleKey = scheduleConfig.ScheduleKey
+			repeating = scheduleConfig.RepeatDaily
+		}
+		deleted, err := h.app.Store.DeleteAccountSkillMixVideoRunPlanByOwner(r.Context(), jobID, user.ID, scheduleKey, repeating)
+		if err != nil {
+			render.Error(w, http.StatusInternalServerError, "Failed to delete account skill run")
+			return
+		}
+		if !deleted {
+			render.Error(w, http.StatusConflict, "任务当前状态不支持删除")
+			return
+		}
+		recordAuditEvent(h.app, r.Context(), store.CreateAuditEventInput{
+			OwnerUserID:  user.ID,
+			ResourceType: "mix_video_task",
+			ResourceID:   &jobID,
+			Action:       "delete",
+			Title:        "删除账号混剪计划",
+			Source:       account.Platform,
+			Status:       "success",
+			Message:      auditStringPtr("账号混剪计划已删除，重复计划已停止续排"),
+			Payload: mustJSONBytes(map[string]any{
+				"accountId":          account.ID,
+				"accountName":        account.AccountName,
+				"deviceId":           account.DeviceID,
+				"mixVideoTaskId":     jobID,
+				"scheduleKey":        scheduleKey,
+				"repeatDaily":        repeating,
+				"publishAt":          mixTask.RunAt,
+				"localPublishTaskId": mixTask.LocalPublishTaskID,
+				"taskStatus":         mixTask.Status,
+			}),
+		})
+		render.JSON(w, http.StatusOK, map[string]any{"deleted": true})
 		return
 	}
 

@@ -74,12 +74,14 @@ class OmniDriveOpenAIProxyHelpersTests(unittest.TestCase):
             original_paths = sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS
             try:
                 sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS = (config_path,)
-                sau_backend.sync_openclaw_omnidrive_model_configs(
-                    [{"modelName": "gpt-5.4"}, {"modelName": "qwen3.5-plus"}],
-                    api_base_url="http://127.0.0.1:8410",
-                    access_token="fresh-token",
-                    default_chat_model="gpt-5.4",
-                )
+                with mock.patch.object(sau_backend, "SAU_BACKEND_PORT", 5409), \
+                     mock.patch.object(sau_backend, "OMNIBULL_API_KEY", ""):
+                    sau_backend.sync_openclaw_omnidrive_model_configs(
+                        [{"modelName": "gpt-5.4"}, {"modelName": "qwen3.5-plus"}],
+                        api_base_url="http://127.0.0.1:8410",
+                        access_token="fresh-token",
+                        default_chat_model="gpt-5.4",
+                    )
             finally:
                 sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS = original_paths
 
@@ -91,10 +93,10 @@ class OmniDriveOpenAIProxyHelpersTests(unittest.TestCase):
             self.assertNotIn("omnidrive/default-chat", defaults)
             self.assertEqual(defaults["omnidrive/gpt-5.4"]["alias"], "omni")
             self.assertEqual(defaults["omnidrive/qwen3.5-plus"]["alias"], "omni-qwen")
-            self.assertEqual(provider["baseUrl"], "http://127.0.0.1:8410/openai/v1")
+            self.assertEqual(provider["baseUrl"], "http://127.0.0.1:5409/openai/v1")
             self.assertEqual(provider["api"], "openai-completions")
             self.assertNotIn("apiKey", provider)
-            self.assertNotIn("models", provider)
+            self.assertEqual([item["id"] for item in provider["models"]], ["gpt-5.4", "qwen3.5-plus"])
 
     def test_sync_openclaw_configs_overwrites_model_cache_with_online_set(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -131,12 +133,14 @@ class OmniDriveOpenAIProxyHelpersTests(unittest.TestCase):
             original_paths = sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS
             try:
                 sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS = (config_path,)
-                sau_backend.sync_openclaw_omnidrive_model_configs(
-                    [{"modelName": "claude-opus-4-6-thinking"}],
-                    api_base_url="https://aitoplus.com",
-                    access_token="fresh-token",
-                    default_chat_model="claude-opus-4-6-thinking",
-                )
+                with mock.patch.object(sau_backend, "SAU_BACKEND_PORT", 5409), \
+                     mock.patch.object(sau_backend, "OMNIBULL_API_KEY", ""):
+                    sau_backend.sync_openclaw_omnidrive_model_configs(
+                        [{"modelName": "claude-opus-4-6-thinking"}],
+                        api_base_url="https://aitoplus.com",
+                        access_token="fresh-token",
+                        default_chat_model="claude-opus-4-6-thinking",
+                    )
             finally:
                 sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS = original_paths
 
@@ -144,10 +148,10 @@ class OmniDriveOpenAIProxyHelpersTests(unittest.TestCase):
             provider = data["models"]["providers"]["omnidrive"]
             defaults = data["agents"]["defaults"]["models"]
 
-            self.assertEqual(provider["baseUrl"], "https://aitoplus.com/openai/v1")
+            self.assertEqual(provider["baseUrl"], "http://127.0.0.1:5409/openai/v1")
             self.assertEqual(provider["api"], "openai-completions")
             self.assertNotIn("apiKey", provider)
-            self.assertNotIn("models", provider)
+            self.assertEqual([item["id"] for item in provider["models"]], ["claude-opus-4-6-thinking"])
             self.assertEqual(defaults, {"omnidrive/claude-opus-4-6-thinking": {"alias": "omni"}})
 
     def test_sync_openclaw_configs_exposes_every_online_model_in_defaults(self):
@@ -175,17 +179,19 @@ class OmniDriveOpenAIProxyHelpersTests(unittest.TestCase):
             original_paths = sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS
             try:
                 sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS = (config_path,)
-                sau_backend.sync_openclaw_omnidrive_model_configs(
-                    [
-                        {"modelName": "claude-opus-4-6-thinking"},
-                        {"modelName": "deepseek-chat"},
-                        {"modelName": "deepseek-r1"},
-                        {"modelName": "gemini-3.1-pro-preview"},
-                    ],
-                    api_base_url="https://aitoplus.com",
-                    access_token="fresh-token",
-                    default_chat_model="gemini-3.1-pro-preview",
-                )
+                with mock.patch.object(sau_backend, "SAU_BACKEND_PORT", 5409), \
+                     mock.patch.object(sau_backend, "OMNIBULL_API_KEY", ""):
+                    sau_backend.sync_openclaw_omnidrive_model_configs(
+                        [
+                            {"modelName": "claude-opus-4-6-thinking"},
+                            {"modelName": "deepseek-chat"},
+                            {"modelName": "deepseek-r1"},
+                            {"modelName": "gemini-3.1-pro-preview"},
+                        ],
+                        api_base_url="https://aitoplus.com",
+                        access_token="fresh-token",
+                        default_chat_model="gemini-3.1-pro-preview",
+                    )
             finally:
                 sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS = original_paths
 
@@ -217,27 +223,32 @@ class OmniDriveOpenAIProxyHelpersTests(unittest.TestCase):
             original_paths = sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS
             try:
                 sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS = (config_path, models_path)
-                sau_backend.sync_openclaw_omnidrive_model_configs(
-                    [{"modelName": "deepseek-chat"}, {"modelName": "gpt-5.4"}],
-                    api_base_url="https://aitoplus.com",
-                    access_token="fresh-token",
-                    default_chat_model="deepseek-chat",
-                )
+                with mock.patch.object(sau_backend, "SAU_BACKEND_PORT", 5409), \
+                     mock.patch.object(sau_backend, "OMNIBULL_API_KEY", ""):
+                    sau_backend.sync_openclaw_omnidrive_model_configs(
+                        [{"modelName": "deepseek-chat"}, {"modelName": "gpt-5.4"}],
+                        api_base_url="https://aitoplus.com",
+                        access_token="fresh-token",
+                        default_chat_model="deepseek-chat",
+                    )
             finally:
                 sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS = original_paths
 
             root_config = json.loads(config_path.read_text(encoding="utf-8"))
             agent_models = json.loads(models_path.read_text(encoding="utf-8"))
 
-            self.assertEqual(root_config["models"]["providers"]["omnidrive"]["baseUrl"], "https://aitoplus.com/openai/v1")
+            self.assertEqual(root_config["models"]["providers"]["omnidrive"]["baseUrl"], "http://127.0.0.1:5409/openai/v1")
             self.assertEqual(root_config["models"]["providers"]["omnidrive"]["api"], "openai-completions")
             self.assertNotIn("apiKey", root_config["models"]["providers"]["omnidrive"])
-            self.assertNotIn("models", root_config["models"]["providers"]["omnidrive"])
+            self.assertEqual(
+                [item["id"] for item in root_config["models"]["providers"]["omnidrive"]["models"]],
+                ["deepseek-chat", "gpt-5.4"],
+            )
             self.assertEqual(root_config["agents"]["defaults"]["workspace"], "/tmp/openclaw-workspace")
             self.assertEqual(root_config["agents"]["defaults"]["models"]["omnidrive/deepseek-chat"]["alias"], "omni")
             self.assertEqual(root_config["agents"]["defaults"]["models"]["omnidrive/gpt-5.4"]["alias"], "omni-gpt")
             self.assertTrue(models_path.exists())
-            self.assertEqual(agent_models["providers"]["omnidrive"]["apiKey"], "fresh-token")
+            self.assertNotIn("apiKey", agent_models["providers"]["omnidrive"])
             self.assertEqual(
                 [item["id"] for item in agent_models["providers"]["omnidrive"]["models"]],
                 ["deepseek-chat", "gpt-5.4"],
@@ -263,18 +274,20 @@ class OmniDriveOpenAIProxyHelpersTests(unittest.TestCase):
             original_paths = sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS
             try:
                 sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS = (config_path, models_path)
-                first_changed_paths = sau_backend.sync_openclaw_omnidrive_model_configs(
-                    [{"modelName": "deepseek-chat"}, {"modelName": "gpt-5.4"}],
-                    api_base_url="https://aitoplus.com",
-                    access_token="fresh-token",
-                    default_chat_model="deepseek-chat",
-                )
-                second_changed_paths = sau_backend.sync_openclaw_omnidrive_model_configs(
-                    [{"modelName": "deepseek-chat"}, {"modelName": "gpt-5.4"}],
-                    api_base_url="https://aitoplus.com",
-                    access_token="fresh-token",
-                    default_chat_model="deepseek-chat",
-                )
+                with mock.patch.object(sau_backend, "SAU_BACKEND_PORT", 5409), \
+                     mock.patch.object(sau_backend, "OMNIBULL_API_KEY", ""):
+                    first_changed_paths = sau_backend.sync_openclaw_omnidrive_model_configs(
+                        [{"modelName": "deepseek-chat"}, {"modelName": "gpt-5.4"}],
+                        api_base_url="https://aitoplus.com",
+                        access_token="fresh-token",
+                        default_chat_model="deepseek-chat",
+                    )
+                    second_changed_paths = sau_backend.sync_openclaw_omnidrive_model_configs(
+                        [{"modelName": "deepseek-chat"}, {"modelName": "gpt-5.4"}],
+                        api_base_url="https://aitoplus.com",
+                        access_token="fresh-token",
+                        default_chat_model="deepseek-chat",
+                    )
             finally:
                 sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS = original_paths
 
@@ -283,6 +296,193 @@ class OmniDriveOpenAIProxyHelpersTests(unittest.TestCase):
                 [str(config_path), str(models_path)],
             )
             self.assertEqual(second_changed_paths, [])
+
+    def test_sync_openclaw_configs_uses_local_gateway_key_when_present(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "openclaw.json"
+            config_path.write_text(
+                json.dumps({"models": {"providers": {}}, "agents": {"defaults": {"models": {}}}}),
+                encoding="utf-8",
+            )
+
+            original_paths = sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS
+            try:
+                sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS = (config_path,)
+                with mock.patch.object(sau_backend, "SAU_BACKEND_PORT", 15409), \
+                     mock.patch.object(sau_backend, "OMNIBULL_API_KEY", "local-gateway-key"):
+                    sau_backend.sync_openclaw_omnidrive_model_configs(
+                        [{"modelName": "gpt-5.4"}],
+                        api_base_url="https://cloud.example.com",
+                        access_token="cloud-access-token",
+                        default_chat_model="gpt-5.4",
+                    )
+            finally:
+                sau_backend.OPENCLAW_OMNIDRIVE_CONFIG_PATHS = original_paths
+
+            provider = json.loads(config_path.read_text(encoding="utf-8"))["models"]["providers"]["omnidrive"]
+            self.assertEqual(provider["baseUrl"], "http://127.0.0.1:15409/openai/v1")
+            self.assertEqual(provider["apiKey"], "local-gateway-key")
+
+    def test_ensure_openclaw_omnidrive_models_synced_only_logs_changed_paths(self):
+        with mock.patch.object(
+            sau_backend,
+            "sync_openclaw_omnidrive_models_from_cloud",
+            return_value=["/tmp/openclaw.json", "/tmp/models.json"],
+        ), mock.patch.object(
+            sau_backend,
+            "_reload_openclaw_gateway_after_omnidrive_model_sync",
+        ) as reload_mock:
+            sau_backend.ensure_openclaw_omnidrive_models_synced()
+
+        reload_mock.assert_not_called()
+
+    def test_ensure_openclaw_omnidrive_models_synced_skips_reload_when_configs_unchanged(self):
+        with mock.patch.object(
+            sau_backend,
+            "sync_openclaw_omnidrive_models_from_cloud",
+            return_value=[],
+        ), mock.patch.object(
+            sau_backend,
+            "_reload_openclaw_gateway_after_omnidrive_model_sync",
+        ) as reload_mock:
+            sau_backend.ensure_openclaw_omnidrive_models_synced()
+
+        reload_mock.assert_not_called()
+
+    def test_refresh_openclaw_runtime_config_reloads_gateway_when_model_configs_change(self):
+        session_payload = {
+            "accessToken": "session-token",
+            "apiBaseUrl": "https://aitoplus.com",
+            "device": {"defaultChatModel": "gpt-5.4"},
+        }
+        cloud_payload = {
+            "items": [
+                {"modelName": "gpt-5.4"},
+                {"modelName": "deepseek-chat"},
+            ]
+        }
+
+        with mock.patch.object(
+            sau_backend,
+            "get_omnidrive_device_session_data",
+            return_value=session_payload,
+        ), mock.patch.object(
+            sau_backend,
+            "omnidrive_cloud_json_request",
+            return_value=(200, cloud_payload),
+        ), mock.patch.object(
+            sau_backend,
+            "_extract_omnidrive_chat_models",
+            return_value=cloud_payload["items"],
+        ), mock.patch.object(
+            sau_backend,
+            "_mark_openclaw_omnidrive_model_sync",
+        ), mock.patch.object(
+            sau_backend,
+            "sync_openclaw_omnidrive_model_configs",
+            return_value=["/tmp/openclaw.json"],
+        ), mock.patch.object(
+            sau_backend,
+            "sync_hermes_shared_runtime_config",
+            return_value=({}, []),
+        ), mock.patch.object(
+            sau_backend,
+            "_reload_openclaw_gateway_after_omnidrive_model_sync",
+        ) as reload_mock:
+            sau_backend.refresh_openclaw_omnidrive_runtime_config(include_models=True)
+
+        reload_mock.assert_called_once_with(
+            ["/tmp/openclaw.json"],
+            reason="refresh_openclaw_omnidrive_runtime_config",
+        )
+
+    def test_refresh_openclaw_runtime_config_skips_reload_when_model_configs_unchanged(self):
+        session_payload = {
+            "accessToken": "session-token",
+            "apiBaseUrl": "https://aitoplus.com",
+            "device": {"defaultChatModel": "gpt-5.4"},
+        }
+        cloud_payload = {
+            "items": [
+                {"modelName": "gpt-5.4"},
+            ]
+        }
+
+        with mock.patch.object(
+            sau_backend,
+            "get_omnidrive_device_session_data",
+            return_value=session_payload,
+        ), mock.patch.object(
+            sau_backend,
+            "omnidrive_cloud_json_request",
+            return_value=(200, cloud_payload),
+        ), mock.patch.object(
+            sau_backend,
+            "_extract_omnidrive_chat_models",
+            return_value=cloud_payload["items"],
+        ), mock.patch.object(
+            sau_backend,
+            "_mark_openclaw_omnidrive_model_sync",
+        ), mock.patch.object(
+            sau_backend,
+            "sync_openclaw_omnidrive_model_configs",
+            return_value=[],
+        ), mock.patch.object(
+            sau_backend,
+            "sync_hermes_shared_runtime_config",
+            return_value=({}, []),
+        ), mock.patch.object(
+            sau_backend,
+            "_reload_openclaw_gateway_after_omnidrive_model_sync",
+        ) as reload_mock:
+            sau_backend.refresh_openclaw_omnidrive_runtime_config(include_models=True)
+
+        reload_mock.assert_not_called()
+
+    def test_skill_routes_allow_loopback_without_omnibull_key_and_reject_remote_without_key(self):
+        with mock.patch.object(sau_backend, "OMNIBULL_API_KEY", "local-gateway-key"), \
+             mock.patch.object(sau_backend, "build_skill_status_payload", return_value={"deviceCode": "device-1"}):
+            with sau_backend.app.test_client() as client:
+                local_response = client.get("/api/skill/status", environ_base={"REMOTE_ADDR": "127.0.0.1"})
+                remote_response = client.get("/api/skill/status", environ_base={"REMOTE_ADDR": "10.20.30.40"})
+
+        self.assertEqual(local_response.status_code, 200)
+        self.assertEqual(remote_response.status_code, 401)
+
+    def test_skill_routes_do_not_trust_forwarded_for_when_loopback_key_is_required(self):
+        with mock.patch.object(sau_backend, "OMNIBULL_API_KEY", "local-gateway-key"), \
+             mock.patch.object(sau_backend, "build_skill_status_payload", return_value={"deviceCode": "device-1"}):
+            with sau_backend.app.test_client() as client:
+                response = client.get(
+                    "/api/skill/status",
+                    environ_base={"REMOTE_ADDR": "10.20.30.40"},
+                    headers={"X-Forwarded-For": "127.0.0.1"},
+                )
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_skill_omnidrive_session_returns_auth_state_summary(self):
+        session_payload = {
+            "accessToken": "session-token",
+            "expiresAt": "2026-04-19T10:00:00Z",
+            "apiBaseUrl": "https://cloud.example.com",
+            "cloudUrl": "https://cloud.example.com",
+            "user": {"id": "user-1", "name": "禾硕AI", "email": "demo@example.com"},
+            "device": {"id": "device-1", "deviceCode": "device-code-1", "name": "Factory OmniBull"},
+        }
+
+        with mock.patch.object(sau_backend, "OMNIBULL_API_KEY", "local-gateway-key"), \
+             mock.patch.object(sau_backend, "fetch_omnidrive_device_session", return_value=(200, session_payload)), \
+             mock.patch.object(sau_backend, "sync_openclaw_omnidrive_model_configs"), \
+             mock.patch.object(sau_backend, "sync_hermes_shared_runtime_config"):
+            with sau_backend.app.test_client() as client:
+                response = client.get("/api/skill/omnidrive/session", environ_base={"REMOTE_ADDR": "127.0.0.1"})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()["data"]
+        self.assertEqual(data["authState"], "authorized")
+        self.assertEqual(data["reason"], "")
+        self.assertEqual(data["availableSkills"], sau_backend.OPENCLAW_OMNIDRIVE_AVAILABLE_SKILLS)
 
     def test_summarize_openai_media_tool_result_includes_urls_and_artifacts(self):
         content = json.dumps(

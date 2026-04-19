@@ -9,8 +9,8 @@ func TestScanAdminSystemSettingsIncludesPromptOptimizeModel(t *testing.T) {
 	now := time.Now().UTC()
 
 	record, err := scanAdminSystemSettings(func(dest ...any) error {
-		if len(dest) != 40 {
-			t.Fatalf("scanAdminSystemSettings destination count = %d, want %d", len(dest), 40)
+		if len(dest) != 42 {
+			t.Fatalf("scanAdminSystemSettings destination count = %d, want %d", len(dest), 42)
 		}
 
 		*(dest[0].(*string)) = "system"
@@ -20,8 +20,10 @@ func TestScanAdminSystemSettingsIncludesPromptOptimizeModel(t *testing.T) {
 		*(dest[28].(*string)) = "gemini-3.1-pro-preview"
 		*(dest[29].(*string)) = "default-image-model"
 		*(dest[30].(*string)) = "default-video-model"
-		*(dest[38].(*time.Time)) = now
-		*(dest[39].(*time.Time)) = now
+		*(dest[32].(*string)) = "mix-video-script-rewrite"
+		*(dest[33].(*string)) = "mix-video-publish-rewrite"
+		*(dest[40].(*time.Time)) = now
+		*(dest[41].(*time.Time)) = now
 		return nil
 	})
 	if err != nil {
@@ -39,6 +41,12 @@ func TestScanAdminSystemSettingsIncludesPromptOptimizeModel(t *testing.T) {
 	}
 	if record.DefaultVideoModel != "default-video-model" {
 		t.Fatalf("DefaultVideoModel = %q, want %q", record.DefaultVideoModel, "default-video-model")
+	}
+	if record.MixVideoScriptRewritePrompt != "mix-video-script-rewrite" {
+		t.Fatalf("MixVideoScriptRewritePrompt = %q, want %q", record.MixVideoScriptRewritePrompt, "mix-video-script-rewrite")
+	}
+	if record.MixVideoPublishIntroPrompt != "mix-video-publish-rewrite" {
+		t.Fatalf("MixVideoPublishIntroPrompt = %q, want %q", record.MixVideoPublishIntroPrompt, "mix-video-publish-rewrite")
 	}
 	if len(record.PaymentChannels) != 1 || record.PaymentChannels[0] != "manual_cs" {
 		t.Fatalf("PaymentChannels = %#v, want %#v", record.PaymentChannels, []string{"manual_cs"})

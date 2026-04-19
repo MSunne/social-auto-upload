@@ -113,6 +113,8 @@ CREATE TABLE IF NOT EXISTS admin_system_configs (
     default_image_model TEXT NOT NULL DEFAULT 'gemini-3-pro-image-preview',
     default_video_model TEXT NOT NULL DEFAULT 'veo-3.1-fast-fl',
     video_cover_prompt_template TEXT NOT NULL DEFAULT '',
+    mix_video_script_rewrite_prompt TEXT NOT NULL DEFAULT '',
+    mix_video_publish_intro_prompt TEXT NOT NULL DEFAULT '',
     storyboard_prompt_template TEXT NOT NULL DEFAULT '',
     storyboard_model TEXT NOT NULL DEFAULT '',
     storyboard_reference_payload JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -457,6 +459,8 @@ ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS default_chat_model TEX
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS default_image_model TEXT NOT NULL DEFAULT 'gemini-3-pro-image-preview';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS default_video_model TEXT NOT NULL DEFAULT 'veo-3.1-fast-fl';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS video_cover_prompt_template TEXT NOT NULL DEFAULT '';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS mix_video_script_rewrite_prompt TEXT NOT NULL DEFAULT '';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS mix_video_publish_intro_prompt TEXT NOT NULL DEFAULT '';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS storyboard_prompt_template TEXT NOT NULL DEFAULT '';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS storyboard_model TEXT NOT NULL DEFAULT '';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS storyboard_reference_payload JSONB NOT NULL DEFAULT '[]'::jsonb;
@@ -730,6 +734,14 @@ CREATE TABLE IF NOT EXISTS mix_video_tasks (
     ref_audio_asset JSONB NOT NULL,
     result_asset JSONB,
     script_text TEXT NOT NULL,
+    device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
+    skill_id TEXT REFERENCES product_skills(id) ON DELETE SET NULL,
+    account_id TEXT REFERENCES platform_accounts(id) ON DELETE SET NULL,
+    platform TEXT,
+    account_name TEXT,
+    run_at TIMESTAMPTZ,
+    schedule_payload JSONB,
+    local_publish_task_id TEXT REFERENCES publish_tasks(id) ON DELETE SET NULL,
     estimated_duration_seconds INT NOT NULL DEFAULT 0,
     estimated_credits BIGINT NOT NULL DEFAULT 0,
     estimated_credits_millis BIGINT NOT NULL DEFAULT 0,
@@ -767,6 +779,14 @@ ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS source_assets JSONB NOT NUL
 ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS ref_audio_asset JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS result_asset JSONB;
 ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS script_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS device_id TEXT REFERENCES devices(id) ON DELETE SET NULL;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS skill_id TEXT REFERENCES product_skills(id) ON DELETE SET NULL;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS account_id TEXT REFERENCES platform_accounts(id) ON DELETE SET NULL;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS platform TEXT;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS account_name TEXT;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS run_at TIMESTAMPTZ;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS schedule_payload JSONB;
+ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS local_publish_task_id TEXT REFERENCES publish_tasks(id) ON DELETE SET NULL;
 ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS estimated_duration_seconds INT NOT NULL DEFAULT 0;
 ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS estimated_credits BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE mix_video_tasks ADD COLUMN IF NOT EXISTS estimated_credits_millis BIGINT NOT NULL DEFAULT 0;

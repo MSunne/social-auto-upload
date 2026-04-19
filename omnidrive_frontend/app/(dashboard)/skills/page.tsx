@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
+  AudioLines,
+  Scissors,
   Layers,
   Plus,
   Trash2,
@@ -40,6 +42,24 @@ function SkillAssetPreview({ skillId }: { skillId: string }) {
     () => assets.filter((a) => (a.mimeType || "").toLowerCase().startsWith("text/") || a.assetType.includes("text")),
     [assets],
   );
+  const videoAssets = useMemo(
+    () =>
+      assets.filter(
+        (a) =>
+          (a.mimeType || "").startsWith("video/") ||
+          a.assetType.includes("video"),
+      ),
+    [assets],
+  );
+  const audioAssets = useMemo(
+    () =>
+      assets.filter(
+        (a) =>
+          (a.mimeType || "").toLowerCase().startsWith("audio/") ||
+          a.assetType.includes("audio"),
+      ),
+    [assets],
+  );
 
   if (isLoading) {
     return (
@@ -73,6 +93,18 @@ function SkillAssetPreview({ skillId }: { skillId: string }) {
           <span className="inline-flex items-center gap-1">
             <FileText className="h-3 w-3 text-amber-200" />
             {textAssets.length} 个文本
+          </span>
+        ) : null}
+        {videoAssets.length > 0 ? (
+          <span className="inline-flex items-center gap-1">
+            <Video className="h-3 w-3 text-accent" />
+            {videoAssets.length} 个视频
+          </span>
+        ) : null}
+        {audioAssets.length > 0 ? (
+          <span className="inline-flex items-center gap-1">
+            <AudioLines className="h-3 w-3 text-amber-200" />
+            {audioAssets.length} 个音频
           </span>
         ) : null}
       </div>
@@ -141,6 +173,34 @@ function SkillAssetPreview({ skillId }: { skillId: string }) {
           ) : null}
         </div>
       ) : null}
+
+      {videoAssets.length > 0 ? (
+        <div className="space-y-1">
+          {videoAssets.slice(0, expanded ? videoAssets.length : 3).map((asset) => (
+            <div
+              key={asset.id}
+              className="flex items-center gap-2 rounded-lg border border-border/40 bg-surface-hover/30 px-2.5 py-1.5 text-xs text-text-secondary"
+            >
+              <Video className="h-3 w-3 shrink-0 text-accent" />
+              <span className="truncate">{asset.fileName}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {audioAssets.length > 0 ? (
+        <div className="space-y-1">
+          {audioAssets.slice(0, expanded ? audioAssets.length : 2).map((asset) => (
+            <div
+              key={asset.id}
+              className="flex items-center gap-2 rounded-lg border border-border/40 bg-surface-hover/30 px-2.5 py-1.5 text-xs text-text-secondary"
+            >
+              <AudioLines className="h-3 w-3 shrink-0 text-amber-200" />
+              <span className="truncate">{asset.fileName}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -198,6 +258,9 @@ export default function SkillsPage() {
     if (normalizeSkillOutputValue(outputType) === "数字人口播") {
       return <Video className="h-5 w-5 text-emerald-300" />;
     }
+    if (normalizeSkillOutputValue(outputType) === "混剪") {
+      return <Scissors className="h-5 w-5 text-cyan" />;
+    }
     return <FileImage className="h-5 w-5 text-cyan" />;
   };
 
@@ -207,6 +270,7 @@ export default function SkillsPage() {
     if (normalizeSkillOutputValue(outputType) === "视文模式") return "from-accent/15 border-accent/25";
     if (normalizeSkillOutputValue(outputType) === "文本格式") return "from-amber-300/15 border-amber-300/25";
     if (normalizeSkillOutputValue(outputType) === "数字人口播") return "from-emerald-400/15 border-emerald-400/25";
+    if (normalizeSkillOutputValue(outputType) === "混剪") return "from-cyan/15 border-cyan/25";
     return "from-cyan/15 border-cyan/25";
   };
 

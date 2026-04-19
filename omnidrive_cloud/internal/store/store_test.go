@@ -6,6 +6,21 @@ import (
 	"time"
 )
 
+func TestUpdateDevelopmentSeedUserSQLCastsNullableParameters(t *testing.T) {
+	requiredSnippets := []string{
+		"$2::text",
+		"$3::text",
+		"$4::text",
+		"$5::text",
+		"$6::boolean",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(updateDevelopmentSeedUserSQL, snippet) {
+			t.Fatalf("expected updateDevelopmentSeedUserSQL to contain %q, got %q", snippet, updateDevelopmentSeedUserSQL)
+		}
+	}
+}
+
 func TestComputeDeviceStatusUsesHeartbeatGraceWindow(t *testing.T) {
 	now := time.Now().UTC()
 	lastSeenAt := now.Add(-70 * time.Second)

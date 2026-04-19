@@ -20,6 +20,18 @@ const userSelectColumns = `
 	updated_at
 `
 
+const updateDevelopmentSeedUserSQL = `
+	UPDATE users
+	SET
+		email = CASE WHEN $2::text IS NULL THEN email ELSE NULLIF($2::text, '') END,
+		phone = CASE WHEN $3::text IS NULL THEN phone ELSE NULLIF($3::text, '') END,
+		name = CASE WHEN $4::text IS NULL OR NULLIF($4::text, '') IS NULL THEN name ELSE $4::text END,
+		password_hash = COALESCE($5::text, password_hash),
+		is_active = COALESCE($6::boolean, is_active),
+		updated_at = NOW()
+	WHERE id = $1
+	RETURNING ` + userSelectColumns
+
 // 执行存储层相关的数据库写入，维护持久化状态与后续业务流转。
 func (s *Store) CreateUser(ctx context.Context, input CreateUserInput) (*domain.User, error) {
 	var email any
@@ -115,6 +127,34 @@ func (s *Store) GetUserByID(ctx context.Context, id string) (*domain.User, error
 		FROM users
 		WHERE id = $1
 	`, id)
+
+	var user domain.User
+	if err := row.Scan(&user.ID, &user.Email, &user.Phone, &user.Name, &user.IsActive, &user.CreatedAt, &user.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &user, nil
+}
+
+// 执行存储层相关的数据库写入，确保开发环境演示账号与预置口径保持一致。
+func (s *Store) UpdateDevelopmentSeedUser(ctx context.Context, id string, input UpdateDevelopmentSeedUserInput) (*domain.User, error) {
+	var email any
+	if input.Email != nil {
+		email = strings.ToLower(strings.TrimSpace(*input.Email))
+	}
+	var phone any
+	if input.Phone != nil {
+		phone = strings.TrimSpace(*input.Phone)
+	}
+	var name any
+	if input.Name != nil {
+		name = strings.TrimSpace(*input.Name)
+	}
+
+	row := s.pool.QueryRow(ctx, `
+		`+updateDevelopmentSeedUserSQL, id, email, phone, name, input.PasswordHash, input.IsActive)
 
 	var user domain.User
 	if err := row.Scan(&user.ID, &user.Email, &user.Phone, &user.Name, &user.IsActive, &user.CreatedAt, &user.UpdatedAt); err != nil {

@@ -834,6 +834,8 @@ type AdminSystemSettingsRecord struct {
 	DefaultImageModel                  string                     `json:"defaultImageModel"`
 	DefaultVideoModel                  string                     `json:"defaultVideoModel"`
 	VideoCoverPrompt                   string                     `json:"videoCoverPrompt"`
+	MixVideoScriptRewritePrompt        string                     `json:"mixVideoScriptRewritePrompt"`
+	MixVideoPublishIntroPrompt         string                     `json:"mixVideoPublishIntroPrompt"`
 	StoryboardPrompt                   string                     `json:"storyboardPrompt"`
 	StoryboardModel                    string                     `json:"storyboardModel"`
 	StoryboardReferences               json.RawMessage            `json:"storyboardReferences,omitempty"`
@@ -863,6 +865,8 @@ type AdminSystemConfig struct {
 	DefaultImageModel                string                     `json:"defaultImageModel"`
 	DefaultVideoModel                string                     `json:"defaultVideoModel"`
 	VideoCoverPrompt                 string                     `json:"videoCoverPrompt"`
+	MixVideoScriptRewritePrompt      string                     `json:"mixVideoScriptRewritePrompt"`
+	MixVideoPublishIntroPrompt       string                     `json:"mixVideoPublishIntroPrompt"`
 	StoryboardPrompt                 string                     `json:"storyboardPrompt"`
 	StoryboardModel                  string                     `json:"storyboardModel"`
 	StoryboardReferences             json.RawMessage            `json:"storyboardReferences,omitempty"`

@@ -1,6 +1,6 @@
 {
   "version": "omnibull-hermes-shared-runtime-v1",
-  "updatedAt": "2026-04-18T08:15:37.258802+00:00",
+  "updatedAt": "2026-04-19T13:25:56.876512+00:00",
   "device": {
     "deviceCode": "5e:f9:01:22:73:09",
     "deviceName": "A001",
@@ -11,8 +11,7 @@
   "provider": {
     "name": "omnidrive",
     "format": "openai-compatible",
-    "baseUrl": "http://127.0.0.1:8410/openai/v1",
-    "apiKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzY1MDM3MzcsImlhdCI6MTc3NjUwMDEzNywic3ViIjoiODU0YzFlMTItODk2Zi00YzQzLWEzMzItNGZiNmZiMDIzNDAyIn0.kXBTyI0gHowp3jA7qCWK6dqiEOLH1tG_FeCJyukpfCo"
+    "baseUrl": "http://127.0.0.1:5409/openai/v1"
   },
   "defaults": {
     "chatModel": "gemini-3.1-pro-preview",

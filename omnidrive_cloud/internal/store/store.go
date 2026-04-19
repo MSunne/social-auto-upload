@@ -208,6 +208,14 @@ type CreateUserRegistrationInput struct {
 	PartnerCode string
 }
 
+type UpdateDevelopmentSeedUserInput struct {
+	Email        *string
+	Phone        *string
+	Name         *string
+	PasswordHash *string
+	IsActive     *bool
+}
+
 type UpdateDeviceInput struct {
 	Name                  *string
 	DefaultReasoningModel *string
@@ -806,6 +814,14 @@ type CreateMixVideoTaskInput struct {
 	SourceAssets             []byte
 	RefAudioAsset            []byte
 	ScriptText               string
+	DeviceID                 *string
+	SkillID                  *string
+	AccountID                *string
+	Platform                 *string
+	AccountName              *string
+	RunAt                    *time.Time
+	SchedulePayload          []byte
+	LocalPublishTaskID       *string
 	EstimatedDurationSeconds int
 	EstimatedCreditsMillis   int64
 	BillingStatus            string
@@ -848,6 +864,12 @@ type ListMixVideoTasksFilter struct {
 	BeforeUpdatedAt *time.Time
 	BeforeID        string
 	Limit           int
+}
+
+type LinkMixVideoTaskPublishTaskInput struct {
+	TaskID             string
+	LocalPublishTaskID string
+	OwnerUserID        string
 }
 
 type LinkAIJobPublishTaskInput struct {

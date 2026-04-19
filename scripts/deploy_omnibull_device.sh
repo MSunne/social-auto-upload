@@ -216,6 +216,20 @@ wait_for_http_ready() {
   return 1
 }
 
+run_as_sun() {
+  local user_id
+  user_id="$(id -u sun)"
+  sudo -u sun \
+    env \
+    HOME=/home/sun \
+    PATH=/home/sun/.npm-global/bin:/opt/node-v22/bin:/usr/bin:/bin \
+    DISPLAY=:0 \
+    XAUTHORITY=/home/sun/.Xauthority \
+    XDG_RUNTIME_DIR="/run/user/${user_id}" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${user_id}/bus" \
+    "$@"
+}
+
 enabled_state="$(systemctl is-enabled sau-stack.service)"
 active_state="$(systemctl is-active sau-stack.service)"
 [[ "${enabled_state}" == "enabled" ]]
@@ -227,6 +241,13 @@ wait_for_http_ready "http://127.0.0.1:5409/omnidriveAgentStatus"
 ss -ltnp | grep -q ':22'
 ss -ltnp | grep -q ':5409'
 ss -ltnp | grep -q ':5173'
+
+linger_state="$(loginctl show-user sun --property=Linger --value)"
+[[ "${linger_state}" == "yes" ]]
+
+run_as_sun systemctl --user is-enabled openclaw-gateway.service | grep -qx 'enabled'
+run_as_sun systemctl --user is-active openclaw-gateway.service | grep -qx 'active'
+run_as_sun /home/sun/.npm-global/bin/openclaw gateway call omnibull.status --json >/dev/null
 
 command -v google-chrome >/dev/null
 desktop_dir="$(xdg-user-dir DESKTOP 2>/dev/null || printf '%s\n' '/home/sun/Desktop')"
@@ -241,6 +262,63 @@ do
   owner="$(stat -c '%U:%G' "${path}")"
   [[ "${owner}" == "sun:sun" ]]
 done
+
+for plugin_dir in \
+  /home/sun/.openclaw/extensions/omnibull \
+  /home/sun/.openclaw/extensions/omnidrive \
+  /home/sun/.openclaw/extensions/openclaw-weixin \
+  /home/sun/.openclaw/extensions/feishu \
+  /home/sun/.openclaw/extensions/wecom-openclaw-plugin \
+  /home/sun/.openclaw/feishu \
+  /home/sun/.openclaw/openclaw-weixin \
+  /home/sun/.openclaw/wecom \
+  /home/sun/.openclaw/wecomConfig
+do
+  [[ -e "${plugin_dir}" ]]
+done
+
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+config = json.loads(Path("/home/sun/.openclaw/openclaw.json").read_text(encoding="utf-8"))
+gateway = config.get("gateway") or {}
+assert gateway.get("mode") == "local"
+assert gateway.get("bind") == "loopback"
+assert gateway.get("port") == 18790
+assert (gateway.get("auth") or {}).get("mode") == "none"
+control_ui = gateway.get("controlUi") or {}
+assert control_ui.get("allowedOrigins") == ["http://192.168.1.24:18789"]
+assert control_ui.get("dangerouslyDisableDeviceAuth") is True
+
+plugins = ((config.get("plugins") or {}).get("entries")) or {}
+assert plugins.get("feishu", {}).get("enabled") is True
+assert plugins.get("openclaw-weixin", {}).get("enabled") is True
+assert plugins.get("omnibull", {}).get("enabled") is True
+assert plugins.get("omnidrive", {}).get("enabled") is True
+assert plugins.get("wecom-openclaw-plugin", {}).get("enabled") is False
+assert "qwen-portal-auth" not in plugins
+allow = set(((config.get("plugins") or {}).get("allow")) or [])
+required_allow = {
+    "feishu",
+    "wecom-openclaw-plugin",
+    "omnibull",
+    "omnidrive",
+    "openclaw-weixin",
+}
+assert required_allow.issubset(allow)
+PY
+
+for target in sleep.target suspend.target hibernate.target hybrid-sleep.target
+do
+  [[ "$(systemctl is-enabled "${target}" 2>/dev/null)" == "masked" ]]
+done
+
+grep -q 'line-power-sleep-delay 0' <(run_as_sun gsettings list-recursively com.deepin.dde.power)
+grep -q 'battery-sleep-delay 0' <(run_as_sun gsettings list-recursively com.deepin.dde.power)
+grep -q 'lid-closed-sleep false' <(run_as_sun gsettings list-recursively com.deepin.dde.power)
+grep -q 'battery-lid-closed-sleep false' <(run_as_sun gsettings list-recursively com.deepin.dde.power)
+grep -q 'sleep-lock false' <(run_as_sun gsettings list-recursively com.deepin.dde.power)
 
 if sudo journalctl -u sau-stack.service -b --no-pager | grep -E 'Permission denied|权限不够' >/dev/null; then
   echo "permission-related journal entries detected for sau-stack.service" >&2

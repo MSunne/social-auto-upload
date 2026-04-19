@@ -36,6 +36,8 @@ type adminSystemConfigPatchRequest struct {
 	DefaultImageModel                *string                           `json:"defaultImageModel"`
 	DefaultVideoModel                *string                           `json:"defaultVideoModel"`
 	VideoCoverPrompt                 *string                           `json:"videoCoverPrompt"`
+	MixVideoScriptRewritePrompt      *string                           `json:"mixVideoScriptRewritePrompt"`
+	MixVideoPublishIntroPrompt       *string                           `json:"mixVideoPublishIntroPrompt"`
 	StoryboardPrompt                 *string                           `json:"storyboardPrompt"`
 	StoryboardModel                  *string                           `json:"storyboardModel"`
 	StoryboardReferences             []map[string]any                  `json:"storyboardReferences"`
@@ -82,6 +84,8 @@ type effectiveAdminSystemSettings struct {
 	DefaultImageModel                  string
 	DefaultVideoModel                  string
 	VideoCoverPrompt                   string
+	MixVideoScriptRewritePrompt        string
+	MixVideoPublishIntroPrompt         string
 	StoryboardPrompt                   string
 	StoryboardModel                    string
 	StoryboardReferences               json.RawMessage
@@ -90,6 +94,11 @@ type effectiveAdminSystemSettings struct {
 	ImageStoryboardReferences          json.RawMessage
 	UpdatedAt                          *time.Time
 }
+
+const (
+	defaultMixVideoScriptRewritePrompt = "你是混剪视频脚本改写助手。请基于用户提供的脚本模板、固定素材和创作目标，输出适合继续生成混剪视频的完整脚本。保留核心信息，强化节奏、镜头衔接、情绪推进与口语化表达，不要输出与执行无关的说明。"
+	defaultMixVideoPublishIntroPrompt  = "你是短视频平台发布简介改写助手。请基于平台简介模板和最终混剪脚本，输出适合第三方平台发布的简介文案。内容要简洁、自然、适合公开发布，并避免重复脚本原文。"
+)
 
 // 处理默认管理端系统Settings相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
 func defaultAdminSystemSettings(cfg config.Config) effectiveAdminSystemSettings {
@@ -122,6 +131,8 @@ func defaultAdminSystemSettings(cfg config.Config) effectiveAdminSystemSettings 
 		DefaultImageModel:                  strings.TrimSpace(cfg.DefaultImageModel),
 		DefaultVideoModel:                  strings.TrimSpace(cfg.DefaultVideoModel),
 		VideoCoverPrompt:                   strings.TrimSpace(ai.DefaultSkillVideoCoverPromptTemplate),
+		MixVideoScriptRewritePrompt:        defaultMixVideoScriptRewritePrompt,
+		MixVideoPublishIntroPrompt:         defaultMixVideoPublishIntroPrompt,
 		StoryboardPrompt:                   strings.TrimSpace(ai.DefaultVideoStoryboardSystemPrompt),
 		StoryboardModel:                    strings.TrimSpace(ai.DefaultVideoStoryboardModelName),
 		StoryboardReferences:               []byte("[]"),
@@ -272,6 +283,12 @@ func loadEffectiveAdminSystemSettings(ctx context.Context, app *appstate.App) (e
 	if value := strings.TrimSpace(record.VideoCoverPrompt); value != "" {
 		settings.VideoCoverPrompt = value
 	}
+	if value := strings.TrimSpace(record.MixVideoScriptRewritePrompt); value != "" {
+		settings.MixVideoScriptRewritePrompt = value
+	}
+	if value := strings.TrimSpace(record.MixVideoPublishIntroPrompt); value != "" {
+		settings.MixVideoPublishIntroPrompt = value
+	}
 	settings.StoryboardPrompt = strings.TrimSpace(record.StoryboardPrompt)
 	settings.StoryboardModel = strings.TrimSpace(record.StoryboardModel)
 	settings.StoryboardReferences = append([]byte(nil), record.StoryboardReferences...)
@@ -320,6 +337,8 @@ func buildAdminSystemConfigPayload(app *appstate.App, settings effectiveAdminSys
 		DefaultImageModel:                settings.DefaultImageModel,
 		DefaultVideoModel:                settings.DefaultVideoModel,
 		VideoCoverPrompt:                 settings.VideoCoverPrompt,
+		MixVideoScriptRewritePrompt:      settings.MixVideoScriptRewritePrompt,
+		MixVideoPublishIntroPrompt:       settings.MixVideoPublishIntroPrompt,
 		StoryboardPrompt:                 settings.StoryboardPrompt,
 		StoryboardModel:                  settings.StoryboardModel,
 		StoryboardReferences:             settings.StoryboardReferences,
@@ -699,6 +718,18 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 			settings.VideoCoverPrompt = strings.TrimSpace(ai.DefaultSkillVideoCoverPromptTemplate)
 		}
 	}
+	if nestedFieldTouched(raw, "mixVideoScriptRewritePrompt") {
+		settings.MixVideoScriptRewritePrompt = normalizePatchedString(payload.MixVideoScriptRewritePrompt)
+		if settings.MixVideoScriptRewritePrompt == "" {
+			settings.MixVideoScriptRewritePrompt = defaultMixVideoScriptRewritePrompt
+		}
+	}
+	if nestedFieldTouched(raw, "mixVideoPublishIntroPrompt") {
+		settings.MixVideoPublishIntroPrompt = normalizePatchedString(payload.MixVideoPublishIntroPrompt)
+		if settings.MixVideoPublishIntroPrompt == "" {
+			settings.MixVideoPublishIntroPrompt = defaultMixVideoPublishIntroPrompt
+		}
+	}
 	if nestedFieldTouched(raw, "storyboardPrompt") {
 		settings.StoryboardPrompt = normalizePatchedString(payload.StoryboardPrompt)
 	}
@@ -871,6 +902,8 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 		DefaultImageModel:                  settings.DefaultImageModel,
 		DefaultVideoModel:                  settings.DefaultVideoModel,
 		VideoCoverPrompt:                   settings.VideoCoverPrompt,
+		MixVideoScriptRewritePrompt:        settings.MixVideoScriptRewritePrompt,
+		MixVideoPublishIntroPrompt:         settings.MixVideoPublishIntroPrompt,
 		StoryboardPrompt:                   settings.StoryboardPrompt,
 		StoryboardModel:                    settings.StoryboardModel,
 		StoryboardReferences:               settings.StoryboardReferences,
@@ -919,18 +952,20 @@ func (h *AdminAuthHandler) UpdateSystemConfig(w http.ResponseWriter, r *http.Req
 				"dailyLimit":         settings.SMSRegistration.DailyLimit,
 				"codeLength":         settings.SMSRegistration.CodeLength,
 			},
-			"defaultChatModel":          settings.DefaultChatModel,
-			"promptOptimizeModel":       settings.PromptOptimizeModel,
-			"defaultImageModel":         settings.DefaultImageModel,
-			"defaultVideoModel":         settings.DefaultVideoModel,
-			"videoCoverPrompt":          settings.VideoCoverPrompt,
-			"storyboardPrompt":          settings.StoryboardPrompt,
-			"storyboardModel":           settings.StoryboardModel,
-			"storyboardReferences":      json.RawMessage(settings.StoryboardReferences),
-			"imageStoryboardPrompt":     settings.ImageStoryboardPrompt,
-			"imageStoryboardModel":      settings.ImageStoryboardModel,
-			"imageStoryboardReferences": json.RawMessage(settings.ImageStoryboardReferences),
-			"updatedAt":                 record.UpdatedAt,
+			"defaultChatModel":            settings.DefaultChatModel,
+			"promptOptimizeModel":         settings.PromptOptimizeModel,
+			"defaultImageModel":           settings.DefaultImageModel,
+			"defaultVideoModel":           settings.DefaultVideoModel,
+			"videoCoverPrompt":            settings.VideoCoverPrompt,
+			"mixVideoScriptRewritePrompt": settings.MixVideoScriptRewritePrompt,
+			"mixVideoPublishIntroPrompt":  settings.MixVideoPublishIntroPrompt,
+			"storyboardPrompt":            settings.StoryboardPrompt,
+			"storyboardModel":             settings.StoryboardModel,
+			"storyboardReferences":        json.RawMessage(settings.StoryboardReferences),
+			"imageStoryboardPrompt":       settings.ImageStoryboardPrompt,
+			"imageStoryboardModel":        settings.ImageStoryboardModel,
+			"imageStoryboardReferences":   json.RawMessage(settings.ImageStoryboardReferences),
+			"updatedAt":                   record.UpdatedAt,
 		}),
 	})
 

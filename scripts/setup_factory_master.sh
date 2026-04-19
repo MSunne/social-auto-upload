@@ -29,12 +29,20 @@ CHROME_DESKTOP_FILE="${OMNIBULL_CHROME_DESKTOP_FILE:-}"
 LIGHTDM_AUTLOGIN_FILE="${OMNIBULL_LIGHTDM_AUTLOGIN_FILE:-/etc/lightdm/lightdm.conf.d/90-omnibull-autologin.conf}"
 ENV_FILE="${OMNIBULL_ENV_FILE:-/etc/omnibull/omnibull.env}"
 CONF_FILE="${OMNIBULL_CONF_FILE:-${APP_ROOT}/conf.py}"
+OPENCLAW_BUNDLE_DIR="${OMNIBULL_OPENCLAW_BUNDLE_DIR:-}"
+OPENCLAW_HOME="${APP_HOME}/.openclaw"
+OPENCLAW_GLOBAL_BIN_DIR="${APP_HOME}/.npm-global/bin"
+OPENCLAW_BIN="${OPENCLAW_GLOBAL_BIN_DIR}/openclaw"
+OPENCLAW_GATEWAY_BIND="${OMNIBULL_OPENCLAW_GATEWAY_BIND:-loopback}"
+OPENCLAW_GATEWAY_PORT="${OMNIBULL_OPENCLAW_GATEWAY_PORT:-18790}"
+OPENCLAW_PUBLIC_PORT="${OMNIBULL_OPENCLAW_PUBLIC_PORT:-18789}"
+OPENCLAW_PUBLIC_NGINX_CONF="${OMNIBULL_OPENCLAW_PUBLIC_NGINX_CONF:-/etc/nginx/conf.d/openclaw-public.conf}"
 
 NODE_DIST_BASE_URL="${OMNIBULL_NODE_DIST_BASE_URL:-https://nodejs.org/dist/latest-v22.x}"
 CHROME_DEB_URL="${OMNIBULL_CHROME_DEB_URL:-https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb}"
 PIP_INDEX_URL="${OMNIBULL_PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}"
 NPM_REGISTRY="${OMNIBULL_NPM_REGISTRY:-https://registry.npmmirror.com}"
-OMNIDRIVE_BASE_URL="${OMNIDRIVE_BASE_URL:-}"
+OMNIDRIVE_BASE_URL="${OMNIDRIVE_BASE_URL:-https://aitoplus.com}"
 OMNIBULL_CORS_ALLOWED_ORIGINS="${OMNIBULL_CORS_ALLOWED_ORIGINS:-}"
 OMNIBULL_SETUP_RESTART_SERVICE="${OMNIBULL_SETUP_RESTART_SERVICE:-1}"
 OMNIBULL_SETUP_VERIFY="${OMNIBULL_SETUP_VERIFY:-1}"
@@ -52,6 +60,8 @@ APT_PACKAGES=(
   xz-utils
   ca-certificates
   build-essential
+  git
+  nginx
 )
 
 
@@ -180,7 +190,7 @@ build_aliyun_apt_sources() {
     deepin)
       [[ -n "${OS_CODENAME}" ]] || return 1
       cat <<EOF
-deb https://mirrors.aliyun.com/deepin/ ${OS_CODENAME} main commercial community
+deb https://mirrors.aliyun.com/deepin/beige/ ${OS_CODENAME} main commercial community
 EOF
       ;;
     ubuntu)
@@ -208,7 +218,29 @@ EOF
 }
 
 
+build_aliyun_apt_probe_url() {
+  case "${OS_ID}" in
+    deepin)
+      [[ -n "${OS_CODENAME}" ]] || return 1
+      printf 'https://mirrors.aliyun.com/deepin/beige/dists/%s/Release\n' "${OS_CODENAME}"
+      ;;
+    ubuntu)
+      [[ -n "${OS_CODENAME}" ]] || return 1
+      printf 'https://mirrors.aliyun.com/ubuntu/dists/%s/Release\n' "${OS_CODENAME}"
+      ;;
+    debian)
+      [[ -n "${OS_CODENAME}" ]] || return 1
+      printf 'https://mirrors.aliyun.com/debian/dists/%s/Release\n' "${OS_CODENAME}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+
 configure_apt_command() {
+  local probe_url
   local sources_file
 
   load_os_release
@@ -216,6 +248,14 @@ configure_apt_command() {
     log "using system apt sources for unsupported mirror preset: ${OS_ID:-unknown}"
     return 0
   }
+  probe_url="$(build_aliyun_apt_probe_url)" || {
+    log "using system apt sources because mirror probe URL is unavailable for ${OS_ID:-unknown}"
+    return 0
+  }
+  if ! curl -fsSI --connect-timeout 5 --max-time 10 "${probe_url}" >/dev/null 2>&1; then
+    log "using system apt sources because Aliyun mirror probe failed: ${probe_url}"
+    return 0
+  fi
 
   cleanup_apt_temp_dir
   APT_TEMP_DIR="$(mktemp -d)"
@@ -543,6 +583,188 @@ install_frontend_dependencies() {
 }
 
 
+run_openclaw_as_app_user() {
+  local user_id
+  user_id="$(id -u "${APP_USER}")"
+  run_as_app_user \
+    HOME="${APP_HOME}" \
+    PATH="${OPENCLAW_GLOBAL_BIN_DIR}:${NODE_DIR}/bin:/usr/bin:/bin" \
+    DISPLAY=:0 \
+    XAUTHORITY="${APP_HOME}/.Xauthority" \
+    XDG_RUNTIME_DIR="/run/user/${user_id}" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${user_id}/bus" \
+    -- "$@"
+}
+
+
+ensure_openclaw_runtime() {
+  log "installing OpenClaw runtime"
+  install -d -o "${APP_USER}" -g "${APP_GROUP}" -m 0755 "${APP_HOME}/.npm-global"
+  run_as_app_user HOME="${APP_HOME}" PATH="${NODE_DIR}/bin:/usr/bin:/bin" \
+    -- "${NODE_DIR}/bin/npm" config set prefix "${APP_HOME}/.npm-global"
+  run_as_app_user HOME="${APP_HOME}" PATH="${NODE_DIR}/bin:/usr/bin:/bin" \
+    npm_config_registry="${NPM_REGISTRY}" \
+    -- "${NODE_DIR}/bin/npm" config set registry "${NPM_REGISTRY}"
+
+  if [[ ! -x "${OPENCLAW_BIN}" ]]; then
+    run_as_app_user HOME="${APP_HOME}" PATH="${NODE_DIR}/bin:/usr/bin:/bin" \
+      npm_config_registry="${NPM_REGISTRY}" \
+      -- "${NODE_DIR}/bin/npm" install -g openclaw@latest
+  fi
+
+  if ! grep -q '/.npm-global/bin' "${APP_HOME}/.profile" 2>/dev/null; then
+    printf '\nexport PATH="$HOME/.npm-global/bin:$PATH"\n' >> "${APP_HOME}/.profile"
+    chown "${APP_USER}:${APP_GROUP}" "${APP_HOME}/.profile"
+  fi
+}
+
+
+read_openclaw_manifest_spec() {
+  local plugin_id="$1"
+  [[ -n "${OPENCLAW_BUNDLE_DIR}" && -f "${OPENCLAW_BUNDLE_DIR}/manifest.json" ]] || return 0
+  python3 - "${OPENCLAW_BUNDLE_DIR}/manifest.json" "${plugin_id}" <<'PY'
+import json
+import sys
+
+manifest_path, plugin_id = sys.argv[1], sys.argv[2]
+with open(manifest_path, "r", encoding="utf-8") as fh:
+    manifest = json.load(fh)
+value = ((manifest.get("plugins") or {}).get("install_specs") or {}).get(plugin_id)
+if value:
+    print(value)
+PY
+}
+
+
+sync_openclaw_bundle_extension() {
+  local plugin_id="$1"
+  local source_dir="${OPENCLAW_BUNDLE_DIR}/extensions/${plugin_id}"
+  local target_dir="${OPENCLAW_HOME}/extensions/${plugin_id}"
+  [[ -d "${source_dir}" ]] || return 0
+  log "syncing OpenClaw plugin source ${plugin_id}"
+  rm -rf "${target_dir}"
+  install -d -o "${APP_USER}" -g "${APP_GROUP}" -m 0755 "${OPENCLAW_HOME}/extensions"
+  cp -a "${source_dir}" "${target_dir}"
+  chown -R "${APP_USER}:${APP_GROUP}" "${target_dir}"
+}
+
+
+install_openclaw_plugin_with_fallback() {
+  local plugin_id="$1"
+  local source_path="$2"
+  local install_spec
+  local target_dir="${OPENCLAW_HOME}/extensions/${plugin_id}"
+
+  install_spec="$(read_openclaw_manifest_spec "${plugin_id}")"
+  if [[ -n "${install_spec}" ]]; then
+    log "installing OpenClaw plugin ${plugin_id} from spec ${install_spec}"
+    if run_openclaw_as_app_user "${OPENCLAW_BIN}" plugins install --pin "${install_spec}" && [[ -d "${target_dir}" ]]; then
+      return 0
+    fi
+    log "spec install failed for ${plugin_id}; falling back to mirrored local code"
+  fi
+
+  if [[ -n "${source_path}" && -e "${source_path}" ]]; then
+    log "installing OpenClaw plugin ${plugin_id} from ${source_path}"
+    if run_openclaw_as_app_user "${OPENCLAW_BIN}" plugins install "${source_path}" && [[ -d "${target_dir}" ]]; then
+      return 0
+    fi
+  fi
+  sync_openclaw_bundle_extension "${plugin_id}"
+}
+
+
+install_openclaw_plugins() {
+  log "installing OpenClaw plugins"
+  run_openclaw_as_app_user "${OPENCLAW_BIN}" gateway install
+  sync_openclaw_bundle_extension "omnibull"
+  install_openclaw_plugin_with_fallback "omnidrive" "${OPENCLAW_BUNDLE_DIR}/extensions/omnidrive"
+  install_openclaw_plugin_with_fallback "openclaw-weixin" "${OPENCLAW_BUNDLE_DIR}/extensions/openclaw-weixin"
+  install_openclaw_plugin_with_fallback "feishu" "${OPENCLAW_BUNDLE_DIR}/extensions/feishu"
+  install_openclaw_plugin_with_fallback \
+    "wecom-openclaw-plugin" \
+    "${OPENCLAW_BUNDLE_DIR}/extensions/wecom-openclaw-plugin"
+}
+
+
+apply_openclaw_bundle() {
+  if [[ -z "${OPENCLAW_BUNDLE_DIR}" || ! -d "${OPENCLAW_BUNDLE_DIR}" ]]; then
+    log "OpenClaw bundle directory is missing: ${OPENCLAW_BUNDLE_DIR}"
+    exit 1
+  fi
+
+  log "applying OpenClaw bundle into ${OPENCLAW_HOME}"
+  python3 "${ROOT_DIR}/scripts/openclaw_factory_bundle.py" apply \
+    --bundle-dir "${OPENCLAW_BUNDLE_DIR}" \
+    --target-home "${APP_HOME}" \
+    --gateway-bind "${OPENCLAW_GATEWAY_BIND}" \
+    --gateway-port "${OPENCLAW_GATEWAY_PORT}" >/dev/null
+  chown -R "${APP_USER}:${APP_GROUP}" "${OPENCLAW_HOME}"
+}
+
+
+configure_openclaw_gateway_service_port() {
+  local service_file
+  service_file="${APP_HOME}/.config/systemd/user/openclaw-gateway.service"
+  [[ -f "${service_file}" ]] || return 0
+
+  python3 - "${service_file}" "${OPENCLAW_GATEWAY_PORT}" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+port = sys.argv[2]
+text = path.read_text(encoding="utf-8")
+text = re.sub(r'gateway --port \d+', f'gateway --port {port}', text)
+text = re.sub(
+    r'Environment=OPENCLAW_GATEWAY_PORT=\d+',
+    f'Environment=OPENCLAW_GATEWAY_PORT={port}',
+    text,
+)
+path.write_text(text, encoding="utf-8")
+PY
+  chown "${APP_USER}:${APP_GROUP}" "${service_file}"
+}
+
+
+configure_openclaw_public_proxy() {
+  cat > "${OPENCLAW_PUBLIC_NGINX_CONF}" <<EOF
+map \$http_upgrade \$connection_upgrade {
+    default upgrade;
+    '' close;
+}
+server {
+    listen ${OPENCLAW_PUBLIC_PORT};
+    server_name _;
+
+    location / {
+        proxy_pass http://127.0.0.1:${OPENCLAW_GATEWAY_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$connection_upgrade;
+    }
+}
+EOF
+  nginx -t >/dev/null
+  systemctl enable nginx >/dev/null 2>&1 || true
+  systemctl restart nginx
+}
+
+
+enable_openclaw_gateway_service() {
+  log "enabling OpenClaw gateway user service"
+  loginctl enable-linger "${APP_USER}" >/dev/null 2>&1 || true
+  configure_openclaw_gateway_service_port
+  run_openclaw_as_app_user systemctl --user daemon-reload || true
+  run_openclaw_as_app_user systemctl --user enable --now openclaw-gateway.service
+  run_openclaw_as_app_user systemctl --user restart openclaw-gateway.service
+}
+
+
 install_playwright_browser() {
   log "installing Playwright Chromium into ${PLAYWRIGHT_DIR}"
   PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_DIR}" "${VENV_DIR}/bin/python" -m playwright install chromium
@@ -614,6 +836,38 @@ run_gsettings_as_app() {
 }
 
 
+run_x11_command_as_app() {
+  local user_id
+  user_id="$(id -u "${APP_USER}")"
+  run_as_app_user \
+    HOME="${APP_HOME}" \
+    DISPLAY=:0 \
+    XAUTHORITY="${APP_HOME}/.Xauthority" \
+    XDG_RUNTIME_DIR="/run/user/${user_id}" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${user_id}/bus" \
+    -- "$@"
+}
+
+
+configure_x11_display_policy() {
+  local xprofile
+  xprofile="${APP_HOME}/.xprofile"
+
+  cat > "${xprofile}" <<'EOF'
+#!/usr/bin/env sh
+xset s off
+xset s noblank
+xset -dpms
+EOF
+  chown "${APP_USER}:${APP_GROUP}" "${xprofile}"
+  chmod 0755 "${xprofile}"
+
+  run_x11_command_as_app xset s off >/dev/null 2>&1 || true
+  run_x11_command_as_app xset s noblank >/dev/null 2>&1 || true
+  run_x11_command_as_app xset -dpms >/dev/null 2>&1 || true
+}
+
+
 configure_desktop_policy() {
   log "configuring desktop autologin, lockscreen, and power policy"
   configure_lightdm_autologin
@@ -636,6 +890,7 @@ configure_desktop_policy() {
   run_gsettings_as_app com.deepin.wrap.gnome.desktop.screensaver lock-enabled false
   run_gsettings_as_app com.deepin.wrap.gnome.desktop.screensaver idle-activation-enabled false
   run_gsettings_as_app com.deepin.wrap.gnome.desktop.screensaver lock-delay "uint32 0"
+  configure_x11_display_policy
 }
 
 
@@ -676,9 +931,25 @@ wait_for_http_ready() {
 }
 
 
+wait_for_openclaw_gateway_call() {
+  local timeout_seconds="${1:-60}"
+  local deadline=$((SECONDS + timeout_seconds))
+
+  while (( SECONDS < deadline )); do
+    if run_openclaw_as_app_user "${OPENCLAW_BIN}" gateway call omnibull.status --json >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+
+  run_openclaw_as_app_user "${OPENCLAW_BIN}" gateway call omnibull.status --json >/dev/null
+}
+
+
 verify_installation() {
   local browser_path
   local chrome_desktop_file
+  local openclaw_config_path
   local verify_path
   local user_id
   [[ "${OMNIBULL_SETUP_VERIFY}" == "1" ]] || return 0
@@ -695,6 +966,47 @@ verify_installation() {
   systemctl is-active --quiet sau-stack.service
   wait_for_http_ready "http://127.0.0.1:5409/omnidriveAgentStatus"
   wait_for_http_ready "http://127.0.0.1:5173/"
+  wait_for_http_ready "http://127.0.0.1:${OPENCLAW_PUBLIC_PORT}/chat?session=main"
+  openclaw_config_path="${OPENCLAW_HOME}/openclaw.json"
+  [[ -f "${openclaw_config_path}" ]]
+  run_openclaw_as_app_user systemctl --user is-enabled openclaw-gateway.service | grep -qx 'enabled'
+  run_openclaw_as_app_user systemctl --user is-active openclaw-gateway.service | grep -qx 'active'
+  python3 - "${openclaw_config_path}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    config = json.load(fh)
+
+gateway = config.get("gateway") or {}
+assert gateway.get("mode") == "local"
+assert gateway.get("bind") == "loopback"
+assert gateway.get("port") == 18790
+assert (gateway.get("auth") or {}).get("mode") == "none"
+control_ui = gateway.get("controlUi") or {}
+assert control_ui.get("allowedOrigins") == ["http://192.168.1.24:18789"]
+assert control_ui.get("dangerouslyDisableDeviceAuth") is True
+
+plugins = (config.get("plugins") or {}).get("entries") or {}
+assert plugins.get("feishu", {}).get("enabled") is True
+assert plugins.get("openclaw-weixin", {}).get("enabled") is True
+assert plugins.get("omnibull", {}).get("enabled") is True
+assert plugins.get("omnidrive", {}).get("enabled") is True
+assert plugins.get("wecom-openclaw-plugin", {}).get("enabled") is False
+assert "qwen-portal-auth" not in plugins
+PY
+  [[ -d "${OPENCLAW_HOME}/extensions/omnidrive" ]]
+  [[ -d "${OPENCLAW_HOME}/extensions/openclaw-weixin" ]]
+  [[ -d "${OPENCLAW_HOME}/extensions/feishu" ]]
+  [[ -d "${OPENCLAW_HOME}/extensions/omnibull" ]]
+  [[ -d "${OPENCLAW_HOME}/extensions/wecom-openclaw-plugin" ]]
+  [[ -d "${OPENCLAW_HOME}/feishu" ]]
+  [[ -d "${OPENCLAW_HOME}/openclaw-weixin" ]]
+  [[ -d "${OPENCLAW_HOME}/wecom" ]]
+  [[ -d "${OPENCLAW_HOME}/wecomConfig" ]]
+  wait_for_openclaw_gateway_call
+  run_x11_command_as_app xset q | grep -q 'timeout:  0'
+  run_x11_command_as_app xset q | grep -q 'DPMS is Disabled'
 
   browser_path="$(run_as_app_user \
     HOME="${APP_HOME}" \
@@ -728,6 +1040,11 @@ main() {
   write_env_file
   create_python_venv
   install_frontend_dependencies
+  ensure_openclaw_runtime
+  install_openclaw_plugins
+  apply_openclaw_bundle
+  configure_openclaw_public_proxy
+  enable_openclaw_gateway_service
   install_playwright_browser
   initialize_database
   normalize_persistent_permissions

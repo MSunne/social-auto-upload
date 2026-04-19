@@ -56,12 +56,20 @@ const (
 	defaultSkillVideoSubtitleRule    = "默认不要字幕"
 	defaultSkillStoryboardPrompt     = "你是内容创作分镜与脚本优化助手。请结合用户目标、参考图片和参考文本，输出适合继续交给图片、视频或文本模型执行的精炼脚本。输出中需要保留主体、场景、镜头、风格、文案和节奏等关键信息。"
 	skillOutputDigitalHuman          = "数字人口播"
+	skillOutputMixVideo              = "混剪"
 	skillOutputRealVideo             = "真人视频"
 	skillOutputRealSpeech            = "真人口播"
 	skillAssetCharacterImage         = "digital_human_character_image"
 	skillAssetGoodsImage             = "digital_human_goods_image"
 	skillAssetRefAudio               = "digital_human_ref_audio"
+	skillAssetMixVideoSourceVideo    = "mix_video_source_video"
+	skillAssetMixVideoRefAudio       = "mix_video_ref_audio"
 )
+
+type mixVideoSkillConfig struct {
+	ScriptRewriteEnabled bool
+	PublishTemplate      string
+}
 
 type skillVideoGenerationOptions struct {
 	AspectRatio     string
@@ -122,6 +130,8 @@ func MapSkillOutputTypeToJobType(outputType string) (string, bool) {
 		return "video", true
 	case skillOutputDigitalHuman:
 		return "digital_human", true
+	case "mix_video", skillOutputMixVideo:
+		return "mix_video", true
 	case "chat", "text", "text_only", "文本格式":
 		return "chat", true
 	default:
@@ -131,6 +141,10 @@ func MapSkillOutputTypeToJobType(outputType string) (string, bool) {
 
 func IsDigitalHumanSkillOutput(outputType string) bool {
 	return NormalizeSkillOutputType(outputType) == skillOutputDigitalHuman
+}
+
+func IsMixVideoSkillOutput(outputType string) bool {
+	return NormalizeSkillOutputType(outputType) == skillOutputMixVideo
 }
 
 // 规范化技能输出类型，兼容历史别名并确保后续新写入值保持一致。
@@ -144,6 +158,8 @@ func NormalizeSkillOutputType(outputType string) string {
 		return "文本格式"
 	case "digital_human", skillOutputDigitalHuman, skillOutputRealVideo, skillOutputRealSpeech:
 		return skillOutputDigitalHuman
+	case "mix_video", skillOutputMixVideo:
+		return skillOutputMixVideo
 	default:
 		return strings.TrimSpace(outputType)
 	}
@@ -462,6 +478,87 @@ func collectDigitalHumanSkillAssets(assets []domain.ProductSkillAsset, mode stri
 	return *characterAsset, goodsAsset, *refAudioAsset, nil
 }
 
+func ResolveMixVideoSkillConfig(skill domain.ProductSkill) mixVideoSkillConfig {
+	config := mixVideoSkillConfig{
+		ScriptRewriteEnabled: true,
+	}
+	if len(skill.ReferencePayload) == 0 {
+		return config
+	}
+
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(skill.ReferencePayload, &payload); err != nil {
+		return config
+	}
+	var raw map[string]any
+	if nested, ok := payload["mixVideo"]; ok && len(nested) > 0 {
+		if err := json.Unmarshal(nested, &raw); err != nil {
+			return config
+		}
+	} else if err := json.Unmarshal(skill.ReferencePayload, &raw); err != nil {
+		return config
+	}
+	if value, ok := raw["scriptRewriteEnabled"].(bool); ok {
+		config.ScriptRewriteEnabled = value
+	}
+	config.PublishTemplate = strings.TrimSpace(fmt.Sprintf("%v", raw["publishTemplate"]))
+	if config.PublishTemplate == "<nil>" {
+		config.PublishTemplate = ""
+	}
+	return config
+}
+
+func CollectMixVideoSkillAssets(assets []domain.ProductSkillAsset) ([]domain.ProductSkillAsset, *domain.ProductSkillAsset, error) {
+	sourceAssets := make([]domain.ProductSkillAsset, 0)
+	var refAudioAsset *domain.ProductSkillAsset
+	for index := range assets {
+		asset := assets[index]
+		switch strings.TrimSpace(asset.AssetType) {
+		case skillAssetMixVideoSourceVideo:
+			sourceAssets = append(sourceAssets, asset)
+		case skillAssetMixVideoRefAudio:
+			if refAudioAsset == nil || asset.CreatedAt.After(refAudioAsset.CreatedAt) {
+				refAudioAsset = &asset
+			}
+		}
+	}
+	sort.SliceStable(sourceAssets, func(i, j int) bool {
+		if !sourceAssets[i].CreatedAt.Equal(sourceAssets[j].CreatedAt) {
+			return sourceAssets[i].CreatedAt.Before(sourceAssets[j].CreatedAt)
+		}
+		return strings.TrimSpace(sourceAssets[i].ID) < strings.TrimSpace(sourceAssets[j].ID)
+	})
+	if len(sourceAssets) == 0 {
+		return nil, nil, fmt.Errorf("mix video skill requires at least one source video asset")
+	}
+	if refAudioAsset == nil {
+		return nil, nil, fmt.Errorf("mix video skill requires exactly one reference audio asset")
+	}
+	return sourceAssets, refAudioAsset, nil
+}
+
+func BuildMixVideoScriptRewriteInput(adminPrompt string, skillPrompt string, scriptTemplate string) string {
+	parts := []string{
+		strings.TrimSpace(adminPrompt),
+		strings.TrimSpace(skillPrompt),
+		"请基于以下混剪脚本模板输出最终脚本：",
+		strings.TrimSpace(scriptTemplate),
+	}
+	return strings.TrimSpace(strings.Join(filterNonEmptyStrings(parts), "\n\n"))
+}
+
+func BuildMixVideoPublishIntroRewriteInput(adminPrompt string, skillPrompt string, publishTemplate string, finalScript string) string {
+	parts := []string{
+		strings.TrimSpace(adminPrompt),
+		strings.TrimSpace(skillPrompt),
+		"平台简介模板：",
+		strings.TrimSpace(publishTemplate),
+		"最终混剪脚本：",
+		strings.TrimSpace(finalScript),
+	}
+	return strings.TrimSpace(strings.Join(filterNonEmptyStrings(parts), "\n\n"))
+}
+
 func buildDigitalHumanSkillAssetPayload(asset domain.ProductSkillAsset) map[string]any {
 	payload := map[string]any{
 		"fileName":   asset.FileName,
@@ -657,6 +754,16 @@ func optionalStringValue(value *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*value)
+}
+
+func filterNonEmptyStrings(values []string) []string {
+	items := make([]string, 0, len(values))
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			items = append(items, trimmed)
+		}
+	}
+	return items
 }
 
 // 处理追加Unique视频Subtitle规则相关逻辑，结合当前上下文完成必要的状态转换或结果组装。
