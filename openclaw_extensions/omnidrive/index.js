@@ -5,7 +5,7 @@ const DEFAULT_BASE_URL = "http://127.0.0.1:8410";
 const DEFAULT_TIMEOUT_MS = 45000;
 const DEFAULT_LOCAL_OMNIBULL_BASE_URL = "http://127.0.0.1:5409";
 const DEFAULT_LOCAL_OMNIBULL_TIMEOUT_MS = 10000;
-const DEFAULT_CHAT_MODEL = "gemini-3.1-pro-preview";
+const DEFAULT_CHAT_MODEL = "glm-5";
 const DEFAULT_IMAGE_MODEL = "gemini-3-pro-image-preview";
 const DEFAULT_VIDEO_MODEL = "veo-3.1-fast-fl";
 const DEFAULT_VIDEO_DURATION_SECONDS = 8;
@@ -152,16 +152,71 @@ function extractGatewayParams(request) {
 }
 
 function buildGatewayError(methodName, error) {
-  return {
+  const failure = {
     ok: false,
     gatewayMethod: methodName,
     error: String(error?.message || error || "unknown error"),
   };
+  if (typeof error?.code === "string" && error.code.trim()) {
+    failure.errorCode = error.code.trim();
+  }
+  if (error?.fallbackRecommended === true) {
+    failure.fallbackRecommended = true;
+  }
+  if (typeof error?.blockedReason === "string" && error.blockedReason.trim()) {
+    failure.blockedReason = error.blockedReason.trim();
+  }
+  return failure;
 }
 
 function normalizeChatSource(source, fallbackSource) {
   const value = String(source || "").trim();
   return value || fallbackSource;
+}
+
+function createFallbackGatewayError(message, code, extras = {}) {
+  const error = new Error(String(message || "OmniDrive 主聊天不可用"));
+  error.code = String(code || "omnidrive_chat_unavailable").trim() || "omnidrive_chat_unavailable";
+  error.fallbackRecommended = true;
+  if (typeof extras.blockedReason === "string" && extras.blockedReason.trim()) {
+    error.blockedReason = extras.blockedReason.trim();
+  }
+  if (extras.status !== undefined) {
+    error.status = extras.status;
+  }
+  return error;
+}
+
+function classifyMainChatFallbackError(error) {
+  if (error?.fallbackRecommended === true && typeof error?.code === "string" && error.code.trim()) {
+    return error;
+  }
+
+  const message = String(error?.message || error || "OmniDrive 主聊天不可用").trim() || "OmniDrive 主聊天不可用";
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes("token expired") ||
+    normalized.includes("invalid access token") ||
+    message.includes("OmniDrive 会话已失效") ||
+    message.includes("无法从本地 OmniBull 刷新会话")
+  ) {
+    return createFallbackGatewayError(message, "omnidrive_session_unavailable");
+  }
+  if (
+    message.includes("尚未绑定") ||
+    message.includes("未绑定") ||
+    message.includes("无法从本地 OmniBull 读取 deviceCode")
+  ) {
+    return createFallbackGatewayError(message, "omnidrive_device_unbound", { blockedReason: message });
+  }
+  if (message.includes("已被停用或解绑")) {
+    return createFallbackGatewayError(message, "omnidrive_device_unavailable", { blockedReason: message });
+  }
+  if (error?.name === "AbortError" || normalized.includes("aborted") || normalized.includes("timeout")) {
+    return createFallbackGatewayError(message, "omnidrive_cloud_unavailable");
+  }
+  return createFallbackGatewayError(message, "omnidrive_cloud_unavailable");
 }
 
 function isLongRunningJobType(jobType) {
@@ -887,6 +942,131 @@ async function createAIJob(api, payload, overrides = {}) {
   );
 }
 
+function buildDirectMainChatMessages(params = {}) {
+  const prompt = typeof params.prompt === "string" ? params.prompt.trim() : "";
+  const messages = Array.isArray(params.messages)
+    ? params.messages
+        .filter((item) => item && typeof item === "object" && !Array.isArray(item))
+        .map((item) => ({
+          ...item,
+          role: String(item.role || "").trim() || undefined,
+          content: item.content,
+        }))
+        .filter((item) => item.role && item.content !== undefined)
+    : [];
+  const systemPrompt = typeof params.systemPrompt === "string" ? params.systemPrompt.trim() : "";
+
+  if (messages.length > 0) {
+    return systemPrompt
+      ? [{ role: "system", content: systemPrompt }, ...messages]
+      : messages;
+  }
+
+  ensure(prompt, "chat 需要 prompt 或 messages");
+  if (systemPrompt) {
+    return [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: prompt },
+    ];
+  }
+  return [{ role: "user", content: prompt }];
+}
+
+function buildDirectMainChatPayload(params = {}, modelName) {
+  const payload = {
+    model: String(modelName || "").trim(),
+    messages: buildDirectMainChatMessages(params),
+  };
+  if (params.temperature !== undefined) {
+    payload.temperature = params.temperature;
+  }
+  if (params.maxTokens !== undefined) {
+    payload.max_tokens = params.maxTokens;
+  }
+  return payload;
+}
+
+function flattenOpenAIMessageContent(content) {
+  if (typeof content === "string") {
+    return content.trim();
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content
+    .map((item) => {
+      if (typeof item === "string") {
+        return item;
+      }
+      if (item && typeof item === "object") {
+        if (typeof item.text === "string") {
+          return item.text;
+        }
+        if (item.type === "text" && typeof item.content === "string") {
+          return item.content;
+        }
+      }
+      return "";
+    })
+    .join("")
+    .trim();
+}
+
+function extractDirectMainChatText(payload) {
+  const choice = Array.isArray(payload?.choices) ? payload.choices[0] : null;
+  const messageContent = flattenOpenAIMessageContent(choice?.message?.content);
+  if (messageContent) {
+    return messageContent;
+  }
+  const textContent = flattenOpenAIMessageContent(choice?.text);
+  if (textContent) {
+    return textContent;
+  }
+  return "";
+}
+
+async function requestDirectMainChatCompletion(api, payload, overrides = {}) {
+  let accessToken = await ensureAccessToken(api, overrides);
+  let response = await rawRequest(
+    api,
+    "/openai/v1/chat/completions",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    accessToken,
+  );
+
+  if (response.status === 401 && overrides.retryOnAuth !== false) {
+    accessToken = await refreshAccessTokenAfterUnauthorized(api, overrides);
+    response = await rawRequest(
+      api,
+      "/openai/v1/chat/completions",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+      accessToken,
+    );
+  }
+
+  if (response.ok) {
+    return response.payload;
+  }
+
+  const message = extractErrorMessage(response.payload, response.status);
+  if (response.status === 401 || response.status === 403) {
+    throw createFallbackGatewayError(message, "omnidrive_session_unavailable", { status: response.status });
+  }
+  if (response.status === 404) {
+    throw createFallbackGatewayError(message, "omnidrive_model_unavailable", { status: response.status });
+  }
+  if (response.status >= 500) {
+    throw createFallbackGatewayError(message, "omnidrive_cloud_unavailable", { status: response.status });
+  }
+  throw createFallbackGatewayError(message, "omnidrive_cloud_unavailable", { status: response.status });
+}
+
 async function fetchJobWorkspace(api, jobId, overrides = {}) {
   ensure(jobId, "缺少 jobId");
   return requestJson(api, `/api/v1/ai/jobs/${encodeURIComponent(jobId)}/workspace`, { method: "GET" }, overrides);
@@ -1232,6 +1412,40 @@ async function runChat(api, params, options = {}) {
   };
 }
 
+async function runGatewayChat(api, params, options = {}) {
+  try {
+    const cfg = resolveConfig(api);
+    const boundDevice = await resolveBoundOmniBullDevice(api, params || {});
+    const requestSource = normalizeChatSource(options.source || params.source, OPENCLAW_MAIN_CHAT_SOURCE);
+    if (params.deviceId && String(params.deviceId).trim() !== String(boundDevice.id || "").trim()) {
+      throw createFallbackGatewayError(
+        "OpenClaw OmniDrive chat 只能使用当前本机已绑定的 OmniBull 设备",
+        "omnidrive_device_unbound",
+      );
+    }
+
+    const modelName = String(
+      params.modelName || boundDevice.defaultChatModel || cfg.defaultChatModel || DEFAULT_CHAT_MODEL,
+    ).trim();
+    const requestPayload = buildDirectMainChatPayload(params, modelName);
+    const completion = await requestDirectMainChatCompletion(api, requestPayload, params || {});
+    const text = extractDirectMainChatText(completion);
+    ensure(text, "OmniDrive 主聊天未返回有效文本结果");
+
+    return {
+      source: "omnidrive",
+      gatewayMethod: "omnidrive.chat",
+      requestSource,
+      waited: true,
+      device: summarizeBoundDevice(boundDevice),
+      effectiveModelName: String(completion?.model || modelName).trim() || modelName,
+      text,
+    };
+  } catch (error) {
+    throw classifyMainChatFallbackError(error);
+  }
+}
+
 async function executeChat(api, params) {
   return toolResult(await runChat(api, params, { source: OPENCLAW_SKILL_CHAT_SOURCE }));
 }
@@ -1558,7 +1772,7 @@ const plugin = {
     api.registerGatewayMethod("omnidrive.chat", async (request = {}) => {
       const params = extractGatewayParams(request);
       try {
-        const payload = await runChat(api, params, { source: OPENCLAW_MAIN_CHAT_SOURCE });
+        const payload = await runGatewayChat(api, params, { source: OPENCLAW_MAIN_CHAT_SOURCE });
         if (typeof request.respond === "function") {
           request.respond(true, payload);
           return;

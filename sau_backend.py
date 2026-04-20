@@ -99,11 +99,6 @@ OPENCLAW_OMNIDRIVE_CONFIG_PATHS = (
     Path.home() / ".openclaw" / "openclaw.json",
     Path.home() / ".openclaw" / "agents" / "main" / "agent" / "models.json",
 )
-OPENCLAW_OMNIDRIVE_MODEL_NAME_OVERRIDES = {
-    "gemini-3.1-pro-preview": "Gemini 3.1 Pro Preview",
-    "gpt-5.4": "GPT-5.4",
-    "qwen3.5-plus": "Qwen3.5 Plus",
-}
 OPENCLAW_OMNIDRIVE_MULTIMODAL_MODELS = {
     "gemini-3.1-pro-preview",
     "gpt-5.4",
@@ -1450,7 +1445,7 @@ def _iter_openai_model_aliases(value):
 def _build_openclaw_omnidrive_model_entry(model_id, include_api=False):
     entry = {
         "id": model_id,
-        "name": OPENCLAW_OMNIDRIVE_MODEL_NAME_OVERRIDES.get(model_id) or model_id,
+        "name": model_id,
         "reasoning": False,
         "input": ["text", "image"] if model_id in OPENCLAW_OMNIDRIVE_MULTIMODAL_MODELS else ["text"],
         "cost": {
@@ -1465,34 +1460,6 @@ def _build_openclaw_omnidrive_model_entry(model_id, include_api=False):
     if include_api:
         entry["api"] = "openai-completions"
     return entry
-
-
-def _build_openclaw_omnidrive_default_alias(model_id, default_chat_model="", used_aliases=None):
-    model_id = str(model_id or "").strip()
-    if not model_id:
-        return ""
-
-    if model_id == str(default_chat_model or "").strip():
-        alias = "omni"
-    else:
-        alias = {
-            "gemini-3.1-pro-preview": "omni-gemini",
-            "gpt-5.4": "omni-gpt",
-            "qwen3.5-plus": "omni-qwen",
-        }.get(model_id)
-        if not alias:
-            slug = re.sub(r"[^a-z0-9]+", "-", model_id.lower()).strip("-")
-            alias = f"omni-{slug or 'model'}"
-
-    if isinstance(used_aliases, set):
-        base_alias = alias
-        suffix = 2
-        while alias in used_aliases:
-            alias = f"{base_alias}-{suffix}"
-            suffix += 1
-        used_aliases.add(alias)
-
-    return alias
 
 
 def _initialize_openclaw_omnidrive_provider(data, *, is_root_config):
@@ -1524,12 +1491,20 @@ def _write_openclaw_omnidrive_config_if_changed(path, serialized):
     return True
 
 
+def _build_openclaw_omnidrive_model_allowlist(model_ids):
+    allowlist = {}
+    for model_id in model_ids:
+        allowlist[f"omnidrive/{model_id}"] = {}
+    return allowlist
+
+
 def sync_openclaw_omnidrive_model_configs(models, api_base_url="", access_token="", default_chat_model=""):
     normalized_ids = _normalize_openclaw_omnidrive_models(models)
     models_supplied = models is not None
     provider_base_url = _resolve_openclaw_omnidrive_provider_base_url(api_base_url)
     provider_api_key = str(OMNIBULL_API_KEY or "").strip()
     default_chat_model = str(default_chat_model or "").strip()
+    effective_default_chat_model = default_chat_model if default_chat_model in normalized_ids else ""
     changed_paths = []
 
     for path in OPENCLAW_OMNIDRIVE_CONFIG_PATHS:
@@ -1576,27 +1551,11 @@ def sync_openclaw_omnidrive_model_configs(models, api_base_url="", access_token=
                 for key in list(defaults.keys()):
                     if str(key).startswith("omnidrive/"):
                         defaults.pop(key, None)
-
-                omni_target_model = default_chat_model or (normalized_ids[0] if normalized_ids else "")
-                alias_model_ids = list(normalized_ids)
-                if omni_target_model and omni_target_model not in alias_model_ids:
-                    alias_model_ids.insert(0, omni_target_model)
-
-                used_aliases = set()
-                for model_id in alias_model_ids:
-                    alias = _build_openclaw_omnidrive_default_alias(
-                        model_id,
-                        default_chat_model=omni_target_model,
-                        used_aliases=used_aliases,
-                    )
-                    if alias:
-                        defaults[f"omnidrive/{model_id}"] = {"alias": alias}
-            elif default_chat_model:
-                for key, value in list(defaults.items()):
-                    alias = value.get("alias") if isinstance(value, dict) else None
-                    if str(key).startswith("omnidrive/") and alias == "omni":
-                        defaults.pop(key, None)
-                defaults[f"omnidrive/{default_chat_model}"] = {"alias": "omni"}
+                defaults.update(_build_openclaw_omnidrive_model_allowlist(normalized_ids))
+                if effective_default_chat_model:
+                    defaults_config["model"] = f"omnidrive/{effective_default_chat_model}"
+                elif str(defaults_config.get("model") or "").startswith("omnidrive/"):
+                    defaults_config.pop("model", None)
 
         serialized = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
         try:

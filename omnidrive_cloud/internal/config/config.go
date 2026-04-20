@@ -121,7 +121,7 @@ func Load() Config {
 		AIChatStreamHeartbeatSeconds:  envAsInt("OMNIDRIVE_AI_CHAT_STREAM_HEARTBEAT_SECONDS", 15),
 		AIVideoStandardizeEnabled:     envAsBool("OMNIDRIVE_AI_VIDEO_STANDARDIZE_ENABLED", true),
 		AIVideoFFmpegPath:             envOrDefault("OMNIDRIVE_AI_VIDEO_FFMPEG_PATH", "ffmpeg"),
-		DefaultChatModel:              envOrDefault("OMNIDRIVE_DEFAULT_CHAT_MODEL", "gemini-3.1-pro-preview"),
+		DefaultChatModel:              envOrDefault("OMNIDRIVE_DEFAULT_CHAT_MODEL", "glm-5"),
 		DefaultImageModel:             envOrDefault("OMNIDRIVE_DEFAULT_IMAGE_MODEL", "gemini-3-pro-image-preview"),
 		DefaultVideoModel:             envOrDefault("OMNIDRIVE_DEFAULT_VIDEO_MODEL", "veo-3.1-fast-fl"),
 		JWTSecret:                     jwtSecret,

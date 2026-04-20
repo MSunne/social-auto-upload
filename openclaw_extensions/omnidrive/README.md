@@ -59,7 +59,7 @@ openclaw plugins enable omnidrive
           "email": "user@example.com",
           "password": "replace-with-strong-password",
           "timeoutMs": 45000,
-          "defaultChatModel": "gemini-3.1-pro-preview",
+          "defaultChatModel": "glm-5",
           "defaultImageModel": "gemini-3-pro-image-preview",
           "defaultVideoModel": "veo-3.1-fast-fl",
           "defaultVideoDurationSeconds": 8
@@ -118,6 +118,7 @@ openclaw plugins enable omnidrive
 1. OpenClaw 主聊天层改为调用 gateway method `omnidrive.chat`
 2. 每次请求都动态读取当前设备绑定关系和 `boundDevice.defaultChatModel`
 3. 具体模型仍以 OmniDrive 云端设备配置为准，本地只切换“聊天路由”，不保存死模型
+4. 主聊天直接调用 OmniDrive 已上线的 `/openai/v1/chat/completions`，不再为主聊天创建 AIJob
 
 这样做的好处是：
 
@@ -149,4 +150,6 @@ openclaw gateway call omnidrive.status --json
 - 插件会优先从本机 OmniBull `/api/skill/status` 读取 `deviceCode`，再在云端定位当前账号已绑定的同一台设备
 - `omnidrive.chat` gateway method 与 `omnidrive_chat` 工具共用同一套默认模型解析逻辑，都会优先读取 `boundDevice.defaultChatModel`
 - `omnidrive.chat` 的请求来源会标记为 `openclaw_main_chat`，便于和 `omnidrive_chat` 的 `openclaw_skill` 区分
+- `omnidrive.chat` 会复用当前 OmniBull 已下发的 device session `accessToken`，直接请求 OmniDrive 云端 `/openai/v1/chat/completions`
+- OpenClaw 主聊天历史仍由 OpenClaw 本地维护；`omnidrive.chat` 不再返回 `job/workspace`，也不依赖 OmniDrive 前端聊天历史
 - `chat/image/video` 默认只允许使用“当前本机已绑定且启用”的 OmniBull；设备解绑后，云端 AI 会直接失效，但本地 `omnibull_*` 查询不受影响

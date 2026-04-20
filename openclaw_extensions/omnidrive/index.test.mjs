@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import plugin from "./index.js";
 import {
   buildMediaToolResultContent,
   buildAuthStatusPayload,
@@ -364,6 +365,333 @@ test("buildAuthStatusPayload reports local agent session and available skills", 
     assert.equal(payload.headlessAgentSessionActive, true);
     assert.equal(payload.boundDevice.deviceCode, "device-code-1");
     assert.deepEqual(payload.availableSkills, ["omnidrive_auth", "omnidrive_chat", "omnibull_status"]);
+  } finally {
+    global.fetch = originalFetch;
+    clearCachedSession();
+  }
+});
+
+test("omnidrive.chat gateway calls cloud openai chat completions directly", async () => {
+  clearCachedSession();
+  const originalFetch = global.fetch;
+  const gatewayMethods = {};
+  const requests = [];
+
+  plugin.register({
+    pluginConfig: {
+      baseUrl: "https://cloud.example.com",
+      localOmniBullBaseUrl: "http://127.0.0.1:5409",
+    },
+    registerGatewayMethod(name, handler) {
+      gatewayMethods[name] = handler;
+    },
+    registerTool() {},
+  });
+
+  global.fetch = async (url, options = {}) => {
+    requests.push({
+      url: String(url),
+      method: options.method || "GET",
+      body: options.body,
+      authorization: options.headers?.Authorization || "",
+    });
+
+    if (String(url) === "http://127.0.0.1:5409/api/skill/omnidrive/session") {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            data: {
+              accessToken: "fresh-local-token",
+              apiBaseUrl: "https://cloud.example.com",
+              user: { id: "user-1", name: "禾硕AI" },
+            },
+          });
+        },
+      };
+    }
+    if (String(url) === "http://127.0.0.1:5409/api/skill/status") {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({ data: { deviceCode: "device-code-1" } });
+        },
+      };
+    }
+    if (String(url) === "https://cloud.example.com/api/v1/devices") {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify([
+            {
+              id: "device-1",
+              deviceCode: "device-code-1",
+              name: "Factory OmniBull",
+              isEnabled: true,
+              defaultChatModel: "gpt-5.4",
+            },
+          ]);
+        },
+      };
+    }
+    if (String(url) === "https://cloud.example.com/openai/v1/chat/completions") {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            id: "chatcmpl-1",
+            model: "gpt-5.4",
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: "assistant",
+                  content: "pong",
+                },
+                finish_reason: "stop",
+              },
+            ],
+          });
+        },
+      };
+    }
+    throw new Error(`unexpected request: ${url}`);
+  };
+
+  try {
+    const payload = await gatewayMethods["omnidrive.chat"]({
+      params: {
+        messages: [{ role: "user", content: "Reply with exactly pong." }],
+      },
+    });
+
+    assert.equal(payload.text, "pong");
+    assert.equal(payload.effectiveModelName, "gpt-5.4");
+    assert.equal(payload.requestSource, "openclaw_main_chat");
+    assert.equal(payload.device.deviceCode, "device-code-1");
+
+    const openaiRequest = requests.find((item) => item.url === "https://cloud.example.com/openai/v1/chat/completions");
+    assert.ok(openaiRequest);
+    assert.equal(openaiRequest.authorization, "Bearer fresh-local-token");
+    assert.deepEqual(JSON.parse(openaiRequest.body), {
+      model: "gpt-5.4",
+      messages: [{ role: "user", content: "Reply with exactly pong." }],
+    });
+    assert.equal(
+      requests.some((item) => item.url === "https://cloud.example.com/api/v1/ai/jobs"),
+      false,
+    );
+  } finally {
+    global.fetch = originalFetch;
+    clearCachedSession();
+  }
+});
+
+test("omnidrive.chat gateway returns fallback metadata for direct chat failures", async () => {
+  clearCachedSession();
+  const originalFetch = global.fetch;
+  const gatewayMethods = {};
+
+  plugin.register({
+    pluginConfig: {
+      baseUrl: "https://cloud.example.com",
+      localOmniBullBaseUrl: "http://127.0.0.1:5409",
+    },
+    registerGatewayMethod(name, handler) {
+      gatewayMethods[name] = handler;
+    },
+    registerTool() {},
+  });
+
+  global.fetch = async (url, options = {}) => {
+    if (String(url) === "http://127.0.0.1:5409/api/skill/omnidrive/session") {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            data: {
+              accessToken: "fresh-local-token",
+              apiBaseUrl: "https://cloud.example.com",
+              user: { id: "user-1", name: "禾硕AI" },
+            },
+          });
+        },
+      };
+    }
+    if (String(url) === "http://127.0.0.1:5409/api/skill/status") {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({ data: { deviceCode: "device-code-1" } });
+        },
+      };
+    }
+    if (String(url) === "https://cloud.example.com/api/v1/devices") {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify([
+            {
+              id: "device-1",
+              deviceCode: "device-code-1",
+              name: "Factory OmniBull",
+              isEnabled: true,
+              defaultChatModel: "gpt-5.4",
+            },
+          ]);
+        },
+      };
+    }
+    if (String(url) === "https://cloud.example.com/openai/v1/chat/completions") {
+      return {
+        ok: false,
+        status: 401,
+        async text() {
+          return JSON.stringify({ error: "invalid access token or token expired" });
+        },
+      };
+    }
+    throw new Error(`unexpected request: ${url}`);
+  };
+
+  try {
+    const payload = await gatewayMethods["omnidrive.chat"]({
+      params: {
+        prompt: "hello",
+      },
+    });
+
+    assert.equal(payload.ok, false);
+    assert.equal(payload.gatewayMethod, "omnidrive.chat");
+    assert.equal(payload.fallbackRecommended, true);
+    assert.equal(payload.errorCode, "omnidrive_session_unavailable");
+  } finally {
+    global.fetch = originalFetch;
+    clearCachedSession();
+  }
+});
+
+test("omnidrive_chat tool keeps using AI job workflow", async () => {
+  clearCachedSession();
+  const originalFetch = global.fetch;
+  const tools = {};
+  const requests = [];
+
+  plugin.register({
+    pluginConfig: {
+      baseUrl: "https://cloud.example.com",
+      localOmniBullBaseUrl: "http://127.0.0.1:5409",
+    },
+    registerGatewayMethod() {},
+    registerTool(tool) {
+      tools[tool.name] = tool;
+    },
+  });
+
+  global.fetch = async (url, options = {}) => {
+    requests.push({
+      url: String(url),
+      method: options.method || "GET",
+      body: options.body,
+      authorization: options.headers?.Authorization || "",
+    });
+
+    if (String(url) === "http://127.0.0.1:5409/api/skill/omnidrive/session") {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            data: {
+              accessToken: "fresh-local-token",
+              apiBaseUrl: "https://cloud.example.com",
+              user: { id: "user-1", name: "禾硕AI" },
+            },
+          });
+        },
+      };
+    }
+    if (String(url) === "http://127.0.0.1:5409/api/skill/status") {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({ data: { deviceCode: "device-code-1" } });
+        },
+      };
+    }
+    if (String(url) === "https://cloud.example.com/api/v1/devices") {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify([
+            {
+              id: "device-1",
+              deviceCode: "device-code-1",
+              name: "Factory OmniBull",
+              isEnabled: true,
+              defaultChatModel: "gpt-5.4",
+            },
+          ]);
+        },
+      };
+    }
+    if (String(url) === "https://cloud.example.com/api/v1/ai/jobs") {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            id: "job-1",
+            modelName: "gpt-5.4",
+          });
+        },
+      };
+    }
+    if (String(url) === "https://cloud.example.com/api/v1/ai/jobs/job-1/workspace") {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            job: {
+              id: "job-1",
+              modelName: "gpt-5.4",
+              status: "success",
+              outputPayload: {
+                text: "job response",
+              },
+            },
+            artifacts: [],
+          });
+        },
+      };
+    }
+    throw new Error(`unexpected request: ${url}`);
+  };
+
+  try {
+    const payload = await tools.omnidrive_chat.execute("tool-1", {
+      prompt: "hello",
+    });
+
+    assert.equal(payload.content[0].type, "text");
+    assert.equal(
+      requests.some((item) => item.url === "https://cloud.example.com/api/v1/ai/jobs"),
+      true,
+    );
+    assert.equal(
+      requests.some((item) => item.url === "https://cloud.example.com/openai/v1/chat/completions"),
+      false,
+    );
   } finally {
     global.fetch = originalFetch;
     clearCachedSession();

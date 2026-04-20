@@ -91,12 +91,19 @@ class OmniDriveOpenAIProxyHelpersTests(unittest.TestCase):
 
             self.assertNotIn("omnidrive/gpt-5-4", defaults)
             self.assertNotIn("omnidrive/default-chat", defaults)
-            self.assertEqual(defaults["omnidrive/gpt-5.4"]["alias"], "omni")
-            self.assertEqual(defaults["omnidrive/qwen3.5-plus"]["alias"], "omni-qwen")
+            self.assertEqual(
+                defaults,
+                {
+                    "omnidrive/gpt-5.4": {},
+                    "omnidrive/qwen3.5-plus": {},
+                },
+            )
+            self.assertEqual(data["agents"]["defaults"]["model"], "omnidrive/gpt-5.4")
             self.assertEqual(provider["baseUrl"], "http://127.0.0.1:5409/openai/v1")
             self.assertEqual(provider["api"], "openai-completions")
             self.assertNotIn("apiKey", provider)
             self.assertEqual([item["id"] for item in provider["models"]], ["gpt-5.4", "qwen3.5-plus"])
+            self.assertEqual([item["name"] for item in provider["models"]], ["gpt-5.4", "qwen3.5-plus"])
 
     def test_sync_openclaw_configs_overwrites_model_cache_with_online_set(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -152,7 +159,14 @@ class OmniDriveOpenAIProxyHelpersTests(unittest.TestCase):
             self.assertEqual(provider["api"], "openai-completions")
             self.assertNotIn("apiKey", provider)
             self.assertEqual([item["id"] for item in provider["models"]], ["claude-opus-4-6-thinking"])
-            self.assertEqual(defaults, {"omnidrive/claude-opus-4-6-thinking": {"alias": "omni"}})
+            self.assertEqual([item["name"] for item in provider["models"]], ["claude-opus-4-6-thinking"])
+            self.assertEqual(
+                defaults,
+                {
+                    "omnidrive/claude-opus-4-6-thinking": {},
+                },
+            )
+            self.assertEqual(data["agents"]["defaults"]["model"], "omnidrive/claude-opus-4-6-thinking")
 
     def test_sync_openclaw_configs_exposes_every_online_model_in_defaults(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -197,11 +211,27 @@ class OmniDriveOpenAIProxyHelpersTests(unittest.TestCase):
 
             data = json.loads(config_path.read_text(encoding="utf-8"))
             defaults = data["agents"]["defaults"]["models"]
+            provider = data["models"]["providers"]["omnidrive"]
 
-            self.assertEqual(defaults["omnidrive/gemini-3.1-pro-preview"]["alias"], "omni")
-            self.assertEqual(defaults["omnidrive/claude-opus-4-6-thinking"]["alias"], "omni-claude-opus-4-6-thinking")
-            self.assertEqual(defaults["omnidrive/deepseek-chat"]["alias"], "omni-deepseek-chat")
-            self.assertEqual(defaults["omnidrive/deepseek-r1"]["alias"], "omni-deepseek-r1")
+            self.assertEqual(
+                defaults,
+                {
+                    "omnidrive/claude-opus-4-6-thinking": {},
+                    "omnidrive/deepseek-chat": {},
+                    "omnidrive/deepseek-r1": {},
+                    "omnidrive/gemini-3.1-pro-preview": {},
+                },
+            )
+            self.assertEqual(data["agents"]["defaults"]["model"], "omnidrive/gemini-3.1-pro-preview")
+            self.assertEqual(
+                [item["name"] for item in provider["models"]],
+                [
+                    "claude-opus-4-6-thinking",
+                    "deepseek-chat",
+                    "deepseek-r1",
+                    "gemini-3.1-pro-preview",
+                ],
+            )
 
     def test_sync_openclaw_configs_bootstraps_missing_provider_and_agent_models_file(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -245,12 +275,26 @@ class OmniDriveOpenAIProxyHelpersTests(unittest.TestCase):
                 ["deepseek-chat", "gpt-5.4"],
             )
             self.assertEqual(root_config["agents"]["defaults"]["workspace"], "/tmp/openclaw-workspace")
-            self.assertEqual(root_config["agents"]["defaults"]["models"]["omnidrive/deepseek-chat"]["alias"], "omni")
-            self.assertEqual(root_config["agents"]["defaults"]["models"]["omnidrive/gpt-5.4"]["alias"], "omni-gpt")
+            self.assertEqual(
+                root_config["agents"]["defaults"]["models"],
+                {
+                    "omnidrive/deepseek-chat": {},
+                    "omnidrive/gpt-5.4": {},
+                },
+            )
+            self.assertEqual(root_config["agents"]["defaults"]["model"], "omnidrive/deepseek-chat")
+            self.assertEqual(
+                [item["name"] for item in root_config["models"]["providers"]["omnidrive"]["models"]],
+                ["deepseek-chat", "gpt-5.4"],
+            )
             self.assertTrue(models_path.exists())
             self.assertNotIn("apiKey", agent_models["providers"]["omnidrive"])
             self.assertEqual(
                 [item["id"] for item in agent_models["providers"]["omnidrive"]["models"]],
+                ["deepseek-chat", "gpt-5.4"],
+            )
+            self.assertEqual(
+                [item["name"] for item in agent_models["providers"]["omnidrive"]["models"]],
                 ["deepseek-chat", "gpt-5.4"],
             )
 

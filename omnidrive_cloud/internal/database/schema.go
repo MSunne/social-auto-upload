@@ -108,7 +108,7 @@ CREATE TABLE IF NOT EXISTS admin_system_configs (
     digital_human_credits_per_second_millis BIGINT NOT NULL DEFAULT 0,
     digital_human_shopping_default_model TEXT NOT NULL DEFAULT 'qvq-max',
     digital_human_speech_default_model TEXT NOT NULL DEFAULT 'qvq-max',
-    default_chat_model TEXT NOT NULL DEFAULT 'gemini-3.1-pro-preview',
+    default_chat_model TEXT NOT NULL DEFAULT 'glm-5',
     prompt_optimize_model TEXT NOT NULL DEFAULT 'gemini-3.1-pro-preview',
     default_image_model TEXT NOT NULL DEFAULT 'gemini-3-pro-image-preview',
     default_video_model TEXT NOT NULL DEFAULT 'veo-3.1-fast-fl',
@@ -455,7 +455,7 @@ ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS notes TEXT;
 ALTER TABLE platform_accounts ADD COLUMN IF NOT EXISTS notes TEXT;
-ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS default_chat_model TEXT NOT NULL DEFAULT 'gemini-3.1-pro-preview';
+ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS default_chat_model TEXT NOT NULL DEFAULT 'glm-5';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS default_image_model TEXT NOT NULL DEFAULT 'gemini-3-pro-image-preview';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS default_video_model TEXT NOT NULL DEFAULT 'veo-3.1-fast-fl';
 ALTER TABLE admin_system_configs ADD COLUMN IF NOT EXISTS video_cover_prompt_template TEXT NOT NULL DEFAULT '';

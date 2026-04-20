@@ -8,6 +8,7 @@
 2. OpenClaw 主聊天只切换“路由”，统一调用 gateway method `omnidrive.chat`
 3. 真实模型始终以当前绑定设备的 `boundDevice.defaultChatModel` 为准
 4. 如果设备解绑、停用、会话失效，主程序应自动回退到本地默认聊天链路
+5. 主聊天直接走 OmniDrive 云端 `/openai/v1/chat/completions`，不再使用 AIJob/workspace
 
 ## Gateway Contract
 
@@ -43,8 +44,7 @@ openclaw gateway call omnidrive.status --json
   "messages": [
     { "role": "system", "content": "你是 OpenClaw 主助手" },
     { "role": "user", "content": "帮我总结今天的发布计划" }
-  ],
-  "wait": true
+  ]
 }
 ```
 
@@ -52,8 +52,7 @@ openclaw gateway call omnidrive.status --json
 
 ```json
 {
-  "prompt": "帮我总结今天的发布计划",
-  "wait": true
+  "prompt": "帮我总结今天的发布计划"
 }
 ```
 
@@ -62,11 +61,10 @@ openclaw gateway call omnidrive.status --json
 - `text`
 - `effectiveModelName`
 - `device`
-- `job`
-- `workspace`
 - `requestSource`
 
 其中 `requestSource` 固定为 `openclaw_main_chat`，用于和 skill 调用区分。
+主聊天返回的是同步 completion 结果，不再保证 `job` / `workspace`。
 
 ## 建议接入流程
 
@@ -93,6 +91,7 @@ openclaw gateway call omnidrive.status --json
 - OmniDrive 会话不可用
 - 当前 OpenClaw 所在 OmniBull 未绑定或未启用
 - 当前 OmniBull 设备已被停用或解绑
+- OmniDrive 云端聊天路由不可达、超时或返回 5xx/404
 
 回退后可异步重新探测 `omnidrive.status`，当其再次变为 ready 时再切回。
 
@@ -105,7 +104,7 @@ openclaw gateway call omnidrive.status --json
 ## 当前仓库已提供的能力
 
 - `omnidrive.status`：返回当前接入状态和主聊天推荐路由
-- `omnidrive.chat`：主聊天动态入口，请求来源为 `openclaw_main_chat`
+- `omnidrive.chat`：主聊天动态入口，请求来源为 `openclaw_main_chat`，直接调用云端 `/openai/v1/chat/completions`
 - `omnidrive_chat`：skill 入口，请求来源保持为 `openclaw_skill`
 
 ## 后续建议
