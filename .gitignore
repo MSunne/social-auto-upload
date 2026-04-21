@@ -5,7 +5,7 @@ __pycache__/
 
 # C extensions
 *.so
-omnidriveSync
+/omnidriveSync/
 
 # Distribution / packaging
 .Python
@@ -192,8 +192,17 @@ cookiesFile
 uploadFile
 videoFile
 .codex_tmp
+.tmp_*
 runtime/device.identity.json
+runtime/*.pid
+runtime/*.log
+runtime/agent-runtime/
+taskArtifacts/
+logs/
+*openclaw-backup*.tar.gz
 
 # OmniDrive runtime data
 omnidrive_cloud/data/
 omnidrive_cloud/data-smoke/
+omnidrive_cloud/omnidrive.db
+db/*.db

@@ -93,6 +93,8 @@ NOISY_REQUEST_PREFIX_INTERVALS = {
 }
 REQUEST_LOG_BODY_LIMIT = 500
 OMNIDRIVE_OPENAI_PROXY_BASE_PATH = "/openai/v1"
+OMNIDRIVE_OPENAI_PROXY_RESPONSE_HEADERS = ("Content-Type", "Cache-Control", "X-Request-Id")
+OMNIDRIVE_OPENAI_PROXY_STREAM_CHUNK_BYTES = 64 * 1024
 OMNIDRIVE_OPENAI_PROXY_FINAL_JOB_STATUSES = {"success", "completed", "failed", "cancelled", "needs_verify"}
 OMNIDRIVE_OPENAI_SUPPORTED_TOOL_NAMES = {"omnidrive_image", "omnidrive_video", "omnidrive_mix_video"}
 OPENCLAW_OMNIDRIVE_CONFIG_PATHS = (
@@ -2465,6 +2467,93 @@ def _openai_error_response(message, status_code=400, error_type="invalid_request
     }), status_code
 
 
+def _get_case_insensitive_header(headers, header_name):
+    if not headers:
+        return ""
+    if hasattr(headers, "get"):
+        value = headers.get(header_name)
+        if value is not None:
+            return str(value)
+    if hasattr(headers, "items"):
+        target = header_name.lower()
+        for key, value in headers.items():
+            if str(key).lower() == target and value is not None:
+                return str(value)
+    return ""
+
+
+def _copy_omnidrive_openai_proxy_response_headers(response, upstream_headers):
+    for header_name in OMNIDRIVE_OPENAI_PROXY_RESPONSE_HEADERS:
+        value = _get_case_insensitive_header(upstream_headers, header_name).strip()
+        if value:
+            response.headers[header_name] = value
+
+
+def _build_omnidrive_openai_proxy_url(api_base_url=""):
+    return f"{_resolve_omnidrive_api_base_url(api_base_url)}/openai/v1/chat/completions"
+
+
+def _iter_omnidrive_openai_proxy_response(upstream_response):
+    try:
+        while True:
+            chunk = upstream_response.read(OMNIDRIVE_OPENAI_PROXY_STREAM_CHUNK_BYTES)
+            if not chunk:
+                break
+            yield chunk.encode("utf-8") if isinstance(chunk, str) else chunk
+    finally:
+        close = getattr(upstream_response, "close", None)
+        if callable(close):
+            close()
+
+
+def _build_omnidrive_openai_proxy_response(upstream_response):
+    upstream_headers = getattr(upstream_response, "headers", {}) or {}
+    status_code = getattr(upstream_response, "status", None)
+    if status_code is None and hasattr(upstream_response, "getcode"):
+        status_code = upstream_response.getcode()
+    content_type = _get_case_insensitive_header(upstream_headers, "Content-Type").strip() or "application/json"
+
+    response = Response(
+        _iter_omnidrive_openai_proxy_response(upstream_response),
+        status=status_code or 200,
+        content_type=content_type,
+    )
+    _copy_omnidrive_openai_proxy_response_headers(response, upstream_headers)
+    return response
+
+
+def _build_omnidrive_openai_proxy_http_error_response(exc):
+    raw_payload = exc.read()
+    if isinstance(raw_payload, str):
+        raw_payload = raw_payload.encode("utf-8")
+    upstream_headers = getattr(exc, "headers", {}) or {}
+    content_type = _get_case_insensitive_header(upstream_headers, "Content-Type").strip() or "application/json"
+    response = Response(raw_payload or b"", status=getattr(exc, "code", 502) or 502, content_type=content_type)
+    _copy_omnidrive_openai_proxy_response_headers(response, upstream_headers)
+    return response
+
+
+def proxy_omnidrive_openai_chat_completion(raw_body, accept_header=""):
+    session = get_omnidrive_device_session_data()
+    raw_payload = raw_body.encode("utf-8") if isinstance(raw_body, str) else (raw_body or b"")
+    headers = {
+        "Authorization": f"Bearer {session['accessToken']}",
+        "Content-Type": "application/json",
+    }
+    accept = str(accept_header or "").strip()
+    if accept:
+        headers["Accept"] = accept
+
+    request_obj = urllib_request.Request(
+        _build_omnidrive_openai_proxy_url(session.get("apiBaseUrl")),
+        method="POST",
+        headers=headers,
+        data=raw_payload,
+    )
+    upstream_response = urllib_request.urlopen(request_obj, timeout=300)
+    return _build_omnidrive_openai_proxy_response(upstream_response)
+
+
 def _build_openai_usage():
     return {
         "prompt_tokens": 0,
@@ -4400,42 +4489,21 @@ def omnidrive_openai_chat_completions():
     if auth_error:
         return auth_error
 
-    payload = request.get_json(silent=True) or {}
-    if parse_bool(payload.get("stream")):
-        try:
-            return stream_omnidrive_openai_chat_completion(payload)
-        except ValueError as exc:
-            return _openai_error_response(str(exc), status_code=400)
-        except RuntimeError as exc:
-            return _openai_error_response(str(exc), status_code=502, error_type="server_error")
-        except Exception as exc:
-            return _openai_error_response(str(exc), status_code=500, error_type="server_error")
-
     try:
-        completion = create_omnidrive_openai_chat_completion(payload)
+        return proxy_omnidrive_openai_chat_completion(
+            request.get_data(cache=False),
+            accept_header=request.headers.get("Accept", ""),
+        )
+    except urllib_error.HTTPError as exc:
+        return _build_omnidrive_openai_proxy_http_error_response(exc)
     except ValueError as exc:
         return _openai_error_response(str(exc), status_code=400)
+    except urllib_error.URLError as exc:
+        return _openai_error_response(str(exc), status_code=502, error_type="server_error")
     except RuntimeError as exc:
         return _openai_error_response(str(exc), status_code=502, error_type="server_error")
     except Exception as exc:
         return _openai_error_response(str(exc), status_code=500, error_type="server_error")
-
-    if completion.get("toolCall"):
-        return jsonify(
-            _build_openai_tool_call_completion_response(
-                completion["jobId"],
-                completion["modelName"],
-                completion["toolCall"],
-            )
-        ), 200
-
-    return jsonify(
-        _build_openai_chat_completion_response(
-            completion["jobId"],
-            completion["modelName"],
-            completion["text"],
-        )
-    ), 200
 
 
 @app.route('/api/skill/omnidrive/skills', methods=['GET'])

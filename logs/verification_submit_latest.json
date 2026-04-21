@@ -1,9 +1,0 @@
-{
-  "label": "submit",
-  "url": "https://creator.test/login",
-  "interactiveCandidates": [],
-  "extra": {
-    "beforeSignature": "same",
-    "beforeUrl": "https://creator.test/login"
-  }
-}
